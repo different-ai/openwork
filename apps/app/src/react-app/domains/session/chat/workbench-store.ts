@@ -26,7 +26,6 @@ export type SyncWorkbenchInput = {
   primarySessionId: string | null;
   sessions: OpenworkSessionRef[];
   sessionsKnown: boolean;
-  /** Explicit archive metadata for this workspace, not sessions missing from its engine index. */
   archivedSessionIds?: string[];
 };
 
@@ -108,13 +107,10 @@ export function syncWorkbenchSnapshot(
     if (!available.has(key)) available.set(key, { ...session, workspaceTitle });
   }
   const archivedSessionIds = new Set(input.archivedSessionIds);
-  // An index only covers one engine. Absence is not evidence of deletion:
-  // retained tabs, like saved pairs, require an explicit close or archive.
   let tabs = current.tabs
     .filter((tab) => (
       tab.workspaceId !== input.workspaceId
       || !archivedSessionIds.has(tab.sessionId)
-      // Keep the routed archived primary viewable until navigation leaves it.
       || tab.sessionId === input.primarySessionId
     ))
     .map((tab) => {

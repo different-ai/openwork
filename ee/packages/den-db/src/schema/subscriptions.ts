@@ -29,7 +29,6 @@ export const OrgSubscriptionTable = mysqlTable(
     stripe_price_id: varchar("stripe_price_id", { length: 255 }),
     stripe_subscription_item_id: varchar("stripe_subscription_item_id", { length: 255 }),
     quantity: int("quantity").notNull().default(0),
-    /** Committed minimum users (Enterprise): Stripe bills at least this many. 0 means none. */
     minimum_quantity: int("minimum_quantity").notNull().default(0),
     current_period_start: timestamp("current_period_start", { fsp: 3 }),
     current_period_end: timestamp("current_period_end", { fsp: 3 }),

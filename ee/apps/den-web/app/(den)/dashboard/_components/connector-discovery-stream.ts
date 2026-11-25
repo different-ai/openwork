@@ -9,7 +9,6 @@ export const discoveryCheckSchema = z.object({
 }).strict();
 export type DiscoveryCheck = z.infer<typeof discoveryCheckSchema>;
 
-/** Validate streamed results before the form uses their authentication defaults. */
 const resultSchema: z.ZodType<McpRequirementsDiscovery> = z.object({
   status: z.enum(["ready", "manual_action_required", "unsupported", "unreachable"]),
   publishedSignInAddresses: z.array(z.object({ authorizationEndpoint: z.string(), tokenEndpoint: z.string(), advertisedIssuer: z.string(), metadataIssuer: z.string() })).optional(),
@@ -39,7 +38,6 @@ const resultSchema: z.ZodType<McpRequirementsDiscovery> = z.object({
 export const DISCOVERY_STREAM_ERROR = "The server check could not finish. Try again.";
 const MAX_EVENT_CHARS = 1024 * 1024;
 
-/** Actual server events only: no timers or inferred intermediate successes. */
 export async function readDiscoveryStream(
   body: ReadableStream<Uint8Array>,
   onCheck: (check: DiscoveryCheck) => void,
@@ -56,7 +54,6 @@ export async function readDiscoveryStream(
       const part = await reader.read();
       signal?.throwIfAborted();
       buffer += part.done ? decoder.decode() : decoder.decode(part.value, { stream: true });
-      // Normalize complete CRLFs, including when \r and \n arrive in different chunks.
       buffer = buffer.replace(/\r\n/g, "\n");
       let end = buffer.indexOf("\n\n");
       while (end >= 0) {

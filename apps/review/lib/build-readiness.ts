@@ -1,14 +1,9 @@
-// Pure first-build readiness model; rendered by components/build-readiness.tsx.
-
-/** Snapshot layers in build order, as reported by GET /r/<id>/launch. */
 export const BUILD_LAYERS = ["tools", "dependencies", "compiled", "running-template", "world"];
 
 export interface BuildStepView { id: string; ms: number }
 
-/** What the page has seen of one first build, kept monotonic across polls. */
 export interface BuildTracker {
   started: number;
-  /** Furthest layer index seen; -1 while the commit is still being read. */
   furthest: number;
   layerStarted: number[];
   layerEnded: number[];
@@ -20,10 +15,6 @@ export function startTracking(now: number): BuildTracker {
   return { started: now, furthest: -1, layerStarted: [], layerEnded: [], steps: [], failed: false };
 }
 
-/**
- * Folds one poll into the tracker. No builder is alive between layers, so a poll
- * without a layer keeps what was seen; progress never moves backwards.
- */
 export function advance(tracker: BuildTracker, poll: { layer?: string; steps: BuildStepView[] }, now: number): BuildTracker {
   const index = poll.layer === undefined ? -1 : BUILD_LAYERS.indexOf(poll.layer);
   const next: BuildTracker = { ...tracker, layerStarted: [...tracker.layerStarted], layerEnded: [...tracker.layerEnded] };
@@ -57,10 +48,8 @@ const SECTIONS: { label: string; layers: number[] }[] = [
   { label: "Apply this commit", layers: [4] },
 ];
 
-// ACME reports its services one by one; its boot step is then only their total.
 const SERVICE_STEPS = new Set(["world-services", "den-pages", "app-modules", "gateway-probe", "desktop"]);
 
-/** Sub-steps worth showing: the umbrella boot step is hidden when its parts are known. */
 export function visibleSteps(steps: BuildStepView[]): BuildStepView[] {
   return steps.some((step) => SERVICE_STEPS.has(step.id)) ? steps.filter((step) => step.id !== "boot-and-verify") : steps;
 }

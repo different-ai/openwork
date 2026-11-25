@@ -40,37 +40,28 @@ function modelKey(model: { providerId: string; modelId: string }) {
   return `${encodeURIComponent(model.providerId)}:${encodeURIComponent(model.modelId)}`
 }
 
-/** Keeps the chosen model when these options offer it; otherwise moves to the first one. */
 function withAvailableModel(input: CreateAutomation, options: readonly AutomationModelOption[]): CreateAutomation {
   if (options.length === 0 || options.some((option) => modelKey(option) === modelKey(input.model))) return input
   return { ...input, model: defaultInput(options).model }
 }
 
 
-/** A Workflow version the Automation is pinned to instead of free-form instructions and a model. */
 export type AutomationEditorPinnedWorkflow = {
   title: string
   configObjectVersionId: string
 }
 
 export type AutomationEditorProps = {
-  /** Opens AI provider settings when the picker offers to connect more providers. */
   onOpenProviderSettings?: () => void
   initial?: CreateAutomation | null
   initialKey?: string
-  /** Where the Automation runs unless the person picks the other of `placementChoices`. */
   placement: AutomationExecutionTarget
-  /** Where it can run; with more than one "what it can use" choice, the person picks. */
   placementChoices?: readonly AutomationExecutionTarget[]
-  /** What a cloud run can reach: a cloud computer's files, only connected accounts (headless), or both choices. */
   cloudOptions?: AutomationCloudOptions
-  /** True in the desktop app, where the desktop choice means this very computer. */
   onThisComputer?: boolean
-  /** The person's connected accounts, shown on every choice. */
   connectedAccounts?: readonly AutomationConnectedAccount[]
   pinnedWorkflow?: AutomationEditorPinnedWorkflow
   modelOptions: readonly AutomationModelOption[]
-  /** Models each placement can use, when they differ; defaults to `modelOptions`. */
   modelOptionsByPlacement?: Readonly<Record<AutomationExecutionTarget, readonly AutomationModelOption[]>>
   providerCatalog?: AutomationProviderCatalog
   busy: boolean
@@ -83,13 +74,10 @@ export type AutomationEditorProps = {
 export type AutomationConnectedAccount = { id: string; name: string; iconUrl: string | null }
 
 export type AutomationCloudOptions = {
-  /** The person has an OpenWork Web computer, whose files a cloud run can use. */
   cloudComputer: boolean
-  /** The headless runtime: runs that reach only connected accounts, on the organization's one model. */
   accountsOnly: boolean
 }
 
-/** What an Automation can use, which also decides where it runs. */
 export type AutomationCanUse = "computer" | "cloud-computer" | "accounts"
 
 const CAN_USE_ORDER: readonly AutomationCanUse[] = ["computer", "cloud-computer", "accounts"]
@@ -101,7 +89,6 @@ export function automationCanUseChoices(
   return CAN_USE_ORDER.filter((choice) => {
     if (choice === "computer") return placementChoices.includes("desktop")
     if (!placementChoices.includes("cloud")) return false
-    // An older Den that cannot say which cloud it has still offers one cloud choice.
     if (!cloud) return choice === "cloud-computer"
     return choice === "cloud-computer" ? cloud.cloudComputer : cloud.accountsOnly
   })
@@ -111,7 +98,6 @@ export function automationPlacementOf(choice: AutomationCanUse): AutomationExecu
   return choice === "computer" ? "desktop" : "cloud"
 }
 
-/** The words for each choice say what the Automation can reach, not where it runs. */
 export function automationCanUseLabel(choice: AutomationCanUse, onThisComputer?: boolean) {
   if (choice === "computer") return onThisComputer ? "Desktop: Connected accounts and files on this computer" : "Desktop: Connected accounts and files on your computer"
   if (choice === "cloud-computer") return "Cloud: Connected accounts and files on your cloud computer"
@@ -124,7 +110,6 @@ export function automationCanUseNote(choice: AutomationCanUse) {
   return "Runs in the cloud, even when your computer is off."
 }
 
-/** Where an Automation starts: its placement, then the cloud it uses (the cloud default model means only accounts). */
 export function initialCanUse(
   placement: AutomationExecutionTarget,
   model: CreateAutomation["model"] | undefined,
@@ -138,10 +123,6 @@ export function initialCanUse(
 
 const LOGO_TILE = "grid size-5 place-items-center overflow-hidden rounded-md border border-border bg-background"
 
-/**
- * What a choice can reach, at a glance: the computer whose files it can use
- * (when it can), plus the logos of the person's connected accounts.
- */
 function ConnectedAccountLogos({ accounts, files }: { accounts: readonly AutomationConnectedAccount[]; files?: "computer" | "cloud-computer" }) {
   const shown = accounts.slice(0, 4)
   const names = accounts.map((account) => account.name)
@@ -182,7 +163,6 @@ export function AutomationEditor(props: AutomationEditorProps) {
   const fallbackChoice = initialCanUse(props.placement, props.initial?.model, choices)
   const canUse = canChoose && chosen && choices.includes(chosen) ? chosen : fallbackChoice
   const placement = canChoose ? automationPlacementOf(canUse) : props.placement
-  // "Only connected accounts" runs on the organization's one cloud model: there is nothing to pick.
   const usesCloudDefault = canUse === "accounts"
   const modelOptions = props.modelOptionsByPlacement?.[placement] ?? props.modelOptions
   const [input, setInput] = useState<CreateAutomation>(() => {
@@ -199,8 +179,6 @@ export function AutomationEditor(props: AutomationEditorProps) {
       setInput(props.initial)
       return
     }
-    // Creating: keep what the person typed; move only off a model this
-    // choice cannot use (models and choices load late, or the choice changed).
     setInput((current) => {
       if (!usesCloudDefault) return withAvailableModel(current, modelOptions)
       return isAutomationCloudDefaultModel(current.model) ? current : { ...current, model: { ...AUTOMATION_CLOUD_DEFAULT_MODEL, variant: null } }
@@ -231,13 +209,9 @@ export function AutomationEditor(props: AutomationEditorProps) {
       setInput((current) => ({ ...current, model: { ...AUTOMATION_CLOUD_DEFAULT_MODEL, variant: null } }))
       return
     }
-    // The free starter model runs only on a desktop, and the cloud default only
-    // headless: keep the model when the new choice offers it, otherwise switch
-    // visibly to one it does.
     const options = props.modelOptionsByPlacement?.[automationPlacementOf(next)] ?? props.modelOptions
     setInput((current) => withAvailableModel(current, options))
   }
-  // Den reads the calendar for these, so they run only in OpenWork Cloud.
   const meetingsNeedCloud = input.schedule.kind === "calendar" && placement !== "cloud"
   const canSave = useMemo(
     () => input.name.trim().length > 0

@@ -24,7 +24,6 @@ export type CloudRuntimeWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "n
   image_version?: typeof WorkerTable.$inferSelect.image_version
 }
 export type CloudRuntimeToken = Pick<typeof WorkerTokenTable.$inferSelect, "scope" | "token">
-/** The endpoint half of a runtime record; `sandbox` is present when the host instance is known. */
 export type CloudRuntimeSandboxRecord = Pick<RuntimeInstanceRecord, "endpointUrl" | "endpointExpiresAt">
   & Partial<Pick<RuntimeInstanceRecord, "sandbox">>
 export type CloudRuntimeSandboxInspection = RuntimeInstanceInspection | null
@@ -79,14 +78,10 @@ export type ResolveCloudRuntimeStateOptions = {
   startRecovery: StartWake
   store: CloudRuntimeStore
   now: () => number
-  /** The image version new instances boot; a stopped worker on an older one is recycled. */
   currentImageVersion?: () => string | null
   forceFailedRecovery?: boolean
-  /** Asks the instance's own server; any answer proves a slow health probe wrong. */
   probeActivity?: ProbeCloudWorkerActivity
-  /** How long a running instance must answer nothing before it is restarted. */
   unreachableGraceMs?: number
-  /** Consecutive silent resolves required on top of the grace window. */
   unreachableMisses?: number
 }
 
@@ -104,17 +99,13 @@ const failedHealCooldownMs = 60_000
 const explicitFailedHealCooldownMs = 60_000
 const signedPreviewProbeTimeoutMs = 2_500
 const signedPreviewHealthCacheMs = 15_000
-/** Consecutive silent resolves required, on top of the grace window, before a running instance is restarted. */
 export const unreachableMissesBeforeRecovery = 3
 const explicitFailedHealAttempts = new Map<WorkerId, number>()
 const signedPreviewHealthCache = new Map<WorkerId, { url: string; healthyUntilMs: number }>()
 const wakingWorkers = new Set<WorkerId>()
 const unreachableWorkers = new Set<WorkerId>()
-// Replica-local like the caches above: the floor is "this long of silence as
-// seen by the deciding replica", never less.
 const unreachableSince = new Map<WorkerId, { firstMissAt: number; misses: number }>()
 
-/** Test seam: forget unreachable windows between scenarios. */
 export function resetCloudRuntimeUnreachableWindows() {
   unreachableSince.clear()
 }
@@ -372,13 +363,6 @@ async function startStaleStoppedRecycle(input: {
   return true
 }
 
-/**
- * The health probe missed. A stopped instance wakes at once; a running one is
- * restarted only after it has answered nothing for the grace window, because a
- * sandbox busy with the member's own work can be slow on `/health` while its
- * server still answers an authenticated request. Restarting it would abort
- * that work and lose everything since the last checkpoint.
- */
 async function recoverUnhealthyCloudSandbox(input: {
   worker: CloudRuntimeWorker
   endpoint: CloudRuntimeSandboxRecord | null
@@ -437,8 +421,6 @@ async function recoverUnhealthyCloudSandbox(input: {
       silent_ms: nowMs - firstMissAt,
       grace_ms: input.unreachableGraceMs,
     })
-    // Keep handing out the last endpoint so a live stream is not cut by a
-    // status poll; real traffic reports its own errors if the instance is gone.
     if (endpoint) return { status: "ready", url: endpoint.endpointUrl, expiresAt: endpoint.endpointExpiresAt }
     unreachableWorkers.add(workerId)
     return { status: "waking", url: null, reason: "unreachable" }

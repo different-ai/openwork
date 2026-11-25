@@ -25,13 +25,11 @@ interface AppErrorBoundaryState {
 
 export { redactCrashText } from "@/app/lib/crash-diagnostics";
 
-/** React may throw any value, including one that cannot safely be inspected. */
 export function describeCrash(thrown: unknown): CrashDetails {
   const { message, stack } = formatCrashDiagnostic(thrown);
   return { message, stack };
 }
 
-/** Clipboard payload: message, stack, app version and distribution flavor. */
 export function buildCrashReport(crash: CrashDetails, context: CrashContext): string {
   const header = `OpenWork ${context.version} (${context.deployment}, ${context.flavor})`;
   return [header, crash.message, crash.stack].filter((line) => line.length > 0).join("\n\n");
@@ -45,11 +43,6 @@ function readCrashContext(): CrashContext {
   };
 }
 
-/**
- * The server log lives under the desktop profile and is only reachable through
- * the desktop bridge. On the web, or before an enterprise install is activated,
- * the bridge refuses the call and the action stays hidden.
- */
 async function resolveLogFilePath(): Promise<string | null> {
   try {
     return (await openworkServerInfo()).logFilePath;
@@ -114,8 +107,6 @@ function RecoveryScreen({ crash }: { crash: CrashDetails }) {
           </button>
         </div>
 
-        {/* Same disclosure shape as the session error card: the raw payload
-            and its actions are for whoever reports the crash, on demand. */}
         <div className="flex flex-col gap-2">
           <button
             type="button"
@@ -160,22 +151,6 @@ function RecoveryScreen({ crash }: { crash: CrashDetails }) {
   );
 }
 
-/**
- * Last-resort boundary around the whole application.
- *
- * React unmounts the entire tree when a render throws, so before this existed a
- * single bad value rendered the app as a blank window with nothing in the UI to
- * explain it. The same failure mode is documented on the tool-part boundary in
- * components/chat/message-list.tsx, which was added after it was seen in
- * production.
- *
- * It sits above every provider in index.react.tsx, so it must not read any
- * React context. It deliberately renders plain elements and does not call
- * `t()`: locale initialization runs before the tree mounts and has itself been
- * a source of startup failures, so the screen that reports a crash must not
- * depend on it. Recovery needs no network; optional web reporting keeps its
- * existing monitoring and analytics gates.
- */
 export class AppErrorBoundary extends React.Component<
   { children: React.ReactNode },
   AppErrorBoundaryState
@@ -187,9 +162,6 @@ export class AppErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: unknown, _info: React.ErrorInfo) {
-    // A caught render throw never reaches the window "error" listener, so the
-    // web deployment's monitor is told directly, with the same redacted text
-    // the screen shows. Inert on desktop.
     reportCaughtWebError(error);
   }
 

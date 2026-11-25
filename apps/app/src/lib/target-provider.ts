@@ -6,9 +6,7 @@ import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-targ
 export type OpenTargetOptions = {
   external?: boolean;
   reveal?: boolean;
-  /** A person-selected installed application; still uses the same resolver and native guards. */
   appPath?: string;
-  /** Owning session's file evidence; never borrowed from the currently selected session. */
   sessionTargets?: OpenTarget[];
 };
 
@@ -18,7 +16,6 @@ type OpenTargetContextValue = {
   client?: OpenworkServerClient;
   workspaceId?: string;
   workspaceRoot?: string;
-  /** The conversation being shown; lets file reads follow it into a worktree. */
   sessionId?: string;
   isLocalWorkspace?: boolean;
   openTargets: OpenTarget[];

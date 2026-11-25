@@ -4,7 +4,6 @@ import type { UIMessage } from "ai";
 import { useAppsClient } from "./use-apps";
 import { builtAppSummary, latestBuiltAppParts } from "./built-mcp-app-model";
 
-/** Builder results already belong to the member catalog; refresh it, never pin them. */
 export function BuiltAppCatalogSync({ messages }: { messages: UIMessage[] }) {
   const context = useAppsClient();
   const queryClient = useQueryClient();

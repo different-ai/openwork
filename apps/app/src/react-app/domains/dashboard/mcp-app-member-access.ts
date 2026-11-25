@@ -7,24 +7,14 @@ import type { ActivityScope } from "@/react-app/kernel/activity-types";
 import type { ConnectCapabilityInventory } from "../session/surface/connect-capability-inventory";
 import { clearDashboardTileData } from "./dashboard-tile-cache";
 
-/**
- * What an App last showed stays on this device so it can reopen at once, so it
- * has to go when the person loses the access that produced it. Den's inventory
- * revision changes for many reasons, so a change only prompts a comparison of
- * what this member can use, and stored data clears when something was lost.
- * The revision is a best-effort signal: this clears data, it never proves
- * access. Until this session has compared, a saved tile withholds stored reads.
- */
 type MemberInventory = {
   capabilities: Pick<ConnectCapabilityInventory, "plugins">;
   connections: DenExternalMcpConnection[];
 };
 type RecordedAccess = { revision: string | null; access: string[] };
 
-/** How long a saved tile waits for a check under way before opening without stored reads. */
 const CHECK_WAIT_MS = 250;
 
-/** The signed-in member, and the member this session has compared access for. */
 let currentMember: ActivityScope | null = null;
 let comparedMember: string | null = null;
 let checking: Promise<void> | null = null;
@@ -49,11 +39,9 @@ function recordAccess(scope: ActivityScope, recorded: RecordedAccess) {
   try {
     window.localStorage.setItem(storageKey(scope), JSON.stringify(recorded));
   } catch {
-    // Without a record the next session has nothing to compare, and clears nothing.
   }
 }
 
-/** One entry per thing this member can use, naming the account behind a connection. */
 export function memberAccessKeys({ capabilities, connections }: MemberInventory): string[] {
   const usable = connections.filter((connection) => connection.connected
     && (connection.credentialMode === "shared" || connection.connectedForMe)
@@ -73,21 +61,15 @@ function clearStoredMcpAppData() {
   forgetMcpAppOpenLoads();
 }
 
-/**
- * Names who is signed in, or nobody. A comparison only counts for the member it
- * was made for, so any change starts over rather than inheriting the last one.
- */
 export function setMemberAccessScope(scope: ActivityScope | null): void {
   if (!scope || !currentMember || memberKey(scope) !== memberKey(currentMember)) comparedMember = null;
   currentMember = scope;
 }
 
-/** A revision this member's access was already compared at means nothing has changed since. */
 export function noteInventoryRevision(scope: ActivityScope, revision: string | null): void {
   if (revision !== null && readRecordedAccess(scope)?.revision === revision) comparedMember = memberKey(scope);
 }
 
-/** Compares a complete inventory with the last one, clearing stored data if anything was lost. */
 export function reconcileMemberAccess(scope: ActivityScope, revision: string | null, inventory: MemberInventory): void {
   const access = memberAccessKeys(inventory);
   const previous = readRecordedAccess(scope);
@@ -103,7 +85,6 @@ export function trackMemberAccessCheck(check: Promise<unknown>): void {
   checking = settled;
 }
 
-/** Whether this member's access has been compared in this session, so stored reads may show. */
 export function memberAccessConfirmed(): boolean {
   return currentMember !== null && comparedMember === memberKey(currentMember)
     && currentMember.organizationId === readDenSettings().activeOrgId;
@@ -120,7 +101,6 @@ export async function waitForMemberAccessCheck(): Promise<void> {
   clearTimeout(timer);
 }
 
-/** For tests: a new session has compared nothing yet. */
 export function resetMemberAccessSession(): void {
   currentMember = null;
   comparedMember = null;

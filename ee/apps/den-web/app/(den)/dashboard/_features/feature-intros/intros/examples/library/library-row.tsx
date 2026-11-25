@@ -9,7 +9,6 @@ function RowMark({ row }: { row: LibraryExampleRow }) {
   return <LibraryKindIcon kind={row.kind === "plugin" ? "plugin" : "skill"} />;
 }
 
-/** One My Library row on sample data: mark, name and detail, then who gave it or the sign-in it waits on. */
 export function LibraryExampleItem({ row, active }: { row: LibraryExampleRow; active: boolean }) {
   return (
     <ExampleRow active={active}>

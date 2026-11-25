@@ -4,18 +4,10 @@ import { defineFeatureIntro, type FeatureIntroContext } from "../types";
 import { docsPage } from "./docs";
 import { CollectionPluginsExample, CollectionsExample } from "./examples/settings/collections-example";
 
-/**
- * Facts Settings › Advanced › Collections reports from data it already loads
- * (`GET /v1/marketplaces`, a collection's plugins). A missing fact means "not loaded yet".
- */
 export type CollectionsFacts = {
-  /** Active collections, the built-in OpenWork Marketplace included. Null: unknown (a collection's page). */
   collections?: number | null;
-  /** The organization's own collections, without the built-in one every organization gets. */
   ownCollections?: number | null;
-  /** Collection page: plugins in this collection. */
   collectionPlugins?: number;
-  /** Collection page: the viewer can add plugins (`sharing.manage_all`). */
   canAddPlugins?: boolean;
 };
 
@@ -23,9 +15,7 @@ type Ctx = FeatureIntroContext<CollectionsFacts>;
 
 const PATH = getMarketplacesRoute();
 const DOCS = "cloud/share-with-your-team/collections";
-/** `?new=1` opens the New collection form (DESIGN.md I5). */
 export const COLLECTIONS_NEW_ROUTE = `${PATH}?new=1`;
-/** On a collection's page, `?addPlugin=1` opens Add a plugin with this collection chosen. */
 export const COLLECTION_ADD_PLUGIN_PARAM = "addPlugin";
 
 export const collectionsIntros = [
@@ -41,7 +31,7 @@ export const collectionsIntros = [
       { title: "One audience for many plugins.", text: "Everyone, some teams or a few people get every plugin in the collection." },
       { title: "Grows with you.", text: "Add plugins over time; people with access get them in the desktop app." },
       { title: "Optional.", text: "To share a single plugin, choose who can use it on its own page instead." },
-      { title: "Built in.", text: "Every organization has the OpenWork Marketplace with OpenWork's own plugins." },
+      { title: "Built in.", text: "Every organization starts with the OpenWork Marketplace, shared with everyone and ready for your plugins." },
     ],
     example: {
       Component: CollectionsExample,
@@ -52,7 +42,6 @@ export const collectionsIntros = [
       { when: (ctx: Ctx) => ctx.can("canManageMarketplaces"), label: "Create a collection", href: COLLECTIONS_NEW_ROUTE },
       { when: () => true, label: "Create a collection", href: COLLECTIONS_NEW_ROUTE, locked: { reason: permissionLockReason("marketplaces.manage") } },
     ],
-    // Full screen with no collection at all, banner while only the built-in one exists.
     setupState: (ctx) => {
       if (ctx.facts.collections == null || ctx.facts.ownCollections == null) return "done";
       if (ctx.facts.collections === 0) return "none";
@@ -66,7 +55,6 @@ export const collectionsIntros = [
     version: 1,
     match: { path: `${PATH}/:marketplaceId` },
     icon: Package,
-    // The page already says "Plugins in this collection" right above the box.
     title: "Fill this collection",
     summary: "Put the plugins one audience needs together, and they get every one in the desktop app.",
     highlights: [
@@ -83,7 +71,6 @@ export const collectionsIntros = [
       { when: (ctx: Ctx) => ctx.facts.canAddPlugins === true, label: "Add a plugin", href: `?${COLLECTION_ADD_PLUGIN_PARAM}=1` },
       { when: () => true, label: "Add a plugin", href: `?${COLLECTION_ADD_PLUGIN_PARAM}=1`, locked: { reason: permissionLockReason("sharing.manage_all") } },
     ],
-    // Box in place of "No plugins in this collection yet".
     setupState: (ctx) => {
       if (ctx.facts.collectionPlugins === undefined) return "done";
       return ctx.facts.collectionPlugins > 0 ? "done" : "none";

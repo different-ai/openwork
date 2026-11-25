@@ -10,10 +10,6 @@ import { orgMemberRoute, queryValidator, requireOrgPermission } from "../../midd
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 
-/**
- * The organization's Workbot, Slack and Automation conversations as Den's session index knows them (session-index.ts),
- * for admins. Content-free: sizes, activity and state, never titles or messages.
- */
 export function registerOrgHeadlessSessionRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/headless/sessions",

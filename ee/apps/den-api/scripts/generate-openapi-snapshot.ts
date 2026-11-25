@@ -12,19 +12,12 @@ function setEnvDefault(name: string, value: string) {
 }
 
 function seedSnapshotEnv(snapshotVersion: string) {
-  // Schema export serves no traffic, but importing Better Auth registers OAuth
-  // resources in MySQL. `pnpm den:contract` supplies a prepared disposable DB;
-  // these defaults also support direct `pnpm api:snapshot` with a local schema.
   setEnvDefault("OPENWORK_DEV_MODE", "1")
   setEnvDefault("DB_MODE", "mysql")
   setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/openwork_den")
   setEnvDefault("DEN_DB_ENCRYPTION_KEY", "local-dev-db-encryption-key-please-change-1234567890")
   setEnvDefault("BETTER_AUTH_SECRET", "local-dev-secret-not-for-production-use!!")
   setEnvDefault("BETTER_AUTH_URL", "http://localhost:8790")
-  // Published contract metadata: `servers[0].url` must point at the hosted API
-  // so "Try it" works from the docs, and `info.version` must be deterministic
-  // (not a git SHA). Den API images use the app release version, so the pinned
-  // latest app version is the same value production reports.
   setEnvDefault("DEN_API_PUBLIC_URL", "https://api.openworklabs.com")
   setEnvDefault("DEN_API_VERSION", snapshotVersion)
   setEnvDefault("DEN_AUTOMATIONS_ENABLED", "true")
@@ -73,6 +66,4 @@ try {
   process.exit(1)
 }
 
-// Importing the app starts background service timers and opens pools that keep
-// the event loop alive; the document has been written, so exit explicitly.
 process.exit(0)

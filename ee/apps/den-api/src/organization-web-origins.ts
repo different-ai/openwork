@@ -23,7 +23,6 @@ export type ApproveOrganizationWebOriginResult =
   | { ok: true; webOrigin: OrganizationWebOriginRecord; auditEventIds: string[] }
   | { ok: false; reason: "already_approved" | "limit_reached" }
 
-/** Resolves whether `origin` is approved, optionally scoped to one organization. */
 type WebOriginApprovalLookup = (input: { origin: string; organizationId?: OrganizationId }) => Promise<boolean>
 
 const APPROVAL_CACHE_TTL_MS = 30_000
@@ -35,7 +34,6 @@ let approvalCacheGeneration = 0
 
 async function lookupWebOriginApprovalInDatabase(input: { origin: string; organizationId?: OrganizationId }) {
   const originMatch = eq(OrganizationWebOriginTable.origin, input.origin)
-  // primary: runs right after an approval or removal clears the cache, and the result is cached.
   const rows = await db.$primary
     .select({ id: OrganizationWebOriginTable.id })
     .from(OrganizationWebOriginTable)
@@ -46,17 +44,14 @@ async function lookupWebOriginApprovalInDatabase(input: { origin: string; organi
 
 let activeApprovalLookup: WebOriginApprovalLookup = lookupWebOriginApprovalInDatabase
 
-/** Test-only: replace the database lookup. Pass null to restore it. Also clears the cache. */
 export function setWebOriginApprovalLookupForTest(lookup: WebOriginApprovalLookup | null) {
   activeApprovalLookup = lookup ?? lookupWebOriginApprovalInDatabase
   invalidateWebOriginApprovalCache()
 }
 
-/** Organizations the user currently belongs to that approved `origin`, oldest membership first. */
 type MemberWebOriginLookup = (input: { userId: UserId; origin: string }) => Promise<OrganizationId[]>
 
 async function lookupMemberOrganizationsApprovingInDatabase(input: { userId: UserId; origin: string }) {
-  // primary: an uncached handoff check, so a removal takes effect immediately.
   const rows = await db.$primary
     .select({ organizationId: OrganizationWebOriginTable.organizationId })
     .from(OrganizationWebOriginTable)
@@ -73,16 +68,10 @@ async function lookupMemberOrganizationsApprovingInDatabase(input: { userId: Use
 
 let activeMemberLookup: MemberWebOriginLookup = lookupMemberOrganizationsApprovingInDatabase
 
-/** Test-only: replace the member-scoped database lookup. Pass null to restore it. */
 export function setMemberWebOriginLookupForTest(lookup: MemberWebOriginLookup | null) {
   activeMemberLookup = lookup ?? lookupMemberOrganizationsApprovingInDatabase
 }
 
-/**
- * Handoff check when the session's active organization did not approve the
- * origin (or the session has none yet, as with a fresh sign-in by someone in
- * several organizations): organizations the user belongs to that did. Uncached.
- */
 export async function findMemberOrganizationsApprovingWebOrigin(userId: UserId, origin: string): Promise<OrganizationId[]> {
   if (!isCanonicalExactHttpsOrigin(origin)) return []
   return activeMemberLookup({ userId, origin })
@@ -92,17 +81,16 @@ function isCanonicalExactHttpsOrigin(origin: string) {
   return normalizeExactHttpsOrigin(origin) === origin
 }
 
+const DUPLICATE_ENTRY_MESSAGE = /\bDuplicate entry\b|\(errno 1062\)/
+
 function isDuplicateEntry(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false
   if ("code" in error && error.code === "ER_DUP_ENTRY") return true
   if ("errno" in error && error.errno === 1062) return true
+  if ("message" in error && typeof error.message === "string" && DUPLICATE_ENTRY_MESSAGE.test(error.message)) return true
   return "cause" in error && error.cause !== error && isDuplicateEntry(error.cause)
 }
 
-/**
- * Drops cached CORS approvals on this process. Other Den API replicas keep
- * their entries until the TTL expires, so changes propagate within 30 seconds.
- */
 export function invalidateWebOriginApprovalCache(origin?: string) {
   approvalCacheGeneration += 1
   if (origin === undefined) {
@@ -124,11 +112,6 @@ function rememberApproval(origin: string, approved: boolean) {
   }
 }
 
-/**
- * CORS check: true when any organization approved this exact origin. Results
- * (positive and negative) are cached per process for 30 seconds. Lookup
- * errors propagate uncached so callers can fail closed.
- */
 export async function isWebOriginApprovedByAnyOrganization(origin: string): Promise<boolean> {
   if (!isCanonicalExactHttpsOrigin(origin)) return false
 
@@ -150,7 +133,6 @@ export async function isWebOriginApprovedByAnyOrganization(origin: string): Prom
   return lookup
 }
 
-/** Handoff check: uncached, so a removal takes effect immediately on every replica. */
 export async function isWebOriginApprovedForOrganization(organizationId: OrganizationId, origin: string): Promise<boolean> {
   if (!isCanonicalExactHttpsOrigin(origin)) return false
   return activeApprovalLookup({ origin, organizationId })
@@ -189,20 +171,19 @@ async function readCreatorName(memberId: MemberId) {
   return row?.name?.trim() || row?.email?.trim() || null
 }
 
-/** `origin` must already be normalized with normalizeExactHttpsOrigin. */
 export async function approveOrganizationWebOrigin(input: {
   organizationId: OrganizationId
   origin: string
   createdByOrgMemberId: MemberId
+  id?: OrganizationWebOriginId
 }, capture: AuditChangeCapture | null = null): Promise<ApproveOrganizationWebOriginResult> {
-  const id = createDenTypeId("organizationWebOrigin")
+  const id = input.id ?? createDenTypeId("organizationWebOrigin")
   const createdAt = new Date()
 
   let outcome: "created" | "already_approved" | "limit_reached"
   let auditEventIds: string[] = []
   try {
     outcome = await db.transaction(async (tx) => {
-      // The organization row is the serialization point for the per-org limit.
       await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
         .where(eq(OrganizationTable.id, input.organizationId)).for("update")
 
@@ -227,6 +208,7 @@ export async function approveOrganizationWebOrigin(input: {
     })
   } catch (error) {
     if (!isDuplicateEntry(error)) throw error
+    if (input.id) return approveOrganizationWebOrigin({ organizationId: input.organizationId, origin: input.origin, createdByOrgMemberId: input.createdByOrgMemberId }, capture)
     outcome = "already_approved"
   }
 
@@ -245,10 +227,6 @@ export async function approveOrganizationWebOrigin(input: {
   }
 }
 
-/**
- * Removes one approved origin from the organization. Returns the removed origin
- * (and the web_origin.removed event ids when captured), or null when absent.
- */
 export async function removeOrganizationWebOrigin(input: {
   organizationId: OrganizationId
   id: OrganizationWebOriginId

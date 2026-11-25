@@ -8,7 +8,6 @@ export type ChildOrigin = {
   title?: string;
 };
 
-// Navigation context is transient and scoped to the runtime, never a shared draft.
 const origins = new Map<string, ChildOrigin>();
 const returning = new Map<string, ChildOrigin>();
 const draftPersistence = new Map<string, () => void>();
@@ -24,7 +23,6 @@ export function prepareChildReturn(scope: string, child: string) {
   if (origin) returning.set(key(scope, origin.parentId), origin);
   return origin;
 }
-/** Header, breadcrumb and keyboard return share the mounted child's draft flush. */
 export function registerChildDraftPersistence(scope: string, child: string, persist: () => void) {
   const id = key(scope, child);
   draftPersistence.set(id, persist);

@@ -72,19 +72,8 @@ export type UpdatesViewProps = {
   checkForUpdates: () => void | Promise<void>;
   downloadUpdate: () => void | Promise<void>;
   installUpdateAndRestart: () => void | Promise<void>;
-  /** Currently selected release channel. Optional; callers may omit. */
   releaseChannel?: ReleaseChannel;
-  /**
-   * Change the release channel. When not provided, the channel row is
-   * rendered read-only — useful for contexts where the pref can't be
-   * mutated (e.g. web preview).
-   */
   onReleaseChannelChange?: (next: ReleaseChannel) => void;
-  /**
-   * Whether the alpha channel is available on this platform. Alpha is
-   * macOS-only today; other platforms should receive `false` so the
-   * toggle is hidden.
-   */
   alphaChannelSupported?: boolean;
 };
 

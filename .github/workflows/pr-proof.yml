@@ -1,11 +1,12 @@
 name: PR change proof
 
 # Author evidence, not a merge gate: PRs do not run it. Run it by hand on a PR's
-# head branch to get its changed specs' records as artifacts:
+# head branch to get its changed specs' records as artifacts and publish eligible
+# evidence through the trusted default-branch Evidence review workflow:
 #   gh workflow run pr-proof.yml --ref <branch> -f pr=<number>
 # Manual runs use the secret-free lanes only (changed specs and packaged
 # specs); the core journeys run on every dev push and nightly (core-journeys.yml),
-# and changed specs run nightly in "Build and core checks".
+# and changed specs run nightly in "Nightly regression".
 on:
   workflow_dispatch:
     inputs:
@@ -14,6 +15,7 @@ on:
         required: true
         type: string
 
+cache-mode: read
 permissions:
   contents: read
   pull-requests: read
@@ -107,7 +109,7 @@ jobs:
           restore-keys: ${{ runner.os }}-pnpm-core-
       - name: Install only the test tools
         run: |
-          pnpm --filter @openwork/freestyle... --filter @openwork/daytona-evidence... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
+          pnpm --filter @openwork/world-freestyle... --filter @openwork/evidence-daytona... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
           pnpm --dir evals install --frozen-lockfile --ignore-scripts --prefer-offline
       - name: Prepare this commit's evidence world
         timeout-minutes: 35

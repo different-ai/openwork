@@ -3,6 +3,14 @@ import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 
+/// The masks for a capture taken between two reads of the window: every protected field
+/// either read found, so one that appeared or moved while the image was taken stays hidden.
+enum CaptureMasks {
+    static func during(before: [CGRect], after: [CGRect]) -> [CGRect] {
+        before + after.filter { frame in !before.contains(frame) }
+    }
+}
+
 /// Saving what the agent sees in the session's window as a PNG file, so another app can
 /// use it (open it, place it). The image is the observation's capture at full resolution,
 /// with the same privacy masks; only the file leaves the helper.

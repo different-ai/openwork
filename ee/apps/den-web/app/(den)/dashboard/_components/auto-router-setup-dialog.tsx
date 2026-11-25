@@ -5,11 +5,6 @@ import { buttonVariants } from "../../_components/ui/button";
 
 export const AUTO_ROUTER_SETUP_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/auto-model-routing#self-hosted";
 
-/**
- * Shown when an admin tries to create or edit a Smart Router while the AI Gateway has
- * no TypeSafe (Jev) key. Only the person who runs the OpenWork instance can add
- * it, so the dialog names who acts and the exact steps (DESIGN.md P2, P4).
- */
 export function AutoRouterSetupDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>

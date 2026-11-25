@@ -4,10 +4,6 @@ import { isActiveWorkSessionStatus, isNeedsAttentionSessionStatus, isSessionArch
 
 type SessionGroupLike = { workspace: { id: string }; sessions: readonly SessionListItem[] };
 
-/**
- * A side chat's row is hidden while attached, so its running work lights its
- * main chat's loader. Waiting side chats keep their own visible row instead.
- */
 export function withSideChatActivity(
   statusById: Readonly<Record<string, string>>,
   sideChats: Readonly<Record<string, WorkbenchSessionTab>>,
@@ -32,7 +28,6 @@ export function withSideChatActivity(
   return next ?? statusById;
 }
 
-/** Attached side chats stay out of the list unless open or waiting on the person. */
 export function shouldHideAttachedSideChat(attached: boolean, selected: boolean, status: string | undefined) {
   return attached && !selected && !isNeedsAttentionSessionStatus(status);
 }

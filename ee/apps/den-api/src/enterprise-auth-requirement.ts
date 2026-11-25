@@ -7,6 +7,7 @@ import {
   SsoProviderTable,
 } from "@openwork-ee/den-db/schema"
 import { db } from "./db.js"
+import { ssoDomainColumnCovers } from "./sso-domains.js"
 
 type EnterpriseAuthRequirementRow = {
   organizationId: string
@@ -75,12 +76,12 @@ export async function findEnterpriseAuthRequirementForEmailDomain(email: string)
     .innerJoin(SsoConnectionTable, and(
       eq(OrganizationTable.id, SsoConnectionTable.organizationId),
       eq(SsoConnectionTable.status, "enabled"),
-      eq(SsoConnectionTable.domain, domain),
+      ssoDomainColumnCovers(SsoConnectionTable.domain, domain),
     ))
     .innerJoin(SsoProviderTable, and(
       eq(SsoConnectionTable.providerId, SsoProviderTable.providerId),
       eq(OrganizationTable.id, SsoProviderTable.organizationId),
-      eq(SsoProviderTable.domain, domain),
+      ssoDomainColumnCovers(SsoProviderTable.domain, domain),
       eq(SsoProviderTable.domainVerified, true),
     ))
 

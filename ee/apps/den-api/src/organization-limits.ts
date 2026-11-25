@@ -37,7 +37,9 @@ export type OrganizationMetadata = {
   allowedDesktopVersions?: string[]
   requireSso?: boolean
   restrictDomainToSso?: boolean
-  ssoSessionMaxAgeHours?: number
+  sessionLengthHours?: number
+  maxSessionLengthDays?: number
+  adminReauthMinutes?: number
   brandAppName?: string
   brandLogoUrl?: string
   brandIconUrl?: string

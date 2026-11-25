@@ -1,6 +1,15 @@
 import type { ManagedDeployment } from "@openwork/types/den/managed-deployments";
 
 export type DeploymentTone = "neutral" | "warning" | "danger";
+
+export function assistantSettingsState(deployment: ManagedDeployment, enabled: boolean, canManage: boolean): { editable: boolean; reason: string | null } {
+  if (!enabled) return { editable: false, reason: "Gateway-managed runtimes aren't enabled for this workspace. Ask your OpenWork operator to enable them. Existing services and health reports are unchanged; new gateway-runtime approvals are blocked." };
+  if (!canManage) return { editable: false, reason: "Read only. A workspace owner or someone with deployment management access can change the runtime profile or computers." };
+  const run = deployment.run;
+  if (run && !run.expired && (run.state === "awaiting_approval" || run.state === "provisioning")) return { editable: false, reason: "The runtime profile and computer settings are frozen for this approval. They can change with the next version-increasing Update." };
+  if (!deployment.installedVersion || !deployment.updateAvailable) return { editable: false, reason: "The runtime profile and computers can change when a newer installer is available. Retry keeps the approved settings." };
+  return { editable: true, reason: null };
+}
 export type ProviderReadiness = {
   provider: "aws" | "gcp" | "azure";
   available: boolean;
@@ -12,7 +21,6 @@ export function providerName(provider: ProviderReadiness["provider"]) {
   return provider === "aws" ? "AWS" : provider === "gcp" ? "Google Cloud" : "Azure";
 }
 
-/** Configuration values and secrets never belong in readiness copy. */
 export function readinessMessage(entry: ProviderReadiness) {
   const name = providerName(entry.provider);
   if (entry.available) return `${name} is ready for customer approval.`;
@@ -24,11 +32,15 @@ export function readinessMessage(entry: ProviderReadiness) {
   }
 }
 
-/** Installation/update failures take precedence over the last known health. */
 export function deploymentStatus(deployment: ManagedDeployment): { label: string; tone: DeploymentTone } {
   const run = deployment.run;
   const installed = Boolean(deployment.installedVersion);
-  if (run && run.state !== "ready") {
+  if (run?.kind === "configure") {
+    if (run.state === "awaiting_approval" && run.lastSeenAt) return { label: "AWS approval reserved", tone: "neutral" };
+    if (run.state === "provisioning") return run.expired ? { label: "Configuration change stopped reporting", tone: "danger" } : { label: "Applying configuration change", tone: "neutral" };
+    if (run.state === "failed") return { label: "Configuration change failed", tone: "danger" };
+  }
+  if (run && run.state !== "ready" && !(run.kind === "configure" && run.expired)) {
     if (run.expired) return { label: installed ? "Update stopped reporting" : "Installer stopped reporting", tone: "danger" };
     if (run.state === "failed") return { label: installed ? "Update failed" : "Install failed", tone: "danger" };
     if (run.state === "awaiting_approval") return { label: `Awaiting ${deployment.provider === "gcp" ? "Google Cloud" : "AWS"} approval`, tone: "neutral" };

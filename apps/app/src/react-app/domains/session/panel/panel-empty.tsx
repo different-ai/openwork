@@ -1,13 +1,18 @@
 /** @jsxImportSource react */
 import * as React from "react";
-import { ArrowLeft, ArrowRight, FileText, Globe, Puzzle } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, Globe, MessagesSquare, Puzzle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
+
+import type { EmptyPanelView } from "./files-rail";
 
 export type PanelEmptyActions = {
   onOpenBrowser?: () => void;
+  onOpenFiles: () => void;
   onOpenExtensions?: () => void;
+  onOpenSideChat?: () => void;
 };
 
 export function handlePanelEscape(key: string, onClose: () => void) {
@@ -17,17 +22,14 @@ export function handlePanelEscape(key: string, onClose: () => void) {
 }
 
 type PanelDestination = {
-  id: "browser" | "files" | "extensions";
+  id: "browser" | "files" | "extensions" | "side-chat";
   label: string;
   description: string;
   icon: React.ReactNode;
   activate: () => void;
 };
 
-export function getPanelDestinations(
-  actions: PanelEmptyActions,
-  onOpenFiles: () => void,
-): PanelDestination[] {
+export function getPanelDestinations(actions: PanelEmptyActions): PanelDestination[] {
   const destinations: PanelDestination[] = [];
 
   if (actions.onOpenBrowser) {
@@ -45,8 +47,18 @@ export function getPanelDestinations(
     label: "Files & artifacts",
     description: "View files and artifacts created in this session.",
     icon: <FileText aria-hidden="true" />,
-    activate: onOpenFiles,
+    activate: actions.onOpenFiles,
   });
+
+  if (actions.onOpenSideChat) {
+    destinations.push({
+      id: "side-chat",
+      label: t("session_management.split_view"),
+      description: t("side_question.destination_description"),
+      icon: <MessagesSquare aria-hidden="true" />,
+      activate: actions.onOpenSideChat,
+    });
+  }
 
   if (actions.onOpenExtensions) {
     destinations.push({
@@ -61,17 +73,22 @@ export function getPanelDestinations(
   return destinations;
 }
 
-export function PanelEmpty({ onOpenBrowser, onOpenExtensions }: PanelEmptyActions) {
-  const [destination, setDestination] = React.useState<"chooser" | "files">("chooser");
-
-  if (destination === "files") {
+export function PanelEmpty({
+  view,
+  onShowChooser,
+  onOpenBrowser,
+  onOpenFiles,
+  onOpenExtensions,
+  onOpenSideChat,
+}: PanelEmptyActions & { view: EmptyPanelView; onShowChooser: () => void }) {
+  if (view === "files") {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
         <Button
           variant="ghost"
           size="sm"
           className="mb-6 w-fit gap-2"
-          onClick={() => setDestination("chooser")}
+          onClick={onShowChooser}
         >
           <ArrowLeft />
           All destinations
@@ -89,10 +106,7 @@ export function PanelEmpty({ onOpenBrowser, onOpenExtensions }: PanelEmptyAction
     );
   }
 
-  const destinations = getPanelDestinations(
-    { onOpenBrowser, onOpenExtensions },
-    () => setDestination("files"),
-  );
+  const destinations = getPanelDestinations({ onOpenBrowser, onOpenFiles, onOpenExtensions, onOpenSideChat });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">

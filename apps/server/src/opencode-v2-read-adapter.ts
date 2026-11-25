@@ -1,6 +1,5 @@
 import { sessionActivityFrom } from "./opencode-plugins/session-activity.js";
 
-// Kept dependency-free: the bundled engine plugin imports this adapter.
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -26,7 +25,6 @@ async function pages(read: Read, path: string, limit?: number): Promise<Record<s
   const rows: Record<string, unknown>[] = [];
   const cursors = new Set<string>();
   while (true) {
-    // The semantic total is not the engine's native page size (maximum 200).
     const remaining = limit === undefined ? undefined : limit - rows.length;
     url.searchParams.set("limit", String(Math.min(200, remaining ?? 200)));
     const result = await read(url.pathname + url.search);
@@ -38,14 +36,11 @@ async function pages(read: Read, path: string, limit?: number): Promise<Record<s
     if (cursors.has(next)) throw new Error("Invalid engine pagination cursor");
     if (rows.length === limit) return rows;
     cursors.add(next);
-    // The opaque cursor carries the order; the engine rejects cursor + order.
     url.searchParams.delete("order");
     url.searchParams.set("cursor", next);
   }
 }
 
-/** Adapt read-only native endpoints to the existing semantic query contract.
- * Calls go through OpenWork's native proxy, which checks stable session homes. */
 export function createV2ReadAdapter(read: Read): Read {
   return async path => {
     const match = /^\/workspace\/([^/]+)\/opencode(\/.*)$/.exec(path);
@@ -87,8 +82,6 @@ export function createV2ReadAdapter(read: Read): Read {
     }
     const limit = url.searchParams.get("limit");
     const rows = await pages(native, `/api/session/${target[1]}/message?order=desc`, limit === null ? undefined : Number(limit));
-    // Native pages are newest first. Reverse before the stable time sort so
-    // messages sharing a timestamp also keep chronological timeline order.
     return rows.reverse().filter(row => row.type === "user" || row.type === "assistant")
       .sort((a, b) => Number(isRecord(a.time) ? a.time.created : 0) - Number(isRecord(b.time) ? b.time.created : 0))
       .map(row => ({ info: { id: row.id, role: row.type, time: row.time, ...(row.error ? { error: row.error } : {}) },
@@ -100,11 +93,6 @@ function nativeSessionPath(workspaceId: string, sessionId: string): string {
   return `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/session/${encodeURIComponent(sessionId)}`;
 }
 
-/**
- * Native `Session.Message.Info` rows of every type, unfiltered, in timeline
- * order: the first `limit` from the start, or the newest `limit` from the end
- * (all of them when `limit` is omitted). Used by `session.read` detail reads.
- */
 export async function readV2NativeMessages(
   read: Read,
   workspaceId: string,
@@ -114,11 +102,9 @@ export async function readV2NativeMessages(
   const order = options.from === "start" ? "asc" : "desc";
   const rows = await pages(read, `${nativeSessionPath(workspaceId, sessionId)}/message?order=${order}`, options.limit);
   const timeline = order === "desc" ? rows.reverse() : rows;
-  // Stable sort: messages sharing a timestamp keep the engine's timeline order.
   return timeline.sort((a, b) => Number(isRecord(a.time) ? a.time.created : 0) - Number(isRecord(b.time) ? b.time.created : 0));
 }
 
-/** One native `Session.Message.Info` row by id. */
 export async function readV2NativeMessage(read: Read, workspaceId: string, sessionId: string, messageId: string): Promise<unknown> {
   return data(await read(`${nativeSessionPath(workspaceId, sessionId)}/message/${encodeURIComponent(messageId)}`));
 }

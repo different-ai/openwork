@@ -3,11 +3,6 @@ import type { ScimProviderTable } from "@openwork-ee/den-db/schema"
 import type { AuditChangeCapture, AuditChangeEventInput } from "../request-capture.js"
 import { auditChangeEvent, auditText, auditTime, organizationParent, targetResource, type AuditSnapshot } from "./snapshot.js"
 
-// scim_connection.token_rotated / .deleted / .reconciled and
-// scim_group_mapping.updated (legacy organization.scim.*). The bearer token
-// (encrypted scimToken) is never read into evidence: rotation is the opaque
-// "credentialMaterial" marker, never the value or a hash of it.
-
 export type ScimConnectionAuditRow = Pick<typeof ScimProviderTable.$inferSelect, "id" | "providerId" | "groupMappingMode" | "createdAt">
 export type ScimReconciliationResult = Readonly<{ checked: number; repaired: number; failures: number }>
 
@@ -19,7 +14,6 @@ function resources(organizationId: string, row: ScimConnectionAuditRow) {
   return [targetResource("scim_connection", row.id), organizationParent(organizationId)]
 }
 
-/** `before` null when the connector is created by this rotation. */
 export function scimTokenRotatedEvent(organizationId: string, before: ScimConnectionAuditRow | null, after: ScimConnectionAuditRow): AuditChangeEventInput | null {
   return auditChangeEvent({
     action: "scim_connection.token_rotated", resources: resources(organizationId, after),
@@ -31,7 +25,6 @@ export function scimConnectionDeletedEvent(organizationId: string, row: ScimConn
   return auditChangeEvent({ action: "scim_connection.deleted", resources: resources(organizationId, row), before: serializeScimConnection(row), after: null })
 }
 
-/** No-op (mode unchanged) emits nothing. */
 export function scimGroupMappingUpdatedEvent(organizationId: string, before: ScimConnectionAuditRow, nextMode: string): AuditChangeEventInput | null {
   return auditChangeEvent({
     action: "scim_group_mapping.updated", resources: resources(organizationId, before),
@@ -39,10 +32,6 @@ export function scimGroupMappingUpdatedEvent(organizationId: string, before: Sci
   })
 }
 
-/**
- * A reconciliation run is system work, not a resource state change: execution
- * category when selected (else change), counts only as the run summary.
- */
 export function scimReconciledEvent(capture: AuditChangeCapture, connection: ScimConnectionAuditRow | null, result: ScimReconciliationResult): AuditChangeEventInput | null {
   const category: AuditCategory = capture.policy.categories.includes("execution") ? "execution" : "change"
   return auditChangeEvent({

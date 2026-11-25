@@ -4,7 +4,6 @@ import { ExampleGroupLabel, ExampleRow, ExampleRows, ExampleServiceMark } from "
 import { useExampleStep } from "../use-example-step";
 import { toolTesterExample, toolTesterExampleTools } from "./tool-tester-example-data";
 
-/** Tool Tester example: one run against a connector with your own sign-in, and tools turned on or off for everyone. */
 export function ToolTesterExample() {
   const step = useExampleStep(toolTesterExampleTools.length);
 

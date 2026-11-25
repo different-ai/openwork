@@ -63,6 +63,10 @@ providers without deleting their saved credentials or chats.
 - `skippedProviders` in the engine status: a growing `metadata` count means v1
   changed its catalog shape again; `unsupported` lists providers without a v2
   adapter in the mirror (Google, Groq, custom gateways).
+- One source that cannot be read costs only its own providers. An invalid
+  `auth.json`, or a v1 engine that cannot describe a provider the v2 catalog
+  does not know, leaves the others mirrored; the affected ones are skipped as
+  `metadata` and the reason is in the engine status `lastError`.
 - Server log warning "Could not refresh OpenCode v1 providers after a provider
   change." means AI Providers may show a stale list until a restart.
 - Out of scope here (ENG-888): sharing a personal provider with the team,

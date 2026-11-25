@@ -10,7 +10,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from test_gcp_installer import GCP, ROOT, ENV, runner, install
+from test_gcp_installer import GCP, ROOT, ENV, runner, install, quiet_run_boundaries
 
 
 def observations(revision="owned-revision", count="0", stamp=None):
@@ -52,6 +52,9 @@ class AdoptionTests(unittest.TestCase):
                 if resource["type"] == "google_sql_database_instance":
                     self.assertEqual(change["after"]["database_version"], "MYSQL_8_0")
                     self.assertEqual(change["after"]["name"], change["before"]["name"])
+                    self.assertFalse(change.get("replace_paths"))
+                    self.assertEqual(change["after"]["settings"][0]["backup_configuration"], change["before"]["settings"][0]["backup_configuration"])
+                    self.assertIsNone(change["after"]["settings"][0]["backup_configuration"][0]["location"])
 
     def test_secret_updates_unknown_passwords_major_upgrades_and_service_replacement_are_blocked(self):
         for kind, change in [
@@ -64,6 +67,15 @@ class AdoptionTests(unittest.TestCase):
         ]:
             with self.subTest(kind=kind):
                 self.assertEqual(runner.unsafe_changes({"resource_changes": [{"address": "owned", "type": kind, "change": change}]}), ["owned"])
+
+    def test_backup_location_moves_in_place_and_is_refused_as_a_replacement(self):
+        def instance(actions):
+            settings = lambda location: [{"backup_configuration": [{"enabled": True, "location": location}]}]
+            return {"resource_changes": [{"address": "owned", "type": "google_sql_database_instance", "change": {
+                "actions": actions, "before": {"database_version": "MYSQL_8_0", "settings": settings(None)},
+                "after": {"database_version": "MYSQL_8_0", "settings": settings("asia-east2")}}}]}
+        self.assertEqual(runner.unsafe_changes(instance(["update"])), [])
+        self.assertEqual(runner.unsafe_changes(instance(["delete", "create"])), ["owned"])
 
     def test_apply_keeps_maintenance_through_migration_and_revision_validation(self):
         order = []
@@ -81,6 +93,49 @@ class AdoptionTests(unittest.TestCase):
                     patch.object(runner.subprocess, "run", side_effect=execute), patch.object(runner.subprocess, "check_output", return_value=b"{}"):
                 runner.apply(root, {})
         self.assertEqual(order, [("apply", True), ("verify", True), ("apply", False)])
+
+    def test_service_less_retry_checks_owned_migration_before_apply(self):
+        job = {"type": "google_cloud_run_v2_job", "values": {
+            "name": "ow-123456781234-migrate", "project": ENV["PROJECT_ID"], "location": ENV["REGION"]}}
+        completed = {"status": {"completionTime": "known", "conditions": [{"type": "Completed", "status": "True"}]}}
+        for label, executions, allowed in [
+            ("fresh", None, True),
+            ("no-executions", [], True),
+            ("completed", [completed], True),
+            ("running", [{"status": {}}], False),
+            ("unknown", [{"status": {"completionTime": "known", "conditions": [{"type": "Completed", "status": "Unknown"}]}}], False),
+            ("malformed", {}, False),
+            ("denied", subprocess.CalledProcessError(1, "gcloud"), False),
+            ("timeout", subprocess.TimeoutExpired("gcloud", 30), False),
+        ]:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "infra/managed-deployments/gcp/terraform").mkdir(parents=True)
+                plan = {"prior_state": {"values": {"root_module": {"child_modules": [
+                    {"resources": [] if executions is None else [job]}
+                ]}}}}
+                order = []
+                def cloud(*args, **kwargs):
+                    self.assertEqual(args, ("run", "jobs", "executions", "list", "--job=ow-123456781234-migrate",
+                                            "--region=" + ENV["REGION"]))
+                    self.assertEqual(kwargs, {"timeout": 30})
+                    order.append("migration-read")
+                    if isinstance(executions, Exception):
+                        raise executions
+                    return executions
+                with patch.dict(os.environ, ENV), patch.object(runner, "terraform_binary", return_value="terraform"), \
+                        patch.object(runner, "gcloud", side_effect=cloud) as read, \
+                        patch.object(runner.subprocess, "run", side_effect=lambda command, **kw: order.append(command[1])), \
+                        patch.object(runner.subprocess, "check_output", side_effect=[json.dumps(plan).encode(), b"{}"]), \
+                        patch.object(runner.time, "monotonic", side_effect=[0, 601]), patch("builtins.print"):
+                    if allowed:
+                        runner.apply(root, {})
+                    else:
+                        with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                            runner.apply(root, {})
+                expected = ["init", "plan"] + ([] if executions is None else ["migration-read"]) + (["apply"] if allowed else [])
+                self.assertEqual(order, expected)
+                self.assertEqual(read.call_count, 0 if executions is None else 1)
 
     def test_unverified_revisions_never_resume_autoscaling(self):
         calls = []
@@ -245,7 +300,7 @@ class CommandTimeoutTests(unittest.TestCase):
                     "maintenanceCommand": {"errorCode": "command_deadline"}})
 
     def test_timeout_records_infrastructure_failure_without_reporting_success(self):
-        with patch.dict(os.environ, ENV), patch.object(runner, "enroll", return_value="test-token"), \
+        with patch.dict(os.environ, ENV), quiet_run_boundaries(), patch.object(runner, "enroll", return_value="test-token"), \
                 patch.object(runner, "verify_target"), patch.object(runner, "orchestration_mutex"), \
                 patch.object(runner, "mirror_images", return_value={}), \
                 patch.object(runner, "apply", side_effect=lambda *args: runner.service_status("owned-api")), \
@@ -357,6 +412,18 @@ class FenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "ownership"):
                 runner.maintenance_fence(plan)
             cloud.assert_not_called()
+
+    def test_service_less_retry_rejects_migration_in_another_project_or_region(self):
+        for field in ("project", "location"):
+            values = {"name": "ow-123456781234-migrate", "project": ENV["PROJECT_ID"], "location": ENV["REGION"]}
+            values[field] = "other-target"
+            plan = {"prior_state": {"values": {"root_module": {"resources": [
+                {"type": "google_cloud_run_v2_job", "values": values}
+            ]}}}}
+            with self.subTest(field=field), patch.dict(os.environ, ENV), patch.object(runner, "gcloud") as cloud:
+                with self.assertRaisesRegex(ValueError, "unexpected migration target"):
+                    runner.maintenance_fence(plan)
+                cloud.assert_not_called()
 
     def test_missing_stale_paginated_active_or_idle_instances_are_never_zero(self):
         since = datetime.now(timezone.utc) - timedelta(seconds=1)

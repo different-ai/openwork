@@ -17,15 +17,9 @@ type ReasoningBlockProps = {
   isStreaming: boolean
   className?: string
   disclosureKey?: string
-  /** How long the model thought; text-first shows "Thought 12s". */
   durationMs?: number | null
 }
 
-/**
- * Thinking is collapsed by default — a single "Thinking… / Thought"
- * line with a chevron; the full reasoning renders as markdown only
- * when the user opens it.
- */
 export function ReasoningBlock({ text, isStreaming, className, disclosureKey, durationMs }: ReasoningBlockProps) {
   const [open, setOpen] = useWorkbenchDisclosure(disclosureKey)
 

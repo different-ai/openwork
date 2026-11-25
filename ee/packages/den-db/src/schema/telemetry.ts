@@ -8,16 +8,13 @@ import { denTypeIdColumn } from "../columns"
  * type strings are a wire contract with the desktop app and workers.
  */
 export const TelemetryEventType = [
-  // Layer 1 — who is using AI
   "user.active",
   "session.active",
-  // Layer 2 — how often
   "session.started",
   "session.ended",
   "task.started",
   "task.completed",
   "task.failed",
-  // Server-only Workbot adoption facts. The generic client ingest rejects these.
   "workbot.signed_in",
   "workbot.greeting_started",
   "workbot.greeting_completed",
@@ -25,8 +22,6 @@ export const TelemetryEventType = [
   "workbot.message_sent",
   "workbot.turn_completed",
   "connection.connected",
-  // Server-only Get set up facts (one row per member, stable id), written by
-  // POST /v1/me/activation/events. The generic client ingest rejects these.
   "activation.first_response",
   "activation.use_skill",
   "activation.own_provider",

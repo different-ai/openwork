@@ -4,20 +4,15 @@ import { Body, Button, Container, Head, Heading, Hr, Html, Img, Link, Preview, S
 const LOGO_URL = "https://openworklabs.com/email/openwork-mark.png"
 
 export type OrganizationInviteEmailProps = {
-  /** Opens the join page for this invitation: it signs the person in (password, Google or SSO) and adds them to the organization. */
   inviteLink: string
   invitedByName: string
   invitedByEmail: string
   organizationName: string
   role: string
-  /** The address the invitation was sent to; the person signs in with it. */
   inviteeEmail: string
   gettingStartedUrl: string
-  /** Replies go here. Without one, replies reach the person who sent the invitation. */
   supportEmail?: string
-  /** Where a recipient reports an invitation they do not trust. Omitted when the deployment has nowhere to send reports. */
   reportAbuseUrl?: string
-  /** Company or deployment details shown at the bottom, one line each. */
   footerLines: string[]
 }
 

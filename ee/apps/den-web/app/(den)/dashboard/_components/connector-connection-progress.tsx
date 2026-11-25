@@ -7,7 +7,6 @@ import { DenNotice } from "../../_components/ui/notice";
 import { ItemHeader, ItemPage, StepFooter } from "./item-header";
 import { ConnectorLogo } from "./item-logo";
 
-/** Only the outstanding decision or recovery, not the four internal setup phases. */
 export function ConnectorConnectionProgress({ name, url, back, waitingForSignIn, problem, keyFields, busy, onRetry, onEdit, onCancel }: {
   name: string;
   url: string;

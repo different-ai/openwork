@@ -1,17 +1,6 @@
 import type { RemoteThreadStart } from "@/lib/remote-session-thread"
 import type { RemoteThreadOwner } from "./remote-thread-store"
 
-/**
- * What a task opened in the main pane needs to know about where it came
- * from: the task itself, the chat that started it and that chat's title.
- * Kept per window in sessionStorage so a reload on the task's route still
- * shows it and can return to its chat; the scroll and pane to return to stay
- * in `child-navigation.ts` like a local helper's.
- *
- * The follow-up draft lives here too, so leaving with Esc and coming back
- * keeps what the person was typing.
- */
-
 export type RemoteHelperOrigin = {
   start: RemoteThreadStart
   owner: RemoteThreadOwner
@@ -68,7 +57,6 @@ export function rememberRemoteHelperOrigin(origin: RemoteHelperOrigin) {
   try {
     storage()?.setItem(`${STORAGE_PREFIX}${origin.start.key}`, JSON.stringify(origin))
   } catch {
-    // A full or blocked storage only loses reload recovery.
   }
 }
 

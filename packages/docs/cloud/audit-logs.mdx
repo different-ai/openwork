@@ -106,13 +106,41 @@ only runs as a dry run: nothing is deleted.
 
 ## Export
 
-People with **View audit history** can export audit history through the API
-with `GET /v1/audit/export`, as NDJSON (the default) or CSV. Each response is
-one page. Keep requesting with the `X-Audit-Next-Cursor` header value until it
-no longer appears. Use the same filters as the page. Send an
-[API key](/cloud/api-keys) in the `x-api-key` header to call it from a script.
+- [Download audit history with the API](/cloud/export-audit-logs) for setup,
+  paging and resuming an interrupted download.
+- [Generated audit export reference](/api-reference/organizations/export-one-audit-snapshot-page)
+  for parameters, response headers, formats, and errors.
+- [Audit export rules](/cloud/audit-export-api) for cursor validity, combining
+  pages, throttling, and self-hosted deployments.
 
-CSV pages contain summary fields only, without before and after values.
+## How export snapshots and cursors work
+
+The export includes retained, structured audit history, not legacy payloads.
+Filters select operations, but the export contains all eligible child events of
+those operations, not just the child that matched a filter. An operation can
+span pages. Events are sorted by ascending time-ordered event ID, not by a
+per-organization sequence. The `outcome` filter uses the current operation
+outcome, not an individual event outcome. If the operation changes outcome
+while you're paging, it can appear only partly in the export.
+
+The first request sets `X-Audit-Snapshot-At` to server time minus five seconds.
+Every page in that snapshot uses the same cutoff. It excludes events recorded
+later, including new children of existing operations. Event IDs are assigned
+before writes commit. Leaving out the most recent five seconds reduces the
+chance that an in-progress write lands behind a page you've already read. The cutoff doesn't
+freeze current operation outcomes or protect retention. If access recording
+is on, export requests can themselves produce audit events. Those events
+fall outside the current snapshot but can appear in a later export.
+
+A new snapshot can include newer events, but exporting is not a continuous
+feed. Using the previous snapshot cutoff as a polling watermark in `from`
+can miss events: `from` filters when the operation was first recorded, not
+when each child event was recorded.
+
+The cursor is in a response header so the attachment body contains only
+export data. It records where the previous page ended, and Den signs it so
+clients can't change that position or the snapshot it belongs to. See
+[Audit export rules](/cloud/audit-export-api) for when a cursor can be reused.
 
 ## Related
 

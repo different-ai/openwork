@@ -40,3 +40,29 @@ describe("truthful upload approval choices", () => {
     expect(html).toContain("Allow for session");
   });
 });
+
+describe("one approval card for every file sent to a connected account", () => {
+  const kinds = ["drive_upload_file", "drive_push_file", "gmail_create_draft_with_attachments", "outlook_create_draft_with_attachments"];
+  const send = (kind: string, remember: string[]): PendingPermission => ({ id: "per_one", sessionID: "ses_one", permission: kind,
+    patterns: ["report.pdf", "file-send-request:opaque"], always: remember.length ? ["file-send:opaque"] : [],
+    metadata: { paths: ["report.pdf"], target: "Gmail draft to sam@example.com", connectionId: "google-workspace", fileSend: { kind, remember } }, receivedAt: 1, protocol: "v2" });
+
+  test("each tool offers the same three choices the host said it will honor", () => {
+    for (const kind of kinds) {
+      const html = renderToStaticMarkup(<PermissionApprovalPanel permission={send(kind, ["session", "always"])} respondPermission={() => {}} />);
+      for (const label of ["Deny", "Allow once", "Allow for this chat", "Always allow"]) expect(html).toContain(label);
+      expect(html).toContain("report.pdf → Gmail draft to sam@example.com → google-workspace");
+      expect(html).not.toContain("file-send-request:opaque");
+      expect(html).not.toContain("Allow for session");
+    }
+  });
+  test("choices the host will not remember are not offered", () => {
+    const chat = renderToStaticMarkup(<PermissionApprovalPanel permission={send("drive_upload_file", ["session"])} respondPermission={() => {}} />);
+    expect(chat).toContain("Allow for this chat");
+    expect(chat).not.toContain("Always allow</button>");
+    const once = renderToStaticMarkup(<PermissionApprovalPanel permission={send("drive_upload_file", [])} respondPermission={() => {}} />);
+    expect(once).toContain("Allow once");
+    expect(once).not.toContain("Allow for this chat");
+    expect(once).toContain("This approval covers this send only.");
+  });
+});

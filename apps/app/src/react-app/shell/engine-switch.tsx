@@ -43,7 +43,6 @@ function runningOn(activity: EngineActivity | null, engine: ChatEngine): number 
   return count ? count.busySessions + count.waitingRequests : 0;
 }
 
-/** Check work on the engine being left before changing routing. */
 export async function requestEngineSwitch(
   client: EngineSwitchClient,
   engine: ChatEngine,

@@ -5,19 +5,13 @@ import { brandIconCandidates } from "../../_lib/brand-icon";
 
 export type DenBrandMarkProps = {
   name: string;
-  /** Simple Icons slug, when the brand is known by name rather than by URL. */
   simpleIconSlug?: string;
-  /** Any URL owned by the brand (docs, console, API). Used for the favicon fallback. */
   serviceUrl?: string | null;
   iconUrl?: string;
   className?: string;
   imageClassName?: string;
 };
 
-/**
- * Brand tile that walks the shared icon ladder and ends on a monogram, so a
- * provider without a usable logo still reads as a deliberate mark.
- */
 export function DenBrandMark({
   name,
   simpleIconSlug,

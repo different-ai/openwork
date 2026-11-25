@@ -1,25 +1,12 @@
-/**
- * What each maintained world accepts on each target, and ready-to-run commands
- * by intent. `pnpm world help <name> --json` publishes this so an agent can
- * choose a world, placement, seed and source in one call instead of reading the
- * recipes. `world up` composes `--source`/`--seed` from the same entries. The
- * world scripts still enforce every rule; tests keep this catalog in step with
- * them and parse every example command.
- */
-
 import type { SourceKind } from "./source.ts";
 
 /** A `--source` spec kind as typed on the command line: `ref:` resolves to a `sha` before launch. */
 export type GuideSourceKind = SourceKind | "ref";
 
 export interface WorldTargetGuide {
-  /** A `supportedTargets` entry, for example `freestyle/linux`. */
   target: string;
-  /** Seeds accepted on this target; empty when the world takes no seed. */
   seeds: readonly string[];
-  /** Source kinds accepted on this target. */
   sources: readonly GuideSourceKind[];
-  /** What an omitted `--source` means here. Absent when a source is required. */
   defaultSource?: string;
   note?: string;
 }
@@ -30,9 +17,7 @@ export interface WorldExample {
 }
 
 export interface WorldGuide {
-  /** How `world up` composes `--source`/`--seed` for this world. */
   family: "preview" | "web";
-  /** `--source` components; `*` is the unnamed default component. */
   components: readonly string[];
   targets: readonly WorldTargetGuide[];
   examples: readonly WorldExample[];

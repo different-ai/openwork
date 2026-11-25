@@ -15,27 +15,15 @@ import { CellsStore } from "../cells-store.js"
 import { CellCallError, INTERNAL_PATHS, SESSION_CELL_ID, SessionCells, sessionCellName, type CellIdentity, type InternalPath } from "../cells.js"
 import { localMemory } from "../memory.js"
 import { serviceHealthResponse } from "../service-health.js"
+import { cellIdsResponse } from "../cell-ids.js"
+import { computerDetailResponse, computerFleetResponse } from "../computer-fleet.js"
 import { durableObjectSql } from "./sql.js"
+import { CELL_UNAVAILABLE, CELL_UNAVAILABLE_RETRY_SECONDS, cellRouteFailure, type CellRouteFailure } from "./route-failure.js"
 
-/**
- * The runner on celld (or any Durable Objects host): the same HTTP API as the Node server, so callers keep their URL
- * and token. Each request reaches one cell, a single-threaded actor with its own SQLite:
- *
- * - With `x-openwork-headless-owner` (Workbot): the owner's cell, holding their legacy chats, the directory of their
- *   chats in session cells, and their shared memory. A session id `hs_c_<32 hex>` goes to its own session cell
- *   (`session:<id>`), which stores its owner at creation and answers only that owner (OWNER-CELLS.md, "Session cells").
- * - Without it (Slack, Automations): the conversation's own cell, by session id. Creating one picks the id here.
- *
- * The owner header comes from an authenticated service caller, never from a browser. Cells also call each other
- * (`/internal/*`, see cells.ts): only from a cell, never through this router.
- */
 const OWNER_HEADER = "x-openwork-headless-owner"
-/** Set only by this router (any caller value is replaced), and checked by the cell against its own id. */
 const CELL_HEADER = "x-openwork-headless-cell"
-/** On a cell-to-cell call: the calling cell's name, and an HMAC binding it to the called cell (see internalProof). */
 const FROM_HEADER = "x-openwork-headless-from"
 const INTERNAL_HEADER = "x-openwork-headless-internal"
-/** Test only: waits this long between a split's import calls, so the e2e can kill the runtime mid-split. */
 const SPLIT_PAUSE_VAR = "HEADLESS_TEST_SPLIT_PAUSE_MS"
 export type CellEnv = { HEADLESS_CELL: DurableObjectNamespace; [key: string]: unknown }
 const ownerSchema = z.string().min(1).max(200)
@@ -67,11 +55,6 @@ function parseCell(name: string): Cell | null {
 
 const json = (body: unknown, status: number) => Response.json(body, { status })
 
-/**
- * Proves a cell-to-cell call came from cell `from` to cell `to`: an HMAC with the service token. Requests only reach a
- * cell from this Worker's own code (the router sets the cell header and never forwards `/internal/*`), so this is
- * defense in depth against a public request being treated as a cell's.
- */
 function internalProof(apiToken: string, from: string, to: string) {
   return createHmac("sha256", apiToken).update(`openwork-headless-cell-call\n${from}\n${to}`).digest("hex")
 }
@@ -81,31 +64,22 @@ function sameSecret(left: string, right: string) {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-/** Where a cell keeps its own name: an alarm has no request to read it from. */
 const CELL_NAME_KEY = "cell"
-/**
- * How far ahead a cell's alarm is set while it has turns running or waiting to resume: after a crash, the node that
- * takes the cell over wakes it within this, recovery marks its turns interrupted, and the alarm resumes them.
- */
 const RESUME_ALARM_MS = 30_000
 
 type Runtime = Awaited<ReturnType<typeof createRuntime>>
-/** A live-event socket's keep-alive and its answer (headless-protocol's `openEventsSocket` sends it). */
 const SOCKET_PING = "ping"
 const SOCKET_PONG = "pong"
 
-/** Completes a live-event socket's close; a code an application may not send back is answered as a normal close. */
 function closeSocket(socket: WebSocket, code: number) {
   try {
     socket.close(code >= 3000 && code <= 4999 ? code : 1000)
   } catch {
-    // Already closed.
   }
 }
 
 export class HeadlessCell {
   private readonly ready: Promise<Runtime>
-  /** This cell's name, once a request addressed it by name (and it was stored for alarms). */
   private name: string | null = null
   private readonly store: Store
   private readonly cells: CellsStore
@@ -136,14 +110,12 @@ export class HeadlessCell {
         cells: this.cells,
         indexHeld: () => this.cells.meta("index_hold") !== null,
       })
-      // Session cells: the directory outbox (session cell) and the owner-cell split (owner cell); each acts only there.
       runtime.background.register(this.sessionCells.directoryJob())
       runtime.background.register(this.sessionCells.splitJob())
       return this.withEventSockets(runtime)
     })
   }
 
-  /** Another cell's internal route: JSON in and out, the calling cell named and proven (see internalProof). */
   private async callCell(cell: string, path: InternalPath, body: unknown): Promise<unknown> {
     const from = this.name
     if (from === null) throw new CellCallError(400, "invalid_cell")
@@ -162,13 +134,11 @@ export class HeadlessCell {
     return answer
   }
 
-  /** A chat moved out of this cell: its live readers here end (sockets close as a restart), so they reconnect. */
   private moved(sessionId: string) {
     for (const socket of this.ctx.getWebSockets(sessionId)) closeSocket(socket, 1012)
     this.ctx.waitUntil(this.ready.then((runtime) => runtime.events.end(sessionId)))
   }
 
-  /** Sends a public request on to the cell that now holds its chat; the answer (a WebSocket too) is that cell's. */
   private forwardTo(cell: string, request: Request) {
     const headers = new Headers(request.headers)
     headers.set(CELL_HEADER, cell)
@@ -179,7 +149,6 @@ export class HeadlessCell {
     )
   }
 
-  /** A call from another cell (`/internal/*`): only with the proof; answered by cells.ts. */
   private async internal(request: Request, path: string) {
     const name = this.name
     const from = request.headers.get(FROM_HEADER) ?? ""
@@ -194,14 +163,7 @@ export class HeadlessCell {
     return json(answer.body, answer.status)
   }
 
-  /**
-   * Live events over hibernatable WebSockets (GET /v1/sessions/:id/events with `Upgrade: websocket`): each socket is
-   * tagged with its session id and found again through the cell's state, never an in-memory listener, so it keeps
-   * receiving events after the cell sleeps or switches to new code, and it never holds up that switch. Runs at every
-   * start of the cell, so events from whatever runs after a wake (a request, the alarm) reach the sockets.
-   */
   private withEventSockets(runtime: Runtime) {
-    // A client's keep-alive is answered without waking the cell.
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(SOCKET_PING, SOCKET_PONG))
     runtime.events.useSockets({
       accept: (sessionId) => {
@@ -215,7 +177,6 @@ export class HeadlessCell {
           try {
             socket.send(data)
           } catch {
-            // A socket closing as this runs; the others still get the event.
           }
         }
       },
@@ -223,7 +184,6 @@ export class HeadlessCell {
     return runtime
   }
 
-  /** Live-event sockets carry nothing from the client but keep-alives (answered by the auto-response first). */
   webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
     if (message === SOCKET_PING) socket.send(SOCKET_PONG)
   }
@@ -236,7 +196,6 @@ export class HeadlessCell {
     closeSocket(socket, 1000)
   }
 
-  /** The cell's name if it is this cell's: the same check a request gets, for one that names the cell. */
   private isOwnName(name: string) {
     return parseCell(name) !== null && this.ctx.id.equals(this.env.HEADLESS_CELL.idFromName(name))
   }
@@ -245,7 +204,6 @@ export class HeadlessCell {
     try {
       return await this.serve(request)
     } finally {
-      // A request answered without reading its body (a refusal, the split route): release it, not after the answer.
       if (request.body && !request.bodyUsed) await request.body.cancel().catch(() => undefined)
     }
   }
@@ -259,15 +217,12 @@ export class HeadlessCell {
       this.name = name
     }
     const url = new URL(request.url)
-    // Another cell's call: never a public request (the router answers /internal/* with 404).
     if (url.pathname.startsWith("/internal/")) return this.internal(request, url.pathname)
     const sessionId = SESSION_PATH.exec(url.pathname)?.[1]
     const creating = request.method === "PUT" && sessionId !== undefined && url.pathname === `/v1/sessions/${sessionId}`
 
     if (cell.kind === "service" && url.pathname !== "/v1/files/status") return json({ error: "not_found" }, 404)
-    // A conversation's own cell holds that conversation only.
     if (cell.kind === "session" && sessionId !== cell.sessionId) return json({ error: "unknown_session" }, 404)
-    // A chat in its own cell under an owner (hs_c_, or a moved legacy chat): only that owner reaches it.
     let owned: string | null = null
     if (cell.kind === "session") {
       await this.ready
@@ -277,7 +232,6 @@ export class HeadlessCell {
         if (header === null) return stored === null ? json({ error: "owner_required" }, 400) : json({ error: "unknown_session" }, 404)
         const owner = ownerSchema.safeParse(header)
         if (!owner.success) return json({ error: "invalid_owner" }, 400)
-        // Claimed by the request that creates the chat; any other owner gets what an unknown chat gets.
         if (stored !== null ? stored !== owner.data : creating && this.cells.claimCellOwner(owner.data) !== owner.data) return json({ error: "unknown_session" }, 404)
         if (stored === null && !creating) return json({ error: "unknown_session" }, 404)
         owned = owner.data
@@ -290,7 +244,6 @@ export class HeadlessCell {
       }
     }
     if (cell.kind === "owner") {
-      // Nothing in a body or query can put a chat under, or list, another owner.
       if (request.method === "GET" && url.pathname === "/v1/sessions" && url.searchParams.get("owner") !== cell.owner) {
         return json({ error: "owner_mismatch" }, 400)
       }
@@ -301,14 +254,11 @@ export class HeadlessCell {
       }
       const runtime = await this.ready
       if (request.method === "POST" && url.pathname === "/v1/owner/split") {
-        // Moving this owner's legacy chats into their own cells: idempotent, done by the owner-split job.
         const split = this.sessionCells.startSplit()
         await this.armResume(runtime, false)
         return json({ split }, 200)
       }
       if (sessionId) {
-        // A chat moved to its own cell keeps its id: its requests (a WebSocket too) are answered there. A session-cell
-        // id sent here by an older router is too.
         const moved = this.cells.forwardOf(sessionId)
         if (moved && moved.owner === cell.owner) return this.forwardTo(moved.cell, request)
         if (SESSION_CELL_ID.test(sessionId) && !this.store.getSession(sessionId)) return this.forwardTo(sessionCellName(sessionId), request)
@@ -317,63 +267,36 @@ export class HeadlessCell {
     const runtime = await this.ready
     const response = await runtime.app.fetch(request)
     if (request.method === "POST" && url.pathname.endsWith("/turns") && response.status === 202) {
-      // The caller may stop listening after admission; keep the turn running on either host.
       this.ctx.waitUntil(runtime.runner.idle())
     }
     if (owned !== null && request.method !== "GET") {
-      // The owner's directory hears of this chat: right away when it is created or deleted, otherwise once what the
-      // request started has finished (a turn's end, a rename), through the durable outbox.
       if ((creating && response.status === 201) || (request.method === "DELETE" && response.ok)) await this.sessionCells.syncDirectory()
       else this.ctx.waitUntil(runtime.runner.idle().then(() => this.sessionCells.syncDirectory()).then(() => this.armResume(runtime, false)))
     }
-    // A turn admitted or resumed, or turns found interrupted when this cell woke up: keep an alarm set for them.
     await this.armResume(runtime, false)
-    // Deleting a chat removes only its rows; the owner's other chats and memory stay.
     return response
   }
 
-  /**
-   * The cell's one alarm, for two jobs, with no request:
-   *
-   * - Step-mode turns' due steps (see steps.ts): each runs to completion, lanes in parallel. Between alarms nothing
-   *   runs in the cell, so a celld deploy switches it to the new code there instead of cancelling a step.
-   * - Self-resume: after a crash or a deploy the alarm wakes the cell (startup recovery marks its turns interrupted),
-   *   and this resumes those with a resume grant and keeps them running.
-   * - Storage upkeep (background.ts): sealing, the Den index outbox, owner-cell splits.
-   *
-   * Then it is set again for the earliest of both.
-   */
   async alarm() {
     const name = await this.ctx.storage.get(CELL_NAME_KEY)
-    // A cell only arms alarms after a request named it; anything else is not this cell's to act on.
     if (typeof name !== "string" || !this.isOwnName(name)) return
     this.name = name
     const runtime = await this.ready
-    // Never throws: a step's failure is its turn's alone.
     await runtime.runner.runDueSteps()
-    // A step may have ended a turn: a session cell's directory entry follows (sent by the owner-directory job).
     this.sessionCells.refreshDirectory()
     if (runtime.selfResume) await runtime.selfResume.sweep()
-    // Storage upkeep (sealing, Den index outbox, owner-cell splits); never throws.
     await runtime.background.runDue()
-    // Turns run in one go that started here (resumed, or next in a lane a step-mode turn just gave back) keep running.
     this.ctx.waitUntil(runtime.runner.idle())
     await this.armResume(runtime, true)
   }
 
-  /** What the runner needs from this cell to run step-mode turns from the alarm. */
   private stepHost(): StepHost {
     return {
       stepAlarm: true,
-      // After the runtime exists: the runner can call this while it is being built (startup recovery).
       wake: () => this.ctx.waitUntil(Promise.resolve().then(() => this.ready).then((runtime) => this.armResume(runtime, false))),
     }
   }
 
-  /**
-   * Sets the alarm for the earliest step due, and while any turn is queued, running or waiting to resume; `replace`
-   * even if one is set.
-   */
   private async armResume(runtime: Runtime, replace: boolean) {
     const sweep = runtime.selfResume?.nextSweepAt()
     const step = runtime.runner.nextStepAt()
@@ -390,7 +313,6 @@ export class HeadlessCell {
   }
 }
 
-/** The request with the body's owner set to `owner`; a body naming another owner is refused. */
 async function withOwner(request: Request, owner: string): Promise<Request | Response> {
   const body: unknown = await request.clone().json().catch(() => null)
   if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "invalid_request" }, 400)
@@ -404,7 +326,6 @@ function forward(env: CellEnv, request: Request, cell: Cell, init: { method?: st
   const name = cellName(cell)
   const headers = new Headers(request.headers)
   headers.set(CELL_HEADER, name)
-  // Only a cell names a calling cell.
   headers.delete(FROM_HEADER)
   headers.delete(INTERNAL_HEADER)
   const forwarded = new Request(init.url ?? request.url, { method: init.method ?? request.method, headers, body: request.body })
@@ -412,8 +333,11 @@ function forward(env: CellEnv, request: Request, cell: Cell, init: { method?: st
 }
 
 const router = new Hono<{ Bindings: CellEnv }>()
+router.use("*", async (c, next) => {
+  await next()
+  if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive")
+})
 router.get("/health", (c) => c.json({ ok: true }))
-// Cell-to-cell routes are only for cells: never reachable from outside, whatever the request carries.
 router.all("/internal/*", (c) => c.json({ error: "not_found" }, 404))
 router.use("/v1/*", async (c, next) => {
   if (c.req.path === "/v1/health") c.header("Cache-Control", "no-store")
@@ -431,31 +355,38 @@ function reporterFor(config: Config) {
   }
   return reporter
 }
-/** Reports a router failure (the route and error type, never the request); a no-op without HEADLESS_SENTRY_DSN. */
-function reportRouterError(c: Context<{ Bindings: CellEnv }>, error: Error) {
+function reportRouterError(c: Context<{ Bindings: CellEnv }>, error: Error, unavailable: CellRouteFailure | null = null) {
   let config: Config
   try {
     config = configFor(c.env)
   } catch {
-    // The configuration itself is what failed: there is nowhere configured to report to.
     return
   }
   const reporter = reporterFor(config)
   if (!reporter.enabled) return
-  const sent = reporter.report({ code: "request_failed", tags: { route: routePath(c), method: c.req.method }, error })
+  const sent = unavailable
+    ? reporter.report({ code: CELL_UNAVAILABLE, kind: `${CELL_UNAVAILABLE}:${unavailable.reason}`, level: "warning", tags: { reason: unavailable.reason, route: routePath(c), method: c.req.method } })
+    : reporter.report({ code: "request_failed", tags: { route: routePath(c), method: c.req.method }, error })
   try {
     c.executionCtx.waitUntil(sent)
   } catch {
-    // No execution context (tests): the report still runs on its own.
   }
 }
 router.onError((error, c) => {
+  const unavailable = cellRouteFailure(error)
+  if (unavailable) {
+    console.warn("[headless-cells] cell unavailable", { path: c.req.path, reason: unavailable.reason })
+    reportRouterError(c, error, unavailable)
+    return c.json({ error: CELL_UNAVAILABLE, reason: unavailable.reason }, 503, { "Retry-After": String(CELL_UNAVAILABLE_RETRY_SECONDS), "Cache-Control": "no-store" })
+  }
   console.error("[headless-cells] request failed", { path: c.req.path, error: error.message })
   reportRouterError(c, error)
   return c.json({ error: "internal_error" }, 500)
 })
-// Service-wide configuration facts stay in the router: no owner or conversation cell is touched.
 router.get("/v1/health", (c) => serviceHealthResponse(c.req.raw, configFor(c.env)))
+router.get("/v1/computers", (c) => computerFleetResponse(configFor(c.env), { fetch: (url, init) => fetch(url, init) }))
+router.get("/v1/computers/:source/:id", (c) => computerDetailResponse(configFor(c.env), { fetch: (url, init) => fetch(url, init) }, c.req.param("source"), c.req.param("id")))
+router.post("/v1/cells/ids", (c) => cellIdsResponse(c.req.raw, { valid: (name) => parseCell(name) !== null, id: (name) => c.env.HEADLESS_CELL.idFromName(name).toString() }))
 const catalogs = new WeakMap<Config, ReturnType<typeof gatewayModelCatalog>>()
 router.get("/v1/models", async (c) => {
   const config = configFor(c.env)
@@ -485,7 +416,6 @@ router.post("/v1/model-probe", bodyLimit({ maxSize: 8192 }), (c) => {
   }
   return modelProbeResponse(c.req.raw, probe)
 })
-// Conversations only leave cells: they are imported into a Node runner (README: Move conversations to Node).
 router.post("/v1/sessions/:id/import", (c) => c.json({ error: "import_not_supported" }, 405))
 router.all("/v1/*", (c) => {
   const rawOwner = c.req.header(OWNER_HEADER)
@@ -494,14 +424,11 @@ router.all("/v1/*", (c) => {
   if (rawOwner !== undefined) {
     const owner = ownerSchema.safeParse(rawOwner)
     if (!owner.success) return c.json({ error: "invalid_owner" }, 400)
-    // A chat in its own cell (hs_c_): that cell, which checks the owner. Everything else of the owner's: their cell.
     if (pathSession && SESSION_CELL_ID.test(pathSession)) return forward(c.env, c.req.raw, { kind: "session", sessionId: pathSession })
     return forward(c.env, c.req.raw, { kind: "owner", owner: owner.data })
   }
-  // Chats in their own cell, and owner-level routes, belong to an owner.
   if ((pathSession && SESSION_CELL_ID.test(pathSession)) || path.startsWith("/v1/owner/")) return c.json({ error: "owner_required" }, 400)
   if (c.req.method === "POST" && path === "/v1/sessions") {
-    // A conversation without an owner gets its own cell; its id is chosen here so it can be found again.
     const sessionId = `hs_${crypto.randomUUID().replaceAll("-", "")}`
     return forward(c.env, c.req.raw, { kind: "session", sessionId }, { method: "PUT", url: new URL(`/v1/sessions/${sessionId}`, c.req.url).toString() })
   }

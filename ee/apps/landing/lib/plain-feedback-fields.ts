@@ -26,7 +26,6 @@ const fieldDefinitions = [
   { key: "openwork_metadata", label: "OpenWork metadata" },
 ];
 
-// Shared by the form and the one-time setup script so schema keys/types stay in sync.
 export const plainFeedbackFieldSchemas: CreateThreadFieldSchemaInput[] = fieldDefinitions.map((field, order) => ({
   key: field.key,
   label: field.label,

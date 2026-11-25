@@ -14,13 +14,11 @@ export type FeatureIntroKey = z.infer<typeof featureIntroKeySchema>
 
 export const featureIntroStateSchema = z.object({
   introKey: featureIntroKeySchema,
-  /** Registry version the timestamps belong to; a newer version shows the intro again. */
   introVersion: z.number().int().min(1),
-  /** ISO timestamps, null until the event happened for this version. */
-  firstSeenAt: z.string().nullable(),
-  lastSeenAt: z.string().nullable(),
-  dismissedAt: z.string().nullable(),
-  ctaClickedAt: z.string().nullable(),
+  firstSeenAt: z.string().datetime().nullable(),
+  lastSeenAt: z.string().datetime().nullable(),
+  dismissedAt: z.string().datetime().nullable(),
+  ctaClickedAt: z.string().datetime().nullable(),
 })
 export type FeatureIntroState = z.infer<typeof featureIntroStateSchema>
 

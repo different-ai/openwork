@@ -9,7 +9,7 @@ import {
 } from "../../../packages/automations/src/proactive.ts";
 
 /**
- * Replay evals for Your agent: a recorded timeline (calendar, email and team chat as Connect would return them) is
+ * Replay evals for Your agent: a recorded timeline (calendar, mail and Slack as Connect would return them) is
  * served to a model as read-only tools, with the agent's real session instructions and wake prompt. The model's answer
  * is parsed with the agent's real reply parser and scored: did it message when it should, stay quiet otherwise, name
  * the right sources, connect what it was meant to connect, and write the way the instructions ask.
@@ -85,10 +85,14 @@ export type ReplayUsage = { input: number; cached: number; output: number };
 export type ReplayModel = (input: { messages: readonly ReplayMessage[]; tools: readonly ReplayToolSpec[] }) => Promise<{ content: string | null; tool_calls?: ReplayToolCall[]; usage?: ReplayUsage }>;
 
 const MAX_STEPS = 16;
+/**
+ * The calendar, and the member's Google Workspace and Slack connections, where mail and chat are read. A connection's
+ * source id is its connection id; the recorded timelines call them `email` and `chat`.
+ */
 const SOURCES: AgentPromptSource[] = [
   { id: "calendar", name: "Calendar", via: ["Google Calendar"], instruction: "", lastReadAt: null },
-  { id: "email", name: "Email", via: ["Gmail"], instruction: "", lastReadAt: null },
-  { id: "chat", name: "Team chat", via: ["Slack"], instruction: "", lastReadAt: null },
+  { id: "email", name: "Google Workspace", via: [], service: "google-workspace", instruction: "", lastReadAt: null },
+  { id: "chat", name: "Slack", via: [], service: "slack", instruction: "", lastReadAt: null },
 ];
 
 const object = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties, required, additionalProperties: false });
@@ -170,7 +174,7 @@ export function answerTool(timeline: ReplayTimeline, files: Map<string, string>,
   }
 }
 
-/** The wake prompt Den would send for this timeline: a scheduled check with calendar, email and team chat. */
+/** The wake prompt Den would send for this timeline: a scheduled check with the calendar, Google Workspace and Slack. */
 export function replayPrompt(timeline: ReplayTimeline): string {
   const lastReadAt = timeline.lastReadAt ? Date.parse(timeline.lastReadAt) : null;
   return agentWakePrompt({

@@ -90,8 +90,6 @@ export function buildFeedbackUrl(options: FeedbackUrlOptions): string {
   const deployment = options.deployment ?? (isDesktopRuntime() ? "desktop" : "web");
   const version = options.appVersion?.trim() || ENV_APP_VERSION;
   const buildSha = options.buildSha?.trim() ?? ENV_BUILD_SHA;
-  // Web releases are identified by the UI bundle's commit, independently of
-  // the desktop package and the connected server's version.
   const appVersion = deployment === "web"
     ? (buildSha ? `web@${buildSha}` : "")
     : (/^0\.0\.0(?:$|[-+])/.test(version) ? "" : version);

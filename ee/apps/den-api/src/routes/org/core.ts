@@ -20,9 +20,10 @@ import { deploymentCapabilities } from "../../gateway-deployment.js"
 import { cachedOrganizationServiceReadiness } from "../../service-readiness-runtime.js"
 import { canManageDeploymentServices } from "../../middleware/admin.js"
 import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
-import { organizationFeatureEnabled } from "../../features.js"
 import { findDomainSsoRequirement, sessionCanRequireOrganizationSso, ssoSignInUrl } from "../../organization-sso-access.js"
-import { SSO_SESSION_MAX_AGE_HOURS } from "../../sso-routing.js"
+import { organizationRequiresSsoSession } from "@openwork-ee/den-sso"
+import { ADMIN_REAUTH_MINUTES, MAX_SESSION_LENGTH_DAYS, organizationSessionLimits, SESSION_LENGTH_HOURS } from "../../session-security-settings.js"
+import { shortenMemberSessions } from "../../session-security-lifetime.js"
 import { jsonValidator, memberPermissionsForOrganizationContext, orgMemberRoute, orgPermissionRoute, publicRoute, queryValidator, resolveMemberPermissionsMiddleware, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
 import { sortedPermissionKeys } from "../../permissions/effective.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -46,6 +47,7 @@ import {
 } from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
+import type { ResourceActionContext, ResourceOrganizationContext } from "./declarative.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { requestClientIpKey } from "../../request-client-ip.js"
 
@@ -58,15 +60,15 @@ const updateOrganizationSchema = z.object({
   allowedEmailDomains: z.array(z.string().trim().min(1).max(255)).max(100).nullable().optional(),
   allowedDesktopVersions: z.array(z.string().trim().min(1).max(32)).max(200).nullable().optional(),
   requireSso: z.boolean().optional(),
-  /** ssoPerOrganization: every email on the verified SSO domain must sign in with this organization's SSO. */
   restrictDomainToSso: z.boolean().optional(),
-  /** ssoPerOrganization: hours an SSO sign-in opens the organization before it asks for SSO again; null for as long as the session lasts. */
-  ssoSessionMaxAgeHours: z.literal(SSO_SESSION_MAX_AGE_HOURS).nullable().optional(),
+  sessionLengthHours: z.literal(SESSION_LENGTH_HOURS).optional(),
+  maxSessionLengthDays: z.literal(MAX_SESSION_LENGTH_DAYS).optional(),
+  adminReauthMinutes: z.literal(ADMIN_REAUTH_MINUTES).optional(),
   brandAppName: z.string().trim().min(1).max(64).nullable().optional(),
   brandLogoUrl: z.string().url().max(2048).nullable().optional(),
   brandIconUrl: z.string().url().max(2048).nullable().optional(),
   brandAccentColor: z.string().trim().min(1).max(32).nullable().optional(),
-}).strict().refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.restrictDomainToSso !== undefined || value.ssoSessionMaxAgeHours !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
+}).strict().refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.restrictDomainToSso !== undefined || value.sessionLengthHours !== undefined || value.maxSessionLengthDays !== undefined || value.adminReauthMinutes !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
   message: "Provide at least one organization field to update.",
 })
 
@@ -80,9 +82,14 @@ const resolveSsoByEmailResponseSchema = z.object({
   organizationSlug: z.string(),
   signInPath: z.string(),
   signInUrl: z.string().url(),
+  ssoRequired: z.boolean().optional(),
 }).or(z.object({
   requireSso: z.literal(false),
   method: z.union([z.literal("google"), z.literal("password"), z.literal("signup")]),
+  ssoRequired: z.boolean().optional(),
+  organizationSlug: z.string().optional(),
+  signInPath: z.string().optional(),
+  signInUrl: z.string().url().optional(),
 })).meta({ ref: "ResolveOrganizationSsoByEmailResponse" })
 
 const botVerificationFailedSchema = z.object({
@@ -97,14 +104,9 @@ const rateLimitedSchema = z.object({
 
 const SSO_RESOLVE_IDENTITY_RATE_LIMIT_MAX = 20
 const SSO_RESOLVE_RATE_LIMIT_WINDOW_MS = 60_000
-// See the login-options buckets: a long domain window buys burst tolerance for
-// a coworker sign-in wave while keeping SUSTAINED per-domain throughput below
-// the previous flat 20/min (120 per 10 min = 12/min; 30 misses per 10 min = 3/min).
 const SSO_RESOLVE_DOMAIN_RATE_LIMIT_WINDOW_MS = 600_000
 const SSO_RESOLVE_DOMAIN_RATE_LIMIT_MAX = 120
 const SSO_RESOLVE_DOMAIN_MISS_RATE_LIMIT_MAX = 30
-// A generous domain bucket bounds distributed enumeration without recreating coworker lockouts;
-// only unresolved addresses pay the tighter miss bucket.
 
 const singleOrgSsoStatusResponseSchema = z.object({
   configured: z.boolean(),
@@ -189,11 +191,6 @@ const organizationContextResponseSchema = z.object({
       description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
     }),
   }).passthrough(),
-  /**
-   * Effective on/off for every registry feature (packages/features/src/registry.ts).
-   * New clients read this; `capabilities` is frozen for published clients.
-   * A key missing here means an older server: treat it as off.
-   */
   features: clientFeaturesSchema.meta({ description: "Effective on/off for every OpenWork feature in this organization, plus fixed deprecated client compatibility values. Treat a missing key as off." }),
   canManageDeploymentServices: z.boolean().meta({ description: "Whether this caller may open installation diagnostics: a self-hosted installation administrator (local allowlist), signed in or using an API key they own. Organization ownership and permissions never grant it. False on hosted deployments and when the lookup fails." }),
   deploymentCapabilities: deploymentCapabilitiesSchema,
@@ -303,6 +300,95 @@ export async function setRequestActiveOrganization(
   }
 }
 
+export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>
+
+export async function updateOrganizationAction(c: ResourceActionContext, payload: ResourceOrganizationContext, input: UpdateOrganizationInput) {
+
+      const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined
+        ? { domains: undefined, invalidDomains: [] }
+        : normalizeAllowedEmailDomains(input.allowedEmailDomains)
+
+      if (normalizedDomains.invalidDomains.length > 0) {
+        return c.json({
+          error: "invalid_email_domain",
+          message: "Enter valid email domains like company.com.",
+          invalidDomains: normalizedDomains.invalidDomains,
+        }, 400)
+      }
+
+      const changesSessionLimits = input.sessionLengthHours !== undefined || input.maxSessionLengthDays !== undefined
+
+      const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
+      const enablesRequireSso = (input.requireSso === true && currentMetadata.requireSso !== true)
+        || (input.restrictDomainToSso === true && currentMetadata.restrictDomainToSso !== true)
+      const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
+      if (enablesRequireSso) {
+        if (!await sessionCanRequireOrganizationSso({ sessionId: c.get("signInSessionId") ?? null, organizationId: payload.organization.id })) {
+          const signInPath = `/sso/${encodeURIComponent(payload.organization.slug)}`
+          return c.json({
+            error: "sso_session_required",
+            message: "Sign in with this organization's SSO first, then return to Settings and save again. SSO has not been made required.",
+            signInPath,
+            signInUrl: ssoSignInUrl(signInPath),
+          }, 409)
+        }
+      }
+      if (enablesRequireSso || enablesVersionPinning) {
+        const entitlement = checkEntitlement(payload.organization.metadata, "orgControls")
+        if (!entitlement.ok) {
+          return c.json(entitlement.response, entitlement.status)
+        }
+      }
+
+      const enablesBranding = (typeof input.brandAppName === "string") || (typeof input.brandLogoUrl === "string") || (typeof input.brandIconUrl === "string") || (typeof input.brandAccentColor === "string")
+      if (enablesBranding) {
+        const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
+        if (!entitlement.ok) {
+          return c.json(entitlement.response, entitlement.status)
+        }
+      }
+
+      if (typeof input.brandIconUrl === "string") {
+        const brandIconCheck = await validateBrandIconUrl(input.brandIconUrl)
+        if (!brandIconCheck.ok) {
+          return c.json({
+            error: "invalid_brand_icon",
+            reason: brandIconCheck.reason,
+            message: brandIconCheck.message,
+          }, 400)
+        }
+      }
+
+      const updated = await updateOrganizationSettings({
+        organizationId: payload.organization.id,
+        name: input.name,
+        allowedEmailDomains: normalizedDomains.domains,
+        allowedDesktopVersions: input.allowedDesktopVersions,
+        requireSso: input.requireSso,
+        restrictDomainToSso: input.restrictDomainToSso,
+        sessionLengthHours: input.sessionLengthHours,
+        maxSessionLengthDays: input.maxSessionLengthDays,
+        adminReauthMinutes: input.adminReauthMinutes,
+        brandAppName: input.brandAppName,
+        brandLogoUrl: input.brandLogoUrl,
+        brandIconUrl: input.brandIconUrl,
+        brandAccentColor: input.brandAccentColor,
+      })
+
+      if (!updated) {
+        return c.json({ error: "organization_not_found" }, 404)
+      }
+
+      if (changesSessionLimits) {
+        await shortenMemberSessions({
+          organizationId: payload.organization.id,
+          limits: organizationSessionLimits(updated.metadata),
+        })
+      }
+
+      return c.json({ organization: updated })
+}
+
 export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
     "/v1/org",
@@ -340,7 +426,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
     await setRequestActiveOrganization(c, organizationId)
 
-    // primary: reads back the organization created above.
     const organization = await db.$primary
       .select()
       .from(OrganizationTable)
@@ -374,8 +459,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
-    // The invitation token proves its organization: served evidence there
-    // (category read), actor unknown; the token itself is never recorded.
     await attributeAuditRequest(c, { organizationId: invitation.organization.id, actor: { type: "unknown", id: null }, principalKey: "unknown:invitation_token" })
 
     return c.json(invitation)
@@ -425,8 +508,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         userId: normalizeDenTypeId("user", user.id),
         email,
         invitationId: input.id,
-        // The invitation matched the verified session user's email: its
-        // organization is the tenant; the invitee has no member id yet.
         beforeEffect: async (invitation) => {
           const attribution = auditSessionUserAttribution(user.id)
           if (!attribution) return true
@@ -499,96 +580,12 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         402: jsonResponse("Enabling enforced SSO or desktop version controls requires an Enterprise plan.", enterprisePlanRequiredSchema),
         403: jsonResponse("The caller does not have permission to update the requested organization fields.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
-        409: jsonResponse("ssoPerOrganization: requiring SSO needs the caller's session to have signed in through this organization's SSO.", z.object({ error: z.literal("sso_session_required"), message: z.string(), signInPath: z.string(), signInUrl: z.string().url() })),
+        409: jsonResponse("requiring SSO needs the caller's session to have signed in through this organization's SSO.", z.object({ error: z.literal("sso_session_required"), message: z.string(), signInPath: z.string(), signInUrl: z.string().url() })),
       },
     }),
     orgPermissionRoute("organization.update"),
     jsonValidator(updateOrganizationSchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const input = c.req.valid("json")
-
-      const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined
-        ? { domains: undefined, invalidDomains: [] }
-        : normalizeAllowedEmailDomains(input.allowedEmailDomains)
-
-      if (normalizedDomains.invalidDomains.length > 0) {
-        return c.json({
-          error: "invalid_email_domain",
-          message: "Enter valid email domains like company.com.",
-          invalidDomains: normalizedDomains.invalidDomains,
-        }, 400)
-      }
-
-      if ((input.restrictDomainToSso !== undefined || input.ssoSessionMaxAgeHours !== undefined) && !await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
-        return c.json({ error: "feature_disabled", message: "These SSO settings are not available for this organization." }, 404)
-      }
-
-      const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
-      const enablesRequireSso = (input.requireSso === true && currentMetadata.requireSso !== true)
-        || (input.restrictDomainToSso === true && currentMetadata.restrictDomainToSso !== true)
-      const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
-      if (enablesRequireSso && await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
-        // Requiring SSO takes effect at once for every member, the admin too:
-        // only an admin signed in through it can turn it on, so nobody locks
-        // themselves out of the organization by mistake.
-        const session = c.get("session")
-        if (!await sessionCanRequireOrganizationSso({ sessionId: session?.id ?? null, organizationId: payload.organization.id })) {
-          const signInPath = `/sso/${encodeURIComponent(payload.organization.slug)}`
-          return c.json({
-            error: "sso_session_required",
-            message: "Sign in with this organization's SSO first, then return to Settings and save again. SSO has not been made required.",
-            signInPath,
-            signInUrl: ssoSignInUrl(signInPath),
-          }, 409)
-        }
-      }
-      if (enablesRequireSso || enablesVersionPinning) {
-        const entitlement = checkEntitlement(payload.organization.metadata, "orgControls")
-        if (!entitlement.ok) {
-          return c.json(entitlement.response, entitlement.status)
-        }
-      }
-
-      const enablesBranding = (typeof input.brandAppName === "string") || (typeof input.brandLogoUrl === "string") || (typeof input.brandIconUrl === "string") || (typeof input.brandAccentColor === "string")
-      if (enablesBranding) {
-        const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
-        if (!entitlement.ok) {
-          return c.json(entitlement.response, entitlement.status)
-        }
-      }
-
-      if (typeof input.brandIconUrl === "string") {
-        const brandIconCheck = await validateBrandIconUrl(input.brandIconUrl)
-        if (!brandIconCheck.ok) {
-          return c.json({
-            error: "invalid_brand_icon",
-            reason: brandIconCheck.reason,
-            message: brandIconCheck.message,
-          }, 400)
-        }
-      }
-
-      const updated = await updateOrganizationSettings({
-        organizationId: payload.organization.id,
-        name: input.name,
-        allowedEmailDomains: normalizedDomains.domains,
-        allowedDesktopVersions: input.allowedDesktopVersions,
-        requireSso: input.requireSso,
-        restrictDomainToSso: input.restrictDomainToSso,
-        ssoSessionMaxAgeHours: input.ssoSessionMaxAgeHours,
-        brandAppName: input.brandAppName,
-        brandLogoUrl: input.brandLogoUrl,
-        brandIconUrl: input.brandIconUrl,
-        brandAccentColor: input.brandAccentColor,
-      })
-
-      if (!updated) {
-        return c.json({ error: "organization_not_found" }, 404)
-      }
-
-      return c.json({ organization: updated })
-    },
+    async (c) => updateOrganizationAction(c, c.get("organizationContext"), c.req.valid("json")),
   )
 
   app.get(
@@ -622,7 +619,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       security: [],
       hide: true,
       summary: "Resolve sign-in method by email",
-      description: "Returns a uniform sign-in routing envelope. SSO routing is resolved by verified domain; non-SSO routing is protected by bot verification and rate limiting.",
+      description: "Returns a uniform sign-in routing envelope. SSO routing is resolved by verified domain; non-SSO routing is protected by bot verification and rate limiting. When the domain's organization has SSO, its sign-in URL is always returned: with requireSso true (method sso) SSO is the only way in; otherwise SSO is one option next to method, and ssoRequired says whether the organization itself only opens from an SSO session.",
       responses: {
         200: jsonResponse("Sign-in resolution returned successfully.", resolveSsoByEmailResponseSchema),
         400: jsonResponse("The SSO resolution query parameters were invalid.", invalidRequestSchema),
@@ -635,13 +632,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const query = c.req.valid("query")
 
-      // Security note:
-      // This endpoint intentionally preserves per-user auth-method routing for non-SSO
-      // accounts as a product UX decision. To reduce enumeration risk it:
-      // 1. resolves SSO by verified domain, not membership,
-      // 2. requires Vercel BotID verification before per-user method resolution,
-      // 3. relies on Better Auth/routing rate limits,
-      // 4. returns a uniform 200 response envelope for successful lookups.
       const botProtection = await verifyBotProtection()
       if (!botProtection.ok) {
         return c.json({
@@ -661,21 +651,20 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const requirement = await findEnterpriseAuthRequirementForEmailDomain(query.email)
-      // This is the password/Google preflight, not organization access. With
-      // per-org SSO, Require SSO must not undo the alternative offered by login
-      // options: the person may still sign in for their other organizations.
-      // Only restricting the entire domain (or the legacy behavior) redirects.
       const domainPolicy = requirement ? await findDomainSsoRequirement(query.email) : null
       const permitsNonSsoSignIn = Boolean(domainPolicy?.perOrganization && !domainPolicy.policy.restrictDomainToSso)
 
-      if (requirement && !permitsNonSsoSignIn) {
-        return c.json({
-          requireSso: true,
-          method: "sso",
-          organizationSlug: requirement.organizationSlug,
-          signInPath: requirement.signInPath,
-          signInUrl: new URL(requirement.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
-        })
+      const ssoOption = requirement
+        ? {
+            ssoRequired: domainPolicy ? organizationRequiresSsoSession(domainPolicy.policy) : true,
+            organizationSlug: requirement.organizationSlug,
+            signInPath: requirement.signInPath,
+            signInUrl: new URL(requirement.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
+          }
+        : null
+
+      if (ssoOption && !permitsNonSsoSignIn) {
+        return c.json({ requireSso: true, method: "sso", ...ssoOption, ssoRequired: true })
       }
 
       const method = await resolveNonSsoSignInMethodForEmail(query.email)
@@ -693,6 +682,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({
         requireSso: false,
         method,
+        ...(ssoOption ?? {}),
       })
     },
   )
@@ -715,17 +705,12 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
 
-      // Same per-request resolution the middleware made.
       const memberPermissions = await memberPermissionsForOrganizationContext(payload, c.get("memberTeams"))
-      // Reuse the organization row and feature snapshot resolved for this request.
       const currentOrganization = payload.organization
       const features = payload.features
-      // Cloud is entitled by OpenWork Web access (paid subscription or the
-      // platform-admin complimentary grant) on hosted deployments; there is no
-      // separate per-organization Cloud rollout flag.
       const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })
         && (await getOpenWorkWebAccess(payload.organization.id)).hasAccess
-      // The directory is only loaded here, not with every org request's context.
+        && payload.currentMember.openworkWeb
       const [directory, ssoRows, scimRows] = await Promise.all([
         loadOrganizationDirectory(payload.organization.id),
         db
@@ -763,8 +748,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
             : null,
         },
         currentMemberTeams: c.get("memberTeams") ?? [],
-        // Caller-specific operator authority is queried only here, not by the
-        // shared org context loader used by unrelated organization requests.
         canManageDeploymentServices: await canManageDeploymentServices({ user: c.get("user"), session: c.get("session"), apiKey: c.get("apiKey") }),
         deploymentCapabilities: {
           ...deploymentCapabilities(),
@@ -773,29 +756,15 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         plan: parseOrganizationPlan(currentOrganization.metadata),
         entitlements: getOrganizationEntitlements(currentOrganization.metadata),
         features: clientFeatures(features),
-        // Frozen for published clients; new clients read `features`.
         capabilities: {
           auditLogs: env.auditVisibilityEnabled,
           gatewayDashboard: true,
-          // Organization Dashboards were removed (2026-10). Published desktop
-          // builds call the old dashboard routes only when this is true, so it
-          // stays pinned to false.
           orgManagedDashboards: false,
-          // Compatibility field for published clients: Connect is always on.
           mcpConnections: true,
-          // Building your own Apps is on for every organization unless the
-          // deployment turns it off.
           appMcpServers: env.appMcpServersEnabled,
-          // Workflows/Code Mode are enabled for every organization; the field
-          // remains for published clients that still read it.
           workflows: true,
-          // Compatibility field for published clients: install links are always on.
           installLinks: true,
-          // Effective offer: the deployment switch enables Web generally,
-          // while the platform-admin complimentary grant enables only this
-          // organization when the deployment switch is off.
           openworkWeb: isOpenWorkWebAvailableForOrganization(payload.organization.metadata),
-          // Workbot is generally available when its app origin is configured (DEN_WORKBOT_URL).
           workbot: workbotOrigin() !== null,
           ...(cloudEnabled ? { cloud: true } : {}),
         },

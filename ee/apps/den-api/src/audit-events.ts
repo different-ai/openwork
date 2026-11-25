@@ -37,6 +37,7 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   permissionSetArchived: "organization.permission_set.archived",
   permissionSetRenamed: "organization.permission_set.renamed",
   permissionSetTeamsChanged: "organization.permission_set.teams_changed",
+  permissionSetMembersChanged: "organization.permission_set.members_changed",
 }
 
 export type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
@@ -89,8 +90,6 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.permissionSetPermissionsChanged:
     case ORGANIZATION_AUDIT_ACTIONS.permissionSetArchived:
       return true
-    // Intentionally unchanged by the operation audit work: ownership transfer
-    // has never raised an operator [audit-alert]; widening that contract is out of scope.
     case ORGANIZATION_AUDIT_ACTIONS.memberOwnershipTransferred:
     case ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun:
       return false
@@ -111,11 +110,6 @@ export function logOrganizationAuditEvent(event: OrganizationAuditEvent) {
   logOrganizationAuditAlert({ auditEventId: event.id, organizationId: event.org_id, actorUserId: event.actor_user_id ?? null, action: event.action, payload: event.payload })
 }
 
-/**
- * The `[audit-alert]` operator contract, independent of which store recorded the
- * action: the legacy row id, or the operation change event id (null when the
- * bridged action changed nothing) plus the request id.
- */
 export function logOrganizationAuditAlert(input: {
   auditEventId: string | null
   organizationId: string

@@ -42,11 +42,6 @@ export type SkillUse = {
   source: CapabilityUsageSource
 }
 
-/**
- * Records one skill load for the organization's Library usage view. Every load
- * is one row. Never throws and never delays the caller: usage is best effort,
- * the skill is served either way.
- */
 export function recordSkillUse(use: SkillUse): void {
   void writeSkillUse(use).catch((error: unknown) => warn("record-skill", error))
 }
@@ -66,23 +61,19 @@ async function writeSkillUse(use: SkillUse): Promise<void> {
 export type ConnectorUse = {
   organizationId: string
   orgMembershipId: DenTypeId<"member">
-  /** The external_mcp_connection id, or the provider key of a legacy Google Workspace / Microsoft 365 connection. */
   connectionId: string
   ok: boolean
   source: CapabilityUsageSource
 }
 
-/** Records one connector tool call. Same guarantees as recordSkillUse; stores ids only, never the tool name, arguments or results. */
 export function recordConnectorUse(use: ConnectorUse): void {
   void writeConnectorUse(use).catch((error: unknown) => warn("record-connector", error))
 }
 
-/** An MCP CallToolResult that reports a tool-level error (`isError: true`). */
 export function toolCallFailed(result: unknown): boolean {
   return typeof result === "object" && result !== null && "isError" in result && result.isError === true
 }
 
-/** Records when a tool call settles, without changing what the caller awaits or sees. */
 export function recordConnectorCall<T>(call: Promise<T>, use: Omit<ConnectorUse, "ok">, failed: (result: T) => boolean): void {
   call.then(
     (result) => recordConnectorUse({ ...use, ok: !failed(result) }),
@@ -102,18 +93,10 @@ async function writeConnectorUse(use: ConnectorUse): Promise<void> {
   })
 }
 
-// ---------------------------------------------------------------------------
-// Reads. Recent uses are raw capability_usage_event rows; uses older than about
-// two days were folded into daily capability_usage_rollups by the gateway's
-// rollup job, which deletes the raw rows in the same transaction. Every read
-// unions both stores in one statement, so a use is counted exactly once.
-// ---------------------------------------------------------------------------
-
 const raw = CapabilityUsageEventTable
 const rollup = CapabilityUsageRollupTable
 const workflowRun = WorkflowRunTable
 
-/** Most rows one breakdown returns; a larger result asks the caller to narrow it. */
 export const LIBRARY_USAGE_MAX_ROWS = 10_000
 
 export class LibraryUsageTooManyRowsError extends Error {
@@ -127,11 +110,9 @@ export type LibraryUsageQuery = {
   kind: LibraryUsageKind
   days: number
   groupBy: readonly LibraryUsageDimension[]
-  /** Only these members' uses; an empty list matches nobody. */
   memberIds?: readonly string[]
   itemId?: string
   now?: Date
-  /** Most rows to return before failing with LibraryUsageTooManyRowsError; null for none (one row per live item). */
   maxRows?: number | null
 }
 
@@ -148,7 +129,6 @@ export type LibraryUsageBreakdownRow = {
 
 const usageKinds: Record<LibraryUsageKind, CapabilityUsageKind> = { skills: "skill", plugins: "skill", connectors: "connector_tool" }
 
-// Epoch arithmetic gives UTC calendar dates even if a DB session is not UTC.
 function utcDate(timestamp: SQL) {
   return sql<string>`date_format(timestampadd(day, floor(unix_timestamp(${timestamp}) / 86400), '1970-01-01'), '%Y-%m-%d')`
 }
@@ -170,7 +150,6 @@ function sourceCounts(row: Record<string, unknown>): LibraryUsageSourceCounts {
   return counts
 }
 
-/** Uses grouped by the requested dimensions, from raw rows, daily rollups and, for plugins, Workflow runs. */
 export async function readLibraryUsageBreakdown(query: LibraryUsageQuery): Promise<LibraryUsageBreakdownRow[]> {
   if (query.memberIds && query.memberIds.length === 0) return []
   const { from } = libraryUsageWindow(query.days, query.now)
@@ -214,7 +193,6 @@ export async function readLibraryUsageBreakdown(query: LibraryUsageQuery): Promi
     query.itemId ? sql`${rollupItem} = ${query.itemId}` : undefined,
   )).groupBy(sql`item_id`, sql`member_id`, sql`usage_date`)
 
-  // A plugin is also used when one of its Workflows runs; Automation runs count as automation.
   const workflowQuery = db.select({
     itemId: sql<string>`${workflowRun.plugin_id}`.as("item_id"),
     memberId: sql<string | null>`${workflowRun.org_membership_id}`.as("member_id"),
@@ -233,7 +211,6 @@ export async function readLibraryUsageBreakdown(query: LibraryUsageQuery): Promi
     query.itemId ? sql`${workflowRun.plugin_id} = ${query.itemId}` : undefined,
   )).groupBy(sql`item_id`, sql`member_id`, sql`usage_date`)
 
-  // A CTE, not a derived table: its UNION prevents merging, so MySQL reads each store once.
   const sources = db.$with("library_usage_sources").as(query.kind === "plugins"
     ? rawQuery.unionAll(rollupQuery).unionAll(workflowQuery)
     : rawQuery.unionAll(rollupQuery))
@@ -270,7 +247,6 @@ export async function readLibraryUsageBreakdown(query: LibraryUsageQuery): Promi
   }))
 }
 
-/** MAX() over a union comes back as the driver's raw text, always UTC under drizzle's session assumption. */
 function parseDatabaseTimestamp(value: string | Date | null): Date | null {
   if (value === null) return null
   if (value instanceof Date) return value
@@ -278,7 +254,6 @@ function parseDatabaseTimestamp(value: string | Date | null): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
-/** Current members of one of the organization's teams, for a team view; null when the team is not in this organization. */
 export async function libraryUsageTeamMemberIds(organizationId: DenTypeId<"organization">, teamId: string): Promise<string[] | null> {
   const team = await db.select({ id: TeamTable.id }).from(TeamTable)
     .where(and(eq(TeamTable.id, normalizeDenTypeId("team", teamId)), eq(TeamTable.organizationId, organizationId))).limit(1)
@@ -289,7 +264,6 @@ export async function libraryUsageTeamMemberIds(organizationId: DenTypeId<"organ
   return rows.flatMap((row) => row.memberId ? [row.memberId] : [])
 }
 
-/** When the organization's first recorded use happened, across raw rows and rollups; null before any. */
 export async function libraryUsageTrackingSince(organizationId: DenTypeId<"organization">): Promise<Date | null> {
   const [first, firstRollup] = await Promise.all([
     db.select({ at: min(raw.created_at) }).from(raw).where(eq(raw.organization_id, organizationId)),
@@ -299,7 +273,6 @@ export async function libraryUsageTrackingSince(organizationId: DenTypeId<"organ
   return dates.length ? new Date(Math.min(...dates.map((date) => date.getTime()))) : null
 }
 
-/** Legacy native connections have no row; their id is the provider key. */
 const legacyNativeConnectionNames: Record<string, string> = {
   "google-workspace": "Google Workspace",
   "microsoft-365": "Microsoft 365",
@@ -330,7 +303,6 @@ async function skillItems(organizationId: DenTypeId<"organization">) {
 async function libraryItems(organizationId: DenTypeId<"organization">, kind: LibraryUsageKind, usedItemIds: ReadonlySet<string>): Promise<LibraryItem[]> {
   if (kind === "skills") {
     const items = new Map<string, LibraryItem>()
-    // A skill can sit in several plugins; list it once, under the first plugin by name.
     for (const row of await skillItems(organizationId)) {
       if (!items.has(row.skillId)) items.set(row.skillId, { id: row.skillId, name: row.skillName, detail: row.pluginName, pluginId: row.pluginId, tracksFailures: false })
     }
@@ -360,10 +332,7 @@ async function libraryItems(organizationId: DenTypeId<"organization">, kind: Lib
   return items
 }
 
-/** Every live skill, plugin or connector with its usage over the window; unused items come back with zeros. */
 export async function readLibraryUsage(organizationId: DenTypeId<"organization">, kind: LibraryUsageKind, days: number, now = new Date()): Promise<LibraryUsageReport> {
-  // One row per item (people counted distinct across sources by the database), so
-  // the report never grows with members x items; it is bounded by the live library.
   const [breakdown, trackingSince] = await Promise.all([
     readLibraryUsageBreakdown({ organizationId, kind, days, groupBy: ["item"], now, maxRows: null }),
     libraryUsageTrackingSince(organizationId),

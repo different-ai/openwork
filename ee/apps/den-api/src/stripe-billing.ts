@@ -12,6 +12,7 @@ import {
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { db } from "./db.js"
+import { withDeadlockRetry } from "./utils/deadlock-retry.js"
 import { env } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
 import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } from "./organization-metadata.js"
@@ -40,6 +41,7 @@ import {
 import { normalizeUserCount, OPENWORK_WEB_QUANTITY_DEFINITION, type OrganizationBillingQuantities } from "./billing-quantities.js"
 import { billingUserCondition, getOrganizationBillingQuantities } from "./billing-users.js"
 import { getOrganizationPlanState } from "./organization-plan-state.js"
+import { serializeInvoicePage, type OrganizationInvoicePage } from "./billing-invoices.js"
 import { personAddRefusal } from "./organization-plan.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -51,23 +53,12 @@ const STRIPE_API_VERSION = "2026-04-22.dahlia"
 const INFERENCE_SUBSCRIPTION_TYPE = "inference" as const
 const SEAT_SUBSCRIPTION_TYPE = "seat" as const
 const WEB_SUBSCRIPTION_TYPE = "web" as const
-/**
- * Den no longer creates Enterprise subscriptions (Enterprise is set in /admin
- * and invoiced outside OpenWork). A Stripe subscription tagged this way is
- * still stored under its own type so it is never mistaken for another
- * product, but it changes nothing.
- */
 const ENTERPRISE_SUBSCRIPTION_TYPE = "enterprise" as const
 export const OPENWORK_WEB_UNIT_AMOUNT = 5000
 export const OPENWORK_WEB_CURRENCY = "usd" as const
 export const OPENWORK_WEB_INTERVAL = "month" as const
 const ACTIVE_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing"])
 const ONGOING_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing", "incomplete", "past_due", "unpaid", "paused"])
-// Stripe keeps retrying a `past_due` subscription (Smart Retries) and only
-// moves it to `canceled` / `unpaid` once dunning gives up. `incomplete` is an
-// initial payment still pending (e.g. 3DS). Neither is a reason to revoke
-// access yet — doing so is what pushed subscribers to buy a second
-// subscription while the first one was still collectable.
 const RECOVERABLE_STATUSES = new Set<OrgSubscriptionStatusValue>(["past_due", "incomplete"])
 const INFERENCE_DISABLING_STATUSES = new Set<OrgSubscriptionStatusValue>(["canceled", "unpaid", "incomplete_expired", "paused", "expired"])
 const logger = appLogger.child({ component: "stripe_billing" })
@@ -121,10 +112,6 @@ function requirePriceIdForSubscriptionType(subscriptionType: StripeCheckoutSubsc
   }
 }
 
-/**
- * The deployment does not sell this product: a configuration state the API
- * answers with 503 `billing_not_configured`, never a 500.
- */
 export class BillingNotConfiguredError extends Error {
   readonly product: BillingNotConfiguredProduct
 
@@ -135,7 +122,6 @@ export class BillingNotConfiguredError extends Error {
   }
 }
 
-/** Whether this deployment has the Stripe key and the price a product needs. */
 export function isBillingProductConfigured(product: BillingNotConfiguredProduct) {
   if (!env.stripe.secretKey) return false
   switch (product) {
@@ -156,11 +142,6 @@ export function assertBillingProductConfigured(product: BillingNotConfiguredProd
   if (!isBillingProductConfigured(product)) throw new BillingNotConfiguredError(product)
 }
 
-/**
- * Configuration failures thrown deep in a Stripe call (a missing key or price,
- * a price that does not match its contract), mapped to the product that is not
- * sold. Anything else is not a configuration failure and stays an error.
- */
 export function billingNotConfiguredProductForError(error: unknown, fallback: BillingNotConfiguredProduct): BillingNotConfiguredProduct | null {
   if (error instanceof BillingNotConfiguredError) return error.product
   if (!(error instanceof Error)) return null
@@ -199,9 +180,6 @@ function subscriptionStatus(value: string | null | undefined): OrgSubscriptionSt
   }
 }
 
-// Rank used to decide which of two Stripe subscriptions of the same type may
-// own an organization's single `org_subscriptions` row. Access-granting
-// statuses beat recoverable ones, which beat terminal ones.
 export function subscriptionPrecedence(status: string | null | undefined) {
   const normalized = subscriptionStatus(status)
   if (ACTIVE_STATUSES.has(normalized)) return 3
@@ -209,12 +187,6 @@ export function subscriptionPrecedence(status: string | null | undefined) {
   return 1
 }
 
-// The row is unique per (organization, type). When Stripe holds two
-// subscriptions of the same type for one organization — a re-purchase after a
-// failed renewal, a duplicate Checkout — only a subscription that outranks the
-// one the row currently tracks may take the row over. Equal rank keeps the
-// tracked subscription so late or replayed webhooks for the other one cannot
-// flip the row back and forth.
 export function shouldReplaceTrackedSubscription(input: {
   incomingStatus: string | null | undefined
   trackedStatus: string | null | undefined
@@ -236,9 +208,6 @@ function unixSecondsField(source: object | null, key: "current_period_start" | "
   return typeof value === "number" ? value : null
 }
 
-// Newer Stripe API versions report the billing period on the subscription
-// item; older payloads still carry it on the subscription itself. Neither
-// location is part of the pinned SDK types, so both are read structurally.
 function subscriptionPeriod(subscription: Stripe.Subscription, item: Stripe.SubscriptionItem | null) {
   return {
     start: fromUnixSeconds(unixSecondsField(subscription, "current_period_start") ?? unixSecondsField(item, "current_period_start")),
@@ -314,7 +283,6 @@ async function joinedMemberCount(organizationId: OrgId) {
   return normalizeUserCount(Number(row?.count ?? 0))
 }
 
-/** Counted people ("N joined, M invited"): pending invitations count toward the plan. */
 export async function getOrganizationPeopleCounts(organizationId: OrgId) {
   const [people, joined] = await Promise.all([activeMemberCount(organizationId), joinedMemberCount(organizationId)])
   return { people, joined: Math.min(joined, people), invited: Math.max(0, people - joined) }
@@ -367,13 +335,8 @@ export function openWorkWebPaymentStatus(status: string | null | undefined, paym
   }
 }
 
-// Seat billing only gates member additions on hosted multi-org deployments
-// where Stripe seat billing is configured. Single-org (self-hosted /
-// enterprise) deployments never restrict member count, and without Stripe
-// configured the 402 would be a dead end the operator cannot resolve.
 export { isSeatBillingGateEnabled } from "./organization-plan.js"
 
-/** Billing writes pass `db.$primary` so their decisions never use a lagging replica row. */
 type SubscriptionReader = typeof db | typeof db.$primary
 
 async function findOrgSubscriptionByType(organizationId: OrgId, subscriptionType: OrgSubscriptionTypeValue, database: SubscriptionReader = db) {
@@ -490,7 +453,6 @@ export async function organizationHasActiveInferenceSubscription(organizationId:
   return Boolean(row && ACTIVE_STATUSES.has(row.status))
 }
 
-/** A payment problem with an existing subscription should lead to billing, not an upgrade offer. */
 export async function organizationHasOngoingInferenceSubscription(organizationId: OrgId) {
   const row = await findInferenceSubscriptionByOrg(organizationId)
   return Boolean(row && ONGOING_STATUSES.has(row.status))
@@ -501,13 +463,7 @@ export async function organizationHasActiveSeatSubscription(organizationId: OrgI
   return Boolean(row && ACTIVE_STATUSES.has(row.status))
 }
 
-/**
- * Keeps the organization's plan in step with its Team plan (seat)
- * subscription: paying makes it Team (at any size), and ending it returns a
- * plan Stripe set to Free. Admin-set and grandfathered plans are left alone.
- */
 async function syncOrganizationPlanFromSubscriptions(organizationId: OrgId, seatSubscription?: Stripe.Subscription) {
-  // Primary: always runs right after the seat subscription row was written.
   const seatRow = await findSeatSubscriptionByOrg(organizationId, db.$primary)
   const seatTier = seatSubscription ? planTierFromSubscriptionMetadata(seatSubscription.metadata) : "team"
   await updateOrganizationMetadata(organizationId, (current) => {
@@ -557,12 +513,6 @@ export async function organizationHasOngoingOpenWorkWebSubscription(organization
   return Boolean(row && isOngoingOpenWorkWebSubscriptionStatus(row.status))
 }
 
-/**
- * Whether one more person may join the organization, by any path: an email
- * invitation, SSO sign-up, a verified-domain join or SCIM. One rule for all of
- * them (organization-plan.ts). `reason` tells a refusal on Free (offer the
- * Team plan) from a full plan a platform admin set (ask for more seats).
- */
 export async function getOrganizationSeatAddEligibility(organizationId: OrgId) {
   const [plan, { seats }, hasActiveSeatSubscription] = await Promise.all([
     getOrganizationPlanState(organizationId),
@@ -592,13 +542,44 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
   const organizationId = metadata.organizationId as OrgId
   const status = subscriptionStatus(subscription.status)
   const subscriptionType = subscriptionTypeFromStripeSubscription(subscription, item)
+  const written = await withDeadlockRetry(() => writeOrgSubscriptionFromStripe({ subscription, item, organizationId, status, subscriptionType, eventId }))
+  if (written.ignored) {
+    return written.existingSubscription
+  }
+  const { existingSubscription } = written
+
+  if (subscriptionType === INFERENCE_SUBSCRIPTION_TYPE) {
+    if (INFERENCE_DISABLING_STATUSES.has(status)) {
+      await setInferenceEnabled({ organizationId, enabled: false })
+    } else if (
+      ACTIVE_STATUSES.has(status)
+      && existingSubscription
+      && !ACTIVE_STATUSES.has(existingSubscription.status)
+    ) {
+      await activatePurchasedInference(organizationId)
+    }
+  }
+  if (isPlanSubscriptionType(subscriptionType)) {
+    await syncOrganizationPlanFromSubscriptions(organizationId, subscriptionType === SEAT_SUBSCRIPTION_TYPE ? subscription : undefined)
+  }
+
+  return findOrgSubscriptionByStripeId(subscription.id, db.$primary)
+}
+
+async function writeOrgSubscriptionFromStripe(input: {
+  subscription: Stripe.Subscription
+  item: ReturnType<typeof firstSubscriptionItem>
+  organizationId: OrgId
+  status: ReturnType<typeof subscriptionStatus>
+  subscriptionType: ReturnType<typeof subscriptionTypeFromStripeSubscription>
+  eventId?: string | null
+}) {
+  const { subscription, item, organizationId, status, subscriptionType, eventId } = input
+  const metadata = getSubscriptionMetadata(subscription)
   const existingSubscription = await findOrgSubscriptionByType(organizationId, subscriptionType, db.$primary)
   const sameSubscription = existingSubscription?.stripe_subscription_id === subscription.id
 
   if (existingSubscription && !sameSubscription) {
-    // The organization already tracks a different Stripe subscription of this
-    // type. Compare against Stripe's current view of that subscription rather
-    // than the stored status, which may lag behind its own webhooks.
     const trackedStatus = await currentStripeSubscriptionStatus(existingSubscription.stripe_subscription_id)
       ?? existingSubscription.status
     if (!shouldReplaceTrackedSubscription({ incomingStatus: status, trackedStatus })) {
@@ -611,7 +592,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
         incoming_status: status,
         event_id: eventId ?? null,
       })
-      return existingSubscription
+      return { ignored: true as const, existingSubscription }
     }
     logger.info("replacing the organization's tracked Stripe subscription", {
       organization_id: organizationId,
@@ -626,11 +607,6 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
 
   const existingWebSubscription = subscriptionType === WEB_SUBSCRIPTION_TYPE ? existingSubscription : null
   const sameWebSubscription = subscriptionType === WEB_SUBSCRIPTION_TYPE && sameSubscription
-  // An active Stripe subscription is not proof that its latest payment was
-  // collected (notably for asynchronous payment methods). New or replacement
-  // active Web subscriptions therefore fail closed until Checkout or an
-  // invoice event positively confirms payment. Trialing subscriptions remain
-  // eligible because Stripe does not require an initial payment for a trial.
   const paymentFailed = subscriptionType === WEB_SUBSCRIPTION_TYPE
     ? sameWebSubscription
       ? existingWebSubscription?.payment_failed ?? status === "active"
@@ -684,26 +660,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
     },
   })
 
-  if (subscriptionType === INFERENCE_SUBSCRIPTION_TYPE) {
-    if (INFERENCE_DISABLING_STATUSES.has(status)) {
-      await setInferenceEnabled({ organizationId, enabled: false })
-    } else if (
-      ACTIVE_STATUSES.has(status)
-      && existingSubscription
-      && !ACTIVE_STATUSES.has(existingSubscription.status)
-    ) {
-      // A recovered renewal (Stripe retry succeeded, card updated in the
-      // portal) or a replacement subscription taking over the row: restore
-      // the access the earlier failure removed. Brand-new rows are activated
-      // by the Checkout handlers once payment is confirmed.
-      await activatePurchasedInference(organizationId)
-    }
-  }
-  if (isPlanSubscriptionType(subscriptionType)) {
-    await syncOrganizationPlanFromSubscriptions(organizationId, subscriptionType === SEAT_SUBSCRIPTION_TYPE ? subscription : undefined)
-  }
-
-  return findOrgSubscriptionByStripeId(subscription.id, db.$primary)
+  return { ignored: false as const, existingSubscription }
 }
 
 async function currentStripeSubscriptionStatus(stripeSubscriptionId: string) {
@@ -1057,11 +1014,6 @@ export async function createOrgSubscriptionCheckoutSession(input: {
   })
   if (existingOngoingInference) {
     if (INFERENCE_DISABLING_STATUSES.has(subscriptionStatus(existingOngoingInference.status))) {
-      // `unpaid` / `paused`: dunning already gave up and access is already
-      // revoked, so the customer is here to pay again. Sending them to the
-      // portal would soft-lock them; leaving the old subscription in place
-      // would keep generating uncollectible invoices next to the new one.
-      // Retire it and let Checkout create a clean replacement.
       await stripe().subscriptions.cancel(existingOngoingInference.id, {
         prorate: false,
         invoice_now: false,
@@ -1073,9 +1025,6 @@ export async function createOrgSubscriptionCheckoutSession(input: {
         status: existingOngoingInference.status,
       })
     } else {
-      // Active, trialing, past due or incomplete: Stripe is still collecting
-      // on it. A second Checkout would bill the customer twice; the caller
-      // sends them to the billing portal to fix the payment method instead.
       await upsertOrgSubscriptionFromStripe(existingOngoingInference)
       throw new Error("stripe_inference_subscription_exists")
     }
@@ -1111,7 +1060,6 @@ function planSubscriptionMetadata(input: { organizationId: OrgId; orgMemberId: M
 
 export type PlanCheckoutResult = { kind: "checkout"; url: string }
 
-/** Team already paid for, or a Team payment Stripe is still collecting. */
 export class PlanSubscriptionExistsError extends Error {
   readonly reason: "same_plan" | "payment_pending"
 
@@ -1122,22 +1070,12 @@ export class PlanSubscriptionExistsError extends Error {
   }
 }
 
-/**
- * An organization has one plan subscription. When one already exists, record
- * its latest state and refuse a second checkout: Team is already paid for, or
- * Stripe is still collecting its payment.
- */
 async function refuseSecondPlanSubscription(stripeSubscriptionId: string): Promise<never> {
   const subscription = await stripe().subscriptions.retrieve(stripeSubscriptionId)
   await upsertOrgSubscriptionFromStripe(subscription)
   throw new PlanSubscriptionExistsError(ACTIVE_STATUSES.has(subscriptionStatus(subscription.status)) ? "same_plan" : "payment_pending")
 }
 
-/**
- * Starts paying for Team per person: a subscription Checkout for every counted
- * person (joined and invited) plus `addPeople`. It becomes the organization's
- * single seat subscription, and paying sets the plan to Team.
- */
 export async function createPlanCheckout(input: {
   organizationId: OrgId
   orgMemberId: MemberId
@@ -1168,8 +1106,6 @@ export async function createPlanCheckout(input: {
     },
   })
 
-  // Stripe may hold a plan subscription our row has not seen yet (a webhook
-  // still in flight); never start a second one next to it.
   const untracked = await findOngoingStripeSubscription({
     customer,
     organizationId: input.organizationId,
@@ -1209,11 +1145,26 @@ export async function createOpenWorkWebCheckout(input: Omit<Parameters<typeof cr
   return createOrgSubscriptionCheckoutSession({ ...input, subscriptionType: WEB_SUBSCRIPTION_TYPE })
 }
 
-export async function createStripePortalSession(input: { organizationId: OrgId; returnUrl: string }) {
-  const storedCustomerId = await findStripeCustomerIdByOrg(input.organizationId)
-  const stripeCustomerId = storedCustomerId && await stripeCustomerBelongsToOrganization(storedCustomerId, input.organizationId)
+async function resolveOrganizationStripeCustomerId(organizationId: OrgId) {
+  const storedCustomerId = await findStripeCustomerIdByOrg(organizationId)
+  return storedCustomerId && await stripeCustomerBelongsToOrganization(storedCustomerId, organizationId)
     ? storedCustomerId
-    : await findStripeCustomerIdByOrgMetadata(input.organizationId)
+    : await findStripeCustomerIdByOrgMetadata(organizationId)
+}
+
+export async function listOrganizationInvoices(input: { organizationId: OrgId; limit: number; startingAfter?: string | null }): Promise<OrganizationInvoicePage> {
+  const stripeCustomerId = await resolveOrganizationStripeCustomerId(input.organizationId)
+  if (!stripeCustomerId) return { invoices: [], hasMore: false, nextCursor: null }
+  const page = await stripe().invoices.list({
+    customer: stripeCustomerId,
+    limit: input.limit,
+    ...(input.startingAfter ? { starting_after: input.startingAfter } : {}),
+  })
+  return serializeInvoicePage(page.data, page.has_more)
+}
+
+export async function createStripePortalSession(input: { organizationId: OrgId; returnUrl: string }) {
+  const stripeCustomerId = await resolveOrganizationStripeCustomerId(input.organizationId)
   if (!stripeCustomerId) {
     throw new Error("stripe_customer_missing")
   }
@@ -1279,7 +1230,7 @@ async function loadOpenWorkWebBillingSummary(organizationId: OrgId, loadedQuanti
       currency: OPENWORK_WEB_CURRENCY,
       interval: OPENWORK_WEB_INTERVAL,
       quantityDefinition: OPENWORK_WEB_QUANTITY_DEFINITION,
-      quantityDescription: "Every organization member and every pending invitation that has not expired.",
+      quantityDescription: "Every organization member and pending invitation that has not expired and has OpenWork Web (everyone, unless an admin chooses who gets Web).",
       quantity,
       expectedMonthlyTotal: quantity * OPENWORK_WEB_UNIT_AMOUNT,
       hasEligibleSubscription,
@@ -1305,7 +1256,6 @@ export async function getOpenWorkWebBillingSummary(organizationId: OrgId) {
   return (await loadOpenWorkWebBillingSummary(organizationId)).summary
 }
 
-/** Plans an organization may buy by card: Team, wherever the deployment sells it. Enterprise is set in /admin. */
 export function billingPlanOffers(): BillingPlans {
   return {
     team: {
@@ -1317,10 +1267,6 @@ export function billingPlanOffers(): BillingPlans {
   }
 }
 
-/**
- * The Team quote attached to a seat 402: the workspace after this invitation,
- * every person at the Team price ("6 people x $10 = $60/month").
- */
 export async function getSeatPlanQuote(input: { organizationId: OrgId; currentCount: number }): Promise<SeatPlanQuote> {
   const counts = await getOrganizationPeopleCounts(input.organizationId)
   const quote = quotePlan({ plan: "team", people: input.currentCount, addPeople: 1 })
@@ -1427,11 +1373,6 @@ function stripeQuantityForSubscription(row: BillingSubscriptionRow, quantities: 
   }
 }
 
-/**
- * Only subscriptions Stripe is billing normally (active or trialing) follow
- * the user count. OpenWork Web also requires its configured price and no
- * failed payment, the same rule that grants access to it.
- */
 function subscriptionFollowsUserCount(row: BillingSubscriptionRow | null): row is BillingSubscriptionRow {
   if (!row || !row.stripe_subscription_item_id) return false
   if (row.type === WEB_SUBSCRIPTION_TYPE) return isEligibleOpenWorkWebSubscriptionRow(row)
@@ -1443,41 +1384,26 @@ async function syncSubscriptionQuantity(row: BillingSubscriptionRow | null, quan
     return
   }
   const quantity = stripeQuantityForSubscription(row, quantities)
-  // Stripe rejects quantity 0 on the per-user OpenWork Web price.
   if (quantity === null || (row.type === WEB_SUBSCRIPTION_TYPE && quantity < 1)) {
     return
   }
-  // Already right: skip, so the subscription.updated webhook this update
-  // causes does not trigger another update.
   if (row.quantity === quantity) {
     return
   }
   await stripe().subscriptionItems.update(row.stripe_subscription_item_id, {
     quantity,
-    // Accrue prorations onto the next monthly invoice instead of charging
-    // (and invoicing) every quantity change immediately. Customers get one
-    // consolidated invoice per cycle; add/remove churn nets out.
     proration_behavior: "create_prorations",
   })
-  // Show the quantity Stripe accepted immediately, before its webhook arrives.
   await db
     .update(OrgSubscriptionTable)
     .set({ quantity, updated_at: new Date() })
     .where(eq(OrgSubscriptionTable.id, row.id))
 }
 
-/**
- * Brings every active subscription's Stripe quantity in line with the
- * organization's current users: Team seats, OpenWork Models and
- * OpenWork Web.
- * Call after a member or pending invitation is added or removed, or after the
- * free seat count changes.
- */
 export async function syncOrganizationBillingQuantities(input: { organizationId: OrgId }) {
   if (!env.stripe.secretKey) {
     return
   }
-  // Primary: row.quantity decides whether Stripe is updated, and the last sync may have just written it.
   const [quantities, seatRow, inferenceRow, webRow] = await Promise.all([
     getOrganizationBillingQuantities(input.organizationId),
     findSeatSubscriptionByOrg(input.organizationId, db.$primary),
@@ -1528,9 +1454,6 @@ async function createSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Ch
     {
       customer: session.customer,
       default_payment_method: paymentMethod,
-      // Created at 0 so the idempotent request is identical on every retry
-      // (webhook and checkout sync both land here); the real quantity is set
-      // right after.
       items: [{ price: requireSeatPriceId(), quantity: 0 }],
       metadata: {
         org_id: metadata.organizationId,
@@ -1543,8 +1466,6 @@ async function createSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Ch
   )
 
   const row = await upsertOrgSubscriptionFromStripe(subscription, eventId)
-  // An organization that is already past its free seats owes for them from
-  // the start, not only after the next member change.
   await syncSubscriptionQuantity(row, await getOrganizationBillingQuantities(metadata.organizationId as OrgId))
   return row
 }
@@ -1607,8 +1528,6 @@ async function activatePurchasedInference(organizationId: OrgId) {
   try {
     await setInferenceEnabled({ organizationId, enabled: true })
   } catch (error) {
-    // Keep the purchase history, but acknowledge a deliberate policy denial.
-    // Unavailable policy must still fail safely so a later delivery can retry.
     if (error instanceof ManagedModelsPolicyError && error.code === "managed_models_disabled_for_dpa") return
     throw error
   }
@@ -1690,9 +1609,7 @@ async function expireNonWebSubscriptionAfterPaymentFailure(
   }
 }
 
-/** Analytics failures never fail invoice settlement or cause another billing mutation. */
 async function recordPaidInvoiceConversion(subscription: Stripe.Subscription, row: typeof OrgSubscriptionTable.$inferSelect | null, invoiceId: string) {
-  // A subscription started before the attribution window can never convert; skip the extra Stripe read for renewals.
   if (Date.now() - subscription.created * 1000 > FREE_AUTO_CONVERSION_WINDOW_DAYS * 86_400_000) return
   try {
     const invoice = await stripe().invoices.retrieve(invoiceId)
@@ -1716,13 +1633,6 @@ async function syncPaymentStateFromInvoiceEvent(input: {
   const subscription = await stripe().subscriptions.retrieve(subscriptionId)
   const subscriptionType = subscriptionTypeFromStripeSubscription(subscription, firstSubscriptionItem(subscription))
   if (subscriptionType !== WEB_SUBSCRIPTION_TYPE) {
-    // A failed renewal leaves the subscription `past_due` while Stripe keeps
-    // retrying; syncing records that status without revoking access. Access
-    // is only revoked once Stripe itself gives up (`canceled` / `unpaid`),
-    // which the same sync applies when that status arrives. The returned row
-    // may also track a different subscription of the same type (a replacement
-    // the customer already paid for), so nothing here may expire it on behalf
-    // of the subscription this invoice belongs to.
     const row = await syncCurrentStripeSubscription(subscription.id, input.eventId)
     if (input.eventType === "invoice.paid") {
       await recordPaidInvoiceConversion(subscription, row, input.invoice.id)
@@ -1765,12 +1675,6 @@ async function syncPaymentStateFromInvoiceEvent(input: {
   return { ...row, payment_failed: paymentFailed }
 }
 
-/**
- * Audit attribution hook for a verified Stripe event. "before": our stored
- * subscription row already maps the event to an organization and nothing has
- * been applied yet (false aborts with StripeWebhookAuditBlockedError). "after":
- * the event created the mapping (first checkout), so it is known only now.
- */
 export type StripeWebhookOrganizationHook = (organizationId: OrgId, phase: "before" | "after") => Promise<boolean>
 
 export class StripeWebhookAuditBlockedError extends Error {
@@ -1798,11 +1702,9 @@ function stripeEventSubscriptionId(event: Stripe.Event): string | null {
   }
 }
 
-/** The organization our stored subscription rows map a verified event to (never event metadata alone). */
 async function stripeEventOrganizationId(event: Stripe.Event): Promise<OrgId | null> {
   const subscriptionId = stripeEventSubscriptionId(event)
   if (subscriptionId) {
-    // Primary: the "after" lookup reads the row this event just created.
     const row = await findOrgSubscriptionByStripeId(subscriptionId, db.$primary)
     if (row) return row.organization_id
   }
@@ -1857,10 +1759,6 @@ async function applyStripeWebhookEvent(event: Stripe.Event) {
             eventId: event.id,
           })
         } else if (row && row.stripe_subscription_id === subscription.id) {
-          // The initial payment for this subscription never completed, so
-          // there is nothing for Stripe to retry. Only the row tracking this
-          // subscription is expired; a row tracking another subscription of
-          // the same type keeps whatever access that one grants.
           await expireNonWebSubscriptionAfterPaymentFailure(row, event.id)
         }
       }

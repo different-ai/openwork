@@ -37,7 +37,6 @@ function removeTransferManagedRoles(roleValue: string) {
   })
 }
 
-/** The previous owner becomes an admin; the new owner keeps any other (non built-in) role entries. */
 export function getRoleValueAfterOwnershipTransfer(input: {
   currentRole: string
   targetRole: string

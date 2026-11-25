@@ -33,16 +33,8 @@ async function defaultRateLimitCheck(
   return checkFixedWindowRateLimit(key, maxRequests, windowMs, now, consume)
 }
 
-/**
- * Failures from one address across every client ID. It bounds callers that
- * rotate client IDs or credentials to mint fresh per-caller budgets, and stays
- * above OAUTH_TOKEN_FAILURE_MAX so one stuck caller cannot fill it for its
- * neighbors. Refused refresh tokens are not charged to it (see
- * isRefreshTokenRejection).
- */
 const OAUTH_TOKEN_SOURCE_FAILURE_MAX = 60
 
-/** Safe-to-log names of the budgets that can refuse a token request. */
 export type OAuthTokenRateLimitBucket =
   | "ip"
   | "client"
@@ -61,17 +53,11 @@ type OAuthTokenRateLimitBudget = {
   windowMs: number
 }
 
-/**
- * Charged when the request fails: the caller's own budget, then the ceiling for
- * its address. `source` is null when no trusted address was found, because all
- * such callers would share one ceiling.
- */
 export type OAuthTokenFailureBudgets = {
   subject: OAuthTokenRateLimitBudget
   source: OAuthTokenRateLimitBudget | null
 }
 
-/** Keyed with the server secret so stored keys cannot be matched against client IDs, addresses or tokens. */
 function bucketId(secret: string, ...parts: string[]) {
   return createHmac("sha256", secret).update(JSON.stringify(parts)).digest("base64url").slice(0, 32)
 }
@@ -90,14 +76,6 @@ function attemptBudget(bucket: OAuthTokenRateLimitBucket, key: string, max: numb
   return { bucket, key, max, windowMs: OAUTH_TOKEN_ATTEMPT_WINDOW_MS }
 }
 
-/**
- * client_id is public and often shared by every installation of one app, so
- * no budget is keyed by it alone. A refresh token's failures are charged to
- * that token, so a caller replaying a dead token only exhausts its own budget;
- * other failures are charged per client ID and address. The keys depend only
- * on what the caller sent, never on whether a credential is valid, so a
- * refusal reveals nothing about stored grants.
- */
 async function oauthTokenRateLimitBudgets(request: Request) {
   const [{ env }, { resolveRequestClientIp }, { clientIpRateLimitKey }] = await Promise.all([
     import("./env.js"),
@@ -177,31 +155,18 @@ export async function checkOAuthTokenRateLimit(
 ): Promise<OAuthTokenRateLimitAdmission> {
   const budgets = await oauthTokenRateLimitBudgets(request)
   const { subject, source } = budgets.failure
-  // Failure budgets are only read here. A caller already refused for failing
-  // is turned away without spending the attempt ceilings it shares with its
-  // neighbors, so retrying through a cooldown cannot lock them out.
   const failureBlocked = await blockedBy(source ? [subject, source] : [subject], rateLimitCheck, now, false)
   if (failureBlocked.length) return admission(failureBlocked, budgets.failure)
 
-  // The always-consumed address ceiling bounds callers that rotate client IDs
-  // to obtain fresh per-client budgets.
   return admission(await blockedBy([budgets.ip, budgets.attempt], rateLimitCheck, now, true), budgets.failure)
 }
 
-/**
- * A presented refresh token refused as invalid_grant (unknown, expired, reused
- * or revoked) is charged to that token alone. Refresh tokens cannot be guessed,
- * so made-up ones gain an attacker nothing, while a server that renews for many
- * people from one address is not locked out by a few dead tokens; the attempt
- * ceilings still bound volume. The body is read from a clone and never logged.
- */
 async function isRefreshTokenRejection(failure: OAuthTokenFailureBudgets, response: Response) {
   if (failure.subject.bucket !== "failure_refresh_token") return false
   const body: unknown = await response.clone().json().catch(() => null)
   return typeof body === "object" && body !== null && "error" in body && body.error === "invalid_grant"
 }
 
-/** Charges a failed request and returns the budgets it charged that are now full (empty otherwise). */
 export async function recordOAuthTokenFailure(
   failure: OAuthTokenFailureBudgets,
   response: Response,
@@ -212,9 +177,6 @@ export async function recordOAuthTokenFailure(
   const { subject, source } = failure
   const charged: OAuthTokenRateLimitBudget[] = []
   if (await rateLimitCheck(subject.key, subject.max, subject.windowMs, now) === null) charged.push(subject)
-  // A failure past the caller's own budget (a concurrent burst admitted before
-  // it filled) is not charged to the address, so one caller contributes at most
-  // OAUTH_TOKEN_FAILURE_MAX to the ceiling it shares with others.
   if (charged.length && source && !await isRefreshTokenRejection(failure, response)) {
     if (await rateLimitCheck(source.key, source.max, source.windowMs, now) === null) charged.push(source)
   }

@@ -1,5 +1,3 @@
-/** Sample data only: no API calls (DESIGN.md I7). Choices and patterns as the agent permissions editor shows them. */
-
 export type TeamAgentsExampleRow = { title: string; choice: string; detail: string };
 
 export const teamAgentsExampleTeam = "Contractors";

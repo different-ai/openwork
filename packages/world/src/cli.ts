@@ -30,7 +30,6 @@ import { SOURCES_ENV, gitRefResolver, parseSourceFlag, resolveSources, type Sour
 import { SEEDS_ENV, parseSeedFlag, type WorldSeed } from "./seed.ts";
 import { assertWorldSupport, readWorldSummary, readWorldSupport, supportedTargetDescription, targetMatches, type WorldSupport } from "./support.ts";
 
-/** Web worlds whose Daytona placement builds Den from one pinned commit (origin/dev unless --source names one). */
 const PINNED_WEB_WORLDS: ReadonlySet<string> = new Set(["acme-web", "preview-workbot"]);
 
 export type WorldCommand =
@@ -64,12 +63,7 @@ export interface WorldCliOptions {
   preflight?: PreflightCheck[];
   viewMode?: "tty" | "plain";
   reapers?: Record<string, Reaper>;
-  /** Recognise known provider failures in a failed world's error and log tail; returns fixes. */
   diagnose?: (text: string) => string[];
-  /**
-   * Paths the world driver and recipes load from this checkout. A remote world
-   * building another commit gets a note when these differ from that commit.
-   */
   recipePaths?: readonly string[];
 }
 
@@ -102,7 +96,6 @@ function shellQuote(value: string): string {
   return SHELL_SAFE.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-/** The exact invocation, so a requirement can print a command to rerun as-is. */
 function worldCommandLine(argv: readonly string[]): string {
   return ["pnpm", "world", ...argv.map(shellQuote)].join(" ");
 }
@@ -114,7 +107,6 @@ function providerOf(entry: string): WorldProvider | undefined {
 
 type RequirementInfo = { id: string; label: string; places: WorldProvider[]; needs?: string; fix?: string };
 
-/** Blocking checks that can apply to at least one of a world's placements. */
 function requirementsFor(support: WorldSupport, checks: readonly PreflightCheck[]): RequirementInfo[] {
   const providers = new Set((support ?? ["local/host"]).map(providerOf).filter((provider) => provider !== undefined));
   return checks
@@ -138,12 +130,6 @@ function usedPlaceholders(guide: WorldGuide): Record<string, string> {
   return Object.fromEntries(Object.entries(EXAMPLE_PLACEHOLDERS).filter(([placeholder]) => text.includes(placeholder)));
 }
 
-/**
- * Everything an agent needs to choose and start a world in one call: what it
- * is, which seeds and sources each target accepts, what an omitted source
- * means, the logins or keys each placement needs, and commands by intent.
- * Keys appear only when the world declares them.
- */
 async function describeWorld(script: { name: string; path: string }, options: WorldCliOptions) {
   const support = await readWorldSupport(script.path);
   const summary = await readWorldSummary(script.path);
@@ -208,7 +194,6 @@ function describeWorldText(info: Awaited<ReturnType<typeof describeWorld>>): str
   return lines.join("\n");
 }
 
-/** Where a seed is available, so a refusal can point at a world that has it. */
 function seedAvailability(seed: string): string[] {
   return Object.entries(WORLD_GUIDES).flatMap(([name, guide]) => {
     const targets = guide.targets.filter((target) => target.seeds.includes(seed)).map((target) => target.target);
@@ -216,10 +201,6 @@ function seedAvailability(seed: string): string[] {
   });
 }
 
-/**
- * Refuse a `--seed` the chosen target cannot apply before the script starts,
- * naming the worlds and placements that do offer it.
- */
 function assertGuidedSeeds(name: string, target: WorldTarget, seeds: readonly WorldSeed[]): void {
   const guide = WORLD_GUIDES[name];
   const targetGuide = guide?.targets.find((entry) => targetMatches(entry.target, target));
@@ -231,11 +212,6 @@ function assertGuidedSeeds(name: string, target: WorldTarget, seeds: readonly Wo
   throw new Error(`${name} on ${formatTarget(target)} ${accepted}; ${JSON.stringify(refused.name)} is not available here.${elsewhere.length > 0 ? ` ${refused.name} is available in: ${elsewhere.join("; ")}.` : ""} See pnpm world help ${name}.`);
 }
 
-/**
- * Which commit a remote world builds (short SHA, subject, origin/dev) and a
- * note when this checkout's recipes are not that commit's. Best effort: a git
- * problem never blocks a launch.
- */
 async function sourceNotes(options: WorldCliOptions, sources: WorldSources, pinnedEvalRef: string | undefined, pinnedDev: string | undefined): Promise<string[]> {
   const candidates: ReadonlyArray<readonly [string | undefined, WorldSource | undefined]> = [["desktop", sources.desktop], ["den", sources.den], [undefined, sources["*"]]];
   const [component, source] = candidates.find(([, candidate]) => candidate !== undefined) ?? [undefined, undefined];
@@ -255,7 +231,6 @@ async function sourceNotes(options: WorldCliOptions, sources: WorldSources, pinn
 
 type DefaultSource = { commit?: SourceCommit; lines: string[] };
 
-/** What an omitted --source resolves to right now, for world plan. */
 async function defaultDevSource(options: WorldCliOptions): Promise<DefaultSource> {
   try {
     const sha = await gitRefResolver(options.cwd)("dev");
@@ -814,18 +789,15 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       if (target.os === "windows" && script.name === "preview-desktop" && !(command.args.includes("--release") || command.sources?.some((source) => source.component === "desktop" && source.spec.kind === "release"))) {
         throw new Error("Daytona Windows requires a blank published preview-desktop release; use --source desktop=release:<version>/<distribution> --seed blank.");
       }
-      // These are opt-in for now: never silently accept inputs a recipe cannot apply.
       const preview = WORLD_GUIDES[script.name]?.family === "preview";
       const web = WORLD_GUIDES[script.name]?.family === "web";
       assertGuidedSeeds(script.name, target, command.seeds ?? []);
-      // The evidence viewer reads one pushed app-web source and takes no seed.
       const evidence = script.name === "evidence-web";
       if (evidence && (command.seeds?.length ?? 0) > 0) throw new Error("evidence-web does not accept --seed.");
       if (!preview && !web && !evidence && ((command.sources?.length ?? 0) > 0 || (command.seeds?.length ?? 0) > 0)) {
         throw new Error(`World ${script.name} does not yet declare --source/--seed support. Use its existing script arguments after --.`);
       }
       const resolveRemoteRef = gitRefResolver(options.cwd);
-      // Remember what origin/dev resolved to, so the header can say which commit this is.
       let pinnedDev: string | undefined;
       const resolveRef = async (ref: string): Promise<string> => {
         const sha = await resolveRemoteRef(ref);
@@ -846,11 +818,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         }
       }
       const env: NodeJS.ProcessEnv = Object.fromEntries((command.env ?? []).map((key) => [key, process.env[key]]));
-      // Existing previews use origin/dev by default. Resolve it before adoption,
-      // otherwise a moved branch silently reuses an older running world.
       if (script.name === "preview-desktop" && place === "daytona" && !sources["*"]) {
-        // The app alone: pin its source commit, or for a published release the
-        // commit whose preview tooling installs and launches those bytes.
         const sha = process.env.OPENWORK_EVAL_REF?.trim() || await resolveRef("dev");
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Preview desktop source must be a full reviewed, pushed commit SHA.");
         const release = command.args.includes("--release") || sources.desktop?.kind === "release";
@@ -862,8 +830,6 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Preview Den source must be a full reviewed, pushed commit SHA.");
         sources.den = { kind: "sha", sha };
       }
-      // A Freestyle snapshot is built from one pushed commit. Pin it before
-      // adoption, exactly as Daytona previews pin their Den source.
       if (script.name === "preview-desktop" && place === "freestyle" && !sources.desktop && !sources["*"]) {
         const sha = process.env.OPENWORK_EVAL_REF?.trim() || await resolveRef("dev");
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Freestyle desktop source must be a full reviewed, pushed commit SHA.");
@@ -885,7 +851,6 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       if ((preview || evidence) && Object.keys(sources).length > 0) env[SOURCES_ENV] = JSON.stringify(sources);
       if (preview && seeds.length > 0) env[SEEDS_ENV] = JSON.stringify(seeds);
       const sourceHash = place === "local" ? await computeLocalSourceHash(options.cwd) : undefined;
-      // Keep existing placement-only receipts adoptable when --os was omitted.
       const targetIdentity = command.os === undefined && !process.env[OS_ENV] ? place : formatTarget(target);
       const invocationHash = computeInvocationHash(recipeHash, scriptArgs, targetIdentity, env, sourceHash);
       const snapshotDirectory = scriptWorldSnapshotDirectory(options.cwd);
@@ -905,8 +870,6 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         print(`World ${JSON.stringify(stagedName)} is running but its ${reason}; run pnpm world down ${script.name}${stage ? ` --stage ${stage}` : ""} first.`);
         return 1;
       }
-      // Logins and keys come before any side effect: a missing requirement
-      // should cost one fast, actionable failure, not a half-provisioned world.
       const [preflight, notes] = await Promise.all([
         runPreflight(checksForPlace([nodeCheck(), ...(options.preflight ?? [])], place), undefined, {
           place,
@@ -1121,8 +1084,6 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
   }
   if (command.kind === "outputs") {
     const snapshotDirectory = scriptWorldSnapshotDirectory(options.cwd);
-    // With --json, "no such world" is a structured answer too; agents use this
-    // to decide between reopening an existing preview and creating one.
     const missing = (name: string, candidates?: string[]): number => {
       if (command.json) print(JSON.stringify({ name, exists: false, ...(candidates ? { candidates } : {}) }));
       else if (!candidates) print(`World receipt ${JSON.stringify(name)} does not exist.`);
@@ -1191,10 +1152,6 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
       const stagedName = receiptName(script.name, stage);
       const snapshotPath = scriptWorldSnapshotPath(snapshotDirectory, stagedName);
       const state = await classifyScriptReceipt(snapshotPath, recipeHash);
-      // Only requirements run here: health badges stay a world up concern, and
-      // a plan must not be slowed or failed by them. When the target defaults
-      // to origin/dev, say which commit that is and whether this checkout's
-      // recipes match it.
       const guideTarget = WORLD_GUIDES[script.name]?.targets.find((entry) => targetMatches(entry.target, target));
       const [requirements, source] = await Promise.all([
         runPreflight(
@@ -1260,7 +1217,6 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         for (const result of requirements) {
           const symbol = preflightSymbol(result);
           if (symbol === "✔") {
-            // Passing requirements still say who: "which org are you using?" should not need a question.
             if (result.detail) print(`  ${result.label}: ${result.detail}`);
             continue;
           }

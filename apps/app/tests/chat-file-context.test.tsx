@@ -465,3 +465,40 @@ describe("deriveSessionFileEvidence", () => {
     expect(evidence.map((target) => target.value)).toEqual([`${ABS_DIRECTORY}${FILE}`]);
   });
 });
+
+test("a reply shows an image the chat saved on this computer instead of a broken picture", async () => {
+  const path = "~/Downloads/OpenWork/ses_1/Dolores Park postcard.png";
+  const invokeDesktop = mock(async (command: string, input: { sessionId: string; path: string }) => {
+    if (command !== "computerChatImage") throw new Error(`unexpected ${command}`);
+    return input.path === path ? { data: new Uint8Array([137, 80, 78, 71]), contentType: "image/png" } : null;
+  });
+  Reflect.set(window, "__OPENWORK_ELECTRON__", { invokeDesktop });
+  try {
+    await act(async () => root?.render(
+      <PlatformProvider value={createDefaultPlatform()}>
+        <OpenTargetProvider workspaceRoot={ROOT} sessionId="ses_1" openTargets={[]} onOpenTarget={() => {}}>
+          <MarkdownBlock text={`Here it is:\n\n![Dolores Park postcard](<${path}>)`} />
+        </OpenTargetProvider>
+      </PlatformProvider>,
+    ));
+    const image = required(host.querySelector<HTMLImageElement>("img[data-openwork-image-path]"));
+    // The file reference shows while the image loads.
+    expect(host.querySelector("[data-openwork-image-fallback] [data-openwork-link-href]")).not.toBeNull();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(invokeDesktop).toHaveBeenCalledWith("computerChatImage", { sessionId: "ses_1", path });
+    expect(image.src.startsWith("blob:")).toBe(true);
+    await act(async () => { image.dispatchEvent(new window.Event("load")); });
+    expect(host.querySelector("[data-openwork-image]")).toBeNull();
+    expect(host.querySelector("[data-openwork-image-preview] img")).toBe(image);
+    expect(host.querySelector("[data-openwork-image-fallback]")).toBeNull();
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__");
+  }
+});
+
+test("an image the chat cannot load stays a clickable file reference", async () => {
+  await render("![missing](</Users/test/elsewhere/missing.png>)", () => {});
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(host.querySelector("[data-openwork-image-preview]")?.closest("[hidden]")).not.toBeNull();
+  expect(host.querySelector("[data-openwork-image-fallback] [data-openwork-link-href]")).not.toBeNull();
+});

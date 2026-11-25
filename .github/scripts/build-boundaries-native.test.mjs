@@ -74,14 +74,14 @@ test("both alpha platforms depend on the desktop scope while retaining manual pl
   assert.match(macBuild, /contents: read/);
   assert.doesNotMatch(macBuild, /concurrency:|contents: write|gh release/);
   const macPublish = job(workflow, "publish-alpha-macos-aarch64");
-  // The packaged Linux smoke must pass before any alpha is published.
-  assert.match(macPublish, /needs: \[changes, packaged-smoke, build-alpha-macos-aarch64\]/);
+  // The quick check and the packaged Linux smoke must pass before any alpha is published.
+  assert.match(macPublish, /needs: \[changes, critical-checks, packaged-smoke, build-alpha-macos-aarch64\]/);
   assert.ok(macPublish.includes("(inputs.platform != 'windows-x64' && inputs.publish == true)"));
   assert.match(macPublish, /concurrency:\n      group: alpha-macos-\$\{\{ inputs\.channel_tag \|\| 'alpha-macos-latest' \}\}\n      cancel-in-progress: false/);
   assert.doesNotMatch(macPublish, /environment:|secrets\.|runs-on: macos/);
 
   const windows = job(workflow, "publish-alpha-windows-x64");
-  assert.match(windows, /needs: \[changes, packaged-smoke\]/);
+  assert.match(windows, /needs: \[changes, critical-checks, packaged-smoke\]/);
   assert.ok(windows.includes("if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'macos-arm64')"));
   assert.match(windows, install);
 
@@ -175,8 +175,8 @@ test("review follows all evidence dependencies and its external shared-color imp
     "apps/review/app/page.tsx",
     "packages/review/src/schema.ts",
     "packages/evidence-provider/src/provider.ts",
-    "packages/daytona-evidence/src/review-provider.ts",
-    "packages/freestyle/src/builder.ts",
+    "packages/evidence-daytona/src/review-provider.ts",
+    "packages/world-freestyle/src/builder.ts",
     "apps/app/src/styles/colors.css",
     ".vercelignore",
     ".github/workflows/review-app-deploy.yml",
@@ -197,7 +197,6 @@ test("celld includes the runner's transitive dependencies and desktop-image cros
     "packages/sandbox/src/index.ts",
     "packages/sandbox-freestyle/src/index.ts",
     "packages/sandbox-daytona/src/index.ts",
-    "packages/sandbox-differently/src/index.ts",
     "packages/computer-use/computer-x11-driver.mjs",
     "packages/codemode/src/index.ts",
     "packages/types/src/browser-demonstration.ts",

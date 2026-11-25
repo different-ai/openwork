@@ -1,21 +1,4 @@
 #!/usr/bin/env tsx
-/**
- * Smoke test for the config-object version payload boundary against a deployed Den API.
- *
- * Required env (env only; never hardcode secrets):
- *   DEN_API_BASE_URL       Den API root that serves /v1, e.g. https://app.openworklabs.com/api/den
- *   DEN_API_BEARER_TOKEN   Bearer token from an authenticated Den session with config-object edit access
- *   DEN_CONFIG_OBJECT_ID   Explicit target configObjectId (cob_...) to receive new immutable versions
- *
- * Usage:
- *   DEN_API_BASE_URL=https://app.openworklabs.com/api/den \
- *   DEN_API_BEARER_TOKEN=<session bearer token> \
- *   DEN_CONFIG_OBJECT_ID=cob_... \
- *   pnpm --filter @openwork-ee/den-api run smoke:config-object-payload-boundary -- --dry-run
- *
- * Safety: this script only creates new versions for the named config object. It does not delete,
- * mutate schema, or modify other config objects. Use --dry-run to print the probe plan without writes.
- */
 
 type ExpectedStatus = 201 | 400
 type ProbeField = "rawSourceText" | "normalizedPayloadJson"

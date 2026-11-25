@@ -355,3 +355,75 @@ test("session CLI: inspect, seal, verify, export and delete a Node runner's sess
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+const orphanCheck = (storage: SessionStorage) => {
+  const job = storage.jobs().find((entry) => entry.name === "segment-orphans")
+  assert.ok(job)
+  return job
+}
+const HOUR = 3_600_000
+
+test("an orphan check follows a store by a day, and a conversation that stores nothing is never checked", async () => {
+  using idle = world()
+  seedConversation(idle.store, ID, 3)
+  assert.equal(orphanCheck(idle.storage).nextAt(), null, "nothing stored: no check, so nothing wakes an idle cell")
+  idle.clock.t += 30 * 24 * HOUR
+  assert.equal(orphanCheck(idle.storage).nextAt(), null, "however long it sits")
+
+  using sealed = world()
+  seedConversation(sealed.store, ID, 50)
+  const job = orphanCheck(sealed.storage)
+  assert.equal(job.nextAt(), null)
+  const before = sealed.clock.t
+  assert.equal(await sealed.storage.sealSession(ID), "sealed")
+  const due = job.nextAt()
+  assert.ok(due !== null && due >= before + 25 * HOUR && due <= sealed.clock.t + 25 * HOUR, "a day after the store, when a check can see it as old enough")
+  sealed.clock.t = due
+  await job.run()
+  assert.equal(sealed.storage.inspect(ID).orphans.lastScanAt, due)
+  assert.equal(job.nextAt(), null, "checked: not again until it stores again")
+  // A cell that slept and woke works it out from the store, and agrees.
+  const woken = new SessionStorage(sealed.store, sealed.blobs.store, settings, undefined, () => sealed.clock.t)
+  assert.equal(orphanCheck(woken).nextAt(), null)
+  // It stores again (a large tool output): one more check, a day on.
+  sealed.clock.t += 5 * HOUR
+  const stored = sealed.clock.t
+  await woken.prepare(ID, { role: "tool", callId: "c", name: "read_file", output: "x".repeat(5_000), isError: false })
+  assert.equal(orphanCheck(woken).nextAt(), stored + 25 * HOUR)
+})
+
+test("a store that keeps storing is checked about once a day, and once more after it stops", async () => {
+  using busy = world()
+  seedConversation(busy.store, ID, 3)
+  const job = orphanCheck(busy.storage)
+  const big = (label: string) => busy.storage.prepare(ID, { role: "tool", callId: "c", name: "read_file", output: `${label}:`.padEnd(5_000, "x"), isError: false })
+  const first = busy.clock.t
+  // A large output every two hours for a day: later stores never push the check back.
+  for (let hour = 0; hour <= 24; hour += 2) {
+    busy.clock.t = first + hour * HOUR
+    await big(`h${hour}`)
+    assert.equal(job.nextAt(), first + 25 * HOUR)
+  }
+  const last = busy.clock.t
+  busy.clock.t = first + 25 * HOUR
+  await job.run()
+  assert.equal(job.nextAt(), last + 25 * HOUR, "the newest objects were too young for that check: one more, a day after the last store")
+  busy.clock.t = last + 25 * HOUR
+  await job.run()
+  assert.equal(job.nextAt(), null, "storing stopped and everything was checked")
+})
+
+test("a store from before stores were noted is checked once more, then only after it stores", async () => {
+  using legacy = world()
+  seedConversation(legacy.store, ID, 3)
+  // As the previous runner left every cell: a daily check ran, and nothing says whether it ever stored.
+  const checkedAt = legacy.clock.t
+  legacy.store.db.prepare("INSERT INTO meta (key, value) VALUES ('segment_orphans_at', ?)").run(String(checkedAt))
+  const job = orphanCheck(legacy.storage)
+  assert.equal(job.nextAt(), checkedAt + 24 * HOUR, "the check it already had coming")
+  legacy.clock.t = checkedAt + 24 * HOUR
+  await job.run()
+  assert.equal(job.nextAt(), null, "then none")
+  const woken = new SessionStorage(legacy.store, legacy.blobs.store, settings, undefined, () => legacy.clock.t)
+  assert.equal(orphanCheck(woken).nextAt(), null)
+})

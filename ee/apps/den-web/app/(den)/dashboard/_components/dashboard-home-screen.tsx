@@ -8,12 +8,8 @@ import { MemberDashboardScreen } from "./member-dashboard-screen";
 
 export function DashboardHomeScreen() {
   const { orgContext, orgBusy, mutationBusy } = useOrgDashboard();
-  // Feature intros (flag `featureIntros`): Home answers `?` only; it never gives way to an intro.
   useFeatureIntro("home", orgContext ? {} : null);
 
-  // A workspace switch keeps the previous orgContext around while the next one
-  // loads. Rendering the neutral placeholder during that window (and while the
-  // directory is loading) avoids flashing the wrong admin/member home layout.
   const switching = mutationBusy === "switch-organization";
   if (!orgContext || orgBusy || switching) {
     return (

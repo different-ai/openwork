@@ -1,33 +1,21 @@
 import { MessageCircle } from "lucide-react";
 import { getNewAiGatewayProviderRoute, getWorkbotSettingsRoute, permissionLockReason } from "../../../../_lib/den-org";
-import { WORKBOT_ENTRY_HREF } from "../../../_lib/workbot-entry";
+import { WORKBOT_ENTRY_COPY, WORKBOT_ENTRY_HREF } from "../../../_lib/workbot-entry";
 import { defineFeatureIntro, type FeatureIntroContext } from "../types";
 import { docsPage } from "./docs";
 import { WorkbotExample } from "./examples/workbot/workbot-example";
 
-/**
- * Facts Manage › Workbot reports from data it already loads (`GET /v1/org/workbot-settings`
- * and `GET /v1/org/workbot-readiness`). A missing fact means "not loaded yet": the intro never
- * takes over the page on a guess.
- */
 export type WorkbotFacts = {
-  /** An admin saved a model (`settings.model`); null keeps the built-in default. */
   modelChosen?: boolean;
-  /**
-   * Workbot has no model to answer with: the default needs the AI Gateway (no included models
-   * for this person) and the organization has no active AI provider. Always false where Workbot
-   * isn't deployed, since adding a provider wouldn't make it work there.
-   */
   needsProvider?: boolean;
+  workbotOff?: boolean;
 };
 
 type Ctx = FeatureIntroContext<WorkbotFacts>;
 
 const PATH = getWorkbotSettingsRoute();
-/** The Default model row on the page (`id` in workbot-settings-screen). */
 export const WORKBOT_DEFAULT_MODEL_ANCHOR = "#workbot-default-model";
 
-/** Nothing set up: no model chosen and nothing Workbot could answer with until someone adds a provider. */
 function workbotUnusable(ctx: Ctx): boolean {
   return ctx.facts.needsProvider === true && ctx.facts.modelChosen === false;
 }
@@ -61,14 +49,18 @@ export const workbotIntros = [
       },
       { when: (ctx) => ctx.can("canManageModelsSettings"), label: "Choose the default model", href: WORKBOT_DEFAULT_MODEL_ANCHOR },
       {
+        when: (ctx) => ctx.orgContext.capabilities.workbot === true && ctx.facts.needsProvider !== true && ctx.facts.workbotOff === true,
+        label: "Open Workbot",
+        href: WORKBOT_ENTRY_HREF,
+        locked: { reason: WORKBOT_ENTRY_COPY.offTitle },
+      },
+      {
         when: (ctx) => ctx.orgContext.capabilities.workbot === true && ctx.facts.needsProvider !== true,
         label: "Open Workbot",
         href: WORKBOT_ENTRY_HREF,
       },
       { when: () => true, label: "Choose the default model", href: WORKBOT_DEFAULT_MODEL_ANCHOR, locked: { reason: permissionLockReason("inference.manage") } },
     ],
-    // Full screen only once both facts are known and Workbot has nothing to answer with. The built-in
-    // default model counts as set up: choosing it saves nothing, so it can't be what clears the intro.
     setupState: (ctx) => {
       if (ctx.facts.needsProvider === undefined || ctx.facts.modelChosen === undefined) return "done";
       return workbotUnusable(ctx) ? "none" : "done";

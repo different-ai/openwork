@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-/** Responses of the openwork-server `/workspace/:id/claude-import/*` routes. */
-
 export const claudeImportItemSchema = z.object({
   sourceId: z.string(),
   title: z.string(),

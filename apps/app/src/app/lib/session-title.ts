@@ -1,6 +1,5 @@
 import { t } from "../../i18n";
 
-/** Raw English string — used for prefix matching against stored titles. */
 export const DEFAULT_SESSION_TITLE = "New session";
 
 const GENERATED_SESSION_TITLE_PREFIX = `${DEFAULT_SESSION_TITLE} - `;

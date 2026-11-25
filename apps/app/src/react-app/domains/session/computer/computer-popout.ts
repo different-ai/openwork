@@ -1,8 +1,3 @@
-// The computer view, popped out of the chat into its own always-on-top window
-// (allowed for this name only by the desktop's window-open handler). The chat's
-// renderer still owns the view: it portals into the new window's document, which
-// mirrors this document's styles and theme so it reads like the in-chat card.
-
 export const COMPUTER_POPOUT_PREFIX = "openwork-computer-view-"
 let opened = 0
 
@@ -33,7 +28,6 @@ export function openComputerPopout(bounds: { left: number; top: number; width: n
   mirrorStyles()
   target.body.className = "m-0 overflow-hidden bg-popover"
 
-  // Theme switches and development style reloads follow the chat while popped out.
   const root = new MutationObserver(mirrorRoot)
   root.observe(document.documentElement, { attributes: true })
   const styles = new MutationObserver(mirrorStyles)

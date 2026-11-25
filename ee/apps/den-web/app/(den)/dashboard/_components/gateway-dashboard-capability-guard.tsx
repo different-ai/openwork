@@ -35,6 +35,5 @@ export function GatewayDashboardCapabilityGuard({ area, children }: { area: Gate
     );
   }
 
-  // A new organization must not inherit provider/editor state from another one.
   return <Fragment key={dashboard.orgId}>{children}</Fragment>;
 }

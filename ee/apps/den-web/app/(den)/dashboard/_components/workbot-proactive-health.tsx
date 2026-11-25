@@ -5,12 +5,8 @@ import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenTable, type DenTableColumn } from "../../_components/ui/table";
+import { AGENT_HEALTH_ANCHOR } from "./workbot-agent-scope";
 import { useWorkbotProactiveHealth } from "./workbot-proactive-data";
-
-/**
- * Manage › Workbot › Members' agents, last 7 days: per responsibility, how often agents checked, how often they had
- * nothing to say, how many messages went out and how many members muted it. Counts only.
- */
 
 type Row = WorkbotProactiveHealth["responsibilities"][number];
 
@@ -20,7 +16,6 @@ function share(part: number, whole: number) {
 
 type RhythmRow = { id: "rhythm"; label: string; checks: number; quiet: number; sent: number };
 
-/** With Your agent's brief (`rhythm`): one row for every check on the one rhythm. */
 function RhythmHealthTable({ rhythm }: { rhythm: NonNullable<WorkbotProactiveHealth["rhythm"]> }) {
   const columns: DenTableColumn<RhythmRow>[] = [
     { key: "label", header: "Agents", render: (row) => <span className="font-medium text-gray-900">{row.label}</span> },
@@ -56,7 +51,7 @@ export function WorkbotProactiveHealthTable({ health }: { health: WorkbotProacti
 export function WorkbotProactiveHealthSection({ orgId }: { orgId: string }) {
   const query = useWorkbotProactiveHealth(orgId, Boolean(orgId));
   return (
-    <section aria-label="Last 7 days" className="grid gap-2" data-section="workbot-proactive-health">
+    <section id={AGENT_HEALTH_ANCHOR} aria-label="Last 7 days" className="grid scroll-mt-6 gap-2" data-section="workbot-proactive-health">
       <h2 className="px-1 text-[13px] font-medium text-gray-500">Last 7 days</h2>
       {query.isError ? (
         <DenNotice

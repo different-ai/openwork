@@ -15,7 +15,6 @@ export function hasSignedOutDraft(target: Pick<SignInReturnTarget, "workspaceId"
     target.sessionId ?? NEW_TASK_DRAFT_SESSION_ID)?.text.trim());
 }
 
-/** Move only after consent; never overwrite a draft already in the account. */
 function carrySignedOutDraft(target: Pick<SignInReturnTarget, "workspaceId" | "sessionId">, scope: string) {
   if (!target.workspaceId) return false;
   const slot = target.sessionId ?? NEW_TASK_DRAFT_SESSION_ID;
@@ -28,11 +27,6 @@ function carrySignedOutDraft(target: Pick<SignInReturnTarget, "workspaceId" | "s
   return true;
 }
 
-/**
- * A signed-out draft has no verifiable owner. Sign-in alone must never give it
- * to an account. The composer asks explicitly, naming the destination; bind
- * that choice to both the account scope and attempt shown when it was made.
- */
 export function carrySignInReturnDraft(identity: SessionDraftIdentity, confirmation?: { scope: string; startedAt: number }): boolean {
   const target = readSignInReturnTarget();
   if (!target || target.signedInAt === null || target.draftCarried) return false;

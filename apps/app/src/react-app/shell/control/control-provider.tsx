@@ -64,14 +64,7 @@ export type OpenworkControlResult =
 
 export type OpenworkControlHelpers = {
   setNarration: (text: string) => void;
-  /** The conversation whose agent issued the request, when it came through the agent bridge. */
   origin?: OpenworkAffordanceOrigin;
-  /**
-   * True when an agent issued the command through the server bridge, which
-   * answers within seconds and has no person on the other end. A warning for
-   * that request goes back through the agent's own conversation as a
-   * structured result, never through a dialog.
-   */
   bridged: boolean;
 };
 
@@ -695,17 +688,10 @@ export function useControlAction(action: OpenworkControlAction | null | false | 
   }, [actionId, registerAction]);
 }
 
-/**
- * Register a dynamic list of control actions. Unlike calling useControlAction
- * per item, this scales to an arbitrary, changing number of actions without
- * violating the rules of hooks. Each action is tracked by its stable id; the
- * latest closure for that id is always used, and removed ids are unregistered.
- */
 export function useControlActions(actions: readonly OpenworkControlAction[]) {
   const control = useOpenworkControl();
   const registerAction = control?.registerAction;
 
-  // One ref per action id, so executeAction always sees the freshest closure.
   const refsById = useRef<Map<string, { current: OpenworkControlAction | null }>>(new Map());
   for (const action of actions) {
     const existing = refsById.current.get(action.id);
@@ -721,7 +707,6 @@ export function useControlActions(actions: readonly OpenworkControlAction[]) {
   useEffect(() => {
     if (!registerAction) return undefined;
     const liveIds = new Set(actions.map((action) => action.id));
-    // Drop refs for ids that no longer exist.
     for (const id of Array.from(refsById.current.keys())) {
       if (!liveIds.has(id)) refsById.current.delete(id);
     }
@@ -746,7 +731,6 @@ const SETTINGS_TABS: ReadonlySet<string> = new Set<string>(
 export function OpenworkRouteControlActions() {
   const navigate = useNavigate();
   const location = useLocation();
-  // Read through a ref so the action list stays stable across route changes.
   const pathnameRef = useRef(location.pathname);
   pathnameRef.current = location.pathname;
   const openSettingsTab = useCallback((tab: string) => {

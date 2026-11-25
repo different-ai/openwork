@@ -1,5 +1,5 @@
 import type { HeadlessModelAccess, HeadlessModelCatalog } from "@openwork-ee/headless-protocol"
-import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { parseGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import { WORKBOT_DEFAULT_MODEL_ID } from "@openwork/types/den/workbot-settings"
 import type { WorkbotAccessReason } from "@openwork/types/den/workbot-settings"
 import type { GatewayProviderSummary } from "@openwork/types/den/gateway"
@@ -23,7 +23,6 @@ export type CloudAgentGatewayModel = {
   protocol: CloudAgentGatewayProtocol
 }
 
-/** Classify the shared Gateway's rewritten SDK, not a model's display name or upstream URL. */
 export function cloudAgentGatewayProtocol(config: Record<string, unknown>): CloudAgentGatewayProtocol | null {
   switch (readProviderConfigNpm(config)) {
     case "@ai-sdk/anthropic": return "anthropic"
@@ -35,7 +34,6 @@ export function cloudAgentGatewayProtocol(config: Record<string, unknown>): Clou
   }
 }
 
-/** Only gatewaySummary(..., false).models is usable; authorizationRequests are never a fallback. */
 export function projectCloudAgentGatewayModels(summaries: CloudAgentGatewaySummary[], gatewayBaseUrl: string): CloudAgentGatewayModel[] {
   const models = new Map<string, CloudAgentGatewayModel>()
   for (const summary of summaries) {
@@ -56,7 +54,6 @@ export function cloudAgentGatewayCatalogProjection(models: CloudAgentGatewayMode
   return {
     defaultModel: luna.length === 1 ? luna[0]?.id ?? WORKBOT_DEFAULT_MODEL_ID : WORKBOT_DEFAULT_MODEL_ID,
     models: models.map(({ id, name, provider }) => ({ id, name, provider })),
-    // Credential/grant readiness only. This is not a paid completion or a claim that upstream is healthy.
     verified: true,
   }
 }
@@ -68,7 +65,6 @@ export type CloudAgentGatewayDeps = {
   missingModelReason?: (actor: CloudAgentGatewayActor, memberId: string, model: string) => Promise<WorkbotAccessReason>
 }
 
-/** Injectable boundary for focused authorization tests. No catalog or access is cached between calls. */
 export function createCloudAgentGatewayModelService(deps: CloudAgentGatewayDeps) {
   async function current(actor: CloudAgentGatewayActor) {
     const snapshot = await deps.snapshot(actor)
@@ -94,12 +90,12 @@ export function createCloudAgentGatewayModelService(deps: CloudAgentGatewayDeps)
   }
 }
 
-// Lazy server imports keep the projections and injectable service usable without booting Den/DB.
 const databaseDeps: CloudAgentGatewayDeps = {
   async snapshot(actor) {
-    const [{ and, asc, eq, isNull }, { AuthUserTable, GatewayProviderTable, MemberTable, OrganizationTable }, { normalizeDenTypeId }, { db }, { env }, { gatewaySummary }, { scheduleLiteLlmProvisioning }, { isLiteLlmProviderId }] = await Promise.all([
+    const [{ and, asc, eq, isNull }, { AuthUserTable, GatewayProviderTable, MemberTable, OrganizationTable }, { normalizeDenTypeId }, { db }, { env }, { gatewaySummary }, { scheduleLiteLlmProvisioning }, { isLiteLlmProviderId, isTrueFoundryProviderId }, { scheduleTrueFoundryProvisioning }] = await Promise.all([
       import("@openwork-ee/den-db/drizzle"), import("@openwork-ee/den-db/schema"), import("@openwork-ee/utils/typeid"),
-      import("../db.js"), import("../env.js"), import("../llm/gateway-matrix.js"), import("../llm/litellm-issued.js"), import("@openwork-ee/utils/litellm-catalog"),
+      import("../db.js"), import("../env.js"), import("../llm/gateway-matrix.js"), import("../llm/litellm-issued.js"), import("@openwork-ee/gateway-catalog"),
+      import("../llm/truefoundry-sync.js"),
     ])
     if (!env.gatewayEnabled) throw new CloudAgentGatewayAccessError("gateway_not_configured")
     const organizationId = normalizeDenTypeId("organization", actor.organizationId)
@@ -116,9 +112,11 @@ const databaseDeps: CloudAgentGatewayDeps = {
     const summaries: CloudAgentGatewaySummary[] = []
     for (const provider of providers) {
       const summary = await gatewaySummary(provider, member.id, env.gatewayPublicBaseUrl, false)
-      // Only granted members appear in these projections. Provisioning rechecks eligibility itself.
       if (isLiteLlmProviderId(provider.provider_id) && (summary.models.length || summary.authorizationRequests.length)) {
         scheduleLiteLlmProvisioning(provider, member.id)
+      }
+      if (isTrueFoundryProviderId(provider.provider_id) && (summary.models.length || summary.authorizationRequests.length)) {
+        scheduleTrueFoundryProvisioning(provider, member.id)
       }
       summaries.push(summary)
     }
@@ -130,7 +128,6 @@ const databaseDeps: CloudAgentGatewayDeps = {
     const [{ and, eq }, { GatewayProviderTable: Provider, GatewayProviderModelTable: Model, GatewayModelGroupTable: Group, GatewayModelGroupModelTable: Link, GatewayCredentialSetTable: Set, GatewayProviderAccessTable: Access }, { normalizeDenTypeId }, { db }, { memberGatewayTeams, effectiveGatewayGrants }] = await Promise.all([
       import("@openwork-ee/den-db/drizzle"), import("@openwork-ee/den-db/schema"), import("@openwork-ee/utils/typeid"), import("../db.js"), import("../llm/inference-provider-lifecycle.js"),
     ])
-    // Diagnose the saved alias without issuing credentials or mutating providers/defaults.
     const [row] = await db.select({ providerId: Provider.id, mode: Set.credential_mode }).from(Model)
       .innerJoin(Provider, and(eq(Provider.id, Model.gateway_provider_id), eq(Provider.organization_id, normalizeDenTypeId("organization", actor.organizationId)), eq(Provider.status, "active")))
       .innerJoin(Group, and(eq(Group.id, selection.modelGroupId), eq(Group.gateway_provider_id, Provider.id), eq(Group.status, "active")))

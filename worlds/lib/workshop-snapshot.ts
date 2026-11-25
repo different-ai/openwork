@@ -4,8 +4,8 @@
  * save its disk as a Daytona snapshot, and clone attendees from that snapshot.
  */
 import type { DaytonaExec, DaytonaExecResult } from "../../evals/packages/hosts/src/daytona.ts";
-import { DaytonaApi } from "../../packages/daytona-evidence/src/api.ts";
-import type { Snapshot } from "../../packages/daytona-evidence/src/api.ts";
+import { DaytonaApi } from "../../packages/evidence-daytona/src/api.ts";
+import type { Snapshot } from "../../packages/evidence-daytona/src/api.ts";
 
 export const WORKSHOP_SNAPSHOT_PREFIX = "workshop-desktop-";
 

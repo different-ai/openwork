@@ -1,8 +1,3 @@
-// Shared contract for organization connect links. The default transport is a
-// short-lived HTTPS exchange; an optional Ed25519 JWS transport is available
-// when its public key ships in the desktop build. Both carry configuration
-// provenance only — never authentication.
-
 export const CONNECT_LINK_ROUTE = "connect";
 export const CONNECT_LINK_AUDIENCE = "openwork-desktop-connect";
 export const CONNECT_LINK_VERSION = 1;

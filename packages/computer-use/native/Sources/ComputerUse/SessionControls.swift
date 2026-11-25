@@ -156,8 +156,6 @@ final class SessionControls: NSObject {
         default: break
         }
     }
-    /// Background work draws presence just above its window; work the person follows, on top.
-    func layer(background: Bool) { AgentCursor.shared.layer(background) }
     func narrate(_ text: String?) { AgentCursor.shared.narrate(text) }
     func react(_ reaction: CursorReaction) { AgentCursor.shared.react(reaction) }
     /// `live` reads where a control is now, or nil once it is gone.
@@ -221,7 +219,7 @@ final class SessionControls: NSObject {
             self.onResume?()
         }
         presence.onStop = { [weak self] in self?.onStop?() }
-        presence.begin(windowFrame: target.frame, windowID: target.id, appName: app.name, layered: background, purpose: purpose)
+        presence.begin(windowFrame: target.frame, windowID: target.id, appName: app.name, purpose: purpose)
         if Self.embedded {
             showMenu()
             publish(["phase": "working", "appName": app.name, "appID": app.bundleID, "pid": Int(app.pid),

@@ -18,7 +18,6 @@ import { ApiError } from "../errors.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
-/** Calls one native OpenCode v2 route for a folder; undefined when v2 is not running. */
 export type ClaudeImportEngine = {
   request(method: "GET" | "POST", path: string, directory: string, body?: unknown): Promise<{ status: number; body: unknown }>;
   prepare(directory: string): Promise<void>;
@@ -83,13 +82,6 @@ async function describe(engine: ClaudeImportEngine, conversations: ImportedConve
   return items.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/**
- * Import each conversation at most once. An unchanged one is left as is; one
- * that changed in Claude after it was imported is skipped, never overwritten,
- * because the person may have continued it in OpenWork. A failed request is
- * reported and not retried: the deterministic session id makes a later run
- * see whether it landed.
- */
 export async function importConversations(engine: ClaudeImportEngine, conversations: ImportedConversation[], directory: string): Promise<ClaudeImportResult[]> {
   await engine.prepare(directory);
   const project = await projectId(engine, directory);
@@ -114,15 +106,13 @@ export async function importConversations(engine: ClaudeImportEngine, conversati
   return results;
 }
 
-/** Claude Code's data folder: `CLAUDE_CONFIG_DIR`, as Claude Code itself reads it, else ~/.claude. */
 export function claudeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
   return env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude");
 }
 
-/** Claude Code saves each folder's sessions under <config>/projects/<folder>. */
 export async function readClaudeCodeSessions(directory: string, configDir: string): Promise<ImportedConversation[]> {
   const folders = new Set([claudeCodeProjectFolder(directory)]);
-  try { folders.add(claudeCodeProjectFolder(await realpath(directory))); } catch { /* folder may be gone */ }
+  try { folders.add(claudeCodeProjectFolder(await realpath(directory))); } catch {}
   const conversations: ImportedConversation[] = [];
   const seen = new Set<string>();
   for (const folder of folders) {
@@ -139,14 +129,12 @@ export async function readClaudeCodeSessions(directory: string, configDir: strin
         seen.add(conversation.sourceId);
         conversations.push(conversation);
       } catch {
-        // An empty or unreadable transcript is not offered.
       }
     }
   }
   return conversations;
 }
 
-/** The running native engine, or undefined while chats still use v1. */
 export function createNativeClaudeImportEngine(
   preview: { status(): { chatRouting?: boolean }; connection(): { url: string; username: string; password: string } | undefined; ensureWorkspaceReady(directory: string): Promise<void> },
 ): ClaudeImportEngine | undefined {
@@ -181,7 +169,6 @@ interface RegisterClaudeImportRoutesOptions {
   routes: Route[];
   config: ServerConfig;
   engineForWorkspace: (workspace: WorkspaceInfo) => ClaudeImportEngine | undefined;
-  /** Defaults to `claudeConfigDir()` on each request. */
   claudeConfigDir?: string;
   jsonResponse: (data: unknown, status?: number) => Response;
   readJsonBody: (request: Request) => Promise<unknown>;
@@ -190,14 +177,6 @@ interface RegisterClaudeImportRoutesOptions {
   resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
 }
 
-/**
- * Import Claude history into a workspace as native chats.
- *
- * - POST /workspace/:id/claude-import/export (multipart: file, mode, ids)
- *   previews or imports conversations from a Claude data export.
- * - GET/POST /workspace/:id/claude-import/code lists or imports the Claude
- *   Code sessions saved for this folder on this computer.
- */
 export function registerClaudeImportRoutes(options: RegisterClaudeImportRoutesOptions): void {
   const { routes, config, engineForWorkspace, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspaceWithoutBootstrap } = options;
   const configDir = () => options.claudeConfigDir ?? claudeConfigDir();

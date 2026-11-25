@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { Loader2 } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { Button } from "@/components/ui/button";
@@ -136,6 +137,12 @@ export function GatewayModelAccessProvider(props: {
       <Dialog open={selection !== null} onOpenChange={(open) => { if (!open) cancel(); }}>
         <DialogContent className="lg:max-w-sm" showCloseButton={false}>
           <DialogHeader><DialogTitle>Log in to this provider to use the models</DialogTitle></DialogHeader>
+          {busy ? (
+            <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 aria-hidden className="size-4 animate-spin" />
+              Finish signing in in your browser…
+            </p>
+          ) : null}
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
           <DialogFooter>
             <Button variant="outline" onClick={cancel}>Cancel</Button>

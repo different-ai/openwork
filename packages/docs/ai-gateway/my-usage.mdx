@@ -1,0 +1,73 @@
+---
+title: "My Usage: your own spend, limits and model prices"
+sidebarTitle: "My Usage"
+description: "Every member can see their own AI Gateway usage: how close they are to their spend limits, what they used in the past 30 days, and what each model they can use would cost them."
+keywords: ["my usage", "my spend", "my limit", "usage limit", "ask for more", "model prices", "compare models", "cost per model", "tokens"]
+---
+
+**My Usage** answers three questions for anyone in your organization, without
+asking an admin:
+
+- How close am I to my spend limit, and when does it reset?
+- How much have I used in the past 30 days, and on which models?
+- Which of the models I can use would be cheaper for what I do?
+
+It shows only your own usage. Nobody else's spend, limits or requests are on it.
+
+## Where to find it
+
+- **OpenWork Cloud**: **Observability › My Usage** in the sidebar. Every
+  member sees it, with no admin permissions needed.
+- **OpenWork app**: **Settings › Usage** shows the same figures under your
+  limits, with **Open My Usage on the web** for the full page.
+
+## Spend limits
+
+Each [limit](/ai-gateway/limits) that applies to you, for today, this week or
+this month: how much you've used, how much is left, when it resets, and whether
+reaching it pauses your models or only warns.
+
+When a limit that pauses your models runs out and your admin lets you ask for
+more, **Ask for $… more** sends a request with your reason. An admin approves
+or declines it in **AI Gateway › Limits**. See
+[Increase requests](/ai-gateway/limits#increase-requests).
+
+## Past 30 days
+
+Your usage across all AI Gateway models, including
+[OpenWork Models](/ai-gateway/openwork-models), by UTC calendar day:
+
+- **Spend**, **Requests**, **Tokens** and your **Top model**.
+- A daily chart by model. Switch **Show** between **Cost** and **Tokens**.
+- Your spend and tokens on each model.
+
+Cost is an estimate from each model's listed price when the request was made,
+not your provider's bill. **Unknown** means OpenWork has no price for those
+requests yet. See [Token costs](/ai-gateway/token-costs) and
+[Counting usage](/ai-gateway/counting-usage).
+
+## Models you can use
+
+Every AI Gateway model shared with you, with its listed price per million
+input and output tokens, and what **your** past 30 days would have cost on
+it. The cheapest for your usage is first, and the models you used are marked
+**What you use now**.
+
+The estimate takes the input, output and cached tokens your requests reported
+and prices them at each model's listed price, including higher prices for
+long contexts. Requests that reported no tokens are left out, and a model with
+no listed price says **No listed price** rather than $0. Different models use
+different numbers of tokens for the same work, so treat it as a guide.
+
+## From other tools
+
+The page reads the same API any client signed in to OpenWork Cloud can call,
+such as a script or an OpenCode plugin:
+
+- `GET /v1/gateway/usage-limits/me`: your limits.
+- `GET /v1/gateway/usage/me?days=30`: your usage by model and day, your token
+  mix, and the models you can use with listed prices.
+- `POST /v1/gateway/usage-limit-reset-requests`: ask for more on a used-up
+  limit.
+
+Each returns only your own data.

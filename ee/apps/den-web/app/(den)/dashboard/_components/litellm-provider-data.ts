@@ -1,21 +1,20 @@
-/**
- * LiteLLM gateway provider requests and display helpers. Request bodies mirror
- * den-api's /v1/inference-providers/litellm schemas; keys are write-only and
- * never read back.
- */
 import type { GatewayLiteLlmAttentionReason, GatewayLiteLlmStatus, GatewayLiteLlmSyncResult } from "@openwork/types/den/gateway";
 import { auditOperationHeaders, type AuditOperationContext } from "@openwork/types/den/audit";
+import { microsoftApiScopeError, microsoftTenantIdSchema } from "@openwork/types/den/inference";
 import { z } from "zod";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { readInferenceProviderFromPayload, type DenInferenceProvider } from "./inference-provider-request";
 
-export const LITELLM_PROVIDER_ID = "litellm";
+export { LITELLM_PROVIDER_ID } from "@openwork-ee/gateway-catalog";
 export const LITELLM_DOC_URL = "https://docs.litellm.ai";
+export const LITELLM_ENTRA_DOC_URL = "https://openworklabs.com/docs/ai-gateway/litellm#microsoft-sign-in";
 
-/** What the admin chooses: one shared key, each person pastes theirs, or OpenWork creates them. */
-export type LiteLlmMode = "org" | "member" | "issued";
+export type LiteLlmMode = "org" | "member" | "issued" | "entra";
 export type LiteLlmIssueStrategy = "per_team" | "mirror";
 export type LiteLlmMirrorFallback = "per_team" | "error";
+
+export type LiteLlmEntraInput = { tenantId: string; clientId: string; clientSecret: string; scope: string; models: string };
+export const EMPTY_LITELLM_ENTRA: LiteLlmEntraInput = { tenantId: "", clientId: "", clientSecret: "", scope: "", models: "" };
 
 export type LiteLlmCreateInput = {
   name: string;
@@ -25,27 +24,60 @@ export type LiteLlmCreateInput = {
   access: { allMembers: boolean; memberIds: string[]; teamIds: string[] };
   issueStrategy?: LiteLlmIssueStrategy;
   mirrorFallback?: LiteLlmMirrorFallback;
+  entra?: LiteLlmEntraInput;
 };
 
-/** The admin-facing mode of a saved provider. */
 export function liteLlmStatusMode(status: Pick<GatewayLiteLlmStatus, "mode" | "keySource">): LiteLlmMode {
-  return status.mode === "org" ? "org" : status.keySource === "issued" ? "issued" : "member";
+  return status.mode === "org" ? "org" : status.keySource === "issued" ? "issued" : status.keySource === "entra" ? "entra" : "member";
+}
+
+export function parseLiteLlmModelList(value: string): string[] {
+  return [...new Set(value.split(/[\n,]/).map((entry) => entry.trim()).filter(Boolean))];
 }
 
 export function buildLiteLlmCreateBody(input: LiteLlmCreateInput) {
+  const access = {
+    ...(input.access.allMembers ? { allMembers: true } : {}),
+    ...(input.access.memberIds.length ? { memberIds: [...new Set(input.access.memberIds)] } : {}),
+    ...(input.access.teamIds.length ? { teamIds: [...new Set(input.access.teamIds)] } : {}),
+  };
+  if (input.mode === "entra") {
+    const entra = input.entra ?? EMPTY_LITELLM_ENTRA;
+    return {
+      name: input.name.trim() || "LiteLLM",
+      baseUrl: input.baseUrl.trim(),
+      mode: input.mode,
+      oauthTenantId: entra.tenantId.trim().toLowerCase(),
+      oauthClientId: entra.clientId.trim(),
+      oauthClientSecret: entra.clientSecret.trim(),
+      oauthScope: entra.scope.trim(),
+      modelIds: parseLiteLlmModelList(entra.models),
+      ...access,
+    };
+  }
   return {
     name: input.name.trim() || "LiteLLM",
     baseUrl: input.baseUrl.trim(),
     mode: input.mode,
     ...(input.mode === "issued" ? { issueStrategy: input.issueStrategy ?? "per_team", mirrorFallback: input.mirrorFallback ?? "per_team" } : {}),
     apiKey: input.apiKey.trim(),
-    ...(input.access.allMembers ? { allMembers: true } : {}),
-    ...(input.access.memberIds.length ? { memberIds: [...new Set(input.access.memberIds)] } : {}),
-    ...(input.access.teamIds.length ? { teamIds: [...new Set(input.access.teamIds)] } : {}),
+    ...access,
   };
 }
 
-/** Client-side check before the server verifies the key against the proxy. */
+export function liteLlmEntraError(entra: LiteLlmEntraInput, saved = false): string | null {
+  if (!microsoftTenantIdSchema.safeParse(entra.tenantId.trim()).success) return "Enter the Entra directory (tenant) ID, for example 00000000-0000-0000-0000-000000000000.";
+  if (!entra.clientId.trim()) return "Enter the application (client) ID of your Entra app registration.";
+  if (!saved && !entra.clientSecret.trim()) return "Paste a client secret of your Entra app registration.";
+  const scopeError = microsoftApiScopeError(entra.scope);
+  if (scopeError) return scopeError;
+  const models = parseLiteLlmModelList(entra.models);
+  if (!models.length) return "Enter at least one LiteLLM model name, one per line.";
+  if (models.some((model) => model.includes("*"))) return "Enter model names, not wildcards such as openai/*.";
+  if (models.length > 500) return "Enter at most 500 models.";
+  return null;
+}
+
 export function liteLlmCreateError(input: LiteLlmCreateInput): string | null {
   const baseUrl = input.baseUrl.trim();
   if (!baseUrl) return "Enter your LiteLLM proxy URL.";
@@ -53,6 +85,7 @@ export function liteLlmCreateError(input: LiteLlmCreateInput): string | null {
     const url = new URL(baseUrl);
     if (url.protocol !== "https:" && url.protocol !== "http:") return "The LiteLLM URL must start with https://.";
   } catch { return "Enter a full URL, for example https://litellm.example.com."; }
+  if (input.mode === "entra") return liteLlmEntraError(input.entra ?? EMPTY_LITELLM_ENTRA);
   if (!input.apiKey.trim()) return input.mode === "org" ? "Paste the LiteLLM key everyone will share."
     : input.mode === "issued" ? "Paste a LiteLLM admin key so OpenWork can create each person's key."
       : "Paste a LiteLLM admin key so OpenWork can read your models and teams.";
@@ -64,7 +97,12 @@ export function liteLlmKeyLabel(mode: LiteLlmMode) {
 }
 
 export function liteLlmModeLabel(mode: LiteLlmMode) {
-  return mode === "org" ? "One organization key" : mode === "issued" ? "OpenWork creates keys" : "Each person's own key";
+  return mode === "org" ? "One organization key" : mode === "issued" ? "OpenWork creates keys" : mode === "entra" ? "Microsoft sign-in" : "Each person's own key";
+}
+
+export function liteLlmModeOptions(): Array<{ value: LiteLlmMode; label: string }> {
+  const modes: LiteLlmMode[] = ["org", "member", "issued", "entra"];
+  return modes.map((value) => ({ value, label: liteLlmModeLabel(value) }));
 }
 
 export function liteLlmIssueStrategyLabel(strategy: LiteLlmIssueStrategy) {
@@ -82,12 +120,12 @@ export function liteLlmAttentionLabel(reason: GatewayLiteLlmAttentionReason) {
         : "Could not create key";
 }
 
-export function liteLlmSpendLabel(status: Pick<GatewayLiteLlmStatus, "spendTracking">) {
-  return status.spendTracking ? "Tracked, priced from LiteLLM" : "Not tracked, LiteLLM budgets each key";
+export function liteLlmSpendLabel(status: Pick<GatewayLiteLlmStatus, "spendTracking"> & { keySource?: GatewayLiteLlmStatus["keySource"] }) {
+  return status.spendTracking ? "Tracked, priced from LiteLLM" : status.keySource === "entra" ? "Not tracked, LiteLLM budgets each person" : "Not tracked, LiteLLM budgets each key";
 }
 
 export function liteLlmAccessTitle(mode: LiteLlmMode) {
-  return mode === "org" ? "Who can use it" : mode === "issued" ? "Who gets a key" : "Who can connect a key";
+  return mode === "org" ? "Who can use it" : mode === "issued" ? "Who gets a key" : mode === "entra" ? "Who can sign in" : "Who can connect a key";
 }
 
 export function liteLlmAccessGroupId(provider: Pick<DenInferenceProvider, "litellm" | "modelGroups">): string | null {
@@ -96,7 +134,6 @@ export function liteLlmAccessGroupId(provider: Pick<DenInferenceProvider, "litel
   return provider.modelGroups?.find((group) => group.name === name)?.id ?? provider.modelGroups?.[0]?.id ?? null;
 }
 
-/** "Synced 5 min ago", or "Never synced". */
 export function liteLlmSyncedLabel(lastSyncedAt: string | null, now = Date.now()) {
   if (!lastSyncedAt) return "Never synced";
   const at = new Date(lastSyncedAt).getTime();
@@ -147,11 +184,30 @@ export async function updateLiteLlmIssue(providerId: string, input: { issueStrat
   return updateLiteLlm(providerId, input, auditContext);
 }
 
-async function updateLiteLlm(providerId: string, body: Record<string, string>, auditContext?: AuditOperationContext) {
+export function buildLiteLlmEntraUpdateBody(saved: LiteLlmEntraInput, next: LiteLlmEntraInput): Record<string, string | string[]> | null {
+  const body: Record<string, string | string[]> = {};
+  if (next.tenantId.trim().toLowerCase() !== saved.tenantId.trim().toLowerCase()) body.oauthTenantId = next.tenantId.trim().toLowerCase();
+  if (next.clientId.trim() !== saved.clientId.trim()) body.oauthClientId = next.clientId.trim();
+  if (next.clientSecret.trim()) body.oauthClientSecret = next.clientSecret.trim();
+  if (next.scope.trim() !== saved.scope.trim()) body.oauthScope = next.scope.trim();
+  const models = parseLiteLlmModelList(next.models);
+  if (JSON.stringify(models) !== JSON.stringify(parseLiteLlmModelList(saved.models))) body.modelIds = models;
+  return Object.keys(body).length ? body : null;
+}
+
+export function liteLlmEntraUpdateSignsPeopleOut(body: Record<string, string | string[]>): boolean {
+  return ["oauthTenantId", "oauthClientId", "oauthClientSecret", "oauthScope"].some((key) => key in body);
+}
+
+export async function updateLiteLlmEntra(providerId: string, body: Record<string, string | string[]>, auditContext?: AuditOperationContext) {
+  return updateLiteLlm(providerId, body, auditContext, "Could not save the Microsoft sign-in settings");
+}
+
+async function updateLiteLlm(providerId: string, body: Record<string, string | string[]>, auditContext?: AuditOperationContext, failure = "Could not replace the LiteLLM key") {
   const { response, payload } = await requestJson(`/v1/inference-providers/${encodeURIComponent(providerId)}/litellm`, {
     method: "PATCH", body: JSON.stringify(body), headers: auditOperationHeaders(auditContext),
   }, 120000);
-  if (!response.ok) throw getRequestError(payload, response, `Could not replace the LiteLLM key (${response.status}).`);
+  if (!response.ok) throw getRequestError(payload, response, `${failure} (${response.status}).`);
   return readResult(payload);
 }
 

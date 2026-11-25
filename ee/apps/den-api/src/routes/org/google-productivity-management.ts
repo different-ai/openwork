@@ -3,8 +3,6 @@ import { bodyLimit } from "hono/body-limit"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled } from "../../features.js"
-import { markFeaturesUsed } from "../../feature-usage.js"
 import { calendarRecurrenceMatches, calendarRecurrenceFields, calendarRecurrenceSchema, calendarTimeZoneSchema, recurrenceToRrule, validateRecurrenceChoice, validateRecurrenceUntil } from "../../capability-sources/google-calendar-events.js"
 import { orgMemberRoute } from "../../middleware/route-access.js"
 import { jsonValidator, paramValidator, queryValidator } from "../../middleware/validation.js"
@@ -43,7 +41,7 @@ const eventPatchSchema = z.object({
   sendUpdates: sendUpdatesSchema,
   confirmNotifications: z.boolean().optional(),
   ...calendarRecurrenceFields,
-  recurrence: calendarRecurrenceSchema.nullable().optional().describe("Replace recurrence on the series master, not an occurrence. null clears recurrence. Setting recurrence/rrule requires both start and end dateTime values with explicit matching IANA timeZone. Requires googleCalendarRecurrence."),
+  recurrence: calendarRecurrenceSchema.nullable().optional().describe("Replace recurrence on the series master, not an occurrence. null clears recurrence. Setting recurrence/rrule requires both start and end dateTime values with explicit matching IANA timeZone."),
 }).strict().superRefine((input, ctx) => {
   validateRecurrenceChoice(input, ctx)
   if (input.start && "dateTime" in input.start && z.string().datetime({ offset: true }).safeParse(input.start.dateTime).success) validateRecurrenceUntil(input, input.start.dateTime, ctx)
@@ -92,7 +90,6 @@ const eventSchema = z.object({
 const eventReceiptSchema = z.object({ ok: z.literal(true), calendarId: z.string(), event: eventSchema, sendUpdates: sendUpdatesSchema.optional() })
 const cancelReceiptSchema = z.object({ ok: z.literal(true), calendarId: z.string(), eventId: z.string(), cancelled: z.literal(true), sendUpdates: sendUpdatesSchema })
 
-// Restrict to finite A1 rectangles, never whole columns/rows, named ranges, or arbitrary queries.
 function rangeDimensions(value: string) {
   const match = /^(?:(?:'([^'\r\n]|'')+'|[A-Za-z_][A-Za-z0-9_ ]*)!)?\$?([A-Za-z]{1,3})\$?([1-9][0-9]{0,6})(?::\$?([A-Za-z]{1,3})\$?([1-9][0-9]{0,6}))?$/.exec(value)
   if (!match) return null
@@ -172,6 +169,7 @@ function routeDescription(operationId: string, summary: string, response: z.ZodT
     401: jsonResponse("Sign in first.", unauthorizedSchema),
     409: jsonResponse("Connect with the required provider permission.", z.object({ error: z.literal("needs_connection"), message: z.string() })),
     413: jsonResponse("Request exceeds 1 MiB.", z.object({ error: z.literal("invalid_request"), message: z.string() })),
+    ...(/sheet/i.test(operationId) ? { 429: jsonResponse("Sheets quota reached. Wait before retrying.", z.object({ error: z.literal("rate_limited"), message: z.string(), retryAfterSeconds: z.number().int().positive() })) } : {}),
     502: jsonResponse("Google did not confirm the operation; do not blindly retry mutations.", upstreamErrorSchema),
   } })
 }
@@ -224,9 +222,6 @@ export function registerGoogleProductivityManagementRoutes<T extends { Variables
     const changingRecurrence = recurrence !== undefined || rrule !== undefined
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "unauthorized", message: "Sign in to an organization first." }, 401)
-    if (changingRecurrence && !await organizationFeatureEnabled(context.organization.id, "googleCalendarRecurrence", { userId: context.currentMember.userId })) {
-      return c.json({ error: "invalid_request", message: "Recurring meeting changes are disabled (googleCalendarRecurrence); omit recurrence/rrule." }, 400)
-    }
     const patch = { ...fields, ...(changingRecurrence ? { recurrence: recurrence === null ? [] : recurrence ? recurrenceToRrule(recurrence) : rrule } : {}) }
     const url = calendarUrl(calendarId, eventId)
     if (changingRecurrence) {
@@ -235,7 +230,6 @@ export function registerGoogleProductivityManagementRoutes<T extends { Variables
       const event = await confirmedBody(current.response, eventSchema)
       if (!event || event.id !== eventId) return unconfirmed(c, false)
       if (event.recurringEventId) return c.json({ error: "invalid_request", message: "Change recurrence on the series master using recurringEventId, not this occurrence ID. Use this occurrence ID only to edit one meeting." }, 400)
-      markFeaturesUsed({ organizationId: context.organization.id, memberId: context.currentMember.id, keys: ["googleCalendarRecurrence"] })
     }
     url.searchParams.set("sendUpdates", sendUpdates)
     url.searchParams.set("maxAttendees", "100")
@@ -261,7 +255,6 @@ export function registerGoogleProductivityManagementRoutes<T extends { Variables
     url.searchParams.set("sendUpdates", sendUpdates)
     const result = await requestGoogleAction(c, deps, calendarWriteScopes, url, { method: "DELETE" })
     if (!result.ok) return result.reply
-    // Calendar events.delete returns 204 with no resource body, unlike the other mutations.
     if (result.response.status !== 204) return unconfirmed(c, true)
     return c.json({ ok: true, calendarId, eventId, cancelled: true, sendUpdates })
   })

@@ -63,7 +63,6 @@ export type ToolCallEnded = {
   readonly input: unknown
   readonly durationMs: number
   readonly outcome: "success" | "failure"
-  /** Model-safe failure message; present only when `outcome` is `"failure"`. */
   readonly message?: string
 }
 
@@ -114,11 +113,6 @@ export class ToolReference {
   constructor(readonly path: ReadonlyArray<string>) {}
 }
 
-/**
- * Maximum nesting depth for values crossing a data boundary. Fixed (not a configurable
- * limit) purely because it produces a clearer diagnostic than a native stack-overflow
- * RangeError would.
- */
 const MAX_VALUE_DEPTH = 32
 
 export class ToolRuntimeError extends Error {
@@ -186,10 +180,6 @@ const copyBounded = (
     value === undefined ||
     typeof value === "string" ||
     typeof value === "boolean" ||
-    // NaN/Infinity are allowed to exist as in-sandbox intermediates (matching real JS and a real
-    // engine) so defensive guards like `Number.isNaN(x)` / `parseInt(x) || 0` can run. They are
-    // normalized to `null` when the value leaves the sandbox - see copyOut - exactly as
-    // JSON.stringify already does at any tool boundary.
     typeof value === "number"
   ) {
     return value
@@ -199,8 +189,6 @@ const copyBounded = (
     throw new ToolRuntimeError("InvalidDataValue", `${label} must contain data only.`)
   }
 
-  // An un-awaited promise never crosses a data checkpoint as `{}`; the diagnostic tells the
-  // model exactly how to fix the program instead.
   if (value instanceof SandboxPromise) {
     throw new ToolRuntimeError(
       "InvalidDataValue",
@@ -209,9 +197,6 @@ const copyBounded = (
   }
 
   if (preserveSandboxValues) {
-    // Intra-sandbox checkpoints keep sandbox value instances alive as leaves; their contents
-    // are never walked here (Map/Set members are validated where mutation happens, and the
-    // real boundary still serializes them below).
     if (
       value instanceof SandboxDate ||
       value instanceof SandboxRegExp ||
@@ -222,8 +207,6 @@ const copyBounded = (
     ) {
       return value
     }
-    // Host instances cannot normally reach an intra-sandbox checkpoint (tool results cross
-    // the boundary first), but wrap them defensively rather than degrading to JSON forms.
     if (value instanceof Date) return new SandboxDate(value.getTime())
     if (value instanceof RegExp) return new SandboxRegExp(value.source, value.flags)
     if (value instanceof Map) {
@@ -242,9 +225,6 @@ const copyBounded = (
     if (value instanceof URLSearchParams) return new SandboxURLSearchParams(new URLSearchParams(value))
   }
 
-  // Sandbox value types (and their host counterparts, which a host tool may legitimately
-  // return) serialize exactly as JSON.stringify would at the data boundary: Date/URL use
-  // toJSON(), while RegExp/Map/Set/URLSearchParams have no JSON form beyond {}.
   if (value instanceof SandboxDate) {
     return Number.isFinite(value.time) ? new Date(value.time).toISOString() : null
   }
@@ -296,9 +276,6 @@ const copyBounded = (
 
 export const copyOut = (value: unknown, undefinedAsNull = false): unknown => {
   if (value === undefined && undefinedAsNull) return null
-  // Normalize non-finite numbers to null as the value crosses out of the sandbox (final return
-  // and tool-call arguments both funnel through here), matching JSON semantics - NaN/Infinity
-  // have no JSON representation, so JSON.stringify would produce null anyway.
   if (typeof value === "number" && !Number.isFinite(value)) {
     return null
   }
@@ -350,18 +327,10 @@ export type DiscoveryPlan = {
 
 export type SearchEntry = {
   readonly description: ToolDescription
-  /** Top-level namespace (first path segment), matched by the search `namespace` option. */
   readonly namespace: string
-  /** Lowercased path + description + input property names/descriptions, for substring matching. */
   readonly searchText: string
 }
 
-/**
- * Split a query into lowercased search terms. camelCase boundaries are split
- * (`resolveLibrary` -> `resolve library`) and every non-alphanumeric character is a
- * separator, so `resolve-library-id`, `resolveLibraryId`, and `resolve library id` all
- * tokenize alike. Empties and the `*` wildcard are dropped.
- */
 const tokenize = (query: string): Array<string> =>
   query
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -369,13 +338,6 @@ const tokenize = (query: string): Array<string> =>
     .split(/[^a-z0-9]+/)
     .filter((term) => term.length > 0 && term !== "*")
 
-/**
- * A term plus its naive singular variants (trailing "s"/"es" stripped), so a plural
- * query term ("issues") still matches indexed text that only carries the singular
- * ("issue"). Matching is one-directional substring containment, so the variants are
- * needed only on the query side; scoring weights are unchanged - each field check
- * passes when ANY form matches.
- */
 const termForms = (term: string): Array<string> => {
   const forms = [term]
   if (term.endsWith("es") && term.length > 3) forms.push(term.slice(0, -2))
@@ -397,8 +359,6 @@ const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition => 
         request.namespace === undefined
           ? searchIndex
           : searchIndex.filter((entry) => entry.namespace === request.namespace)
-      // A query that names one tool path exactly (canonical path or rendered JavaScript
-      // expression) is a lookup, not a search: return that tool alone.
       const trimmed = query.trim()
       const pathQuery = trimmed.startsWith("tools.") ? trimmed.slice("tools.".length) : trimmed
       const exact =
@@ -408,9 +368,6 @@ const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition => 
               (entry) => entry.description.path === pathQuery || toolExpression(entry.description.path) === trimmed,
             )
       const terms = tokenize(query).map(termForms)
-      // Additive field-weighted scoring, summed across terms: exact path or path segment
-      // (20) > path substring (8) > description substring (4) > any searchable text,
-      // including input parameter names and descriptions (2).
       const ranked =
         exact !== undefined
           ? [exact]
@@ -451,7 +408,6 @@ const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition => 
 const searchDescription = describeDefinition(`${reservedNamespace}.search`, makeSearchTool([]))
 
 const catalogLine = (tool: ToolDescription) => {
-  // Keep the tool description concise; the full schema documentation remains in the signature.
   const line = tool.description.split("\n", 1)[0]!.trim()
   const description = line.length > 120 ? line.slice(0, 119) + "..." : line
   return description === "" ? `  - ${tool.signature}` : `  - ${tool.signature} // ${description}`
@@ -508,12 +464,6 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
   }
   const ordered = [...namespaces].sort(([left], [right]) => left.localeCompare(right))
 
-  // Select which signatures fit the budget before emitting, so the list can state
-  // exactly how comprehensive it is. Round-robin fairness: in each round (namespaces
-  // alphabetical), every namespace still holding un-inlined tools tries to place its
-  // next-cheapest line against the shared budget; a namespace whose next line does not
-  // fit is done - the others keep going - so every namespace gets some representation
-  // before any namespace gets everything.
   const selections = ordered.map(([namespace, group]) => ({
     namespace,
     picked: new Set<ToolDescription>(),
@@ -545,10 +495,6 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
 
   const empty = described.length === 0
 
-  // Section order is deliberate: workflow first (the top is the least likely part of a long
-  // description to be truncated or skimmed away), then rules, then syntax, with the budgeted
-  // catalog at the bottom. Example call forms use placeholders - never a real or fabricated
-  // tool name - and show both dot and bracket notation so non-identifier names are not normalized.
   const intro = [
     empty
       ? "This is a restricted JavaScript language for calling tools, not a general-purpose runtime."
@@ -560,8 +506,6 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
       : ["Do not infer or normalize tool names; use only exact signatures shown below or returned by search."]),
   ]
 
-  // The search step exists only when search is advertised (PARTIAL catalog); a COMPLETE
-  // catalog already shows every signature, so step 1 picks from the list instead.
   const workflow = empty
     ? []
     : [
@@ -623,8 +567,6 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
     for (const [namespace, group] of ordered) {
       const picked = shown.get(namespace)!
       const count = `${group.length} tool${group.length === 1 ? "" : "s"}`
-      // Annotate only when a namespace is not fully shown, so a comprehensive
-      // namespace reads cleanly and a truncated one is unambiguous.
       const label =
         picked.size === group.length
           ? count
@@ -647,13 +589,6 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
   }
 }
 
-/**
- * The enumerable names at one node of the callable tool tree - namespace names at the root,
- * tool/namespace names below - powering `Object.keys(tools)` and `for...in` over tool
- * references. A callable tool is a leaf and enumerates as `[]` (like `Object.keys` of a
- * function in JS). An unknown path is an `UnknownTool` error pointing at the working
- * discovery idioms, mirroring how calling an unknown tool fails.
- */
 const namespaceKeys = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): ReadonlyArray<string> => {
   let value: HostTool<R> | Definition<R> | HostTools<R> = tools
   for (const segment of path) {
@@ -701,13 +636,11 @@ export type ToolRuntime<R = never> = {
   readonly root: ToolReference
   readonly calls: Array<ToolCall>
   readonly invoke: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
-  /** Enumerable namespace/tool names at one node of the callable tool tree; see `namespaceKeys`. */
   readonly keys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
 }
 
 export const make = <R>(
   tools: HostTools<R>,
-  /** Undefined means unlimited tool calls. */
   maxToolCalls: number | undefined,
   searchIndex: ReadonlyArray<SearchEntry>,
   hooks?: ToolCallHooks<R>,
@@ -718,8 +651,6 @@ export const make = <R>(
     [reservedNamespace]: { search: makeSearchTool(searchIndex) },
   }
 
-  // Wraps the settling portion of a tool call so onToolCallEnd observes success and failure
-  // symmetrically. Interruption (e.g. the execution timeout) fires neither outcome.
   const observeEnd = <A, E>(effect: Effect.Effect<A, E, R>, call: ToolCallStarted): Effect.Effect<A, E, R> => {
     const onEnd = hooks?.onToolCallEnd
     if (onEnd === undefined) return effect

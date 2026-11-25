@@ -56,7 +56,6 @@ export function connectionActionTextFallback(payload: ConnectionActionPayload): 
   ].filter((line): line is string => line !== null).join("\n")
 }
 
-/** Attach one unambiguous connection card directly to discovery. */
 export function connectionActionSearchCard(matches: readonly { kind?: string }[]) {
   const targets = new Map<string, ConnectionActionPayload>()
   for (const match of matches) {

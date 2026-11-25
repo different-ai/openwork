@@ -30,8 +30,6 @@ const devEmailListSchema = z.object({ emails: z.array(z.object({}).passthrough()
 const devEmailsDescription = "Development-only email outbox used by evals. Answers 404 unless the server runs with OPENWORK_DEV_MODE=1, so production deployments never expose email HTML. Optional `template` query parameter filters by email template."
 
 export function registerDevRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
-  // Dev/eval-only email outbox. These endpoints intentionally 404 unless
-  // OPENWORK_DEV_MODE=1 so production deployments do not expose email HTML.
   app.get(
     "/v1/dev/emails",
     describeRoute({

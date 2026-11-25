@@ -13,7 +13,6 @@ function storedScopes(): Record<string, unknown> {
   } catch { return {}; }
 }
 
-/** Display-only, account/workspace scoped. Never used as entitlement or routing evidence. */
 export function readModelDisplayMemory(scope: string): Map<string, RememberedModel> {
   const records = storedScopes()[scope];
   if (!Array.isArray(records)) return new Map();
@@ -50,5 +49,5 @@ export function rememberModelDisplayNames(scope: string, models: Map<string, Rem
     const keys = Object.keys(scopes);
     for (const key of keys.slice(0, Math.max(0, keys.length - MAX_SCOPES))) delete scopes[key];
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(scopes));
-  } catch { /* Storage unavailable: the in-memory catalog still names warm-session removals. */ }
+  } catch {}
 }

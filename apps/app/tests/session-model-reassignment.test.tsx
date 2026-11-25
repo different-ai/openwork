@@ -26,9 +26,9 @@ const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 afterAll(async () => { Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct); await GlobalRegistrator.unregister(); });
 
-async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean; deny?: boolean; wrongReadback?: boolean; disconnected?: boolean } = {}) {
+async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean; deny?: boolean; wrongReadback?: boolean; disconnected?: boolean; status?: string } = {}) {
   useSessionModelStore.getState().setModel("ses_target", { providerID: "rebind", modelID: "model-a" });
-  useSessionManagementStore.setState({ pinnedIds: [] });
+  useSessionManagementStore.setState({ pinnedIds: [], unreadIds: [] });
   const writes: unknown[] = [];
   const renames: Array<{ path: string; method: string; authorization: string | null; body: unknown }> = [];
   const reloadedWorkspaces: string[] = [];
@@ -71,7 +71,8 @@ async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean
   } : null;
   function Register() {
     useSessionControlActions({ workspaces, selectedWorkspaceId: "one", selectedWorkspaceRoot: "/tmp/one", selectedSessionId: null,
-      sessionsByWorkspaceId: { two: [{ id: "ses_target", time: { archived: options.archived ? 123 : 0 } }] }, canCreateTask: false, openworkClient: client, opencodeClient: null, endpointForWorkspace,
+      sessionsByWorkspaceId: { two: [{ id: "ses_target", time: { updated: 1_700_000_000, archived: options.archived ? 123 : 0 } }] }, canCreateTask: false,
+      sessionStatusById: options.status ? { ses_target: options.status } : undefined, openworkClient: client, opencodeClient: null, endpointForWorkspace,
       navigateToSession: () => { throw new Error("Must not navigate"); }, navigateToSessionRoot: () => { throw new Error("Must not navigate"); },
       createTaskInWorkspace: () => null, openModelPicker: () => { throw new Error("Must not open picker"); }, refreshRouteState: () => {},
       reloadWorkspaceSessions: async (workspaceId) => { reloadedWorkspaces.push(workspaceId); }, archiveSession: async () => ({ kind: "done" }),
@@ -89,7 +90,12 @@ async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean
     await act(async () => { response = await api.command({ id, args, origin: { sessionId: "ses_requester" } }); });
     return response;
   };
-  return { writes, renames, reloadedWorkspaces, command, run: (extra: Record<string, unknown> = {}) => command("session.set_model", {
+  const query = async (id: string, args: Record<string, unknown>) => {
+    let response: Awaited<ReturnType<typeof api.query>> | undefined;
+    await act(async () => { response = await api.query({ id, args }); });
+    return response;
+  };
+  return { writes, renames, reloadedWorkspaces, command, query, run: (extra: Record<string, unknown> = {}) => command("session.set_model", {
     sessionId: "ses_target", providerId: "rebind", modelId: "model-b", ...extra,
   }) };
 }
@@ -180,4 +186,13 @@ test("pin rejects missing and archived targets but stale pins can still be remov
   expect(await fixture.command("session.pin", { sessionId: "ses_missing" })).toMatchObject({ ok: true, result: { pinned: false } });
   expect(await fixture.command("session.pin", { sessionId: "ses_target" })).toMatchObject({ ok: true, result: { pinned: false } });
   expect(useSessionManagementStore.getState().pinnedIds).toEqual([]);
+});
+
+test("session.settle is gone: archive replaces it", async () => {
+  const fixture = await mount();
+  expect(await fixture.command("session.settle", { sessionId: "ses_target", settled: true })).toMatchObject({ ok: false });
+  const listed = await fixture.query("session.list_sessions", {});
+  expect(listed).toMatchObject({ ok: true, result: [{ sessionId: "ses_target" }] });
+  expect(JSON.stringify(listed)).not.toContain("settled");
+  expect(fixture.writes).toEqual([]);
 });

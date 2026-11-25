@@ -1,4 +1,3 @@
-/** Discovery advertisements are not grants. In particular, /readonly only describes a tool endpoint. */
 type ScopeDiscovery = {
   authentication: {
     requiredScopes: readonly string[];
@@ -23,7 +22,6 @@ function unique(scopes: readonly string[]): string[] {
   return [...new Set(scopes)];
 }
 
-/** Only for newly reviewed setup. Never apply this to saved connections or infer scopes from tool hints. */
 export function connectorOAuthAccess(discovery: ScopeDiscovery | null, preset?: ScopePreset | null): ConnectorOAuthAccess {
   const authentication = discovery?.authentication;
   const requiredScopes = unique(authentication?.requiredScopes ?? []);
@@ -34,7 +32,6 @@ export function connectorOAuthAccess(discovery: ScopeDiscovery | null, preset?: 
     ...(preset?.defaultOAuthScopes ?? []),
   ]);
   const optionalScopes = advertised.filter((scope) => !requiredScopes.includes(scope));
-  // Keep provider-required challenge scopes; do not automatically select every advertised capability.
   const selectedDefault = unique([...requiredScopes, ...(preset?.defaultOAuthScopes ?? [])]);
   const conflictingScopes = authentication?.resourceScopesSupported === undefined ? []
     : requiredScopes.filter((scope) => !authentication.resourceScopesSupported?.includes(scope));
@@ -48,7 +45,6 @@ export function connectorOAuthAccess(discovery: ScopeDiscovery | null, preset?: 
   return { requiredScopes, optionalScopes, selectedDefault, conflictingScopes, requiresScopeChoice, warnings };
 }
 
-/** An explicit admin selection replaces recommendations, but never silently removes challenge requirements. */
 export function requestedScopeSelection(discovery: ScopeDiscovery | null, selected: readonly string[]): string[] {
   return unique([...(discovery?.authentication.requiredScopes ?? []), ...selected]);
 }

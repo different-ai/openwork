@@ -12,14 +12,12 @@ import { ORG_SCOPE_HEADER } from "../../../_lib/org-scope";
 import { applyIntroEvent } from "./model";
 import type { FeatureIntroKey } from "./types";
 
-/** Per member and organization: which intros were seen, dismissed or acted on (`/v1/me/feature-intros`). */
 const featureIntrosPath = "/v1/me/feature-intros";
 
 export function featureIntroStatesQueryKey(orgId: string): string[] {
   return ["feature-intros", orgId];
 }
 
-/** Loads only while the `featureIntros` flag is on for the organization. */
 export function useFeatureIntroStates(orgId: string | null, enabled: boolean) {
   return useQuery({
     queryKey: featureIntroStatesQueryKey(orgId ?? ""),
@@ -42,10 +40,6 @@ export function useFeatureIntroStates(orgId: string | null, enabled: boolean) {
 
 export type FeatureIntroEvent = Omit<FeatureIntroEventRequest, "introKey"> & { introKey: FeatureIntroKey };
 
-/**
- * Records seen / dismissed / cta_clicked. Updates the cached states first so
- * dots and banners react at once; a failed write rolls back quietly.
- */
 export function useFeatureIntroEvent(orgId: string | null) {
   const queryClient = useQueryClient();
   const key = featureIntroStatesQueryKey(orgId ?? "");

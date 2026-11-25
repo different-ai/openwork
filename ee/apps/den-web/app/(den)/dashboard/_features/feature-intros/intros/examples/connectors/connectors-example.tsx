@@ -4,7 +4,6 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows, ExampleServiceMark } from "../example-parts";
 import { connectorsExampleActivity, connectorsExampleRows } from "./connectors-example-data";
 
-/** Section example: the apps the team connected, who has each, and what people's AI did with them. */
 export function ConnectorsExample() {
   const step = useExampleStep(connectorsExampleRows.length);
   const active = step === null ? null : connectorsExampleRows[step]?.service ?? null;

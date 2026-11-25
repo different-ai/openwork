@@ -1,8 +1,3 @@
-/**
- * The latest change to a feature, as den-api returns it (`lastChange`), and the
- * one line /admin shows for it: "On for this organization by Omar · 26 Oct 2026, 14:03".
- */
-
 export type AdminFeatureChange = {
   scope: "everyone" | "organization" | "member";
   action: "on" | "off" | "reset" | "killed" | "restored";
@@ -48,10 +43,6 @@ export function formatFeatureChangeTime(at: string, locale?: string): string {
   return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(at));
 }
 
-/**
- * "On by Omar McAdam · 26 Oct 2026, 14:03". Pass `showScope` where changes from
- * more than one scope can appear (an organization's or member's Features list).
- */
 export function describeFeatureChange(change: AdminFeatureChange, options: { showScope?: boolean; locale?: string } = {}): string {
   const who = change.by ? ` by ${change.by.name.trim() || change.by.email}` : "";
   return `${actionWords(change, options.showScope ?? false)}${who} · ${formatFeatureChangeTime(change.at, options.locale)}`;

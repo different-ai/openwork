@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FocusEvent, type KeyboardEvent, type RefObject } from "react"
 
-/**
- * Shared behaviour for every field where a person types a secret (API keys,
- * client secrets, tokens, service-account keys). Each app composes its own
- * styled primitives around this, so the privacy rules live in one place.
- */
-
 /** Shown for a stored secret. Fixed, so nothing about the value leaks. */
 export const MASKED_SECRET = "••••••••"
 
@@ -54,12 +48,10 @@ export function isJsonSecret(value: string, maxLength = 65_536): boolean {
 
 export type SecretRevealControls<T extends HTMLElement> = {
   revealed: boolean
-  /** Spread on the input or textarea. */
   fieldProps: {
     onBlur: (event: FocusEvent<T>) => void
     onKeyDown: (event: KeyboardEvent<T>) => void
   }
-  /** Spread on the show/hide button. */
   toggleProps: {
     ref: RefObject<HTMLButtonElement | null>
     "aria-pressed": boolean
@@ -103,7 +95,6 @@ export function useSecretReveal<T extends HTMLElement>(options: {
       "aria-pressed": revealed,
       "aria-label": revealed ? labels.hide : labels.show,
       disabled: disabled || !hasValue,
-      // Keep focus in the field so the reveal never outlives typing.
       onMouseDown: (event) => event.preventDefault(),
       onClick: () => { setRevealed((value) => !value); field.current?.focus() },
       onBlur: (event) => { if (event.relatedTarget !== field.current) setRevealed(false) },

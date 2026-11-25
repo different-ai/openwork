@@ -13,7 +13,6 @@ import {
 
 export type OpencodeEngineClient = EngineSwitchClient;
 
-/** Engine selection shared by Advanced settings and the command palette. */
 export function useOpencodeEngineControls(client: OpencodeEngineClient | null | undefined, active = true) {
   const [status, setStatus] = useState<EngineV2PreviewStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +41,6 @@ export function useOpencodeEngineControls(client: OpencodeEngineClient | null | 
     : !status ? "Checking chat engine…" : undefined;
   const disabled = Boolean(blockedReason) || busy;
   const selected: ChatEngine = status ? selectedChatEngine(status) : "v1";
-  // Policy and shared-history safety both keep v1 visible but locked (DESIGN P4).
   const v2Only = status?.v2Only === true;
   const v1Locked = status?.v1UnavailableReason || (v2Only ? V2_ONLY_REASON : undefined);
   const select = (engine: ChatEngine) => {

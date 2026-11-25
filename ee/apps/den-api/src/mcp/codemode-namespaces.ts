@@ -22,10 +22,6 @@ export function codemodeScriptPath(namespace: string, toolName: string): string 
 
 const BRACKET_SEGMENT_PATTERN = /\["((?:[^"\\]|\\.)*)"\]/gu
 
-/**
- * The name Code Mode records for a call (its path joined with "."), for a
- * script path: `tools.notion["notion-query"]` becomes `notion.notion-query`.
- */
 export function codemodeCallName(scriptPath: string): string {
   return scriptPath.replace(/^tools\./u, "").replace(BRACKET_SEGMENT_PATTERN, (match, body: string) => {
     const segment: unknown = JSON.parse(`"${body}"`)
@@ -95,6 +91,7 @@ export type CodemodeConnectionNamespaceContext = {
 type CodemodeMemberIdentity = {
   orgMembershipId: DenTypeId<"member">
   teamIds: DenTypeId<"team">[]
+  withheldConnectionIds?: ReadonlySet<string>
 }
 
 export async function resolveCodemodeConnectionNamespaceContext(input: {
@@ -122,12 +119,10 @@ export async function resolveCodemodeConnectionNamespaceContext(input: {
       organizationId,
       orgMembershipId: input.member.orgMembershipId,
       teamIds: input.member.teamIds,
+      withheldConnectionIds: input.member.withheldConnectionIds,
     }),
   ])
   const codemodeNativeProviderEntries = nativeProviderEntries.filter((entry) => entry.connectedForMe === true)
-  // Search chooses a bounded, query-ranked set to probe. Workflow namespaces
-  // must include every eligible connection, including those found beyond that
-  // search batch. Tool discovery already has a shared deadline and worker pool.
   const codemodeExternalMcpConnections = externalMcpConnections.filter(isCodemodeEligibleConnection)
 
   return {

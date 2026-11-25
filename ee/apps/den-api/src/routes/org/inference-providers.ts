@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto"
 import { and, desc, eq, gt, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthSessionTable, GatewayCredentialSetTable, GatewayLiteLlmIssuedKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
+import { AuthSessionTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_CREDENTIAL_STATUSES, GATEWAY_PROVIDER_STATUSES, type GatewayAccessGrantWrite, type GatewayProviderConnectResponse, type GatewayProviderSummary } from "@openwork/types/den/gateway"
-import { GATEWAY_MEMBER_SIGN_IN_METHODS, gatewayAwsSsoSettingsSchema, gatewayMemberConnectionsResponseSchema } from "@openwork/types/den/inference"
+import { GATEWAY_MEMBER_SIGN_IN_METHODS, gatewayAwsSsoSettingsSchema, gatewayMemberConnectionsResponseSchema, microsoftApiScopeError, microsoftTenantIdSchema } from "@openwork/types/den/inference"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { sessionTokenMatches } from "../../session-token.js"
@@ -22,20 +22,22 @@ import { gatewayMemberConnections } from "../../llm/gateway-member-connections.j
 import { requestGatewayProviderTest } from "../../llm/gateway-provider-test.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { GatewayWriteError, normalizeCredential, reusableAwsCredential, enableGatewayGroupModels, gatewayCatalog, effectiveGatewaySummaryGrants, gatewayGrantSummary, gatewaySummary, readGatewaySummaries, refreshGatewayCatalog, resolveGatewayCatalog, trustedProviderCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
-import { buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "../../llm/inference-provider-config.js"
+import { buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, nonSecretProviderConfig, readProviderConfigNpm, upstreamBaseUrlSettingError } from "../../llm/inference-provider-config.js"
 import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, googleOAuthClientBinding, googleOAuthNonce, readGoogleOAuthAttempt, revokeGoogleToken, verifyGoogleIdentity } from "../../llm/inference-provider-google-oauth.js"
 import { buildMicrosoftAuthorizeUrl, exchangeMicrosoftAuthorizationCode, microsoftOAuthNonce, verifyMicrosoftIdentity } from "../../llm/inference-provider-microsoft-oauth.js"
-import { gatewayMemberSignInMethod, memberSignInBinding, memberSignInBrand, memberSignInConfigurationError, readAwsSsoSettings, type GatewayMemberSignInMethod } from "../../llm/gateway-member-sign-in.js"
+import { memberSignInBinding, memberSignInBrand, memberSignInConfigurationError, providerMemberSignInMethod, providerMemberSignInScope, readAwsSsoSettings, type GatewayMemberSignInMethod } from "../../llm/gateway-member-sign-in.js"
 import { awsSsoFetch, pollAwsSsoSignIn, readAwsSsoAttempt, startAwsSsoSignIn } from "../../llm/inference-provider-aws-sso.js"
-import { AwsSsoError, logoutAwsSso } from "@openwork-ee/utils/aws-identity-center"
+import { AwsSsoError, logoutAwsSso } from "@openwork-ee/gateway-upstreams"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeUpstreamCredentials } from "../../llm/inference-provider-lifecycle.js"
 import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
-import { getModelsDevProvider } from "../../llm/models-dev.js"
-import { LiteLlmError, createLiteLlmClient, normalizeLiteLlmBaseUrl } from "../../llm/litellm.js"
-import { liteLlmCatalogProvider } from "../../llm/litellm-settings.js"
-import { deleteLiteLlmIssuedKeys, liteLlmMemberIssueStatus, provisionLiteLlmMember, pruneLiteLlmIssuedKeys, reconcileLiteLlmIssuedKeys, scheduleLiteLlmProvisioning } from "../../llm/litellm-issued.js"
-import { applyLiteLlmSync, connectLiteLlmMemberKey, createLiteLlmProvider, liteLlmAdminKey, updateLiteLlmIssueSettings, disconnectLiteLlmMember, emptySettings, liteLlmEndpoints, liteLlmErrorResponse, liteLlmMemberSet, planLiteLlmCatalog, planLiteLlmSync, pruneLiteLlmAssignments, readLiteLlmSettings, recordLiteLlmSyncError, replaceLiteLlmSyncKey, verifyLiteLlmKey } from "../../llm/litellm-sync.js"
-import { LITELLM_PROVIDER_ID, isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { getModelsDevCatalogProviders, getModelsDevProvider } from "../../llm/models-dev.js"
+import { LiteLlmError, createLiteLlmClient, liteLlmStaticModels, normalizeLiteLlmBaseUrl, verifyLiteLlmEntraToken } from "../../llm/litellm.js"
+import { isLiteLlmEntraSignIn, liteLlmCatalogProvider } from "../../llm/litellm-settings.js"
+import { liteLlmMemberIssueStatus, provisionLiteLlmMember, pruneLiteLlmIssuedKeys, reconcileLiteLlmIssuedKeys, scheduleLiteLlmProvisioning } from "../../llm/litellm-issued.js"
+import { applyLiteLlmSync, connectLiteLlmMemberKey, createLiteLlmEntraProvider, createLiteLlmProvider, liteLlmAdminKey, updateLiteLlmEntraProvider, updateLiteLlmIssueSettings, disconnectLiteLlmMember, emptyEntraSettings, emptySettings, liteLlmEndpoints, liteLlmErrorResponse, liteLlmMemberSet, planLiteLlmCatalog, planLiteLlmSync, pruneLiteLlmAssignments, readLiteLlmSettings, recordLiteLlmSyncError, replaceLiteLlmSyncKey, verifyLiteLlmKey } from "../../llm/litellm-sync.js"
+import { isSupportedGatewayNpm, LITELLM_PROVIDER_ID, isLiteLlmProviderId, TRUEFOUNDRY_PROVIDER_ID, isTrueFoundryProviderId } from "@openwork-ee/gateway-catalog"
+import { TrueFoundryError, createTrueFoundryClient, normalizeTrueFoundryEndpoints } from "../../llm/truefoundry.js"
+import { applyTrueFoundryCatalog, createTrueFoundryProvider, resetTrueFoundryMemberTokens, emptyTrueFoundrySettings, planTrueFoundryCatalog, planTrueFoundrySync, provisionTrueFoundryMember, pruneTrueFoundryMembers, readTrueFoundrySettings, reconcileTrueFoundryMembers, recordTrueFoundrySyncError, scheduleTrueFoundryProvisioning, trueFoundryCall, trueFoundryCatalogProvider, trueFoundryEndpoints, trueFoundryErrorResponse, trueFoundryMemberStatus, updateTrueFoundryProvider } from "../../llm/truefoundry-sync.js"
 import { decodeProviderCredential, readProviderEnvNames, runtimeProviderEnvNames } from "../../llm/provider-credentials.js"
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, userSessionRoute } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, htmlResponse, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -46,10 +48,15 @@ import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgGatewayUsageRoutes } from "./gateway-usage.js"
 import { registerOrgGatewayUsageLimitRoutes } from "./gateway-usage-limits.js"
 import { registerOrgProviderInventoryRoutes } from "./provider-inventory.js"
+import { registerOrgDeviceProviderShareRoutes } from "./device-provider-share.js"
 import { credentialPromptSchema } from "@openwork/types/den/credential-prompt"
-import { GatewayProviderUsageLimitsError, GatewayUsageError, lockUsageOrganization, settleGatewayProviderUsageLimits } from "@openwork-ee/den-db/gateway-usage-limits"
+import { GatewayProviderUsageLimitsError, GatewayUsageError, lockUsageOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import { GATEWAY_PROVIDER_HAS_USAGE_LIMITS, GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS, gatewayProviderHasUsageLimitsSchema, type GatewayProviderRemovalLimitChoice } from "@openwork/types/den/gateway-usage-limits"
 import { credentialPromptResponseFields, gatewayCredentialShape, gatewayProviderCredentialPrompt, gatewayUpstreamDestination } from "../../credential-prompt.js"
+import { GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomCreateRequestSchema, gatewayCustomDiscoverRequestSchema, gatewayCustomDiscoverResponseSchema, gatewayCustomProviderStatusSchema, gatewayCustomTestRequestSchema, gatewayCustomTestResponseSchema, gatewayCustomTestStep, gatewayCustomUpdateRequestSchema, isGatewayCustomProviderId, type GatewayCustomModel, type GatewayCustomProviderSettings, type GatewayCustomTestResponse } from "@openwork/types/den/gateway-custom-providers"
+import { discoverCustomProviderModels } from "../../llm/custom-provider-discovery.js"
+import { checkCustomBaseUrl, customCatalogProvider, customProviderConfig, readCustomProviderSettings, sameCustomOrigin } from "../../llm/gateway-custom-provider.js"
+import { gatewayProviderSettingsSchema, patchGatewayProvider, removeGatewayAccessGrant, removeGatewayCredentialSet, removeGatewayModelGroup, removeGatewayProvider } from "../../llm/gateway-provider-writes.js"
 
 const paramsSchema = idParamSchema("inferenceProviderId", "inferenceProvider")
 const groupParams = paramsSchema.extend(idParamSchema("groupId", "gatewayModelGroup").shape)
@@ -68,7 +75,24 @@ const oauthFields = {
   oauthTenantId: z.string().trim().max(64).optional().describe("Microsoft Foundry member sets: the Entra ID directory (tenant) ID. Empty string clears."),
   awsSso: gatewayAwsSsoSettingsSchema.nullable().optional().describe("Amazon Bedrock member sets: IAM Identity Center access portal URL, its region, the AWS account ID and the permission set name members get. null clears."),
 }
-const groupWrite = z.object({ name: nameSchema, description: z.string().max(10000).nullable().optional(), modelIds: modelIdsSchema, status: z.enum(GATEWAY_PROVIDER_STATUSES).optional() }).strict()
+const groupWriteFields = {
+  name: nameSchema,
+  description: z.string().max(10000).nullable().optional(),
+  status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(),
+}
+const groupMembershipWriteFields = { modelIds: modelIdsSchema.optional(), allModels: z.literal(true).optional() }
+function exclusiveGroupMembership(input: { modelIds?: string[]; allModels?: true }, ctx: z.RefinementCtx) {
+  if (input.modelIds !== undefined && input.allModels === true) {
+    ctx.addIssue({ code: "custom", message: "Specify either modelIds or allModels, not both." })
+  }
+}
+const groupCreateWrite = z.object({ ...groupWriteFields, ...groupMembershipWriteFields }).strict().superRefine((input, ctx) => {
+  exclusiveGroupMembership(input, ctx)
+  if (input.modelIds === undefined && input.allModels !== true) {
+    ctx.addIssue({ code: "custom", message: "Specify modelIds or allModels: true." })
+  }
+})
+const groupPatchWrite = z.object({ ...groupWriteFields, name: nameSchema.optional(), ...groupMembershipWriteFields }).strict().superRefine(exclusiveGroupMembership)
 const setWrite = z.object({ name: nameSchema, credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), credential: credentialSchema.optional(), apiKeys: apiKeysSchema.optional(), ...oauthFields, status: z.enum(GATEWAY_PROVIDER_STATUSES).optional() }).strict()
 const audienceSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("organization") }).strict(),
@@ -76,18 +100,21 @@ const audienceSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("member"), memberId: denTypeIdSchema("member") }).strict(),
 ])
 const grantWrite = z.object({ modelGroupId: denTypeIdSchema("gatewayModelGroup"), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), audience: audienceSchema }).strict()
-const settingsSchema = z.object({ project: z.string().trim().max(255).optional(), location: z.string().trim().max(63).optional(), resourceName: z.string().trim().max(63).optional(), apiVersion: z.string().trim().max(64).optional(), region: z.string().trim().max(63).optional(), upstreamBaseUrl: z.string().trim().max(2048).optional() }).strict()
+const settingsSchema = gatewayProviderSettingsSchema
 const legacyFields = { credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES).optional(), credential: credentialSchema.optional(), apiKeys: apiKeysSchema.optional(), ...oauthFields, allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }
 const universeSchema = modelIdsSchema.describe("Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.")
 const reuseCredentialFromSchema = denTypeIdSchema("inferenceProvider").describe("Amazon Bedrock only: copy the organization AWS keys of another Amazon Bedrock provider in this organization, server-side. Mutually exclusive with credential and apiKeys.")
-const createSchema = z.object({ name: nameSchema, providerId: nameSchema, modelIds: universeSchema.default([]), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields, reuseCredentialFrom: reuseCredentialFromSchema.optional() }).strict().superRefine(singleCredential)
+const createSchema = z.object({ name: nameSchema, providerId: nameSchema, modelIds: universeSchema.default([]), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields, reuseCredentialFrom: reuseCredentialFromSchema.optional(), shareFromDevice: z.literal(true).optional().describe("Atomically refuse if this organization already has an active provider for the catalog id. Requires an explicit shared API key and Everyone grant; no credential or audience mutation of existing providers.") }).strict().superRefine(singleCredential).superRefine((input, ctx) => {
+  if (input.shareFromDevice && (input.credential?.kind !== "api_key" || input.allMembers !== true || input.credentialMode === "member" || input.status === "disabled")) {
+    ctx.addIssue({ code: "custom", message: "Sharing a device provider needs a shared API key, active status and explicit Everyone access." })
+  }
+})
 const patchSchema = z.object({ name: nameSchema.optional(), providerId: nameSchema.optional(), modelIds: universeSchema.optional(), pinnedModelIds: pinnedModelIdsSchema.optional(), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields }).strict().superRefine((input, ctx) => {
   singleCredential(input, ctx)
   if (input.pinnedModelIds !== undefined && Object.keys(input).length !== 1) {
     ctx.addIssue({ code: "custom", path: ["pinnedModelIds"], message: "Update pinned models separately from provider configuration." })
   }
 })
-// The gateway tests settings.upstreamBaseUrl only for an origin its operator allowlisted.
 const testConnectionSchema = z.object({ providerId: nameSchema, model: nameSchema, settings: settingsSchema.optional(), credential: credentialSchema.optional(), apiKeys: apiKeysSchema.optional(), reuseCredentialFrom: reuseCredentialFromSchema.optional() }).strict().superRefine(singleCredential)
 const testConnectionResultSchema = z.object({ ok: z.boolean(), model: z.string(), status: z.number().int().nullable(), code: z.string().nullable(), message: z.string().nullable() }).meta({ ref: "GatewayProviderTestResult" })
 const TEST_CONNECTION_WINDOW_MS = 10 * 60_000
@@ -99,7 +126,7 @@ function singleCredential(input: { credential?: unknown; apiKeys?: unknown; reus
   }
 }
 
-const groupSchema = groupWrite.extend({ id: denTypeIdSchema("gatewayModelGroup"), description: z.string().nullable(), status: z.enum(GATEWAY_PROVIDER_STATUSES) })
+const groupSchema = z.object({ name: nameSchema, description: z.string().nullable(), modelIds: modelIdsSchema, status: z.enum(GATEWAY_PROVIDER_STATUSES), id: denTypeIdSchema("gatewayModelGroup") }).strict()
 const credentialStatus = z.enum(["ready", "member_auth_required", "org_credential_missing"])
 const setSchema = z.object({ id: denTypeIdSchema("gatewayCredentialSet"), name: z.string(), createdAt: z.string().datetime().optional(), createdBy: z.object({ id: denTypeIdSchema("member"), name: z.string().nullable(), email: z.string().nullable() }).nullable().optional().describe("Who created the set. Omitted unless the caller holds Manage Gateway providers."), credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), status: z.enum(GATEWAY_PROVIDER_STATUSES), configured: z.boolean(), credentialStatus, oauthClientId: z.string().nullable().optional(), hasOauthClientSecret: z.boolean().optional(), oauthTenantId: z.string().nullable().optional(), awsSso: gatewayAwsSsoSettingsSchema.nullable().optional() })
 const grantSchema = grantWrite.extend({ id: denTypeIdSchema("inferenceProviderAccess") })
@@ -112,8 +139,17 @@ const summarySchema = z.object({
   authorizationRequests: z.array(z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet"), name: z.string(), authUrl: z.string(), models: z.array(modelSchema).optional() })),
   migration: z.object({ llmProviderId: denTypeIdSchema("llmProvider"), runtimeEnvNames: z.array(z.string()) }).optional(),
 }).meta({ ref: "GatewayProviderSummary" })
-const liteLlmStatusSchema = z.object({ mode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), keySource: z.enum(["personal", "issued"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable(), issuedMemberCount: z.number().int(), attentionCount: z.number().int(), attention: z.array(z.object({ memberId: denTypeIdSchema("member"), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_litellm", "no_key_to_mirror", "no_models", "error"]) })), baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(), lastSyncedAt: z.string().datetime().nullable(), lastSyncError: z.string().nullable(), modelCount: z.number().int(), teamCount: z.number().int(), connectedMemberCount: z.number().int() }).meta({ ref: "GatewayLiteLlmStatus" })
-const detailsSchema = summarySchema.extend({ litellm: liteLlmStatusSchema.optional(), settings: z.record(z.string(), z.unknown()), modelGroups: z.array(groupSchema), credentialSets: z.array(setSchema), accessGrants: z.array(grantSchema), oauthCallbackUrl: z.string().optional(), credentials: z.array(z.object({ id: denTypeIdSchema("inferenceProviderCredential"), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), subject: z.string(), orgMembershipId: denTypeIdSchema("member").nullable(), memberName: z.string().nullable(), memberEmail: z.string().nullable(), kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), status: z.enum(GATEWAY_PROVIDER_CREDENTIAL_STATUSES), expiresAt: z.string().datetime().nullable() })).optional().describe("Per-person credential rows. Only for callers who hold Manage Gateway providers."), credentialCounts: z.object({ total: z.number().int(), active: z.number().int(), revoked: z.number().int(), refreshFailed: z.number().int() }).optional().describe("Credential counts by status, returned instead of credentials to callers who may only view providers.") }).meta({ ref: "GatewayProviderDetails" })
+const trueFoundryAttentionReason = z.enum(["not_in_truefoundry", "user_inactive", "token_limit", "no_models", "error"])
+const trueFoundryStatusSchema = z.object({ controlPlaneUrl: z.string().nullable(), gatewayBaseUrl: z.string().nullable(), createMissingUsers: z.boolean(), trackUsageCosts: z.boolean().describe("Track usage costs in OpenWork: models with public pricing are served priced, and requests to them count towards usage limits and usage tracking."), hasAdminKey: z.boolean(), lastSyncedAt: z.string().datetime().nullable(), lastSyncError: z.string().nullable(), modelCount: z.number().int().describe("Models people are served."), availableModels: z.array(z.object({ id: z.string(), name: z.string() })).describe("Every chat model TrueFoundry listed at the last sync, picked or not."), selectedModelIds: z.array(z.string()).nullable().describe("Models an admin picked, or null when people get every TrueFoundry model."), activeMemberCount: z.number().int(), createdUserCount: z.number().int(), attentionCount: z.number().int(), attention: z.array(z.object({ memberId: denTypeIdSchema("member"), name: z.string().nullable(), email: z.string().nullable(), reason: trueFoundryAttentionReason, message: z.string().nullable() })) }).meta({ ref: "GatewayTrueFoundryStatus" })
+const trueFoundryKeySchema = z.string().trim().min(1).max(8192)
+const trueFoundryCreateMissingUsersSchema = z.boolean().describe("Create missing users in TrueFoundry: when an allowed person's OpenWork email is not a TrueFoundry user, add them to TrueFoundry (default member role, no invite email) and create their token. They get only TrueFoundry's default models until a TrueFoundry admin configures their teams and access.")
+const trueFoundryTrackUsageCostsSchema = z.boolean().describe("Track usage costs in OpenWork: where a TrueFoundry model has public pricing (from its matched models.dev model), price each person's requests at it in OpenWork, so they count towards the person's usage limits and usage tracking. Off by default: TrueFoundry alone budgets these requests.")
+const trueFoundryCreateSchema = z.object({ name: nameSchema.default("TrueFoundry"), controlPlaneUrl: z.string().trim().min(1).max(2048).describe("The address people open TrueFoundry at, e.g. https://acme.truefoundry.cloud."), gatewayUrl: z.string().trim().min(1).max(2048).optional().describe("The TrueFoundry AI Gateway base URL when it is not <controlPlaneUrl>/api/llm."), apiKey: trueFoundryKeySchema.describe("A TrueFoundry virtual account token with the tenant admin role. Write-only; never a personal access token."), createMissingUsers: trueFoundryCreateMissingUsersSchema.default(false), trackUsageCosts: trueFoundryTrackUsageCostsSchema.default(false), allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }).strict()
+const trueFoundryModelPickSchema = z.array(z.string().trim().min(1).max(255)).min(1).max(500).nullable().describe("The TrueFoundry models people get: model ids from availableModels (\"Only the ones I pick\"), or null for every TrueFoundry model, including ones added later.")
+const trueFoundrySyncResultSchema = z.object({ modelCount: z.number().int(), people: z.number().int(), tokensCreated: z.number().int(), usersCreated: z.number().int(), notInTrueFoundry: z.number().int(), noModels: z.number().int(), tokenLimit: z.number().int(), errors: z.number().int(), removed: z.number().int() })
+const trueFoundryMemberStatusSchema = z.object({ status: z.string(), message: z.string().nullable(), ready: z.boolean() })
+const liteLlmStatusSchema = z.object({ mode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), keySource: z.enum(["personal", "issued", "entra"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable(), issuedMemberCount: z.number().int(), attentionCount: z.number().int(), attention: z.array(z.object({ memberId: denTypeIdSchema("member"), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_litellm", "no_key_to_mirror", "no_models", "error"]) })), baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(), lastSyncedAt: z.string().datetime().nullable(), lastSyncError: z.string().nullable(), modelCount: z.number().int(), teamCount: z.number().int(), connectedMemberCount: z.number().int(), entraScope: z.string().optional().describe("keySource entra: the API scope members' Microsoft access tokens are issued for. Only for callers who hold Manage Gateway providers.") }).meta({ ref: "GatewayLiteLlmStatus" })
+const detailsSchema = summarySchema.extend({ litellm: liteLlmStatusSchema.optional(), truefoundry: trueFoundryStatusSchema.optional().describe("TrueFoundry providers: addresses, sync state and people OpenWork has no working token for. Never a key or token."), custom: gatewayCustomProviderStatusSchema.meta({ ref: "GatewayCustomProviderStatus" }).optional().describe("Custom OpenAI-compatible providers: address, models and whether a key is stored (never the key). Only for callers who hold Manage Gateway providers."), settings: z.record(z.string(), z.unknown()), modelGroups: z.array(groupSchema), credentialSets: z.array(setSchema), accessGrants: z.array(grantSchema), oauthCallbackUrl: z.string().optional(), credentials: z.array(z.object({ id: denTypeIdSchema("inferenceProviderCredential"), credentialSetId: denTypeIdSchema("gatewayCredentialSet"), subject: z.string(), orgMembershipId: denTypeIdSchema("member").nullable(), memberName: z.string().nullable(), memberEmail: z.string().nullable(), kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), status: z.enum(GATEWAY_PROVIDER_CREDENTIAL_STATUSES), expiresAt: z.string().datetime().nullable() })).optional().describe("Per-person credential rows. Only for callers who hold Manage Gateway providers."), credentialCounts: z.object({ total: z.number().int(), active: z.number().int(), revoked: z.number().int(), refreshFailed: z.number().int() }).optional().describe("Credential counts by status, returned instead of credentials to callers who may only view providers.") }).meta({ ref: "GatewayProviderDetails" })
 const detailsResponse = z.object({ inferenceProvider: detailsSchema })
 const connectResponse = z.object({ inferenceProvider: summarySchema.extend({ apiKey: z.string(), apiKeys: z.record(z.string(), z.string()) }) })
 const gatewayErrorSchema = z.object({ error: z.string(), message: z.string().optional() })
@@ -129,7 +165,17 @@ const liteLlmKeySchema = z.string().trim().min(1).max(4096)
 const liteLlmModeSchema = z.enum(["org", "member", "issued"]).describe("org: one organization LiteLLM key for everyone, with OpenWork spend tracking. member: each person connects their own LiteLLM key. issued: OpenWork creates a LiteLLM key for each allowed person, found by their OpenWork email. In member and issued modes apiKey is a LiteLLM admin key and OpenWork spend tracking is off.")
 const liteLlmIssueStrategySchema = z.enum(["per_team", "mirror"]).describe("issued mode. per_team: one key per LiteLLM team the person belongs to, or one key without a team when they are in none. mirror: a copy of their oldest active key (team, models, aliases, tags, expiry; never key-level budgets or rate limits).")
 const liteLlmMirrorFallbackSchema = z.enum(["per_team", "error"]).describe("issued + mirror: for someone with no key to copy, create per-team keys, or report them and create nothing.")
-const liteLlmCreateSchema = z.object({ name: nameSchema.default("LiteLLM"), baseUrl: z.string().trim().min(1).max(2048).describe("LiteLLM proxy URL, with or without /v1."), mode: liteLlmModeSchema, issueStrategy: liteLlmIssueStrategySchema.optional(), mirrorFallback: liteLlmMirrorFallbackSchema.optional(), apiKey: liteLlmKeySchema.describe("Organization key (org mode) or admin key (member and issued modes). Write-only."), allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }).strict()
+const liteLlmKeyCreateSchema = z.object({ name: nameSchema.default("LiteLLM"), baseUrl: z.string().trim().min(1).max(2048).describe("LiteLLM proxy URL, with or without /v1."), mode: liteLlmModeSchema, issueStrategy: liteLlmIssueStrategySchema.optional(), mirrorFallback: liteLlmMirrorFallbackSchema.optional(), apiKey: liteLlmKeySchema.describe("Organization key (org mode) or admin key (member and issued modes). Write-only."), allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }).strict()
+const liteLlmEntraFields = {
+  oauthTenantId: z.string().trim().min(1).max(64).describe("Directory (tenant) ID of the Entra ID tenant, a GUID."),
+  oauthClientId: z.string().trim().min(1).max(255).describe("Application (client) ID of the Entra app registration people sign in to."),
+  oauthClientSecret: z.string().trim().min(1).max(4096).describe("A client secret of that app registration. Write-only."),
+  oauthScope: z.string().trim().min(1).max(512).describe("One API scope that app registration exposes, for example api://<application-id>/access. LiteLLM must accept access tokens for it; Microsoft Graph and Azure Cognitive Services scopes are refused."),
+  modelIds: z.array(z.string().trim().min(1).max(255)).min(1).max(500).describe("The LiteLLM model names people may use. OpenWork holds no LiteLLM key in this mode, so it cannot read them from the proxy."),
+}
+const liteLlmEntraCreateSchema = z.object({ name: nameSchema.default("LiteLLM"), baseUrl: z.string().trim().min(1).max(2048).describe("LiteLLM proxy URL, with or without /v1."), mode: z.literal("entra").describe("entra: the proxy accepts sign-in tokens instead of LiteLLM keys (LiteLLM JWT auth). Each allowed person signs in with Microsoft Entra ID, and their own access token is sent to LiteLLM. No LiteLLM key is stored, nothing is synced, and OpenWork spend tracking is off."), ...liteLlmEntraFields, allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }).strict()
+const liteLlmCreateSchema = z.discriminatedUnion("mode", [liteLlmKeyCreateSchema, liteLlmEntraCreateSchema])
+const liteLlmUpdateSchema = z.object({ apiKey: liteLlmKeySchema.optional(), issueStrategy: liteLlmIssueStrategySchema.optional(), mirrorFallback: liteLlmMirrorFallbackSchema.optional(), oauthTenantId: liteLlmEntraFields.oauthTenantId.optional(), oauthClientId: liteLlmEntraFields.oauthClientId.optional(), oauthClientSecret: liteLlmEntraFields.oauthClientSecret.optional(), oauthScope: liteLlmEntraFields.oauthScope.optional(), modelIds: liteLlmEntraFields.modelIds.optional() }).strict().refine((input) => Object.keys(input).length > 0, "Provide apiKey, issueStrategy or mirrorFallback.")
 const liteLlmSyncResultSchema = z.object({ modelCount: z.number().int(), groupCount: z.number().int(), teamCount: z.number().int(), members: z.object({ matched: z.number().int(), rejected: z.number().int(), unavailable: z.number().int(), removed: z.number().int() }), warnings: z.array(z.string()), issued: z.object({ people: z.number().int(), keys: z.number().int(), notInLiteLlm: z.number().int(), noKeyToMirror: z.number().int(), noModels: z.number().int(), errors: z.number().int(), removed: z.number().int() }).optional() })
 const liteLlmIssueStatusSchema = z.object({ status: z.string(), message: z.string().nullable(), keyCount: z.number().int() })
 const liteLlmConnectResultSchema = z.object({ connected: z.literal(true), modelGroupId: denTypeIdSchema("gatewayModelGroup"), modelGroupName: z.string(), modelIds: z.array(z.string()) })
@@ -175,8 +221,6 @@ const managementWrite: MiddlewareHandler<{ Variables: OrgRouteVariables }> = asy
     }
     const unavailable = gatewayManagementUnavailable()
     if (unavailable) { status = 403; return c.json(unavailable, 403) }
-    // Entering a key is human-only: neither the agent nor an API key may.
-    // They leave it out and a person adds it.
     const agent = c.get("session")?.id === "mcp_internal"
     if (agent || c.get("apiKey")) {
       const body: unknown = await c.req.raw.clone().json().catch(() => null)
@@ -194,7 +238,6 @@ const managementWrite: MiddlewareHandler<{ Variables: OrgRouteVariables }> = asy
     await recordProviderAttempt(db, capture, status)
   }
 }
-/** Testing an unsaved key: Manage Gateway providers, Gateway on, and a person (never the agent or an API key). */
 const testConnectionAccess: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
   const permission = await requirePermission(c, MANAGE)
   if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
@@ -205,11 +248,9 @@ const testConnectionAccess: MiddlewareHandler<{ Variables: OrgRouteVariables }> 
   }
   await next()
 }
-/** The one organization set still waiting for its key, when a person can add it in chat. */
 async function pendingKeyPrompt(provider: GatewayProvider, setId: string | null) {
   const shape = gatewayCredentialShape(provider.provider_id, readProviderEnvNames(provider.provider_config))
   if (!setId || !shape) return null
-  // Primary: called right after the create transaction wrote this set.
   const [set] = await db.$primary.select({ mode: GatewayCredentialSetTable.credential_mode }).from(GatewayCredentialSetTable)
     .where(and(eq(GatewayCredentialSetTable.id, normalizeDenTypeId("gatewayCredentialSet", setId)), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id)))
   if (set?.mode !== "org") return null
@@ -227,35 +268,20 @@ async function providerTransaction<T>(c: { req: { raw: Request; param: (key: str
   if (!actor || !id) throw new GatewayWriteError(403, "forbidden")
   return db.transaction(async (tx) => {
     const capture = providerAuditRequests.get(c.req.raw)?.capture ?? null
-    // Match membership/role mutation order: organization before member/provider.
     if (capture) await recheckAuditEntitlement(tx, actor.organization.id)
-    // Writes that also change usage limits take the organization lock usage-limit writes take
-    // first, before any member row, so the two never wait on each other in opposite order.
     if (options.lockOrganization) await lockUsageOrganization(tx, actor.organization.id)
     const provider = await getProvider(tx, actor, id, true)
     await requireLiveManage(tx, actor)
     return providerAuditMutation(tx, capture, () => mutate(tx, provider))
   })
 }
-/**
- * Re-checks Manage Gateway providers inside a management write transaction,
- * after liveMember has locked the caller's member row, so a permission revoked
- * after managementWrite (e.g. while catalog or LiteLLM calls were awaited) is
- * seen before the mutation. Reads only through `tx` (read-only, share locks):
- * no second pool connection while this transaction holds row locks. The
- * recent sign-in part of the check stays with managementWrite.
- */
 async function requireLiveManage(tx: GatewayTx, actor: Actor) {
   if (!(await holdsLiveManage(tx, actor))) throw new GatewayWriteError(403, "forbidden", permissionDeniedMessage(MANAGE))
 }
-/** Whether the caller still holds Manage Gateway providers, read only through `tx` (see requireLiveManage). */
 async function holdsLiveManage(tx: GatewayTx, actor: Actor) {
   const permissions = await resolvePermissionsForMember({ organizationId: actor.organization.id, memberId: actor.currentMember.id, database: tx })
   return permissions.has(MANAGE)
 }
-// Re-reads the caller's member row so a removal that landed after the route
-// check still fails here. Write transactions behind managementWrite then call
-// requireLiveManage with the same transaction.
 async function liveMember(database: GatewayTx | typeof db | typeof db.$primary, actor: Actor, lock: boolean) {
   const query = database.select().from(MemberTable).where(and(eq(MemberTable.id, actor.currentMember.id), eq(MemberTable.organizationId, actor.organization.id), isNull(MemberTable.removedAt)))
   const [member] = await (lock ? query.for("update") : query)
@@ -287,7 +313,7 @@ function oauthRedirect(value?: string): string | null {
   try {
     const url = new URL(value)
     if (!url.username && !url.password && (url.protocol === "openwork:" || ["https:", "http:"].includes(url.protocol) && env.publicUrlTrustedOrigins.includes(url.origin))) return url.toString()
-  } catch { /* Reject malformed redirects rather than reflecting them. */ }
+  } catch {}
   throw new GatewayWriteError(400, "invalid_redirect")
 }
 function affectedRows(result: unknown): number {
@@ -307,7 +333,6 @@ async function defaultMatrix(tx: GatewayTx, provider: GatewayProvider, input: z.
     ...[...new Set(input.teamIds ?? [])].map((teamId) => ({ type: "team" as const, teamId })),
   ]
   const hasCredentialInput = input.credential !== undefined || input.apiKeys !== undefined || input.credentialMode === "member" || input.oauthClientId !== undefined || input.oauthClientSecret !== undefined || input.oauthTenantId !== undefined || input.awsSso !== undefined
-  // Secure keys in chat: access is set up now and the shared key is added by a person next.
   const awaitKey = options.awaitKey === true && !hasCredentialInput && audiences.length > 0
     && gatewayCredentialShape(provider.provider_id, readProviderEnvNames(provider.provider_config)) !== null
   if (!hasCredentialInput && audiences.length && !awaitKey) throw new GatewayWriteError(400, "credential_required", "Configure credentials before granting initial provider access.")
@@ -334,15 +359,24 @@ async function selectOAuthSet(provider: GatewayProvider, memberId: GatewayMember
   return chosen[0]
 }
 
-/**
- * Binds a browser entry attempt to the set's sign-in configuration. Google
- * attempts bind the OAuth client; LiteLLM attempts bind the provider and set,
- * because each member pastes their own LiteLLM key instead.
- */
 function memberAttemptBinding(provider: GatewayProvider, set: GatewaySet, verifier: string): string | null {
+  const method = providerMemberSignInMethod(provider)
+  if (method) return memberSignInBinding(method, set, verifier, providerMemberSignInScope(provider))
   if (isLiteLlmProviderId(provider.provider_id)) return googleOAuthClientBinding(verifier, `litellm:${provider.id}`, set.id)
-  const method = gatewayMemberSignInMethod(provider.provider_id)
-  return method ? memberSignInBinding(method, set, verifier) : null
+  if (isTrueFoundryProviderId(provider.provider_id)) return googleOAuthClientBinding(verifier, `truefoundry:${provider.id}`, set.id)
+  return null
+}
+
+async function liteLlmEntraInput(input: { oauthTenantId?: string; oauthScope?: string; modelIds?: string[] }) {
+  if (input.oauthTenantId !== undefined && !microsoftTenantIdSchema.safeParse(input.oauthTenantId).success) {
+    throw new GatewayWriteError(400, "invalid_tenant_id", "Enter the Entra ID directory (tenant) ID, a GUID such as 00000000-0000-0000-0000-000000000000.")
+  }
+  const scopeError = input.oauthScope === undefined ? null : microsoftApiScopeError(input.oauthScope)
+  if (scopeError) throw new GatewayWriteError(400, "invalid_scope", scopeError)
+  const catalog = input.modelIds === undefined ? [] : await getModelsDevCatalogProviders().catch(() => [])
+  const models = input.modelIds === undefined ? undefined : liteLlmStaticModels(input.modelIds, catalog)
+  if (models && !models.length) throw new GatewayWriteError(400, "model_required", "Enter at least one LiteLLM model name. Wildcards such as openai/* are not model names.")
+  return { tenantId: input.oauthTenantId?.toLowerCase(), scope: input.oauthScope, models }
 }
 
 async function liteLlmCall<T>(run: () => Promise<T>): Promise<T> {
@@ -359,7 +393,6 @@ function liteLlmAudiences(input: { allMembers?: boolean; memberIds?: string[]; t
   ]
 }
 
-/** Member OAuth entry verified against the live browser session: provider org + initiating member. */
 async function attributeMemberOAuthEntry(c: Context, input: { organizationId: string; userId: string; memberId: string }) {
   const attribution = auditSessionUserAttribution(input.userId, input.memberId)
   if (!attribution) return null
@@ -370,36 +403,23 @@ async function attributeMemberOAuthEntry(c: Context, input: { organizationId: st
 type BrowserSession = Pick<typeof AuthSessionTable.$inferSelect, "id" | "token" | "userId">
 type OauthState = typeof GatewayProviderOauthStateTable.$inferSelect
 
-/**
- * Load a browser sign-in attempt for the new browser routes: the live signed
- * cookie must belong to the initiating user, and the provider's sign-in method
- * and configuration must still match what the attempt was started with.
- */
 async function loadBrowserSignInAttempt(c: Context, handle: string, method: GatewayMemberSignInMethod) {
   const cookieToken = await readSignedSessionCookieToken(c)
   const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
   if (!session) return { response: c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401) }
-  // Primary: entry handles are written moments before the browser presents them.
   const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, handle)).limit(1)
   const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
   if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
   if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
   const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
   const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
-  if (!provider || !set || provider.status !== "active" || gatewayMemberSignInMethod(provider.provider_id) !== method
+  if (!provider || !set || provider.status !== "active" || providerMemberSignInMethod(provider) !== method
     || attempt.clientBinding !== memberSignInBinding(method, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
-  // The live signed cookie matches the entry's initiating user: attribute to
-  // the provider's organization and the entry's member before any write.
   const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
   if (auditBlocked) return { response: auditBlocked }
   return { entry, attempt, provider, set, session }
 }
 
-/**
- * Store a member's own credential after sign-in, re-checking access, the browser
- * session and the attempt under the member/provider/set/state locks. The OAuth
- * callback has already claimed its state; the AWS poll claims it here.
- */
 async function storeMemberCredential(input: {
   provider: GatewayProvider
   set: GatewaySet
@@ -430,7 +450,6 @@ async function storeMemberCredential(input: {
   })
 }
 
-/** AWS sign-in failures as API errors: what the person or an administrator should do next. */
 function awsSsoWriteError(error: unknown): unknown {
   if (!(error instanceof AwsSsoError)) return error
   if (error.transient) return new GatewayWriteError(409, "aws_sso_unavailable", error.message)
@@ -441,9 +460,10 @@ function awsSsoWriteError(error: unknown): unknown {
 
 export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   registerOrgProviderInventoryRoutes(app)
+  registerOrgDeviceProviderShareRoutes(app)
+  registerCustomProviderRoutes(app)
   registerOrgGatewayUsageRoutes(app)
   registerOrgGatewayUsageLimitRoutes(app)
-  // Agent-facing management reads never refresh or change the catalog. The existing provider summaries do.
   app.get("/v1/inference-providers/model-management", route("List inference gateway providers and model groups for model enablement", "Read-only organization Gateway provider and group selection. Returns saved upstream model IDs, not picker aliases or credentials. An empty provider modelIds policy means all supported catalog models. Requires the View Gateway providers permission and Gateway management.", z.object({ inferenceProviders: z.array(modelManagementProviderSchema) }), 200, false, { "x-mcp": true, "x-mcp-search-aliases": ["find OpenAI provider model groups", "manage provider models", "choose model group to add models"] }), orgMemberRoute(), managementRead, async (c) => {
     try {
       const actor = c.get("organizationContext")
@@ -486,7 +506,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/member-connections", route("List the caller's member sign-in connections", "Requires a signed-in user session and current organization membership, without an administrator gate. Returns independently selectable member credential sets (Google, AWS IAM Identity Center or Microsoft Entra ID sign-in) with current effective access, credential readiness, the signed-in account name and an opaque completed-authorization revision. Includes retained nonrevoked caller-owned credentials after grant loss or provider disablement for disconnection. Never returns another member's credentials, Google subject, OAuth client details or tokens. Readiness is not a Vertex IAM probe.", gatewayMemberConnectionsResponseSchema), userSessionRoute(), orgMemberRoute(), async (c) => {
+  app.get("/v1/inference-providers/member-connections", route("List the caller's member sign-in connections", "Requires a signed-in user session and current organization membership, without an administrator gate. Returns independently selectable member credential sets (Google, AWS IAM Identity Center or Microsoft Entra ID sign-in) with current effective access, credential readiness, the signed-in account name and an opaque completed-authorization revision. Includes retained nonrevoked caller-owned credentials after grant loss or provider disablement for disconnection. Never returns another member's credentials, Google subject, OAuth client details or tokens. Readiness is not a Vertex IAM probe.", gatewayMemberConnectionsResponseSchema), orgMemberRoute(), userSessionRoute(), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const userId = c.get("user")?.id
@@ -509,15 +529,13 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     const managerDetails = manage && await hasPermission(c, MANAGE)
     const providers = (await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, actor.organization.id)).orderBy(desc(GatewayProviderTable.updated_at)))
       .filter((provider) => manage || provider.status === "active")
-    // One read per table for the whole list, however many providers the organization has.
     const reads = await readGatewaySummaries({ identities: managerDetails, manage, memberId: actor.currentMember.id, organizationId: actor.organization.id, providers })
     const summaries: GatewayProviderSummary[] = []
     for (const provider of providers) {
-      // An organization set may be unconfigured; keep its granted provider discoverable without leaking models.
       if (!manage) {
         if (!effectiveGatewaySummaryGrants(provider, actor.currentMember.id, reads).length) continue
-        // Zero-touch LiteLLM keys: create this person's keys in the background on first use.
         if (isLiteLlmProviderId(provider.provider_id)) scheduleLiteLlmProvisioning(provider, actor.currentMember.id)
+        if (isTrueFoundryProviderId(provider.provider_id)) scheduleTrueFoundryProvisioning(provider, actor.currentMember.id)
       }
       summaries.push(await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), manage, { managerDetails }, reads))
     }
@@ -538,7 +556,6 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       if (provider.status !== "active") throw new GatewayWriteError(404, "inference_provider_not_found")
-      // The grant check and the summary share one read of the provider's rows.
       const reads = await readGatewaySummaries({ identities: false, manage: false, memberId: actor.currentMember.id, organizationId: provider.organization_id, providers: [provider] })
       if (!effectiveGatewaySummaryGrants(provider, actor.currentMember.id, reads).length) throw new GatewayWriteError(403, "forbidden")
       const summary = await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), false, {}, reads)
@@ -566,7 +583,6 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       validateGatewaySettings(catalog.config, settings)
       await liveMember(db, actor, false)
       const now = new Date()
-      // Never inserted: the shape credential checks and Bedrock key reuse read.
       const draft: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: catalog.catalog.name, model_ids: [input.model], pinned_model_ids: [], provider_config: catalog.config, settings, credential_mode: "org", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
       const reuseFrom = input.reuseCredentialFrom
       const credential = reuseFrom === undefined
@@ -590,6 +606,13 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const now = new Date()
       const provider: GatewayProvider = { id: normalizeDenTypeId("inferenceProvider", providerAuditRequests.get(c.req.raw)?.providerId ?? createDenTypeId("inferenceProvider")), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], pinned_model_ids: [], provider_config: catalog.config, settings: input.settings ?? {}, credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
       await db.transaction(async (tx) => {
+        if (input.shareFromDevice) {
+          await lockUsageOrganization(tx, actor.organization.id)
+          const [existing] = await tx.select({ id: GatewayProviderTable.id }).from(GatewayProviderTable)
+            .where(and(eq(GatewayProviderTable.organization_id, actor.organization.id), eq(GatewayProviderTable.provider_id, input.providerId), eq(GatewayProviderTable.status, "active")))
+            .limit(1).for("update")
+          if (existing) throw new GatewayWriteError(409, "already_shared", "Your organization already has this provider.")
+        }
         const capture = providerAuditRequests.get(c.req.raw)?.capture ?? null
         if (capture) await recheckAuditEntitlement(tx, actor.organization.id)
         const member = await liveMember(tx, actor, true)
@@ -632,38 +655,14 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       }
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       const trusted = await trustedProviderCatalog(before)
-      const provider = await providerTransaction(c, async (tx, existing) => {
-        if (input.providerId !== undefined && input.providerId !== existing.provider_id) throw new GatewayWriteError(409, "provider_identity_immutable", "Create a separate provider rather than moving existing groups and credentials to another catalog provider.")
-        if (!trusted || trusted.id !== existing.provider_id || trusted.npm !== readProviderConfigNpm(existing.provider_config)) throw new GatewayWriteError(400, "provider_requires_configuration")
-        const config = existing.provider_config
-        if (input.settings !== undefined) {
-          const persisted: Record<string, unknown> = settingsSchema.parse(publicProviderSettings(existing.settings))
-          validateGatewaySettings(config, { ...persisted, ...input.settings })
-          if (Object.entries(input.settings).some(([key, value]) => value !== persisted[key])) {
-            throw new GatewayWriteError(409, "provider_destination_immutable", "Create a separate provider to change the upstream account or destination. Existing credentials cannot be relocated.")
-          }
-        }
-        const modelIds = input.modelIds === undefined ? existing.model_ids : [...new Set(input.modelIds)]
-        const catalog = resolveGatewayCatalog(trusted, modelIds, config, input.modelIds !== undefined)
-        if (input.status === "disabled" && existing.status === "active") await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, existing.id))
-        const provider: GatewayProvider = { ...existing, name: input.name ?? existing.name, model_ids: modelIds, status: input.status ?? existing.status, updated_at: new Date() }
-        await writeGatewayModels(tx, provider, catalog.models)
-        await tx.update(GatewayProviderTable).set({ name: provider.name, model_ids: modelIds, status: provider.status, updated_at: provider.updated_at }).where(eq(GatewayProviderTable.id, provider.id))
-        return provider
-      })
+      const provider = await providerTransaction(c, (tx, existing) => patchGatewayProvider(tx, existing, trusted, input))
       return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }) })
     } catch (error) { return respond(c, error) }
   })
 
-  // The management catalog is independent of selected wire models and group memberships.
   app.get("/v1/inference-providers/:inferenceProviderId/models", route("List configured gateway catalog models", "Returns supported catalog models within the saved modelIds policy, independently of model-group membership or caller-usable aliases. Callers who also hold Manage Gateway providers and have recently signed in (or use an API key) first refresh the stored models from the catalog; everyone else gets the stored models without any refresh or write. If catalog refresh is unavailable or incompatible, retains the saved configuration and returns catalogWarning. Requires the View Gateway providers permission and enabled Gateway management.", z.object({ modelIds: universeSchema, catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) })), orgMemberRoute(), managementRead, paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
-      // Admitted by View Gateway providers. The refresh can delete stored models and their
-      // group links, so it runs only for callers who pass the full Manage Gateway providers
-      // check (including its recent sign-in), re-checked through the refresh's own write
-      // transaction. Everyone else, including managers with a stale session, gets the stored
-      // models read-only.
       const mayManage = (await requirePermission(c, MANAGE)).ok
       const { provider, catalogWarning } = await refreshGatewayCatalog(
         await getProvider(db, actor, c.req.valid("param").inferenceProviderId),
@@ -684,7 +683,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ modelGroups: details.modelGroups })
     } catch (error) { return respond(c, error) }
   })
-  app.post("/v1/inference-providers/:inferenceProviderId/model-groups", route("Create gateway model group", "Creates and returns a model group using supported catalog model IDs from this provider; creating a group alone grants no access. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(groupWrite), async (c) => {
+  app.post("/v1/inference-providers/:inferenceProviderId/model-groups", route("Create gateway model group", "Creates a model group from explicit modelIds or allModels: true, which links every configured supported catalog model on the provider. Creating a group alone grants no access. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(groupCreateWrite), async (c) => {
     try {
       const actor = c.get("organizationContext")
       await refreshGatewayCatalog(await getProvider(db, actor, c.req.valid("param").inferenceProviderId), providerAuditRequests.get(c.req.raw)?.capture ?? null)
@@ -699,7 +698,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ modelGroup }, 201)
     } catch (error) { return respond(c, error) }
   })
-  app.patch("/v1/inference-providers/:inferenceProviderId/model-groups/:groupId", route("Update gateway model group", "Partially updates a group's name, description, status or model membership. Supplied modelIds replaces membership; omitted modelIds preserves it. IDs must belong to the provider's supported catalog universe. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema })), orgMemberRoute(), managementWrite, paramValidator(groupParams), jsonValidator(groupWrite.partial()), async (c) => {
+  app.patch("/v1/inference-providers/:inferenceProviderId/model-groups/:groupId", route("Update gateway model group", "Partially updates a group's name, description, status or model membership. Explicit modelIds replaces membership; allModels: true links every configured supported catalog model on the provider. Omitting both preserves membership. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema })), orgMemberRoute(), managementWrite, paramValidator(groupParams), jsonValidator(groupPatchWrite), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const params = c.req.valid("param")
@@ -719,13 +718,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     try {
       const params = c.req.valid("param")
       await providerTransaction(c, async (tx, provider) => {
-        const id = normalizeDenTypeId("gatewayModelGroup", params.groupId)
-        const [group] = await tx.select().from(GatewayModelGroupTable).where(and(eq(GatewayModelGroupTable.id, id), eq(GatewayModelGroupTable.gateway_provider_id, provider.id)))
-        if (!group) throw new GatewayWriteError(404, "model_group_not_found")
-        const [grant] = await tx.select({ id: GatewayProviderAccessTable.id }).from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.model_group_id, id)).limit(1)
-        if (grant) throw new GatewayWriteError(409, "model_group_in_use", "Delete referencing access grants first.")
-        await tx.delete(GatewayModelGroupModelTable).where(eq(GatewayModelGroupModelTable.model_group_id, id))
-        await tx.delete(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.id, id))
+        await removeGatewayModelGroup(tx, provider, normalizeDenTypeId("gatewayModelGroup", params.groupId))
         await touch(tx, provider)
       })
       return c.body(null, 204)
@@ -780,17 +773,9 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     try {
       const params = c.req.valid("param")
       const credentials = await providerTransaction(c, async (tx, provider) => {
-        const id = normalizeDenTypeId("gatewayCredentialSet", params.credentialSetId)
-        const [set] = await tx.select().from(GatewayCredentialSetTable).where(and(eq(GatewayCredentialSetTable.id, id), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))).for("update")
-        if (!set) throw new GatewayWriteError(404, "credential_set_not_found")
-        const [grant] = await tx.select({ id: GatewayProviderAccessTable.id }).from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.credential_set_id, id)).limit(1)
-        if (grant) throw new GatewayWriteError(409, "credential_set_in_use", "Delete referencing access grants first.")
-        await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.credential_set_id, id))
-        const rows = await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.credential_set_id, id)).for("update")
-        await tx.delete(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.credential_set_id, id))
-        await tx.delete(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, id))
+        const rows = await removeGatewayCredentialSet(tx, provider, normalizeDenTypeId("gatewayCredentialSet", params.credentialSetId))
         await touch(tx, provider)
-        return rows.filter((row) => row.status !== "revoked")
+        return rows
       })
       await revokeUpstreamCredentials(credentials)
       return c.body(null, 204)
@@ -828,25 +813,19 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         await writeGatewayGrant(tx, provider, merged, id)
         await pruneLiteLlmAssignments(tx, provider)
         if (isLiteLlmProviderId(provider.provider_id)) await pruneLiteLlmIssuedKeys(tx, provider)
+        await pruneTrueFoundryMembers(tx, provider)
         await touch(tx, provider)
         return merged
       })
       return c.json({ accessGrant })
     } catch (error) { return respond(c, error) }
   })
-  // The legacy delete URL remains an exact single-grant operation, without creator exceptions.
   for (const path of ["/v1/inference-providers/:inferenceProviderId/access-grants/:grantId", "/v1/inference-providers/:inferenceProviderId/access/:grantId"]) {
     app.delete(path, route("Remove inference provider access grant", "Deletes exactly the selected grant and returns an empty 204; the legacy /access/{grantId} URL has the same behavior. Other grants and member credentials are retained, and OAuth callbacks recheck remaining access. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", undefined, 204), orgMemberRoute(), managementWrite, paramValidator(grantParams), async (c) => {
       try {
         const params = c.req.valid("param")
         await providerTransaction(c, async (tx, provider) => {
-          const id = normalizeDenTypeId("inferenceProviderAccess", params.grantId)
-          const [grant] = await tx.select().from(GatewayProviderAccessTable).where(and(eq(GatewayProviderAccessTable.id, id), eq(GatewayProviderAccessTable.gateway_provider_id, provider.id)))
-          if (!grant) throw new GatewayWriteError(404, "access_grant_not_found")
-          // Callback reauthorization rejects lost set access while preserving consent through other grants.
-          await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.id, id))
-          await pruneLiteLlmAssignments(tx, provider)
-          if (isLiteLlmProviderId(provider.provider_id)) await pruneLiteLlmIssuedKeys(tx, provider)
+          await removeGatewayAccessGrant(tx, provider, normalizeDenTypeId("inferenceProviderAccess", params.grantId))
           await touch(tx, provider)
         })
         return c.body(null, 204)
@@ -860,29 +839,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const query = c.req.valid("query")
       const choice: GatewayProviderRemovalLimitChoice | undefined = query.usageLimits === "archive" ? { action: "archive" }
         : query.usageLimits === "move" && query.moveUsageLimitsTo ? { action: "move", providerId: query.moveUsageLimitsTo } : undefined
-      const credentials = await providerTransaction(c, async (tx, provider) => {
-        // Usage limits scoped to this provider are moved or archived first, so a missing choice
-        // stops the request before anything is deleted here or in LiteLLM.
-        await settleGatewayProviderUsageLimits(tx, { organizationId: actor.organization.id, memberId: actor.currentMember.id }, provider.id, choice)
-        // Keys OpenWork created in LiteLLM go first, while the admin key is still stored. This runs
-        // inside the transaction, after providerTransaction has locked the caller's member row and
-        // re-checked the permission, so a concurrent membership removal or revocation stops the
-        // request before any external key is deleted.
-        if (isLiteLlmProviderId(provider.provider_id)) await deleteLiteLlmIssuedKeys(provider)
-        await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayLiteLlmIssuedKeyTable).where(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, provider.id))
-        const credentials = await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id)).for("update")
-        const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
-        if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
-        await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
-        await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.id, provider.id))
-        // Request logs and rollups deliberately retain historical resource IDs.
-        return credentials.filter((row) => row.status !== "revoked")
-      }, { lockOrganization: true })
+      const credentials = await providerTransaction(c, (tx, provider) => removeGatewayProvider(tx, provider, { organizationId: actor.organization.id, memberId: actor.currentMember.id }, choice), { lockOrganization: true })
       await revokeUpstreamCredentials(credentials)
       return c.body(null, 204)
     } catch (error) {
@@ -892,16 +849,17 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     }
   })
 
-  app.get("/v1/inference-providers/:inferenceProviderId/oauth/start", route("Begin sign-in for a member inference credential", "Starts a member's own Google, Microsoft or AWS sign-in (or LiteLLM key connection) for a granted member credential set. Requires a user session. Returns { authUrl } for Accept: application/json, otherwise redirects to the Den web /gateway/connect bridge. The ten-minute entry handle binds the initiating user, organization, provider, set, client configuration and allowlisted redirectTo. It is not authentication and cannot be used at the Google callback. The bridge must establish a matching signed-in browser session before browser-start creates Google state and PKCE.", z.object({ authUrl: z.string() }), 200, false, { security: [{ bearerAuth: [] }], responses: { 302: emptyResponse("Redirect to the Den browser connection page.") } }), userSessionRoute(), orgMemberRoute(), paramValidator(paramsSchema), queryValidator(oauthQuery), async (c) => {
+  app.get("/v1/inference-providers/:inferenceProviderId/oauth/start", route("Begin sign-in for a member inference credential", "Starts a member's own Google, Microsoft or AWS sign-in (or LiteLLM key connection) for a granted member credential set. Requires a user session. Returns { authUrl } for Accept: application/json, otherwise redirects to the Den web /gateway/connect bridge. The ten-minute entry handle binds the initiating user, organization, provider, set, client configuration and allowlisted redirectTo. It is not authentication and cannot be used at the Google callback. The bridge must establish a matching signed-in browser session before browser-start creates Google state and PKCE.", z.object({ authUrl: z.string() }), 200, false, { security: [{ bearerAuth: [] }], responses: { 302: emptyResponse("Redirect to the Den browser connection page.") } }), orgMemberRoute(), userSessionRoute(), paramValidator(paramsSchema), queryValidator(oauthQuery), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       if (provider.status !== "active") throw new GatewayWriteError(404, "inference_provider_not_found")
       const query = c.req.valid("query")
       const set = await selectOAuthSet(provider, actor.currentMember.id, query.credentialSetId)
-      const signInMethod = gatewayMemberSignInMethod(provider.provider_id)
-      if (!isLiteLlmProviderId(provider.provider_id)) {
-        const configurationError = signInMethod ? memberSignInConfigurationError(signInMethod, set) : "This provider does not support member sign-in."
+      const signInMethod = providerMemberSignInMethod(provider)
+      const signInScope = providerMemberSignInScope(provider)
+      if (signInMethod || (!isLiteLlmProviderId(provider.provider_id) && !isTrueFoundryProviderId(provider.provider_id))) {
+        const configurationError = signInMethod ? memberSignInConfigurationError(signInMethod, set, signInScope) : "This provider does not support member sign-in."
         if (configurationError) throw new GatewayWriteError(400, "oauth_client_required", `An administrator must finish this credential set's sign-in setup. ${configurationError}`)
       }
       const redirectTo = oauthRedirect(query.redirectTo)
@@ -927,13 +885,12 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.get("/v1/inference-providers/oauth/browser-status", route("Check browser readiness for member sign-in", "Read-only check of a ten-minute entry handle and the live signed OpenWork browser cookie, never a bearer substitute. Returns sign_in_required without a live cookie, account_mismatch for another signed-in user without revealing identities, or ready only after validating the original member, provider, credential set, OAuth client configuration and current grants. Does not consume or rotate the entry, create Google state, exchange tokens or revoke credentials. Browser-start and callback independently repeat authorization checks.", z.object({ status: z.enum(["sign_in_required", "account_mismatch", "ready"]), method: z.enum([...GATEWAY_MEMBER_SIGN_IN_METHODS, "litellm_key", "litellm_issued"]).optional().describe("Present when ready. google and microsoft: continue with browser-start. aws_sso: start AWS device sign-in with browser-aws-start, then poll browser-aws-poll. litellm_key: submit the member's LiteLLM key to browser-litellm-key. litellm_issued: OpenWork creates the key; issue reports why it has not yet, and browser-litellm-check retries."), providerName: z.string().optional(), issue: liteLlmIssueStatusSchema.optional() }), 200, true, { security: [], responses: { 403: jsonResponse("Provider access or OAuth configuration changed.", gatewayErrorSchema) } }), publicRoute, async (c, next) => {
+  app.get("/v1/inference-providers/oauth/browser-status", route("Check browser readiness for member sign-in", "Read-only check of a ten-minute entry handle and the live signed OpenWork browser cookie, never a bearer substitute. Returns sign_in_required without a live cookie, account_mismatch for another signed-in user without revealing identities, or ready only after validating the original member, provider, credential set, OAuth client configuration and current grants. Does not consume or rotate the entry, create Google state, exchange tokens or revoke credentials. Browser-start and callback independently repeat authorization checks.", z.object({ status: z.enum(["sign_in_required", "account_mismatch", "ready"]), method: z.enum([...GATEWAY_MEMBER_SIGN_IN_METHODS, "litellm_key", "litellm_issued", "truefoundry_issued"]).optional().describe("Present when ready. google and microsoft: continue with browser-start. aws_sso: start AWS device sign-in with browser-aws-start, then poll browser-aws-poll. litellm_key: submit the member's LiteLLM key to browser-litellm-key. litellm_issued: OpenWork creates the key; issue reports why it has not yet, and browser-litellm-check retries. truefoundry_issued: OpenWork creates the person's TrueFoundry key; truefoundry reports why it has not yet, and browser-truefoundry-check retries."), providerName: z.string().optional(), issue: liteLlmIssueStatusSchema.optional(), truefoundry: trueFoundryMemberStatusSchema.optional() }), 200, true, { security: [], responses: { 403: jsonResponse("Provider access or OAuth configuration changed.", gatewayErrorSchema) } }), publicRoute, async (c, next) => {
     c.header("Cache-Control", "no-store")
     c.header("Referrer-Policy", "no-referrer")
     await next()
   }, queryValidator(z.object({ attempt: z.string().regex(/^entry\.[A-Za-z0-9_-]{43}$/) }).strict()), async (c) => {
     try {
-      // Primary: oauth/start wrote this handle moments before the browser presents it.
       const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, c.req.valid("query").attempt)).limit(1)
       const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
       if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
@@ -945,11 +902,9 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
       if (!provider || !set || attempt.clientBinding !== memberAttemptBinding(provider, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
       oauthRedirect(entry.redirect_to ?? undefined)
-      const liteLlmMode = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings)?.keySource ?? "personal" : null
-      const signInMethod = gatewayMemberSignInMethod(provider.provider_id)
-      const method = liteLlmMode === "issued" ? "litellm_issued" as const : liteLlmMode ? "litellm_key" as const : signInMethod ?? "google"
-      // The live signed cookie matches the entry's initiating user: attribute to
-      // the provider's organization and the entry's member before any write.
+      const signInMethod = providerMemberSignInMethod(provider)
+      const liteLlmMode = isLiteLlmProviderId(provider.provider_id) && signInMethod === null ? readLiteLlmSettings(provider.settings)?.keySource ?? "personal" : null
+      const method = isTrueFoundryProviderId(provider.provider_id) ? "truefoundry_issued" as const : liteLlmMode === "issued" ? "litellm_issued" as const : liteLlmMode ? "litellm_key" as const : signInMethod ?? "google"
       const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
       if (auditBlocked) return auditBlocked
       const status = await db.transaction(async (tx) => {
@@ -961,7 +916,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         return "ready"
       })
       const issue = status === "ready" && method === "litellm_issued" ? await liteLlmMemberIssueStatus(provider.id, entry.org_membership_id) : null
-      return c.json(status === "ready" ? { status, method, providerName: provider.name, ...(issue ? { issue } : {}) } : { status })
+      const truefoundry = status === "ready" && method === "truefoundry_issued" ? await trueFoundryMemberStatus(provider.id, entry.org_membership_id) : null
+      return c.json(status === "ready" ? { status, method, providerName: provider.name, ...(issue ? { issue } : {}), ...(truefoundry ? { truefoundry } : {}) } : { status })
     } catch (error) { return respond(c, error) }
   })
 
@@ -972,25 +928,24 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const cookieToken = await readSignedSessionCookieToken(c)
       const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
       if (!session) return c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401)
-      // Primary: oauth/start wrote this handle moments before the browser presents it.
       const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, c.req.valid("query").attempt)).limit(1)
       const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
       if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
       if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
       const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
-      if (provider && isLiteLlmProviderId(provider.provider_id)) throw new GatewayWriteError(400, "litellm_key_required", "This provider uses your own LiteLLM key, not Google sign-in.")
-      const method = provider ? gatewayMemberSignInMethod(provider.provider_id) : null
+      const method = provider ? providerMemberSignInMethod(provider) : null
+      const signInScope = provider ? providerMemberSignInScope(provider) : null
+      if (provider && isLiteLlmProviderId(provider.provider_id) && method === null) throw new GatewayWriteError(400, "litellm_key_required", "This provider uses your own LiteLLM key, not Google sign-in.")
+      if (provider && isTrueFoundryProviderId(provider.provider_id)) throw new GatewayWriteError(400, "truefoundry_keys_managed", "OpenWork creates your TrueFoundry key for this provider; there is nothing to sign in to.")
       if (method === "aws_sso") throw new GatewayWriteError(400, "aws_device_sign_in_required", "This provider uses AWS sign-in. Start it from the connect page.")
-      if (!provider || !set || !method || attempt.clientBinding !== memberSignInBinding(method, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
+      if (!provider || !set || !method || attempt.clientBinding !== memberSignInBinding(method, set, attempt.verifier, signInScope)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
       oauthRedirect(entry.redirect_to ?? undefined)
-      // The live signed cookie matches the entry's initiating user: attribute to
-      // the provider's organization and the entry's member before any write.
       const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
       if (auditBlocked) return auditBlocked
       const { verifier, challenge } = createPkcePair()
       const state = `${method}.${randomBytes(32).toString("base64url")}`
-      const clientBinding = memberSignInBinding(method, set, verifier)
+      const clientBinding = memberSignInBinding(method, set, verifier, signInScope)
       if (!clientBinding) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
       const nextAttempt = { verifier, userId: attempt.userId, clientBinding }
       await db.transaction(async (tx) => {
@@ -1003,7 +958,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       })
       const redirectUri = `${publicBase(c.req.raw)}/v1/inference-providers/oauth/callback`
       const authUrl = method === "microsoft"
-        ? buildMicrosoftAuthorizeUrl({ tenantId: set.oauth_tenant_id ?? "", clientId: set.oauth_client_id ?? "", redirectUri, state, codeChallenge: challenge, nonce: microsoftOAuthNonce(verifier, state) })
+        ? buildMicrosoftAuthorizeUrl({ tenantId: set.oauth_tenant_id ?? "", clientId: set.oauth_client_id ?? "", redirectUri, state, codeChallenge: challenge, nonce: microsoftOAuthNonce(verifier, state), apiScope: signInScope })
         : buildGoogleAuthorizeUrl({ clientId: set.oauth_client_id ?? "", redirectUri, state, codeChallenge: challenge, nonce: googleOAuthNonce(verifier, state) })
       if (c.req.header("accept")?.includes("application/json")) return c.json({ authUrl })
       return c.redirect(authUrl, 302)
@@ -1030,9 +985,6 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (redirectTo) { const url = new URL(redirectTo); url.searchParams.set("error", message); if (code) url.searchParams.set("errorCode", code); return c.redirect(url.toString(), 302) }
       return c.html(connectCallbackPage({ ok: false, name: brand, message, referenceId: requestId }), 400)
     }
-    // State is transferable, not browser authentication. Desktop may start with a
-    // bearer session, but the browser must independently sign in as the same user.
-    // Read the live session row so a revoked/expired cookie cannot use cached auth.
     const cookieToken = await readSignedSessionCookieToken(c)
     const [browserSession] = cookieToken ? await db.select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId }).from(AuthSessionTable)
       .where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
@@ -1048,7 +1000,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     if (state.used_at || state.expires_at.getTime() <= Date.now()) return fail("This sign-in link has expired or was already used. Start Connect again.")
     const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, state.gateway_provider_id))
     const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, state.credential_set_id))
-    if (!provider || !set || gatewayMemberSignInMethod(provider.provider_id) !== stateMethod || attempt.clientBinding !== memberSignInBinding(stateMethod, set, attempt.verifier)) return fail("This credential set is no longer available.")
+    const signInScope = provider ? providerMemberSignInScope(provider) : null
+    if (!provider || !set || providerMemberSignInMethod(provider) !== stateMethod || attempt.clientBinding !== memberSignInBinding(stateMethod, set, attempt.verifier, signInScope)) return fail("This credential set is no longer available.")
     const clientId = set.oauth_client_id ?? ""
     const clientSecret = set.oauth_client_secret ?? ""
     let redirectTo: string | null = null
@@ -1065,19 +1018,20 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     })
     if (!claimed) return fail("Provider access changed or the sign-in link was already used. Start Connect again.")
     if (query.error || !query.code) return fail(query.error === "access_denied" ? `${brand} access was denied.` : `${brand} did not return an authorization code.`, redirectTo)
-    // Google refresh tokens can be revoked; Entra ID has no per-token revocation for confidential clients.
     const cleanupWarning = stateMethod === "google" ? " Cleanup revocation may affect existing Google connections using the same OAuth client, including your previous connection. You may need to reconnect those connections." : ""
     let issuedToken: string | null = null
     const redirectUri = `${publicBase(c.req.raw)}/v1/inference-providers/oauth/callback`
+    let entraAccessToken: string | null = null
     try {
       const exchangeStartedAt = Date.now()
       let values: { kind: "oauth_google" | "oauth_azure"; secret: string; expires_at: Date; scopes: string | null }
       if (stateMethod === "microsoft") {
         const tenantId = set.oauth_tenant_id ?? ""
-        const tokens = await exchangeMicrosoftAuthorizationCode({ tenantId, clientId, clientSecret, code: query.code, codeVerifier: attempt.verifier, redirectUri })
+        const tokens = await exchangeMicrosoftAuthorizationCode({ tenantId, clientId, clientSecret, code: query.code, codeVerifier: attempt.verifier, redirectUri, apiScope: signInScope })
         const identity = await verifyMicrosoftIdentity({ idToken: tokens.idToken, tenantId, clientId, nonce: microsoftOAuthNonce(attempt.verifier, state.state) })
+        entraAccessToken = signInScope !== null ? tokens.accessToken : null
         values = { kind: "oauth_azure", expires_at: new Date(exchangeStartedAt + tokens.expiresIn * 1000), scopes: tokens.scope,
-          secret: JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, tokenType: "Bearer", microsoftIdentity: { ...identity, authorizationRevision: randomBytes(32).toString("base64url") } }) }
+          secret: JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, tokenType: "Bearer", microsoftIdentity: { ...identity, authorizationRevision: randomBytes(32).toString("base64url"), ...(signInScope === null ? {} : { scope: signInScope }) } }) }
       } else {
         const tokens = await exchangeGoogleAuthorizationCode({ clientId, clientSecret, code: query.code, codeVerifier: attempt.verifier, redirectUri })
         issuedToken = tokens.refresh_token
@@ -1098,7 +1052,33 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const message = error instanceof OAuthTokenExchangeError ? error.message : `OpenWork could not finish ${brand} sign-in. Try Connect again.`
       return fail(issuedToken ? `${message}${cleanupWarning}` : message, redirectTo, error instanceof OAuthTokenExchangeError ? error.code : "oauth_callback_failed")
     }
-    return redirectTo ? c.redirect(redirectTo, 302) : c.html(connectCallbackPage({ ok: true, name: set.name }))
+    let callbackDetail: string | undefined
+    let callbackWarning: string | undefined
+    if (entraAccessToken !== null && isLiteLlmProviderId(provider.provider_id)) {
+      const upstreamBaseUrl = typeof provider.settings.upstreamBaseUrl === "string" ? provider.settings.upstreamBaseUrl : ""
+      const configuredModels = readLiteLlmSettings(provider.settings)?.catalog.map((model) => model.id) ?? []
+      const check = await verifyLiteLlmEntraToken({ baseUrl: upstreamBaseUrl, accessToken: entraAccessToken, configuredModels })
+      console.info("litellm_entra_connect_check", {
+        requestId,
+        providerId: provider.id,
+        outcome: check.outcome,
+        ...(check.outcome === "rejected"
+          ? { status: check.status, reason: check.reason }
+          : check.outcome === "missing_models"
+            ? { missingCount: check.missingModels.length }
+            : check.outcome === "skipped"
+              ? { status: check.status, reason: check.reason }
+              : { listedCount: check.listedCount }),
+      })
+      if (check.outcome === "verified") callbackDetail = "Connection verified with LiteLLM."
+      else if (check.outcome === "rejected" || check.outcome === "missing_models") callbackWarning = check.warning
+    }
+    if (redirectTo) {
+      const destination = new URL(redirectTo)
+      if (callbackWarning) destination.searchParams.set("warning", callbackWarning)
+      return c.redirect(destination.toString(), 302)
+    }
+    return c.html(connectCallbackPage({ ok: true, name: set.name, ...(callbackDetail ? { detail: callbackDetail } : {}), ...(callbackWarning ? { warning: callbackWarning } : {}) }))
   })
 
   app.post("/v1/inference-providers/oauth/browser-aws-start", route("Start member AWS sign-in from a signed-in browser", "For Amazon Bedrock member credential sets. Consumes the ten-minute entry handle from oauth/start, with the signed-in browser session of the same user, and starts an IAM Identity Center device sign-in against the set's own Identity Center instance. Returns AWS's approval page and code to show the person, and a new attempt handle for browser-aws-poll. Bearer authentication alone is not accepted.", z.object({ attempt: z.string(), verificationUri: z.string(), verificationUriComplete: z.string(), userCode: z.string(), interval: z.number().int(), expiresIn: z.number().int() }), 200, true, { security: [] }), publicRoute, async (c, next) => {
@@ -1141,14 +1121,12 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (!pending || !sso) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
       const now = Date.now()
       if (pending.aws.nextPollAt > now) return c.json({ status: "pending" as const, retryAfter: Math.max(1, Math.ceil((pending.aws.nextPollAt - now) / 1000)) })
-      // Claim this poll slot first so two tabs never spend the same device code.
       const claimed = { ...pending, aws: { ...pending.aws, nextPollAt: now + pending.aws.interval * 1000 } }
       const claimedVerifier = JSON.stringify(claimed)
       const won = affectedRows(await db.update(GatewayProviderOauthStateTable).set({ code_verifier: claimedVerifier })
         .where(and(eq(GatewayProviderOauthStateTable.id, entry.id), eq(GatewayProviderOauthStateTable.state, entry.state), isNull(GatewayProviderOauthStateTable.used_at)))) === 1
       if (!won) return c.json({ status: "pending" as const, retryAfter: pending.aws.interval })
       const result = await pollAwsSsoSignIn({ sso, aws: pending.aws }).catch(async (error: unknown) => {
-        // A final answer from AWS ends this attempt; a transient one keeps it.
         if (error instanceof AwsSsoError && !error.transient) await db.update(GatewayProviderOauthStateTable).set({ used_at: new Date() }).where(eq(GatewayProviderOauthStateTable.id, entry.id))
         throw awsSsoWriteError(error)
       })
@@ -1174,6 +1152,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const actor = c.get("organizationContext")
       const provider = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       if (isLiteLlmProviderId(provider.provider_id) && readLiteLlmSettings(provider.settings)?.keySource === "issued") throw new GatewayWriteError(409, "litellm_keys_managed", "OpenWork manages these LiteLLM keys. Ask your admin to remove your access instead.")
+      if (isTrueFoundryProviderId(provider.provider_id)) throw new GatewayWriteError(409, "truefoundry_keys_managed", "OpenWork manages these TrueFoundry keys. Ask your admin to remove your access instead.")
       const selected = c.req.valid("query").credentialSetId
       const sets = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
       const candidates = selected ? sets.filter((set) => set.id === selected) : sets.filter((set) => set.credential_mode === "member")
@@ -1198,13 +1177,24 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.post("/v1/inference-providers/litellm", route("Create LiteLLM gateway provider", "Connects the organization's own LiteLLM proxy and syncs its models. mode=org stores one organization LiteLLM key used for everyone, creates an \"All LiteLLM models\" group granted to the given audiences, and keeps OpenWork spend tracking and limits on. mode=member stores a LiteLLM admin key used only to sync models and teams; each person then connects their own LiteLLM key, which picks the shared group matching that key's models. The given audiences are granted the empty \"Can connect a LiteLLM key\" group, and OpenWork spend tracking is off because LiteLLM budgets those keys. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 201, true), orgMemberRoute(), managementWrite, jsonValidator(liteLlmCreateSchema), async (c) => {
+  app.post("/v1/inference-providers/litellm", route("Create LiteLLM gateway provider", "Connects the organization's own LiteLLM proxy and syncs its models. mode=entra is for a proxy that accepts sign-in tokens instead of LiteLLM keys: it stores the Entra app registration (oauthTenantId, oauthClientId, write-only oauthClientSecret), one API scope (oauthScope) and the model list (modelIds), creates an \"All LiteLLM models\" group granted to the given audiences, reads nothing from the proxy, and each person then signs in with Microsoft through oauth/start. mode=org stores one organization LiteLLM key used for everyone, creates an \"All LiteLLM models\" group granted to the given audiences, and keeps OpenWork spend tracking and limits on. mode=member stores a LiteLLM admin key used only to sync models and teams; each person then connects their own LiteLLM key, which picks the shared group matching that key's models. The given audiences are granted the empty \"Can connect a LiteLLM key\" group, and OpenWork spend tracking is off because LiteLLM budgets those keys. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 201, true), orgMemberRoute(), managementWrite, jsonValidator(liteLlmCreateSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
       const endpoints = await liteLlmCall(async () => normalizeLiteLlmBaseUrl(input.baseUrl))
       const urlError = upstreamBaseUrlSettingError({ upstreamBaseUrl: endpoints.inferenceBaseUrl })
       if (urlError) throw new GatewayWriteError(400, "invalid_settings", urlError)
+      if (input.mode === "entra") {
+        const entra = await liteLlmEntraInput(input)
+        const now = new Date()
+        const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: LITELLM_PROVIDER_ID, name: input.name, model_ids: [], pinned_model_ids: [], provider_config: buildProviderConfigSnapshot(liteLlmCatalogProvider({ settings: {} })), settings: { upstreamBaseUrl: endpoints.inferenceBaseUrl, litellm: emptyEntraSettings(input.oauthScope) }, credential_mode: "member", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
+        const sync = await db.transaction(async (tx) => {
+          const member = await liveMember(tx, actor, true)
+          await requireLiveManage(tx, actor)
+          return createLiteLlmEntraProvider(tx, provider, { signIn: { tenantId: input.oauthTenantId.toLowerCase(), clientId: input.oauthClientId, clientSecret: input.oauthClientSecret }, models: entra.models ?? [], audiences: liteLlmAudiences(input), creatorId: member.id })
+        })
+        return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync }, 201)
+      }
       if (input.mode !== "issued" && (input.issueStrategy !== undefined || input.mirrorFallback !== undefined)) throw new GatewayWriteError(400, "invalid_request", "issueStrategy and mirrorFallback apply to issued mode only.")
       const credentialMode = input.mode === "org" ? "org" as const : "member" as const
       const client = createLiteLlmClient(endpoints)
@@ -1218,13 +1208,12 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         const created = await createLiteLlmProvider(tx, provider, { name: input.name, mode: credentialMode, endpoints, apiKey: input.apiKey, audiences: liteLlmAudiences(input), creatorId: member.id }, plan)
         return created.result
       })
-      // Everyone allowed gets keys straight away; nobody has to connect anything.
       const issued = issue.keySource === "issued" ? await liteLlmCall(() => reconcileLiteLlmIssuedKeys(provider, client)) : undefined
       return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync: { ...sync, ...(issued ? { issued } : {}) } }, 201)
     } catch (error) { return respond(c, error) }
   })
 
-  app.post("/v1/inference-providers/:inferenceProviderId/litellm/sync", route("Sync LiteLLM models and groups", "Reads the LiteLLM proxy with the stored organization key (org mode) or admin key (member mode) and refreshes the provider's models. Org mode refreshes the \"All LiteLLM models\" group. Member mode refreshes team groups, re-checks every connected member key, moves members to the group matching their key's models, revokes keys LiteLLM rejects, and removes automatic grants of people who may no longer connect. A failed read keeps the last synced catalog and records the error. Requires the Manage Gateway providers permission and Gateway management.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 200, false, { "x-mcp-search-aliases": ["sync litellm models", "refresh litellm model groups"] }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
+  app.post("/v1/inference-providers/:inferenceProviderId/litellm/sync", route("Sync LiteLLM models and groups", "Reads the LiteLLM proxy with the stored organization key (org mode) or admin key (member mode) and refreshes the provider's models. A provider whose members sign in with Microsoft has no key to read the proxy with and answers 409 litellm_sync_unavailable; change its modelIds with PATCH instead. Org mode refreshes the \"All LiteLLM models\" group. Member mode refreshes team groups, re-checks every connected member key, moves members to the group matching their key's models, revokes keys LiteLLM rejects, and removes automatic grants of people who may no longer connect. A failed read keeps the last synced catalog and records the error. Requires the Manage Gateway providers permission and Gateway management.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 200, false, { "x-mcp-search-aliases": ["sync litellm models", "refresh litellm model groups"] }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
@@ -1242,13 +1231,23 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.patch("/v1/inference-providers/:inferenceProviderId/litellm", route("Update LiteLLM key or key creation", "Verifies and stores a new organization LiteLLM key (org mode) or LiteLLM admin key (member and issued modes), and in issued mode changes how keys are created, then syncs. Changing issueStrategy replaces existing created keys at that sync. The proxy URL and mode are fixed; create a new provider to change them. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 200, true), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(z.object({ apiKey: liteLlmKeySchema.optional(), issueStrategy: liteLlmIssueStrategySchema.optional(), mirrorFallback: liteLlmMirrorFallbackSchema.optional() }).strict().refine((input) => Object.keys(input).length > 0, "Provide apiKey, issueStrategy or mirrorFallback.")), async (c) => {
+  app.patch("/v1/inference-providers/:inferenceProviderId/litellm", route("Update LiteLLM key or key creation", "Verifies and stores a new organization LiteLLM key (org mode) or LiteLLM admin key (member and issued modes), and in issued mode changes how keys are created, then syncs. Changing issueStrategy replaces existing created keys at that sync. For a provider whose members sign in with Microsoft: changes oauthTenantId, oauthClientId, oauthClientSecret, oauthScope and/or modelIds without contacting the proxy; changing any sign-in setting revokes every member's token and cancels pending sign-ins, so people sign in again. The proxy URL and mode are fixed; create a new provider to change them. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: liteLlmSyncResultSchema }), 200, true), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(liteLlmUpdateSchema), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       const settings = isLiteLlmProviderId(before.provider_id) ? readLiteLlmSettings(before.settings) : null
       if (!settings) throw new GatewayWriteError(409, "litellm_not_configured", "Only LiteLLM providers have a LiteLLM key.")
+      if (isLiteLlmEntraSignIn(settings)) {
+        if (input.apiKey !== undefined || input.issueStrategy !== undefined || input.mirrorFallback !== undefined) throw new GatewayWriteError(409, "litellm_microsoft_sign_in", "This provider uses Microsoft sign-in. It has no LiteLLM key or key creation settings.")
+        const entra = await liteLlmEntraInput(input)
+        const result = await providerTransaction(c, async (tx, provider) => ({ provider, ...await updateLiteLlmEntraProvider(tx, provider, { tenantId: entra.tenantId, clientId: input.oauthClientId, clientSecret: input.oauthClientSecret, scope: entra.scope, models: entra.models }) }))
+        await revokeUpstreamCredentials(result.revoked)
+        return c.json({ inferenceProvider: await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync: result.sync })
+      }
+      if (input.oauthTenantId !== undefined || input.oauthClientId !== undefined || input.oauthClientSecret !== undefined || input.oauthScope !== undefined || input.modelIds !== undefined) {
+        throw new GatewayWriteError(409, "litellm_not_entra", "Only LiteLLM providers that use Microsoft sign-in have these settings.")
+      }
       const issuedMode = settings.mode === "member" && settings.keySource === "issued"
       if (!issuedMode && (input.issueStrategy !== undefined || input.mirrorFallback !== undefined)) throw new GatewayWriteError(409, "litellm_not_issued", "Only providers where OpenWork creates keys have key creation settings.")
       const client = createLiteLlmClient(liteLlmEndpoints(before))
@@ -1258,7 +1257,6 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         if (apiKey !== undefined) await replaceLiteLlmSyncKey(tx, provider, apiKey)
         if (input.issueStrategy !== undefined || input.mirrorFallback !== undefined) await updateLiteLlmIssueSettings(tx, provider, { issueStrategy: input.issueStrategy, mirrorFallback: input.mirrorFallback })
       })
-      // Primary: reads the key the transaction above just stored.
       const refreshed = await getProvider(db.$primary, actor, before.id)
       const plan = await liteLlmCall(() => planLiteLlmSync(refreshed, client))
       const result = await providerTransaction(c, async (tx, provider) => ({ provider, sync: await applyLiteLlmSync(tx, provider, plan) }))
@@ -1267,7 +1265,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     } catch (error) { return respond(c, error) }
   })
 
-  app.put("/v1/inference-providers/:inferenceProviderId/litellm/member-key", route("Connect the caller's LiteLLM key", "Stores the caller's own LiteLLM key for a per-user LiteLLM provider after checking it with the LiteLLM proxy, and grants the shared model group whose models match what that key can reach. Requires a user session and an admin grant that lets the caller connect a key. Replacing the key re-matches the group. The key is write-only. Disconnect with DELETE /v1/inference-providers/{inferenceProviderId}/oauth.", liteLlmConnectResultSchema, 200, true), userSessionRoute(), orgMemberRoute(), paramValidator(paramsSchema), jsonValidator(z.object({ apiKey: liteLlmKeySchema, credentialSetId: denTypeIdSchema("gatewayCredentialSet").optional() }).strict()), async (c) => {
+  app.put("/v1/inference-providers/:inferenceProviderId/litellm/member-key", route("Connect the caller's LiteLLM key", "Stores the caller's own LiteLLM key for a per-user LiteLLM provider after checking it with the LiteLLM proxy, and grants the shared model group whose models match what that key can reach. Requires a user session and an admin grant that lets the caller connect a key. Replacing the key re-matches the group. The key is write-only. Disconnect with DELETE /v1/inference-providers/{inferenceProviderId}/oauth.", liteLlmConnectResultSchema, 200, true), orgMemberRoute(), userSessionRoute(), paramValidator(paramsSchema), jsonValidator(z.object({ apiKey: liteLlmKeySchema, credentialSetId: denTypeIdSchema("gatewayCredentialSet").optional() }).strict()), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const input = c.req.valid("json")
@@ -1298,7 +1296,6 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const cookieToken = await readSignedSessionCookieToken(c)
       const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
       if (!session) return c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401)
-      // Primary: oauth/start wrote this handle moments before the browser presents it.
       const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, input.attempt)).limit(1)
       const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
       if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
@@ -1306,8 +1303,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
       if (!provider || !set || !isLiteLlmProviderId(provider.provider_id) || attempt.clientBinding !== memberAttemptBinding(provider, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
-      // The live signed cookie matches the entry's initiating user: attribute to
-      // the provider's organization and the entry's member before any write.
+      if (providerMemberSignInMethod(provider) !== null) throw new GatewayWriteError(409, "litellm_microsoft_sign_in", "This provider uses Microsoft sign-in, not a LiteLLM key.")
       const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
       if (auditBlocked) return auditBlocked
       const adminKey = await liteLlmAdminKey(provider)
@@ -1337,7 +1333,6 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const cookieToken = await readSignedSessionCookieToken(c)
       const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
       if (!session) return c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401)
-      // Primary: oauth/start wrote this handle moments before the browser presents it.
       const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, input.attempt)).limit(1)
       const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
       if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
@@ -1345,13 +1340,104 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
       const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
       if (!provider || !set || provider.status !== "active" || !isLiteLlmProviderId(provider.provider_id) || attempt.clientBinding !== memberAttemptBinding(provider, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
-      // The live signed cookie matches the entry's initiating user: attribute to
-      // the provider's organization and the entry's member before any write.
       const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
       if (auditBlocked) return auditBlocked
       await liteLlmCall(() => provisionLiteLlmMember(provider, entry.org_membership_id, { force: true }))
       const status = await liteLlmMemberIssueStatus(provider.id, entry.org_membership_id)
       if (status.keyCount > 0) await db.update(GatewayProviderOauthStateTable).set({ used_at: new Date() }).where(and(eq(GatewayProviderOauthStateTable.id, entry.id), isNull(GatewayProviderOauthStateTable.used_at)))
+      return c.json(status)
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.post("/v1/inference-providers/truefoundry", route("Create TrueFoundry gateway provider", "Connects the organization's TrueFoundry AI Gateway with one TrueFoundry admin key (a virtual account token with the tenant admin role) and syncs its chat models. The given audiences are granted the empty \"Gets a TrueFoundry key\" group. For each allowed person, OpenWork finds their TrueFoundry user by OpenWork email (or, with createMissingUsers, adds them), creates one personal access token owned by that user, stores it as the person's own credential and grants the shared group matching the models that token can reach. TrueFoundry budgets and logs those tokens; OpenWork prices requests and applies usage limits only with trackUsageCosts on, for models with public pricing. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: trueFoundrySyncResultSchema }), 201, true), orgMemberRoute(), managementWrite, jsonValidator(trueFoundryCreateSchema), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const input = c.req.valid("json")
+      const endpoints = await trueFoundryCall(async () => normalizeTrueFoundryEndpoints(input.controlPlaneUrl, input.gatewayUrl))
+      const urlError = upstreamBaseUrlSettingError({ upstreamBaseUrl: endpoints.gatewayBaseUrl })
+      if (urlError) throw new GatewayWriteError(400, "invalid_settings", urlError)
+      const client = createTrueFoundryClient(endpoints)
+      const catalog = await trueFoundryCall(() => planTrueFoundryCatalog(client, input.apiKey))
+      const now = new Date()
+      const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: TRUEFOUNDRY_PROVIDER_ID, name: input.name, model_ids: [], pinned_model_ids: [], provider_config: buildProviderConfigSnapshot(trueFoundryCatalogProvider({ settings: {} })), settings: { upstreamBaseUrl: endpoints.gatewayBaseUrl, truefoundry: emptyTrueFoundrySettings(endpoints.controlPlaneUrl, "pending", { createMissingUsers: input.createMissingUsers, trackUsageCosts: input.trackUsageCosts }) }, credential_mode: "member", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
+      await db.transaction(async (tx) => {
+        const member = await liveMember(tx, actor, true)
+        await requireLiveManage(tx, actor)
+        await createTrueFoundryProvider(tx, provider, { adminKey: input.apiKey, audiences: liteLlmAudiences(input), creatorId: member.id }, catalog)
+      })
+      const sync = await trueFoundryCall(() => reconcileTrueFoundryMembers(provider, client))
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync }, 201)
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.post("/v1/inference-providers/:inferenceProviderId/truefoundry/sync", route("Sync TrueFoundry models and people", "Reads the tenant's chat models with the stored TrueFoundry admin key, then for every allowed person rechecks their token's models, creates a token for people who have none yet (adding missing TrueFoundry users when createMissingUsers is on), and deletes the tokens of people who lost access or left. A failed catalog read keeps the last synced models and records the error. Requires the Manage Gateway providers permission and Gateway management.", z.object({ inferenceProvider: detailsSchema, sync: trueFoundrySyncResultSchema }), 200, false, { "x-mcp-search-aliases": ["sync truefoundry models", "refresh truefoundry keys"] }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
+      if (!isTrueFoundryProviderId(before.provider_id)) throw new GatewayWriteError(409, "truefoundry_not_configured", "Only TrueFoundry providers can be synced here.")
+      const plan = await planTrueFoundrySync(before).catch(async (error: unknown) => {
+        if (error instanceof TrueFoundryError) {
+          await recordTrueFoundrySyncError(before.id, error.message)
+          throw trueFoundryErrorResponse(error)
+        }
+        throw error
+      })
+      const provider = await providerTransaction(c, async (tx, locked) => { await applyTrueFoundryCatalog(tx, locked, plan); return locked })
+      const sync = await trueFoundryCall(() => reconcileTrueFoundryMembers(provider))
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync })
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.patch("/v1/inference-providers/:inferenceProviderId/truefoundry", route("Update TrueFoundry admin key, missing users, usage costs or models", "Verifies and stores a new TrueFoundry admin key, turns Create missing users in TrueFoundry or Track usage costs in OpenWork on or off, and/or sets which TrueFoundry models people get (modelIds), then syncs. The addresses are fixed; create a new provider to change them. Keys are write-only. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", z.object({ inferenceProvider: detailsSchema, sync: trueFoundrySyncResultSchema }), 200, true), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(z.object({ apiKey: trueFoundryKeySchema.optional(), createMissingUsers: trueFoundryCreateMissingUsersSchema.optional(), trackUsageCosts: trueFoundryTrackUsageCostsSchema.optional(), modelIds: trueFoundryModelPickSchema.optional() }).strict().refine((input) => Object.keys(input).length > 0, "Provide apiKey, createMissingUsers, trackUsageCosts or modelIds.")), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const input = c.req.valid("json")
+      const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
+      if (!isTrueFoundryProviderId(before.provider_id) || !readTrueFoundrySettings(before.settings)) throw new GatewayWriteError(409, "truefoundry_not_configured", "Only TrueFoundry providers have a TrueFoundry key.")
+      const client = createTrueFoundryClient(await trueFoundryCall(async () => trueFoundryEndpoints(before)))
+      const apiKey = input.apiKey
+      if (apiKey !== undefined) await trueFoundryCall(() => planTrueFoundryCatalog(client, apiKey))
+      await providerTransaction(c, async (tx, provider) => updateTrueFoundryProvider(tx, provider, { adminKey: apiKey, createMissingUsers: input.createMissingUsers, trackUsageCosts: input.trackUsageCosts, modelIds: input.modelIds }))
+      const refreshed = await getProvider(db.$primary, actor, before.id)
+      const plan = await trueFoundryCall(() => planTrueFoundrySync(refreshed, client))
+      const provider = await providerTransaction(c, async (tx, locked) => { await applyTrueFoundryCatalog(tx, locked, plan); return locked })
+      const sync = await trueFoundryCall(() => reconcileTrueFoundryMembers(provider, client))
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync })
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.post("/v1/inference-providers/:inferenceProviderId/truefoundry/members/:memberId/reset-tokens", route("Reset a person's TrueFoundry tokens", "For a person TrueFoundry refuses a new key because they hold its maximum number of personal access tokens (attention reason token_limit). TrueFoundry can't list or delete only the tokens OpenWork created, so this revokes every personal access token the person holds in TrueFoundry, including ones they made themselves for other tools, then creates a new OpenWork key for them and returns their status. Requires the Manage Gateway providers permission and Gateway management; session callers must recently reauthenticate.", trueFoundryMemberStatusSchema, 200, true, { "x-mcp-search-aliases": ["truefoundry too many tokens", "revoke truefoundry tokens"] }), orgMemberRoute(), managementWrite, paramValidator(paramsSchema.extend({ memberId: denTypeIdSchema("member") })), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const params = c.req.valid("param")
+      const provider = await getProvider(db.$primary, actor, params.inferenceProviderId)
+      if (!isTrueFoundryProviderId(provider.provider_id) || !readTrueFoundrySettings(provider.settings)) throw new GatewayWriteError(409, "truefoundry_not_configured", "Only TrueFoundry providers have TrueFoundry tokens.")
+      return c.json(await resetTrueFoundryMemberTokens(provider, params.memberId))
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.post("/v1/inference-providers/oauth/browser-truefoundry-check", route("Retry creating the caller's TrueFoundry key from a signed-in browser", "For TrueFoundry providers. Uses the ten-minute entry handle from oauth/start plus the signed-in browser session of the same user to look the person up in TrueFoundry by email again (adding them when the provider creates missing users) and create their token. Returns the outcome; a ready token consumes the handle. Bearer authentication alone is not accepted.", trueFoundryMemberStatusSchema, 200, true, { security: [] }), publicRoute, async (c, next) => {
+    c.header("Cache-Control", "no-store")
+    c.header("Referrer-Policy", "no-referrer")
+    await next()
+  }, jsonValidator(z.object({ attempt: z.string().regex(/^entry\.[A-Za-z0-9_-]{43}$/) }).strict()), async (c) => {
+    try {
+      const input = c.req.valid("json")
+      const cookieToken = await readSignedSessionCookieToken(c)
+      const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
+      if (!session) return c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401)
+      const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, input.attempt)).limit(1)
+      const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
+      if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
+      if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
+      const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, entry.gateway_provider_id))
+      const [set] = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, entry.credential_set_id))
+      if (!provider || !set || provider.status !== "active" || !isTrueFoundryProviderId(provider.provider_id) || attempt.clientBinding !== memberAttemptBinding(provider, set, attempt.verifier)) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
+      const auditBlocked = await attributeMemberOAuthEntry(c, { organizationId: provider.organization_id, userId: session.userId, memberId: entry.org_membership_id })
+      if (auditBlocked) return auditBlocked
+      await trueFoundryCall(() => provisionTrueFoundryMember(provider, entry.org_membership_id, { force: true }))
+      const status = await trueFoundryMemberStatus(provider.id, entry.org_membership_id)
+      if (status.ready) await db.update(GatewayProviderOauthStateTable).set({ used_at: new Date() }).where(and(eq(GatewayProviderOauthStateTable.id, entry.id), isNull(GatewayProviderOauthStateTable.used_at)))
       return c.json(status)
     } catch (error) { return respond(c, error) }
   })
@@ -1405,6 +1491,188 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         return provider
       })
       return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }) }, 201)
+    } catch (error) { return respond(c, error) }
+  })
+}
+
+const customCreateSchema = gatewayCustomCreateRequestSchema.extend({ memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() })
+const customDetailsResponse = detailsResponse
+const rateLimitedSchema = z.object({ error: z.literal("rate_limited"), retryAfterSeconds: z.number() })
+const providerIdSchema = denTypeIdSchema("inferenceProvider")
+
+async function customRateLimit(actor: Actor, prefix: string): Promise<number | null> {
+  for (const [key, limit] of [[`${prefix}:member:${actor.currentMember.id}`, 20], [`${prefix}:org:${actor.organization.id}`, 60]] as const) {
+    const retryAfterSeconds = await checkRateLimit(key, limit, TEST_CONNECTION_WINDOW_MS, Date.now())
+    if (retryAfterSeconds !== null) return retryAfterSeconds
+  }
+  return null
+}
+
+function customBaseUrl(input: string): string {
+  const checked = checkCustomBaseUrl(input)
+  if (!checked.ok) throw new GatewayWriteError(400, "invalid_base_url", checked.message)
+  return checked.baseUrl
+}
+
+async function customProvider(database: GatewayTx | typeof db | typeof db.$primary, actor: Actor, id: string, lock = false): Promise<{ provider: GatewayProvider; settings: GatewayCustomProviderSettings; baseUrl: string }> {
+  const parsed = providerIdSchema.safeParse(id)
+  if (!parsed.success) throw new GatewayWriteError(404, "inference_provider_not_found")
+  const provider = await getProvider(database, actor, parsed.data, lock)
+  if (!isGatewayCustomProviderId(provider.provider_id)) throw new GatewayWriteError(409, "custom_not_configured", "Only custom OpenAI-compatible providers can be changed here.")
+  const settings = readCustomProviderSettings(provider.settings)
+  const baseUrl = typeof provider.settings.upstreamBaseUrl === "string" ? provider.settings.upstreamBaseUrl : null
+  if (!settings || !baseUrl) throw new GatewayWriteError(409, "custom_settings_invalid", "This provider's saved settings can't be read. Remove it and add it again.")
+  return { provider, settings, baseUrl }
+}
+
+async function customOrgSet(database: GatewayTx | typeof db | typeof db.$primary, provider: GatewayProvider): Promise<GatewaySet | null> {
+  const sets = await database.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
+  return sets.filter((set) => set.credential_mode === "org" && set.status === "active").sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id))[0] ?? null
+}
+
+async function customSavedKey(provider: GatewayProvider): Promise<string> {
+  const set = await customOrgSet(db, provider)
+  const [row] = set ? await db.select().from(GatewayProviderCredentialTable)
+    .where(and(eq(GatewayProviderCredentialTable.credential_set_id, set.id), eq(GatewayProviderCredentialTable.subject, "org"), isNull(GatewayProviderCredentialTable.org_membership_id))) : []
+  if (!row || row.status !== "active" || row.kind !== "api_key" || !row.secret.trim()) throw new GatewayWriteError(409, "custom_key_missing", "This provider has no saved API key. Enter the key.")
+  return row.secret
+}
+
+async function customSavedKeyFor(actor: Actor, inferenceProviderId: string, baseUrl: string | null): Promise<{ key: string; baseUrl: string }> {
+  const saved = await customProvider(db, actor, inferenceProviderId)
+  const target = baseUrl ?? saved.baseUrl
+  if (!sameCustomOrigin(target, saved.baseUrl)) throw new GatewayWriteError(400, "api_key_required", "Enter the API key again to use a different address.")
+  return { key: await customSavedKey(saved.provider), baseUrl: target }
+}
+
+function customSettings(baseUrl: string, models: GatewayCustomModel[], discovery: GatewayCustomProviderSettings["discovery"]): Record<string, unknown> {
+  const custom: GatewayCustomProviderSettings = { version: 1, catalog: models, discovery }
+  return { upstreamBaseUrl: baseUrl, custom }
+}
+
+async function writeCustomModels(tx: GatewayTx, provider: GatewayProvider) {
+  const catalog = customCatalogProvider(provider)
+  if (!catalog) throw new GatewayWriteError(409, "custom_settings_invalid")
+  const before = await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
+  const groups = await tx.select().from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
+  const links = groups.length ? await tx.select().from(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id))) : []
+  const fullGroups = groups.filter((group) => before.length > 0 && before.every((row) => links.some((link) => link.model_group_id === group.id && link.gateway_provider_model_id === row.id)))
+  const resolved = resolveGatewayCatalog(catalog, provider.model_ids, provider.provider_config, false)
+  await writeGatewayModels(tx, provider, resolved.models)
+  for (const group of fullGroups) await writeGatewayGroup(tx, provider, { modelIds: resolved.models.map((model) => model.id) }, group.id)
+}
+
+function registerCustomProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+
+  app.post("/v1/inference-providers/custom/discover-models", route("Fetch models from a custom OpenAI-compatible provider", "Calls GET {baseUrl}/models on an OpenAI-compatible provider with its API key (or, with inferenceProviderId, the saved key of that custom provider, only for its saved address's origin) and returns each model with suggested models.dev-style settings, matched against the models.dev OpenRouter catalog. status is detailed (OpenRouter-style entries), basic (ids only) or unavailable (with a reason). The address must be public HTTPS or approved by the operator. 10-second timeout, 5 MB and 500 models at most. Nothing is stored. Requires the Manage Gateway providers permission and enabled Gateway management; a person must send it, never the agent or an API key. Limited to 20 per member and 60 per organization every ten minutes.", gatewayCustomDiscoverResponseSchema.meta({ ref: "GatewayCustomDiscoverResponse" }), 200, true, { responses: { 429: jsonResponse("Too many requests. Try again later.", rateLimitedSchema) } }), orgMemberRoute(), testConnectionAccess, jsonValidator(gatewayCustomDiscoverRequestSchema), async (c) => {
+    try {
+      c.header("Cache-Control", "no-store")
+      const actor = c.get("organizationContext")
+      const input = c.req.valid("json")
+      const retryAfterSeconds = await customRateLimit(actor, "gateway-custom-discover")
+      if (retryAfterSeconds !== null) {
+        c.header("Retry-After", String(retryAfterSeconds))
+        return c.json({ error: "rate_limited" as const, retryAfterSeconds }, 429)
+      }
+      await liveMember(db, actor, false)
+      const target = "apiKey" in input
+        ? { key: input.apiKey, baseUrl: customBaseUrl(input.baseUrl) }
+        : await customSavedKeyFor(actor, input.inferenceProviderId, input.baseUrl === undefined ? null : customBaseUrl(input.baseUrl))
+      const result = await discoverCustomProviderModels({ baseUrl: target.baseUrl, apiKey: target.key }, {
+        loadMatchCatalog: async () => (await getModelsDevProvider("openrouter"))?.models ?? [],
+      })
+      return c.json(result)
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.post("/v1/inference-providers/custom/test-connection", route("Test a custom OpenAI-compatible provider before saving it", "Sends one short test prompt through AI Gateway to {baseUrl}/chat/completions with the unsaved API key (or, with inferenceProviderId, the saved key of that custom provider, only for its saved address's origin) and the model settings on screen. Nothing is stored and no usage is recorded. ok=false carries a message for the admin that never contains the key, and step says which setup step the failure belongs to (connection: address or key; model: that model's id or settings; null: try again later). May consume a few tokens on the provider account. Requires the Manage Gateway providers permission and enabled Gateway management; a person must send it, never the agent or an API key. Shares the provider test limit of 20 tests per member and 60 per organization every ten minutes.", gatewayCustomTestResponseSchema.meta({ ref: "GatewayCustomTestResponse" }), 200, true, { responses: { 429: jsonResponse("Too many tests. Try again later.", rateLimitedSchema) } }), orgMemberRoute(), testConnectionAccess, jsonValidator(gatewayCustomTestRequestSchema), async (c) => {
+    try {
+      c.header("Cache-Control", "no-store")
+      const actor = c.get("organizationContext")
+      const input = c.req.valid("json")
+      const retryAfterSeconds = await customRateLimit(actor, "gateway-provider-test")
+      if (retryAfterSeconds !== null) {
+        c.header("Retry-After", String(retryAfterSeconds))
+        return c.json({ error: "rate_limited" as const, retryAfterSeconds }, 429)
+      }
+      const baseUrl = customBaseUrl(input.baseUrl)
+      await liveMember(db, actor, false)
+      const key = input.apiKey ?? (input.inferenceProviderId ? (await customSavedKeyFor(actor, input.inferenceProviderId, baseUrl)).key : null)
+      if (!key) throw new GatewayWriteError(400, "credential_required", "Paste a key to test.")
+      const signingSecret = env.dbEncryptionKey
+      if (!signingSecret) throw new GatewayWriteError(409, "provider_test_unavailable", "Provider tests need DEN_DB_ENCRYPTION_KEY, shared with AI Gateway.")
+      const gatewayKey = await ensureMemberGatewayKey({ organizationId: actor.organization.id, memberId: actor.currentMember.id })
+      const result = await requestGatewayProviderTest(
+        { providerId: GATEWAY_CUSTOM_PROVIDER_ID, model: input.model.id, settings: { upstreamBaseUrl: baseUrl }, credential: { kind: "api_key", secret: key }, customModel: input.model },
+        { baseUrl: env.gatewayProxyBaseUrl ?? env.gatewayPublicBaseUrl, key: gatewayKey, signingSecret, organizationId: actor.organization.id, memberId: actor.currentMember.id },
+      )
+      const response: GatewayCustomTestResponse = result.ok
+        ? { ok: true, model: result.model, status: result.status ?? 200, code: null, message: null, step: null }
+        : { ok: false, model: result.model, status: result.status, code: result.code ?? "test_failed", message: result.message ?? "The test failed.",
+          step: result.code === "gateway_unreachable" ? null : gatewayCustomTestStep({ status: result.status, code: result.code ?? "test_failed" }) }
+      return c.json(response)
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.post("/v1/inference-providers/custom", route("Create custom OpenAI-compatible gateway provider", "Adds an OpenAI-compatible provider to AI Gateway with a name, its API address (public HTTPS or operator-approved; a trailing /chat/completions is removed), one API key and its models (models.dev-shaped settings, usually from discover-models). Creates the provider, an \"All Allowed Models\" group, an organization credential set with the key and grants to allMembers, memberIds and teamIds, and returns management details. Test with custom/test-connection first; this route does not call the provider. The key is write-only. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", customDetailsResponse, 201, true), orgMemberRoute(), managementWrite, jsonValidator(customCreateSchema), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const input = c.req.valid("json")
+      const baseUrl = customBaseUrl(input.baseUrl)
+      const now = new Date()
+      const discovery = { status: input.discoveryStatus ?? "unavailable" as const, lastFetchedAt: input.discoveryStatus ? now.toISOString() : null, listedModelIds: input.discoveryStatus && input.discoveryStatus !== "unavailable" ? [...new Set(input.listedModelIds ?? [])] : [] }
+      const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: GATEWAY_CUSTOM_PROVIDER_ID, name: input.name, model_ids: [], pinned_model_ids: [], provider_config: customProviderConfig(input.name), settings: customSettings(baseUrl, input.models, discovery), credential_mode: "org", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
+      validateGatewaySettings(provider.provider_config, { upstreamBaseUrl: baseUrl })
+      const catalog = customCatalogProvider(provider)
+      if (!catalog) throw new GatewayWriteError(400, "invalid_request", "Check the model settings.")
+      const models = resolveGatewayCatalog(catalog, [], provider.provider_config).models
+      await db.transaction(async (tx) => {
+        const member = await liveMember(tx, actor, true)
+        await requireLiveManage(tx, actor)
+        await tx.insert(GatewayProviderTable).values(provider)
+        await writeGatewayModels(tx, provider, models)
+        await defaultMatrix(tx, provider, { name: input.name, providerId: GATEWAY_CUSTOM_PROVIDER_ID, modelIds: [], credential: { kind: "api_key", secret: input.apiKey }, allMembers: input.allMembers, memberIds: input.memberIds, teamIds: input.teamIds }, member.id)
+      })
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }) }, 201)
+    } catch (error) { return respond(c, error) }
+  })
+
+  app.patch("/v1/inference-providers/:inferenceProviderId/custom", route("Update custom OpenAI-compatible gateway provider", "Changes a custom provider's name, API address, API key or models and returns management details. A new address on another host needs apiKey in the same request, so a saved key is never sent to a host it was not saved for. models replaces the model list: removed models leave every group, new ones join groups that held every model, and access grants are kept. The UI tests address, key and model id changes first; this route does not call the provider. The key is write-only. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", customDetailsResponse, 200, true), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(gatewayCustomUpdateRequestSchema), async (c) => {
+    try {
+      const actor = c.get("organizationContext")
+      const input = c.req.valid("json")
+      const baseUrl = input.baseUrl === undefined ? null : customBaseUrl(input.baseUrl)
+      const provider = await providerTransaction(c, async (tx, existing) => {
+        const current = await customProvider(tx, actor, existing.id, true)
+        if (baseUrl && input.apiKey === undefined && !sameCustomOrigin(baseUrl, current.baseUrl)) {
+          throw new GatewayWriteError(400, "api_key_required", "Enter the API key again to use an address on another host.")
+        }
+        const now = new Date()
+        const name = input.name ?? existing.name
+        const models = input.models ?? current.settings.catalog
+        const discovery = input.discoveryStatus
+          ? { status: input.discoveryStatus, lastFetchedAt: now.toISOString(), listedModelIds: input.discoveryStatus === "unavailable" ? current.settings.discovery.listedModelIds : [...new Set(input.listedModelIds ?? [])] }
+          : current.settings.discovery
+        const modelIds = new Set(models.map((model) => model.id))
+        const updated: GatewayProvider = {
+          ...existing, name, provider_config: customProviderConfig(name),
+          settings: { ...existing.settings, ...customSettings(baseUrl ?? current.baseUrl, models, discovery) },
+          model_ids: input.models ? [] : existing.model_ids,
+          pinned_model_ids: (existing.pinned_model_ids ?? []).filter((id) => modelIds.has(id)),
+          updated_at: now,
+        }
+        validateGatewaySettings(updated.provider_config, { upstreamBaseUrl: baseUrl ?? current.baseUrl })
+        await tx.update(GatewayProviderTable).set({ name: updated.name, provider_config: updated.provider_config, settings: updated.settings, model_ids: updated.model_ids, pinned_model_ids: updated.pinned_model_ids, updated_at: now }).where(eq(GatewayProviderTable.id, updated.id))
+        if (input.models) await writeCustomModels(tx, updated)
+        if (input.apiKey !== undefined) {
+          const set = await customOrgSet(tx, updated)
+          const credential = { kind: "api_key" as const, secret: input.apiKey }
+          if (set) await writeGatewaySet(tx, updated, { credential }, set.id)
+          else await writeGatewaySet(tx, updated, { name: "Default credentials", credentialMode: "org", credential }, { createdByOrgMembershipId: actor.currentMember.id })
+        }
+        return updated
+      })
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }) })
     } catch (error) { return respond(c, error) }
   })
 }

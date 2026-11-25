@@ -16,15 +16,9 @@ import { DetailsToggle, TechnicalDetailsPanel } from "./capability-call-line";
 import { toolErrorMessage } from "@/components/tools/error-attribution";
 import type { DynamicToolUIPart } from "ai";
 
-/**
- * Den's build rejection, shortened to what changed: "MCP App compilation
- * failed. Generated MCP Apps cannot use timers. Use …" → "Can't use timers".
- * A JSON error body reads as its message, never as JSON.
- */
 export function appBuildProblem(part: DynamicToolUIPart): string | null {
   if (part.state !== "output-error" || !part.errorText.trim()) return null;
   const { code, message } = toolErrorMessage(part.errorText);
-  // Den names the existing Plugin and its id; the row already shows the title.
   if (code === "duplicate_plugin") return "An artifact with this name already exists";
   const sentences = message.replace(/\s+/g, " ").trim().split(/(?<=\.)\s+/);
   const reason = sentences.find((sentence) => !/compilation failed|^error:/i.test(sentence)) ?? sentences[0] ?? "";
@@ -37,12 +31,6 @@ export function appBuildProblem(part: DynamicToolUIPart): string | null {
 type StageState = "done" | "active" | "failed" | "pending";
 type Stage = { key: string; label: string; state: StageState; notes?: string[] };
 
-/**
- * The fixed stages of making an App, each labelled from the agent's own
- * calls: the tools it searched and prepare_app checked, the source it is
- * writing, each problem it fixed, and the build. Edits read the App instead
- * of finding and checking tools.
- */
 function appCreationStages(
   run: AppCreationRun,
   progress: ReturnType<typeof appCreationProgress>,
@@ -60,7 +48,6 @@ function appCreationStages(
   const checking = Boolean(run.preparation) || run.script?.kind === "prepare"
     || (discoveries.length > 0 && !searches.some(isToolPartInFlight));
   const preparationFailed = Boolean(run.preparation && appBuilderResultFailed(run.preparation) && !progress.preparation);
-  // The stage the agent is on; every earlier one is done.
   const current = built ? Infinity : building || progress.failed || progress.unavailable ? 3 : writing ? 2 : checking ? 1 : 0;
   const stateOf = (index: number, failed = false): StageState => index < current
     ? "done"
@@ -138,14 +125,11 @@ export function AppBuilderStep({
   active: boolean;
   startedAt?: number | null;
   completedAt?: number | null;
-  /** While the panel is live: the agent's latest thought or call, shown under the active stage. */
   activity?: string | null;
 }) {
   const context = useOptionalMessageList();
   const sessionActivity = useCurrentSessionActivityStatus();
   const waiting = active && sessionActivity === "waiting";
-  // The App spans many tools. A finished/superseded tool is not a pause
-  // while the parent turn is still active; Stop is reflected by active.
   const progress = appCreationProgress(
     run,
     active &&
@@ -163,13 +147,10 @@ export function AppBuilderStep({
       ? [part.callProviderMetadata.openwork.toolCompletedAt]
       : [],
   );
-  // A persisted message timestamp also covers engines without per-tool timing.
-  // Keep the optimistic fallback stable for the lifetime of this App card.
   const firstObservedAt = useRef(Date.now());
   const beganAt = run.startedAt ?? (starts.length ? Math.min(...starts) : startedAt ?? firstObservedAt.current);
   const [now, setNow] = useState(Date.now);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  // Earlier rejected builds are progress on the same app, not new apps.
   const fixedProblems = [...(run.attempts ?? []), ...run.builds.slice(0, -1)].flatMap((part) => {
     const problem = appBuildProblem(part);
     return problem ? [problem] : [];
@@ -200,8 +181,6 @@ export function AppBuilderStep({
       : null;
   const shownElapsed = elapsed !== null && (active || terminal || starts.length > 0) ? formatToolCallDuration(elapsed) : null;
 
-  // The stages show while the agent works, or after it failed or paused; a
-  // ready App folds them into one row.
   const stages = built ? [] : appCreationStages(run, progress, editing, fixedProblems, latestProblem);
   const details = detailsOpen ? (
     <div className="mt-2 flex flex-col gap-2">
@@ -220,8 +199,6 @@ export function AppBuilderStep({
     (part) => part && appBuilderResultFailed(part),
   );
   const problem = failedPart ? appBuildProblem(failedPart) : null;
-  // A compiled view is not proof that its connected data has been read.
-  // Keep the summary factual; the original checklist remains in details.
   const stageLabel = currentStage?.key === "write"
     ? editing ? "Writing the changes" : "Writing the artifact"
     : currentStage?.key === "build" ? "Building the artifact"
@@ -244,8 +221,6 @@ export function AppBuilderStep({
       data-app-creation-stage={progress.stage}
       aria-label={artifactSentence}
     >
-      {/* Both lines and trailing slots stay mounted through tool/thought gaps.
-          Completion also keeps the same geometry instead of collapsing chat. */}
       <div className="flex min-h-12 min-w-0 items-center gap-2 text-sm">
         <span className="shrink-0" aria-hidden="true">
           {built ? <Blocks className="size-4 text-muted-foreground" strokeWidth={1.5} />

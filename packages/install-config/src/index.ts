@@ -186,7 +186,6 @@ export function parseInstallLinkInput(input: string): { url: string; host: strin
       return parsed
     }
   } catch {
-    // Fall through to the simple "host token" form.
   }
 
   const parts = trimmed.split(/\s+/)

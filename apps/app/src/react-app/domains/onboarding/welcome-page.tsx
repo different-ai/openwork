@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect } from "react";
+import { useEffect, type Ref } from "react";
 
 import { t } from "../../../i18n";
 import { useBootState } from "../../shell/boot-state";
@@ -14,6 +14,7 @@ import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { useShellConfig } from "../../shell/shell-config";
 
 type WelcomePageProps = {
+  ref?: Ref<HTMLDivElement>;
   onGetStarted: () => void;
   getStartedLabel?: string;
   busy?: boolean;
@@ -27,6 +28,7 @@ type WelcomePageProps = {
 };
 
 export function WelcomePage({
+  ref,
   onGetStarted,
   getStartedLabel,
   busy,
@@ -42,23 +44,17 @@ export function WelcomePage({
   const appName = shellConfig.appName;
   const { markRouteReady } = useBootState();
 
-  // The boot splash overlay stays mounted (and swallows clicks) until the
-  // first route marks itself ready. Welcome is a terminal route, so mark it
-  // immediately.
   useEffect(() => {
     markRouteReady();
   }, [markRouteReady]);
 
   return (
-    <Page className="min-h-dvh">
+    <Page ref={ref} className="min-h-dvh">
       <PageTitlebarRegion />
 
       <ScrollArea className="relative z-10">
         <ScrollAreaViewport>
           <div className="relative flex min-h-dvh items-center justify-center px-6 py-16">
-            {/* Paper first-load spec: subtle black pixel-dither mosaic over a
-                near-white ground. `dark:invert` flips the pixels to white so
-                the texture survives dark mode. */}
             <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.1] dark:invert">
               <DitherBackdrop />
             </div>

@@ -5,27 +5,6 @@ import { authenticatedRoute, publicRoute } from "../middleware/index.js"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
 import type { AuthContextVariables } from "../session.js"
 
-/**
- * Deprecation stubs for the removed Memory Bank feature.
- *
- * Published desktop builds still call GET /v1/memory and DELETE /v1/memory/:id
- * from the Memory settings screen, so the den deployment must keep answering
- * both in the shapes those clients already tolerate:
- *
- * - the list screen renders the `memories` array, so an empty list is a clean
- *   empty state, while a 404/410 would surface as a load error;
- * - the desktop delete caller explicitly treats 404 as "already gone", which
- *   is now always the truth.
- *
- * Reads therefore return exactly what the old routes returned for a caller
- * with no memories, the write returns 410 so nothing can pretend to persist,
- * and everything is tagged Deprecated, which keeps these operations out of
- * the MCP capability catalog (see mcp/policy.ts SAFE_INCLUDED_TAGS).
- *
- * Remove this module once desktop builds that ship the Memory settings
- * screen have aged out.
- */
-
 const MEMORY_REMOVED_MESSAGE = "The Memory Bank feature has been removed. Saved memories no longer exist and new memories cannot be created."
 
 const removedMemoryListSchema = z.object({

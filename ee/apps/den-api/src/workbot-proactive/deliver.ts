@@ -7,13 +7,6 @@ import {
   type WorkbotDirectMessageTarget,
 } from "../slack-assistant/direct-message.js"
 
-/**
- * Delivery: Den, not the model, sends the message after the delivery policy passed, and the model never picks who
- * gets it. Always a DM from the Workbot Slack app's own bot, so the member is notified and nobody else sees it: the
- * agent reads private email, and its messages go only to the member.
- */
-
-/** `message`: where the DM landed, so the member can open it in Slack from My agent. */
 export type DeliveryResult = { ok: true; message?: AgentMemberCheckMessage } | { ok: false; code: AgentDestinationBlock | "send_failed" }
 
 export type DeliveryDeps = {
@@ -26,7 +19,6 @@ export const defaultDeliveryDeps: DeliveryDeps = {
   send: (input) => sendWorkbotDirectMessage(input),
 }
 
-/** Why a message couldn't reach the member now (no Slack app, Slack not linked), or null. Sends nothing. */
 export async function destinationBlock(input: { organizationId: string; userId: string }, deps: Pick<DeliveryDeps, "target"> = defaultDeliveryDeps): Promise<AgentDestinationBlock | null> {
   const target = await deps.target(input)
   return target.ok ? null : target.reason

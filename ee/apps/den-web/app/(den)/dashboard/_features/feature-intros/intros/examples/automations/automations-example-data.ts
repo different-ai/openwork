@@ -1,5 +1,3 @@
-/** Sample data only: no API calls (DESIGN.md I7). Groups and lines follow the real My Automations list. */
-
 export type AutomationsExampleItem = {
   name: string;
   schedule: string;

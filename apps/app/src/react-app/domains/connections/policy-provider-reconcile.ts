@@ -38,7 +38,6 @@ export type ReconcilePolicyDisabledProvidersInput = {
   storage?: PolicyDisabledProvidersStorage | null;
   setDisabledProviders?: (providerIds: string[]) => void;
   markReloadRequired?: () => void;
-  /** Reads the current list before a write; defaults to readManagedDisabledProviders. */
   readDisabledProviders?: () => Promise<string[]>;
 };
 
@@ -100,7 +99,6 @@ export function writePolicyDisabledProviderIds(
       JSON.stringify(normalizeProviderIds(providerIds)),
     );
   } catch {
-    // Storage failures should not block policy enforcement.
   }
 }
 
@@ -165,10 +163,6 @@ export async function reconcilePolicyDisabledProviders(
   });
   let initialPlan = plan();
   if (initialPlan.toDisable.length > 0 || initialPlan.toReenable.length > 0) {
-    // Every write replaces the whole list. The caller's list can be stale (a
-    // route that mounted before another one disabled a provider), and writing
-    // it back silently re-enabled that provider (ENG-994). Build on the
-    // current list instead.
     const current = await (input.readDisabledProviders ?? (() => readManagedDisabledProviders({
       opencodeClient: input.opencodeClient,
       openworkClient: input.openworkClient,

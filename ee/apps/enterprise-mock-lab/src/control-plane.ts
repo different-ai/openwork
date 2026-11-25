@@ -11,7 +11,7 @@ import {
   type FaultDefinition,
   type ProviderProfile,
   type SafeTraceEvent,
-} from "@openwork/enterprise-mcp-mock-server"
+} from "@openwork/mcp-enterprise-mock-server"
 import {
   ControlPlaneError,
   type CreateInstanceInput,

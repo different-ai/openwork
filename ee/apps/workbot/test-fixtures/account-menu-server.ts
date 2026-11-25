@@ -1,10 +1,6 @@
 import { Hono } from "hono"
 import { createAuth, type AppEnv } from "../src/server/auth.js"
 
-/**
- * Test-only host for the account menu: Workbot's real /auth routes. Den's sign-in is replaced by a page that
- * records whether its workspace chooser was asked for; revoking always succeeds.
- */
 export function accountMenuServer(input: { publicUrl: string }) {
   const revoked: string[] = []
   const chooserRequests: boolean[] = []

@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import type { Ref } from "react";
 import {
   Page,
   PageBackground,
@@ -11,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { KeyRoundIcon, SkipForwardIcon, SparklesIcon } from "lucide-react";
 
 type ProviderSelectionStepProps = {
+  ref?: Ref<HTMLDivElement>;
   showOpenWorkModels?: boolean;
   onOpenWorkModels: () => void;
   onBringYourOwn: () => void;
@@ -18,13 +20,14 @@ type ProviderSelectionStepProps = {
 };
 
 export function ProviderSelectionStep({
+  ref,
   showOpenWorkModels = true,
   onOpenWorkModels,
   onBringYourOwn,
   onSkip,
 }: ProviderSelectionStepProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
+    <div ref={ref} className="fixed inset-0 z-50 flex items-center justify-center bg-background">
       <PageBackground />
       <PageTitlebarRegion />
 

@@ -3,7 +3,7 @@ import type {
   Request, RequestComplete, SessionError, Status, TranscriptMessage, TranscriptPart, TranscriptToolCall, Turn,
 } from "./types.ts"
 import {
-  MAX_COMMAND_ENTRIES, MAX_REQUEST_ENTRIES, REQUEST_RESULT_MAX_BYTES, SessionRunnerError,
+  MAX_COMMAND_ENTRIES, MAX_REQUEST_ENTRIES, PENDING_ITEMS_MAX, REQUEST_RESULT_MAX_BYTES, SessionRunnerError,
   TRANSCRIPT_PARTS_MAX, TRANSCRIPT_REASONING_PART_MAX, TRANSCRIPT_TEXT_PART_MAX, TRANSCRIPT_TOOL_FIELD_MAX,
 } from "./types.ts"
 
@@ -100,9 +100,12 @@ export function parseAnswerInput(value: unknown): AnswerInput {
     if (answers.length === 0) return invalid()
     return { kind: "question", requestId: text(v.requestId, 240), answers }
   }
+  if (v.kind === "dismiss") {
+    keys(v, ["kind", "requestId"])
+    return { kind: "dismiss", requestId: text(v.requestId, 240) }
+  }
   if (v.kind !== "permission") return invalid()
   keys(v, ["kind", "requestId", "decision"])
-  // Never "always": a remote surface approves one request at a time.
   if (v.decision !== "once" && v.decision !== "reject") return invalid()
   return { kind: "permission", requestId: text(v.requestId, 240), decision: v.decision }
 }
@@ -129,8 +132,24 @@ export function answerRefusal(pending: Extract<Pending, { kind: "question" }>, a
   }
   return null
 }
+/**
+ * Only a question can be dismissed: a permission is allowed once or rejected.
+ * Returns the refusal message for an adapter's "invalid_answer", or null.
+ */
+export function dismissRefusal(pending: Pending): string | null {
+  return pending.kind === "question" ? null : "A permission can't be dismissed. Allow it once or reject it."
+}
 export function parseCommand(value: unknown): Command {
-  const v = object(value); keys(v, ["commandId", "kind", "title", "prompt", "model", "expiresAt", "workspaceId"])
+  const v = object(value)
+  if (v.kind === "remote_session_attach") {
+    keys(v, ["commandId", "kind", "title", "prompt", "model", "expiresAt", "workspaceId", "sessionId"])
+    if (v.prompt !== null || v.model !== null) return invalid()
+    return {
+      commandId: text(v.commandId, 160), kind: "remote_session_attach", title: text(v.title, 120), prompt: null, model: null,
+      expiresAt: integer(v.expiresAt), workspaceId: text(v.workspaceId, 240), sessionId: text(v.sessionId, 240),
+    }
+  }
+  keys(v, ["commandId", "kind", "title", "prompt", "model", "expiresAt", "workspaceId"])
   if (v.kind !== "remote_session_create") return invalid()
   const m = nullable(v.model, model)
   if (m !== null && m.variant === undefined) return invalid()
@@ -239,13 +258,14 @@ function message(value: unknown): TranscriptMessage {
 }
 export function parseReadResult(value: unknown): ReadResult {
   const v = object(value)
-  keys(v, ["title", "status", "waitingFor", "lastError", "messageCount", "from", "messages", "nextCursor", "historyScope", "pending"])
+  keys(v, ["title", "status", "waitingFor", "lastError", "messageCount", "from", "messages", "nextCursor", "historyScope", "pending", "pendingItems"])
   if (v.historyScope !== undefined && v.historyScope !== "context" && v.historyScope !== "full") return invalid()
   return { title: nullable(v.title, value => text(value, 240, 0)), status: status(v.status), waitingFor: waiting(v.waitingFor),
     lastError: nullable(v.lastError, parseError), messageCount: integer(v.messageCount), from: direction(v.from),
     messages: array(v.messages, 100, message), nextCursor: nullable(v.nextCursor, value => text(value, 160, 0)),
     ...(v.historyScope === undefined ? {} : { historyScope: v.historyScope }),
-    ...(v.pending === undefined ? {} : { pending: nullable(v.pending, parsePending) }) }
+    ...(v.pending === undefined ? {} : { pending: nullable(v.pending, parsePending) }),
+    ...(v.pendingItems === undefined ? {} : { pendingItems: array(v.pendingItems, PENDING_ITEMS_MAX, parsePending) }) }
 }
 export function parseSendResult(value: unknown): { messageId: string | null; alreadyPresent: boolean } {
   const v = object(value); keys(v, ["messageId", "alreadyPresent"])
@@ -311,14 +331,15 @@ export function parseJournal(value: unknown): Journal {
       keys(e, ["command", "creation", "sendReplay", "intendedSessionId", "lastObservedAt", "phase", "receipt", "promptMessageId", "turn", "lastMessageId", "completion", "completionAcknowledged", "progress", "reportedProgress"])
       if (e.phase !== "prepared" && e.phase !== "created" && e.phase !== "delivered" && e.phase !== "failed") return invalid()
       const command = parseCommand(e.command)
-      // Pre-capability version-1 entries are always at-most-once; never infer replay safety from today's adapter.
-      const legacyCreation = e.creation === undefined && e.intendedSessionId === undefined
+      const attach = command.kind === "remote_session_attach"
+      const legacyCreation = !attach && e.creation === undefined && e.intendedSessionId === undefined
       if (!legacyCreation && e.creation !== "idempotent" && e.creation !== "at_most_once") return invalid()
       const creation = e.creation === "idempotent" ? "idempotent" : "at_most_once"
       if (e.sendReplay !== undefined && e.sendReplay !== "idempotent" && e.sendReplay !== "at_most_once") return invalid()
-      const sendReplay = e.sendReplay === "idempotent" ? "idempotent" : "at_most_once" // Unlabelled dev journals never assume native send safety.
-      const intendedSessionId = legacyCreation ? sessionIdForCommand(command.commandId) : text(e.intendedSessionId, 240)
-      if (intendedSessionId !== sessionIdForCommand(command.commandId)) return invalid()
+      const sendReplay = e.sendReplay === "idempotent" ? "idempotent" : "at_most_once"
+      const intended = attach ? command.sessionId : sessionIdForCommand(command.commandId)
+      const intendedSessionId = legacyCreation ? intended : text(e.intendedSessionId, 240)
+      if (intendedSessionId !== intended) return invalid()
       const receipt = nullable(e.receipt, parseReceipt)
       const completion = nullable(e.completion, parseComplete)
       const acknowledged = boolean(e.completionAcknowledged)
@@ -336,6 +357,7 @@ export function parseJournal(value: unknown): Journal {
       if (promptMessageId !== (command.prompt === null ? null : stableMessageId(command.commandId))) return invalid()
       if ((e.phase === "prepared" && receipt !== null) || ((e.phase === "created" || e.phase === "delivered") && receipt === null)) return invalid()
       if (receipt && command.workspaceId && receipt.workspaceId !== command.workspaceId) return invalid()
+      if (attach && ((receipt !== null) !== (e.phase === "delivered") || (receipt && receipt.sessionId !== command.sessionId))) return invalid()
       if ((e.phase === "delivered") !== (completion?.status === "delivered") || (e.phase === "failed") !== (completion?.status === "failed")) return invalid()
       if (acknowledged && completion === null) return invalid()
       if (completion?.status === "delivered" && (completion.sessionId !== receipt?.sessionId || completion.workspaceId !== receipt?.workspaceId)) return invalid()
@@ -362,20 +384,18 @@ export function parseJournal(value: unknown): Journal {
       if (request.action === "read" && id !== null) return invalid()
       if (request.action === "send" && id !== (request.input.messageId ?? stableMessageId(request.requestId))) return invalid()
       if (request.action === "stop" && request.input.messageId !== null && id !== request.input.messageId) return invalid()
-      // An answer's marker is set to its pending requestId only once the native reply was dispatched.
       if (request.action === "answer" && id !== null && id !== request.input.requestId) return invalid()
       return { request, sendReplay, messageId: id, turn, completion, completionAcknowledged: acknowledged }
     }),
   }
   if (new Set(journal.commands.map(e => e.command.commandId)).size !== journal.commands.length
     || new Set(journal.requests.map(e => e.request.requestId)).size !== journal.requests.length) return invalid()
-  const receipts = journal.commands.flatMap(e => e.receipt ? [`${e.receipt.workspaceId}\0${e.receipt.sessionId}`] : [])
+  const receipts = journal.commands.flatMap(e => e.receipt && e.phase !== "failed" ? [`${e.receipt.workspaceId}\0${e.receipt.sessionId}`] : [])
   if (new Set(receipts).size !== receipts.length) return invalid()
-  const intendedIds = journal.commands.filter(e => e.creation === "idempotent").map(e => e.intendedSessionId)
+  const intendedIds = journal.commands.filter(e => e.creation === "idempotent" && e.command.kind === "remote_session_create").map(e => e.intendedSessionId)
   if (new Set(intendedIds).size !== intendedIds.length) return invalid()
   for (const e of journal.requests) {
     const c = journal.commands.find(c => c.command.commandId === e.request.commandId)
-    // Failed unknown-session requests are legitimate outbox entries, but success/pending requires a known receipt.
     if (e.completion?.status === "failed") continue
     if (c?.phase !== "delivered" || c.receipt?.sessionId !== e.request.sessionId || c.receipt.workspaceId !== e.request.workspaceId) return invalid()
   }

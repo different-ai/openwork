@@ -24,30 +24,28 @@ import { useConnectorsIntroFacts } from "./connectors-intro-facts";
 import { connectorSetupUnfinished, finishSetupHref } from "./admin-connectors";
 import { type ExternalMcpConnection, isNativeProviderConnectionId, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
 
-/** Show the name filter once more than this many connectors are listed. */
 const FILTER_AFTER = 10;
 
 function ConnectorsEmpty({ orgSlug }: { orgSlug: string | null }) {
   const prefetchCatalog = usePrefetchConnectorCatalog();
   return (
     <div className="flex flex-col items-center gap-3">
-      <div className="flex w-full flex-col items-center gap-5 rounded-2xl border border-gray-100 bg-white px-6 pb-14 pt-16 text-center" data-testid="connectors-empty">
+      <div className="flex w-full flex-col items-center gap-4 border-y border-[var(--den-list-line)] px-6 py-10 text-center" data-testid="connectors-empty">
         <ConnectorLogoStrip size="md" />
         <div className="flex flex-col gap-1.5">
-          <p className="text-[15px] font-semibold leading-5 text-gray-900">No connectors yet</p>
-          <p className="text-[13px] leading-[18px] text-gray-500">Apps your organization&apos;s AI can use. You choose who gets each one.</p>
+          <p className="text-sm font-medium leading-5 text-[var(--dls-text-primary)]">No connectors yet</p>
+          <p className="text-[13px] leading-[18px] text-[var(--dls-text-secondary)]">Apps your organization&apos;s AI can use. You choose who gets each one.</p>
         </div>
-        <LinkButton variant="primary" href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>
+        <LinkButton variant="secondary" size="sm" href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>
           <Plus className="h-4 w-4" aria-hidden />
           Add connector
         </LinkButton>
       </div>
-      <p className="text-[12px] leading-4 text-gray-400">Members can still add apps for themselves in My Library.</p>
+      <p className="text-[12px] leading-4 text-[var(--dls-text-secondary)]">Members can still add apps for themselves in My Library.</p>
     </div>
   );
 }
 
-/** C1 and C5: every connector the organization manages, and who has each one. */
 export function AdminConnectorsScreen() {
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
@@ -65,8 +63,6 @@ export function AdminConnectorsScreen() {
   const empty = !connections.isLoading && !connections.error && all.length === 0;
   const introFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
 
-  // Connectors with no stored status are brought up to date once per visit:
-  // a member's Ready check is copied, or the connector is checked now.
   const refreshUnchecked = useRefreshUncheckedConnections();
   const requested = useRef(new Set<string>());
   const [firstChecks, setFirstChecks] = useState<ReadonlySet<string>>(new Set());
@@ -81,7 +77,6 @@ export function AdminConnectorsScreen() {
     });
   }, [canCheck, connections.data]);
 
-  // Check again runs per row, so one slow service never blocks the others.
   const [rechecking, setRechecking] = useState<ReadonlySet<string>>(new Set());
   function checkAgain(connection: ExternalMcpConnection) {
     setRechecking((current) => new Set([...current, connection.id]));
@@ -131,15 +126,12 @@ export function AdminConnectorsScreen() {
       : readinessState === "Sign in" && connection.credentialMode === "shared" ? <LinkButton size="xs" href={href}>Reconnect</LinkButton>
       : unfinished ? <LinkButton size="xs" href={finishSetupHref(orgSlug, connection)}>Finish</LinkButton>
       : menu;
-    // What an admin must act on. A per-person connector the admin hasn't signed in to
-    // themselves is not an organization problem.
     const attention = unfinished || readinessState === "Couldn't verify" || readinessState === "Not checked" || readinessState === "Set up"
       || (readinessState === "Sign in" && connection.credentialMode === "shared");
     const personalSignInPending = readinessState === "Sign in" && connection.credentialMode !== "shared";
     return { href, readinessView, readinessState, status, signInNote, action, attention, personalSignInPending, menu };
   }
 
-  // A short list is read at a glance; the filter earns its place once it runs long.
   const showFilter = all.length > FILTER_AFTER || query !== "";
   const needsAttention = visible.filter((connection) => rowFor(connection).attention);
   const working = visible.filter((connection) => !rowFor(connection).attention);
@@ -155,7 +147,7 @@ export function AdminConnectorsScreen() {
           href={row.href}
           kind="connection"
           testName={connection.name}
-          logo={<ConnectorLogo name={connection.name} url={connection.url} size="xs" />}
+          logo={<ConnectorLogo name={connection.name} url={connection.url} size="sm" />}
           name={connection.name}
           description={note}
           source={row.attention ? undefined : row.status}
@@ -171,16 +163,15 @@ export function AdminConnectorsScreen() {
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3" data-testid="connectors-compact-toolbar">
         <h1 className="text-xl font-semibold tracking-tight text-[var(--dls-text-primary)]">Connectors</h1>
         {empty ? null : (
-          // One toolbar: find and add sit together on the title's row (DESIGN P6, S2).
           <div className="flex w-full items-center gap-2 sm:w-auto">
             {showFilter && !connections.error ? <FilterInput value={query} onChange={setQuery} className="min-w-0 flex-1 sm:w-56 sm:flex-none" /> : null}
-            <DenButton size="sm" icon={Plus} href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>Add</DenButton>
+            <DenButton size="sm" variant="secondary" icon={Plus} href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>Add</DenButton>
           </div>
         )}
       </div>
 
       {connections.error ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-red-600">
+        <p role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
           {connections.error instanceof Error ? connections.error.message : "Connectors did not load."}
         </p>
       ) : null}
@@ -201,20 +192,17 @@ export function AdminConnectorsScreen() {
                 {working.map(compactRow)}
               </LibraryCompactSection>
             ) : null}
-            {/* With nothing to fix there is one group, so it needs no heading or count. */}
             {working.length > 0 && needsAttention.length === 0 ? (
               <div className="flex flex-col" data-testid="connectors-section-connected">{working.map(compactRow)}</div>
             ) : null}
           </LibraryCompactSurface> : null}
           {!connections.isLoading && visible.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-gray-500">Nothing matches.</p>
+            <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">Nothing matches.</p>
           ) : null}
         </>
       ) : null}
     </ItemPage>
   );
 
-  // With feature intros on, the Connectors intro replaces the whole page while there are none (DESIGN.md I1, I2);
-  // with the flag off, the page and ConnectorsEmpty render as before.
   return <FeatureIntroGate introKey="connectors" facts={introFacts}>{page}</FeatureIntroGate>;
 }

@@ -44,8 +44,7 @@ test("computer_open defaults to control and offers the narrower modes only when 
   expect(description).toContain("never a reason to stop or ask them");
 });
 
-test("with parallel computer use on, a task across apps is split into app agents that pass files by path", async () => {
-  expect((await server()).tool.computer_open.description).not.toContain("subagent");
+test("a task across apps is split into app agents that pass files by path", async () => {
   const plugin = await server({ parallel: true });
   const description = plugin.tool.computer_open.description;
   expect(description).toContain("give each app to its own subagent");
@@ -63,4 +62,11 @@ test("a Windows PC is not offered app scripting", async () => {
     expect("computer_script" in plugin.tool).toBe(false);
     expect(plugin.tool.computer_open.description).toContain("Windows PC");
   } finally { Object.defineProperty(process, "platform", platform); }
+});
+
+test("the agent opens the person's own browser as an app when they ask for it", async () => {
+  const plugin = await server();
+  const description = plugin.tool.computer_open.description;
+  expect(description).toContain("unless the person asks for their own browser (Chrome, Safari); then open it as an app like any other");
+  expect(description).toContain("Web browser apps and remote computers take no password or code");
 });

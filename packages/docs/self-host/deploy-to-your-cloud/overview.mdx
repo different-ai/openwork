@@ -187,16 +187,17 @@ To configure Gateway, follow [Enable OpenWork Gateway](/self-host/gateway). This
 
 ## Scheduled maintenance jobs
 
-Two maintenance tasks run on a schedule instead of on every request, so busy write paths never queue behind a shared totals row. Other background work (SCIM cleanup, Automations, worker reconciliation, provider token refresh) runs inside Den API or the Gateway and needs no setup.
+Two maintenance tasks run on a schedule instead of on every request, so busy write paths never queue behind a shared totals row. A third, the GitHub connector reconcile, is optional. Other background work (SCIM cleanup, Automations, worker reconciliation, provider token refresh) runs inside Den API or the Gateway and needs no setup.
 
 | Job | What it does | Hosted schedule | Helm values | Endpoint and token |
 | --- | --- | --- | --- | --- |
 | Gateway usage rollup | Folds Gateway request logs older than two days into hourly usage rollups and deletes the folded rows; folds hourly rollups older than 90 days into daily ones. | Hourly, `5 * * * *` | `gateway.retention.*` (off by default) | Gateway `POST /internal/rollups/run`, `GATEWAY_ADMIN_TOKEN` |
 | Audit usage refresh | Recomputes each organization's audit usage totals (retained operations, events, bytes). | Daily | `denApi.auditUsage.*` (off by default, `30 3 * * *`) | Den API `POST /internal/audit/usage/refresh`, `DEN_MAINTENANCE_TOKEN` |
+| GitHub connector reconcile (optional) | Checks GitHub connectors for commits a missed webhook did not sync and queues a resync. Pushes still sync through webhooks without it. | Every 5 minutes, `*/5 * * * *` | `denApi.githubReconcile.*` (off by default) | Den API `POST /internal/github/reconcile/run`, `DEN_MAINTENANCE_TOKEN` |
 
-Both endpoints answer `404` when their token is not configured and `401` for a wrong token. Both are safe to rerun.
+Each endpoint answers `404` when its token is not configured and `401` for a wrong token. All are safe to rerun, and GitHub reconcile runs are safe to overlap.
 
-With Helm, enable each job and its token as described in [Enable OpenWork Gateway](/self-host/gateway#optional-admin-webhook-and-retention) and the chart README's *Audit usage refresh* section. On Cloud Run, ECS Fargate, or Docker Compose, schedule the calls yourself with Cloud Scheduler, EventBridge Scheduler, or host cron, from a network location that can reach the internal service:
+With Helm, enable each job and its token as described in [Enable OpenWork Gateway](/self-host/gateway#optional-admin-webhook-and-retention) and the chart README's *Audit usage refresh* and *GitHub connector reconcile* sections. On Cloud Run, ECS Fargate, or Docker Compose, schedule the calls yourself with Cloud Scheduler, EventBridge Scheduler, or host cron, from a network location that can reach the internal service:
 
 ```sh
 # Hourly, only when Gateway is enabled
@@ -208,6 +209,10 @@ curl -fsS -X POST -H "Authorization: Bearer $GATEWAY_ADMIN_TOKEN" \
 # Daily
 curl -fsS -X POST -H "Authorization: Bearer $DEN_MAINTENANCE_TOKEN" \
   http://<den-api-internal-host>:8788/internal/audit/usage/refresh
+
+# Every 5 minutes, optional
+curl -fsS -X POST -H "Authorization: Bearer $DEN_MAINTENANCE_TOKEN" \
+  http://<den-api-internal-host>:8788/internal/github/reconcile/run
 ```
 
 Without the rollup job, Gateway request logs are never compacted and grow without limit. Without the audit refresh, the audit usage screen keeps showing its last measured totals.

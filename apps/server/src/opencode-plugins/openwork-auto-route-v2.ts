@@ -40,7 +40,6 @@ function decodeName(value: string | null) {
   }
 }
 
-/** The gateway's routing decision on an Auto response, or undefined for any other response. */
 export function autoRouteFromResponse(response: Response, at: number): AutoRouterReplyRoute | undefined {
   const model = response.headers.get(AUTO_ROUTER_RESPONSE_MODEL_HEADER)?.trim();
   if (!model) return undefined;
@@ -61,7 +60,6 @@ function isJson(value: unknown): value is Json {
   return typeof value === "object" && Object.values(value).every(isJson);
 }
 
-/** The session's other metadata, kept as is; engine metadata is JSON by schema. */
 function jsonRecord(value: unknown): Record<string, Json> {
   const result: Record<string, Json> = {};
   if (!value || typeof value !== "object" || Array.isArray(value)) return result;
@@ -69,18 +67,6 @@ function jsonRecord(value: unknown): Record<string, Json> {
   return result;
 }
 
-/**
- * Smart Model Router (feature `autoRouter`): the gateway picks the model for
- * each Smart turn and names it in response headers. Record that decision in
- * the session's metadata, which the engine keeps with the session and streams
- * to the app, so the chat can say which model answered each Smart reply.
- *
- * Every Smart Router is a model of the one `openwork-auto` provider, so
- * matching the provider covers all of them. Only that provider's main-loop
- * responses are read; titles, compaction
- * and every other provider are untouched. Recording never blocks or fails the
- * reply.
- */
 export default {
   id: "openwork.auto-route",
   setup: async (context: AutoRouteContext) => {
@@ -99,7 +85,6 @@ export default {
       if (event.model.providerID !== AUTO_ROUTER_PROVIDER_ID || event.kind !== "primary") return;
       const route = autoRouteFromResponse(event.response, Date.now());
       if (!route) return;
-      // One session's writes run in order so a read-modify-write never loses a turn.
       const previous = queues.get(event.sessionID) ?? Promise.resolve();
       const next = previous.then(() => record(event.sessionID, route)).catch(() => undefined);
       queues.set(event.sessionID, next);

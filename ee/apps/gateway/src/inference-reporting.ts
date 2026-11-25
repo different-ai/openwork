@@ -70,14 +70,14 @@ export const inferenceAccessLogger = createMiddleware(async (c, next) => {
 export function safeInferenceReporter(reporter: InferenceReporter): InferenceReporter {
   return {
     completion(report) {
-      try { reporter.completion?.(report) } catch { /* Optional reporting. */ }
+      try { reporter.completion?.(report) } catch {}
     },
     request(report) {
-      try { reporter.request(report) } catch { /* Optional reporting cannot break inference. */ }
+      try { reporter.request(report) } catch {}
     },
     handledError(report) {
       const { error, exception, statusText, ...safe } = report
-      try { reporter.handledError({ ...safe, upstreamUrl: safe.upstreamUrl ? safeAccessUrl(safe.upstreamUrl) : undefined }) } catch { /* Optional reporting. */ }
+      try { reporter.handledError({ ...safe, upstreamUrl: safe.upstreamUrl ? safeAccessUrl(safe.upstreamUrl) : undefined }) } catch {}
     },
   }
 }
@@ -87,8 +87,6 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 }
 
 export function buildInferencePayloadLog(_organizationId: string, payload: unknown): { mode: PayloadLogMode; payload: unknown } {
-  // Counts only, for every organization. Field names, roles, tool names and
-  // other caller-provided strings can themselves contain prompt content.
   return { mode: "summary", payload: {
     bodyType: payload === null ? "null" : Array.isArray(payload) ? "array" : typeof payload,
     messageCount: isJsonObject(payload) && Array.isArray(payload.messages) ? payload.messages.length : 0,
@@ -135,7 +133,6 @@ export const sentryInferenceReporter: InferenceReporter = {
       upstreamUrl: report.upstreamUrl ? safeAccessUrl(report.upstreamUrl) : undefined,
     }
     if (shouldEmitSentryLog("error")) Sentry.logger.error("OpenWork Gateway handled error", attributes)
-    // Exceptions often contain request/SQL parameters. Never send them to Sentry.
     Sentry.captureMessage(`OpenWork Gateway handled error: ${report.reason}`, {
       level: "error",
       tags: { organization_id: report.organizationId, inference_key_id: report.inferenceKeyId, openwork_request_id: report.openworkRequestId, route: report.route, method: report.method },

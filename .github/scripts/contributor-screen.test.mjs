@@ -5,8 +5,8 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  aiScreenDecision, encodedPayload, instructionHits, hiddenCharacters, isDatabasePath, isValidUtf8, nonRegistrySpec, packageJsonChanges,
-  parseWardenJsonl, renderScreenComment, reviewDecision, reviewerInstruction, safe, scanRepository, screenDecision,
+  encodedPayload, instructionHits, hiddenCharacters, isDatabasePath, isValidUtf8, nonRegistrySpec, packageJsonChanges,
+  renderScreenComment, reviewerInstruction, safe, scanRepository, screenDecision,
 } from './contributor-screen.mjs';
 
 const cp = (...points) => String.fromCodePoint(...points);
@@ -115,24 +115,7 @@ test('catches instructions split across lines, comments and string pieces', () =
   assert.deepEqual(instructionHits(at('export function ignoreCase(a: string) {', '  return a.toLowerCase();', '}')), []);
 });
 
-const chunk = (skill, findings = [], extra = {}) => JSON.stringify({ schemaVersion: 1, skill, status: 'ok', findings, ...extra });
-const summary = (total, extra = {}) => JSON.stringify({ type: 'summary', totalFindings: total, bySeverity: {}, ...extra });
-const finding = (severity, title = 'x') => ({ id: title, severity, title, description: 'd' });
-
-test('Warden output is complete only when the summary and findings agree', () => {
-  const ok = parseWardenJsonl([chunk('contributor-screen', [finding('low')]), summary(1)].join('\n'), ['contributor-screen']);
-  assert.equal(ok.complete, true);
-  assert.equal(ok.findings[0].skill, 'contributor-screen');
-  assert.equal(parseWardenJsonl('', ['contributor-screen']).complete, false);
-  assert.equal(parseWardenJsonl('not json', ['contributor-screen']).complete, false);
-  assert.equal(parseWardenJsonl([chunk('contributor-screen'), summary(0, { failedSkills: ['contributor-screen'] })].join('\n'), ['contributor-screen']).complete, false);
-  assert.equal(parseWardenJsonl([chunk('contributor-screen', [], { status: 'error' }), summary(0)].join('\n'), ['contributor-screen']).complete, false);
-  assert.equal(parseWardenJsonl([chunk('other-skill'), summary(0)].join('\n'), ['contributor-screen']).complete, false);
-  assert.equal(parseWardenJsonl([chunk('contributor-screen', [finding('high')]), summary(2)].join('\n'), ['contributor-screen']).complete, false);
-});
-
 const emptyScan = { files: [], hidden: [], malformed: [], dependencies: [], database: [], binaries: [], images: [], encoded: [], injection: [] };
-const cleanWarden = { complete: true, findings: [] };
 
 test('free screen: hidden characters block; dependencies, database, binaries, encoded code and reviewer text need review', () => {
   assert.equal(screenDecision(emptyScan).verdict, 'clean');
@@ -143,30 +126,6 @@ test('free screen: hidden characters block; dependencies, database, binaries, en
   assert.equal(screenDecision({ ...emptyScan, binaries: ['x.bin'] }).verdict, 'held');
   assert.equal(screenDecision({ ...emptyScan, encoded: [{}] }).verdict, 'held');
   assert.equal(screenDecision({ ...emptyScan, injection: [{}] }).verdict, 'held');
-});
-
-test('AI screen: clear only when complete with no high or medium findings', () => {
-  assert.equal(aiScreenDecision(cleanWarden).verdict, 'clean');
-  assert.equal(aiScreenDecision({ complete: true, findings: [finding('low')] }).verdict, 'clean');
-  assert.equal(aiScreenDecision({ complete: true, findings: [finding('medium')] }).verdict, 'flagged');
-  assert.equal(aiScreenDecision({ complete: false, reason: 'x', findings: [] }).verdict, 'flagged');
-});
-
-test('a stopped or oversized Warden run keeps its findings but is never complete', () => {
-  const failed = parseWardenJsonl([chunk('diff-security-review', [finding('high', 'Bypass')], { status: 'error' }), summary(1, { failedSkills: ['diff-security-review'] })].join('\n'), ['diff-security-review']);
-  assert.equal(failed.complete, false);
-  assert.equal(failed.findings[0].title, 'Bypass');
-  const big = parseWardenJsonl([chunk('diff-security-review', [], { skippedFiles: [{ filename: 'a.ts', reason: 'limit:changed_lines' }, { filename: 'b.lock', reason: 'ignored:user' }] }), summary(0)].join('\n'), ['diff-security-review']);
-  assert.deepEqual({ complete: big.complete, reason: big.reason, skipped: big.skipped }, { complete: false, reason: 'files-over-size-limits', skipped: 1 });
-  assert.equal(reviewDecision(big).verdict, 'too-big');
-});
-
-test('review: confidentiality or high/medium security findings are not clear', () => {
-  const sec = (severity) => ({ ...finding(severity), skill: 'diff-security-review' });
-  assert.equal(reviewDecision({ complete: true, findings: [sec('low')] }).state, 'success');
-  assert.equal(reviewDecision({ complete: true, findings: [sec('medium')] }).state, 'failure');
-  assert.equal(reviewDecision({ complete: true, findings: [{ ...finding('low'), skill: 'confidentiality-review' }] }).state, 'failure');
-  assert.equal(reviewDecision({ complete: false, reason: 'x', findings: [] }).state, 'failure');
 });
 
 test('rendered text never carries secrets, mentions, markup or hidden characters', () => {

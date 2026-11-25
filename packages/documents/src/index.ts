@@ -9,7 +9,6 @@ export type DocumentItem = {
   modifiedTime: string | null
   size: number | null
   openUrl: string | null
-  /** Set by a combined listing: the connected service this item came from. */
   source?: DocumentSource
 }
 /** A connected service in a combined listing; `storage` names it in sentences like "Save to Drive". */
@@ -22,14 +21,10 @@ export type DocumentsProvider = {
   id: string
   label: string
   rootLabel: string
-  /** How sentences name where files are saved, e.g. "Drive" or "OneDrive". Defaults to the label. */
   storage?: string
-  /** The host connection that recovers this provider's access, when it is not the default one. */
   connectionId?: string
-  /** Top-level places to browse; defaults to one root named `rootLabel`. */
   roots?: { id: string; name: string }[]
   list(request: DocumentsRequest): Promise<DocumentsPage>
-  /** Resolve a user-opened link with current provider permissions, without downloading bytes. */
   get?(id: string, signal?: AbortSignal): Promise<DocumentItem>
 }
 export type DocumentsViewContext = { kind: "file"; item: DocumentItem; unsaved: boolean }
@@ -79,7 +74,6 @@ export function googleDriveProvider(transport: DocumentsTransport): DocumentsPro
     },
     async list(input) {
       const params = new URLSearchParams({ maxResults: "25" })
-      // Search within the displayed folder, matching the breadcrumb's scope.
       if (input.view === "recent") { params.set("orderBy", "recency desc"); params.set("filesOnly", "true") }
       else { params.set("folderId", input.folderId); params.set("orderBy", "folder,name_natural") }
       if (input.query.trim()) params.set("query", input.query.trim())

@@ -27,11 +27,9 @@ export const deploymentServiceStatusSchema = z.strictObject({
   configured: z.boolean(),
   state: serviceReadinessStateSchema,
   reason: serviceReadinessReasonSchema,
-  /** Constant setting names only; values are never part of this contract. */
   missingSettings: z.array(z.string().regex(/^[A-Z][A-Z0-9_]{0,95}$/)).max(16),
   dependencies: z.array(serviceIdSchema).max(4),
   notes: z.array(serviceNoteSchema).max(4),
-  /** How long the last live check took; null when no network or database check ran. */
   durationMs: z.number().int().nonnegative().nullable(),
   checkedAt: z.string().datetime().nullable(),
   lastSuccessAt: z.string().datetime().nullable(),
@@ -43,7 +41,6 @@ export type DeploymentServiceStatus = z.infer<typeof deploymentServiceStatusSche
 export const denServerFactsSchema = z.strictObject({
   version: z.string().min(1).max(64),
   startedAt: z.string().datetime(),
-  /** Process start until the HTTP server accepted connections. */
   startupMs: z.number().int().nonnegative().nullable(),
 }).meta({ ref: "DenServerFacts" })
 export type DenServerFacts = z.infer<typeof denServerFactsSchema>

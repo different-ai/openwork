@@ -14,32 +14,18 @@ import type { ActivationClientEvent, ActivationEventRequest } from "@openwork/ty
 import { computeActivationState, type ActivationFacts } from "./activation-steps.js"
 import { calculateDesktopPolicyForOrgMember } from "./desktop-policies.js"
 import { db } from "./db.js"
+import { organizationFeatureEnabled } from "./features.js"
 import type { MemberTeamSummary, OrganizationContext } from "./orgs.js"
 import { roleIncludesOwner } from "./organization-member-guards.js"
 import { resolveMemberPermissionsFromContext } from "./permissions/resolve.js"
 import { listMemberUsableConnectionFacts } from "./routes/org/mcp-connections.js"
 import { stableTelemetryEventId } from "./workbot/telemetry.js"
 
-/**
- * The "Get set up" checklist (see packages/types/src/den/activation.ts).
- *
- * Every step is computed from data Den already holds, so a step checks off only when it actually worked:
- * - first_response: an answer this member got (desktop `task.completed`, Workbot `workbot.turn_completed`, or the
- *   client's report of its first answer)
- * - invite_teammate: someone this person invited joined or is invited; for people who cannot invite, any teammate
- * - use_skill: an organization skill served to this member (capability usage), or a local skill run the client reports
- * - own_provider: a model provider this member added in Den, or a provider key the client reports saving on the device
- * - gateway_provider: an active AI Gateway provider in the organization
- * - connector: a connection that is ready for this member (the readiness Workbot's connections use)
- *
- * Client reports and "hidden" are telemetry_event rows with a stable id per member (no schema change, idempotent
- * under retries and parallel tabs). They carry identifiers and a duration only.
- */
-
 const CLIENT_EVENT_TYPES: Record<ActivationClientEvent, string> = {
   first_response: "activation.first_response",
   use_skill: "activation.use_skill",
   own_provider: "activation.own_provider",
+  connector: "activation.connector",
   dismiss: "activation.dismissed",
 }
 const ACTIVATION_EVENT_KEY = "once"
@@ -51,8 +37,8 @@ function eventId(actor: Actor, type: string) {
   return stableTelemetryEventId(actor, type, ACTIVATION_EVENT_KEY)
 }
 
-/** Records one client-observed step (or hiding the checklist). Repeats are no-ops; the first report wins. */
-export async function recordActivationEvent(actor: Actor, event: ActivationEventRequest, source: "app" | "workbot") {
+export async function recordActivationEvent(actor: Actor & { userId: string }, event: ActivationEventRequest, source: "app" | "workbot") {
+  if (event.step === "connector" && !(await organizationFeatureEnabled(actor.organizationId, "activationLocalSetup", { userId: actor.userId }))) return
   const type = CLIENT_EVENT_TYPES[event.step]
   await db.insert(TelemetryEventTable).values({
     id: eventId(actor, type),
@@ -67,7 +53,6 @@ export async function recordActivationEvent(actor: Actor, event: ActivationEvent
   }).onDuplicateKeyUpdate({ set: { id: sql`${TelemetryEventTable.id}` } })
 }
 
-/** Reads the facts behind every step for the member in this organization context. */
 export async function readActivationFacts(input: { organizationContext: OrganizationContext; memberTeams: MemberTeamSummary[] }): Promise<ActivationFacts> {
   const { organizationContext, memberTeams } = input
   const organizationId = organizationContext.organization.id
@@ -76,7 +61,8 @@ export async function readActivationFacts(input: { organizationContext: Organiza
   const reportedIds = Object.values(CLIENT_EVENT_TYPES).map((type) => eventId(actor, type))
   const now = new Date()
 
-  const [permissions, reported, others, pending, invitedByMe, owners, gatewayProvider, addedProvider, connections, desktopPolicy, orgProvider] = await Promise.all([
+  const [localSetup, permissions, reported, others, pending, invitedByMe, owners, gatewayProvider, addedProvider, connections, desktopPolicy, orgProvider] = await Promise.all([
+    organizationFeatureEnabled(organizationId, "activationLocalSetup", { userId: member.userId }),
     resolveMemberPermissionsFromContext(organizationContext, memberTeams.map((team) => team.id)),
     db.select({ type: TelemetryEventTable.event_type, durationMs: TelemetryEventTable.duration_ms })
       .from(TelemetryEventTable)
@@ -112,10 +98,7 @@ export async function readActivationFacts(input: { organizationContext: Organiza
       .orderBy(asc(LlmProviderTable.createdAt))
       .limit(1),
     listMemberUsableConnectionFacts({ context: { organizationContext, memberTeams, session: null } }).catch(() => []),
-    // Whether the member may add their own model provider (desktop policy `allowCustomProviders`).
     calculateDesktopPolicyForOrgMember({ organizationId, orgMemberId: member.id }),
-    // Whether the organization already provides models centrally (any provider in the org, including
-    // Den/managed `source: "openwork"` providers an admin provisioned), so the member need not set one up.
     db.select({ id: LlmProviderTable.id }).from(LlmProviderTable)
       .where(eq(LlmProviderTable.organizationId, organizationId))
       .limit(1),
@@ -166,6 +149,8 @@ export async function readActivationFacts(input: { organizationContext: Organiza
       providerName: permissions.has("gateway_providers.view") ? gatewayProvider[0]?.name ?? null : null,
     },
     readyConnectionName: ready?.name ?? null,
+    connectionOnDevice: Boolean(reportedType("connector")),
+    localSetup,
     ownerName: owners.find((row) => roleIncludesOwner(row.role))?.name ?? null,
     dismissed: Boolean(reportedType("dismiss")),
   }

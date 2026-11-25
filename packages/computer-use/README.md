@@ -38,7 +38,7 @@ told to use control to finish the task and to pick a narrower mode only when the
 person asks for one. On a parallel Mac computer, control works in the window
 where it is, without taking the front unless the app or step needs it
 ([docs](../../docs/features/computer-use-background/README.md)). This is
-included in `computerUse`, not a separate rollout.
+included in computer use.
 A kernel-held lock allows one session per window, so chats in different windows
 work at once. On a parallel Mac one chat keeps up to three apps open at once,
 each in its own window with its own helper session, so a task can move between
@@ -53,7 +53,7 @@ turn at the keyboard and pointer and its idle release; end of turn releases
 them all, Take over on any of them holds the whole chat until Continue, and Stop
 ends them all. Watch live shows the app being worked in, and the session card
 names the app of each step. Other computers keep one app per chat.
-With `parallelComputerUse` on ([docs](../../docs/features/parallel-computer-use/README.md)),
+With [parallel computer use](../../docs/features/parallel-computer-use/README.md),
 a subagent the chat starts (OpenCode's `subagent` tool) works on the chat's
 computer as part of the chat; off, it is its own chat. The bridge reads the subagent's root chat from the
 engine's session tree and sends it as `rootSessionId`; model input never names
@@ -112,6 +112,46 @@ apply. Observe and assist images, used only for reading, are 1024 pixels on
 the long side; control keeps 1280 for coordinate accuracy, and `computer_zoom`
 shows detail at full resolution.
 
+### Apps that take only real input
+
+Blender, game engines (Unity, Unreal), games and apps built on Qt, wxWidgets or
+Tk draw their own interface and act only on hardware-origin input: they drop
+events addressed to their process, in front or not (Blender ignores such a
+double-click, typing and Shift). Their control sessions work in front and send
+clicks, double-clicks, drags, scrolls, keys and typing through the system input
+stream with the real pointer, as a person's mouse and keyboard would (step path
+`real_input`). Every press, move, scroll and key is checked just before it is
+posted: the app must be frontmost, and for the pointer the selected window must
+be the topmost one under the point (the agent's see-through overlay aside). What
+goes into the input stream is then a stand-in that does nothing as it is: a key-up
+of an unused key, or a pointer move to the same point. An annotated session event
+tap sees it with the process and window the window server is about to deliver it
+to, and only there turns it into the real event, when that is the selected app and
+window; otherwise it is dropped and the step stops. While the tap is disabled or
+recovering only stand-ins arrive, so no agent input can escape it. Releases go out
+as themselves so nothing stays held, and a drag whose window stops being the target
+is released at its last point inside that window. Without the tap nothing is sent
+(`real_input_unavailable`). The tap also tells
+the person's own events from the agent's tagged ones, so the person's click or
+key still pauses the step. After the batch the person's pointer goes back where
+it was, unless they moved it.
+
+Real input is not limited to the apps known to need it. Any control session can
+ask for it with `computer_act`'s `input: "real"`; when a step sent the usual way
+left the window exactly as it was, the next observation's
+`after_action.real_input` suggests repeating it once that way, and once a
+real-input step visibly changes the window the session keeps real input. Nothing
+is resent by the computer itself, since the first input may have landed unseen.
+
+Apps with real input list no focused control, so their keys and typing go to their
+key window, never under secure input or into a password field, and each typed
+character goes out as its own key on the current layout. Every app's own shortcuts
+are sent as keys: single letters and Shift letters while no text field has the
+keyboard (Blender's G, R, S, Shift-A), Control and Option chords, and Command
+chords its menu bar does not list. Blocked chords (quit, close, hide, app
+switching) never are. Blender sends keys to the editor under the pointer, so a
+`move` over the viewport or a panel comes first.
+
 Person input in the selected app or a deliberate app switch pauses
 the session and releases held input. Only the person's Continue resumes it;
 neither time nor the agent can. Sleep or temporary desktop unavailability
@@ -156,7 +196,7 @@ minimized, counts as not following until the person is back in OpenWork. Each
 receipt's `desktop.followed` says which mode the step ran in. Other computers
 get neither argument.
 
-With `parallelComputerUse` on, a subagent's helpers follow when the person watches its chat, or the
+A subagent's helpers follow when the person watches its chat, or the
 subagent's own thread. Then every agent of the chat works in view and they take
 turns at the keyboard and pointer, one whole call at a time, as one chat's
 apps do. With apps of more than one agent open, none goes `beside_openwork` on
@@ -201,8 +241,13 @@ dialog gets none. A pill over the window's
 buttons offers Take over, Continue and Stop, shows "Your turn" while the person
 has control, and moves to the top of the screen when the window is hidden.
 When the session ends the cursor says it is "all yours" and fades out. Every
-overlay is excluded from screen capture, the frame and cursor ignore the mouse,
-and the pill never activates the helper. In a background session the frame and
+overlay is excluded from screen capture unless
+`OPENWORK_COMPUTER_USE_RECORDABLE_OVERLAY=1` is set, which lets screen
+recordings show the cursor, frame and pill for demos. OpenWork sets it from
+Settings → Advanced → Show computer use in screen recordings (or when it was
+launched with the same variable); the agent's screenshots capture only the selected window either
+way. The frame and cursor ignore the mouse, and the pill never activates the
+helper. In a background session the frame and
 cursor sit just above the selected window instead of above every window, so a
 window the person brings in front covers them too; the pill stays on top so
 Take over and Stop are always reachable.
@@ -307,11 +352,21 @@ a Windows chat starts on it.
 | Command | Purpose |
 | --- | --- |
 | `openwork-computer-use --check` | Prints `{protocol: "openwork.computer-use.windows/1", ok, reason, supported, session, integrity}` and exits. |
-| `openwork-computer-use serve --host-pid N` | Prints `{"type":"ready",...}`, then answers `windows`, `focus`, `capture`, `input` and `status` in order; `cancel` is answered at once and stops running input. It exits when stdin closes. |
+| `openwork-computer-use serve --host-pid N` | Prints `{"type":"ready",...}`, then answers `windows`, `apps`, `focus`, `capture`, `input` and `status` in order; `cancel` is answered at once and stops running input. It exits when stdin closes. |
 
 - Targets are app windows only; there is no whole-screen session. A window is
   identified by its handle, process id and process start time, so a restarted
   app never matches an old observation.
+- `computer_discover` also lists installed apps that are not open, and
+  `computer_open` starts one, waits up to 15 seconds for its window and then
+  attaches, as on a Mac. Installed means what the helper's `apps` request
+  lists: Start menu shortcuts that run a program with no arguments, and the app
+  aliases Windows keeps for packaged apps (Notepad and Paint on Windows 11).
+  The app id is the program's file name, the same id its open windows have.
+  The desktop starts the listed program directly, with no shell and no
+  arguments, and never from a path or command the agent supplies; excluded
+  apps (below) are not listed. An app that shows no window in time returns
+  `app_window_timeout`; one that is not installed returns `app_not_found`.
 - OpenWork's own windows are hidden. Terminals, code editors, password managers,
   security settings, apps in another Windows session, apps running with higher
   privileges than OpenWork (as administrator) and capture-protected windows are
@@ -392,6 +447,16 @@ already correct control. Form receipts verify the retained value and expose
 `value_mismatch` when a page rewrites or rejects it. Field values filled by the
 page or person stay withheld; only the exact value entered by the agent can be
 read back. Select option references are opaque and limited to the observed list.
+`fill_secret` enters a secret the person saved for the page's site, named by the
+`secretRef` an observation lists in `availableSecrets`: after the person
+confirms the site, secret and field, a random placeholder is typed and the host
+swaps it for the value only in a request to a site the secret is allowed for.
+The step is `verified` or `failed` and never returns the value or the
+placeholder; receipts and observations report what became of it in `secrets`
+(`pending`, `sent` or `not_sent`), and everything the browser host returns is
+redacted of saved secrets and placeholders, before any text is cut or trimmed.
+A placeholder works only in the document it was typed into. A tab that received
+one takes no more images until it closes.
 Submission still requires
 observing the resulting page; an uncertain submit must never be replayed.
 References expire after a minute and are consumed once. Before input, the host
@@ -414,7 +479,7 @@ it is a focused provider diagnostic, separate from the Web rollout UI proof.
 
 ## UI programs and shortcuts
 
-With `computerUse` enabled, `computer_run` executes one bounded JavaScript
+`computer_run` executes one bounded JavaScript
 program against the conversation's selected computer or built-in browser. It
 uses the same Stop/takeover controls and organization policy as direct tools.
 Programs share the enabled access, target validation and human handoff used by direct tools. The `remoteComputers` rollout is

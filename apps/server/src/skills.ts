@@ -151,15 +151,10 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
 
       const skillPath = join(dir, entry.name, "SKILL.md");
       if (await exists(skillPath)) {
-        // Direct skill: <dir>/<name>/SKILL.md
         const item = await parseSkillEntry(skillPath, entry.name, scope);
         return item ? [item] : [];
       }
 
-      // Domain/category folder: <dir>/<domain>/<name>/SKILL.md – scan one level deeper.
-      // This supports the convention where global skills are organised as
-      //   skills/<domain>/<skill-name>/SKILL.md
-      // in addition to the flat   skills/<skill-name>/SKILL.md  layout.
       const domainDir = join(dir, entry.name);
       let subEntries: Dirent[];
       try {
@@ -185,7 +180,6 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
   return groups.flat();
 }
 
-/** Global skill folders the skill list includes, highest priority first. */
 export function globalSkillDirectories() {
   const home = homedir();
   return {
@@ -287,9 +281,6 @@ export async function deleteSkill(workspaceRoot: string, name: string): Promise<
     await rm(flatDir, { recursive: true, force: true });
     return { path: flatDir };
   }
-  // Nested layout: skills/<domain>/<name>/SKILL.md (e.g. skills installed by
-  // marketplace plugin bundles are namespaced under a plugin folder). Listing
-  // supports this layout, so deletion must resolve it the same way.
   const items = await listSkills(workspaceRoot, false);
   const item = items.find((skill) => skill.name === trimmed && skill.scope === "project");
   if (!item) {

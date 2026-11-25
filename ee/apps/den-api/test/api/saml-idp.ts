@@ -6,7 +6,6 @@ import { join } from "node:path"
 import { inflateRawSync } from "node:zlib"
 import { SignedXml } from "xml-crypto"
 
-/** A disposable signing IdP, not a forged Den session or an unsigned assertion. */
 export function samlIdentityProvider() {
   const directory = mkdtempSync(join(tmpdir(), "den-saml-idp-"))
   try {

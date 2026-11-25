@@ -9,7 +9,6 @@ import { db } from "../../db.js"
 import { jsonValidator, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { cloudRuntimeAvailable, getCloudRuntime } from "../../workers/cloud-runtime.js"
 import { appLogger } from "../../observability/logger.js"
-import { workerHasOpenOfficeSession } from "../../documents-office-store.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
   activityHeartbeatSchema,
@@ -95,7 +94,6 @@ export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteV
     if (!worker) {
       return c.json({ error: "worker_not_found" }, 404)
     }
-    // Activity-scope token matched for this worker: its organization is the tenant.
     const audited = await attributeAuditRequest(c, {
       organizationId: worker.org_id,
       ...auditServiceAttribution("worker", workerId, { credentialId: tokenRows[0] ? `worker_token:${tokenRows[0].id}` : null }),
@@ -121,15 +119,12 @@ export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteV
 
     const now = Date.now()
     const recentWork = Boolean(body.isActiveRecently && activityAt && now - activityAt.getTime() <= 120_000 && activityAt.getTime() <= now + 30_000)
-    // Office editing reaches the worker through the preview proxy, which does
-    // not reset the VM's own auto-pause timer; an open editor counts as work.
-    if (cloudRuntimeAvailable() && (recentWork || await workerHasOpenOfficeSession(workerId).catch(() => false))) {
+    if (cloudRuntimeAvailable() && recentWork) {
       await getCloudRuntime().recordActivity(workerId).catch(() => {
         appLogger.warn("Could not refresh active computer idle timer", { worker_id: workerId })
       })
     }
 
-    // Older worker binaries still read this field; migration is no longer a rollout.
     const enginePolicy = { upgrade: true }
     c.header("Cache-Control", "no-store")
     return c.json({

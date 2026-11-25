@@ -11,7 +11,7 @@
 import { execFileSync } from "node:child_process"
 import { pathToFileURL } from "node:url"
 
-export const REQUIRED_CHECKS = ["openwork-tests-required", "warden-clear"]
+export const REQUIRED_CHECKS = ["openwork-tests-required"]
 // A commit status that never settles; it is a report link, not a test.
 const IGNORED_CHECKS = new Set(["Evidence preview"])
 const FAILED = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure"])

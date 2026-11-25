@@ -14,4 +14,4 @@ ignored; the response-only compatibility value stays `true`. Cloud placement,
 the headless runner availability, Google Calendar scope and the
 `automationTargetAllowed` (Desktop/Cloud) toggle remain enforced without a flag.
 
-See `reports/ga-feature-retirement.md` for the retirement record.
+See `docs/reports/ga-feature-retirement.md` for the retirement record.

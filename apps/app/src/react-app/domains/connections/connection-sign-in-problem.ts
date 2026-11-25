@@ -1,16 +1,11 @@
 import type { DenConnectionReadinessFailure, DenExternalMcpConnection } from "../../../app/lib/den";
 
-/**
- * Hosts whose settings pages Den may link to when a provider setting blocks
- * sign-in, and what the button calls that page. Anything else is not opened.
- */
 const PROVIDER_SETTINGS_PAGES: Record<string, string | null> = {
   "api.slack.com": "Open Slack app settings",
 };
 
 export type ProviderSettingsLink = { url: string; label: string };
 
-/** Only an https link to a known provider settings page is offered; the label never comes from the link. */
 export function providerSettingsLink(value: unknown, connectionName: string): ProviderSettingsLink | null {
   if (typeof value !== "string" || !value.trim()) return null;
   let url: URL;
@@ -33,7 +28,6 @@ const FALLBACK_REASONS: Partial<Record<DenConnectionReadinessFailure, string>> =
 
 export type ConnectionSignInProblem = {
   failure: DenConnectionReadinessFailure | null;
-  /** Den's own sentence for what went wrong; provider text is never shown. */
   reason: string;
   settings: ProviderSettingsLink | null;
 };
@@ -52,23 +46,16 @@ function problemFrom(connection: ProblemConnection): ConnectionSignInProblem | n
   };
 }
 
-/**
- * A setting in the service's own app blocks this member's sign-in. It wins
- * over needsReconnect: signing in again cannot work until the setting changes.
- */
 export function providerSetupProblem(connection: ProblemConnection): ConnectionSignInProblem | null {
   const problem = problemFrom(connection);
   return problem?.failure === "provider_setup_required" ? problem : null;
 }
 
 export type ConnectAttempt = {
-  /** Local clock when the member asked to sign in. */
   startedAt: number;
-  /** The member's last recorded check before this attempt, so an old failure is not mistaken for this one. */
   previousCheckedAt: string | null;
 };
 
-/** Den's clock and this computer's can disagree a little. */
 const CLOCK_SKEW_MS = 60_000;
 
 export type ConnectPollOutcome =
@@ -76,11 +63,6 @@ export type ConnectPollOutcome =
   | { kind: "failed"; problem: ConnectionSignInProblem }
   | { kind: "waiting" };
 
-/**
- * What one poll says about a sign-in in progress: connected, failed (Den
- * recorded a check for this member after the attempt started that did not
- * pass), or still waiting for the person to finish in the browser.
- */
 export function connectPollOutcome(
   match: (ProblemConnection & Pick<DenExternalMcpConnection, "connectedForMe" | "connectedAt">) | undefined,
   attempt: ConnectAttempt,

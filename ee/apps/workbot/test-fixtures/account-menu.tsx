@@ -4,12 +4,9 @@ import { setWorkbotHost } from "../../../packages/workbot-ui/src/host";
 import { createHost, meSchema } from "../src/client/host";
 import "../src/client/styles.css";
 
-// The production host and avatar for one signed-in person. `?menu=off` is the person
-// before `workbotAccountMenu`; Workbot's real /auth routes answer behind the page.
-const accountMenu = new URLSearchParams(window.location.search).get("menu") !== "off";
 const me = meSchema.parse({
   userId: "user_fixture", organizationId: "org_fixture", name: "Sam Rivera", email: "sam@example.test",
-  organizationName: "Example Team", enabled: true, accountMenu, denUrl: "https://den.example.test",
+  organizationName: "Example Team", enabled: true, denUrl: "https://den.example.test",
 });
 setWorkbotHost(createHost(me));
 

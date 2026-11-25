@@ -4,6 +4,7 @@ import { Fragment } from "react"
 
 import { RAIL_LINE, RAIL_ROW, RailMeta, TextSentenceLine, TrailingChevron } from "@/components/chat/activity-rail"
 import { useCurrentToolLifecycleResolver } from "@/components/chat/current-tool-lifecycle-context"
+import { SandboxGroupTag, SandboxToolTag, toolRanInSandbox, useSandboxToolStep } from "@/components/chat/current-tool-lifecycle-context"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { TextCommandCard, TextDiffCard, TextDiffStats, TextTechnicalDetails } from "@/components/chat/text-activity-details"
 import { t } from "@/i18n"
@@ -24,7 +25,6 @@ function settledStatus(part: AnyToolPart): "running" | "failed" | "done" {
   return "done"
 }
 
-/** Identical settled reads of one file fold into one row; a thought between them keeps them apart. */
 function buildRows(parts: AnyToolPart[], thoughts: AggregateThought[]): TextAggregateRow[] {
   const rows: TextAggregateRow[] = []
   parts.forEach((part, index) => {
@@ -32,6 +32,7 @@ function buildRows(parts: AnyToolPart[], thoughts: AggregateThought[]): TextAggr
     const same = previous !== undefined
       && part.type === "dynamic-tool" && previous.part.type === "dynamic-tool"
       && part.toolName === "read" && previous.part.toolName === "read"
+      && toolRanInSandbox(part) === toolRanInSandbox(previous.part)
       && JSON.stringify(part.input) === JSON.stringify(previous.part.input)
       && settledStatus(part) === "done" && settledStatus(previous.part) === "done"
       && !thoughts.some((thought) => thought.afterIndex === index)
@@ -64,11 +65,6 @@ function editTexts(part: AnyToolPart): { removed: string | null; added: string |
   return null
 }
 
-/**
- * One local step, text-first: "Ran List the workspace files", "Read
- * brief.md", "Edited composer.tsx +11 −3". Opening a command shows the
- * command card; an edit shows its change; a failure shows Technical details.
- */
 function TextStepRow({ row, status, disclosureKey }: {
   row: TextAggregateRow
   status: TextStepStatus
@@ -77,6 +73,7 @@ function TextStepRow({ row, status, disclosureKey }: {
   const part = row.part
   const [open, setOpen] = useWorkbenchDisclosure(disclosureKey)
   const sentence = textStepSentence(part, status)
+  const stepNote = useSandboxToolStep(part, status === "running")
   const command = commandOf(part)
   const output = outputOf(part)
   const edit = status === "failed" ? null : editTexts(part)
@@ -86,7 +83,8 @@ function TextStepRow({ row, status, disclosureKey }: {
   const tone = status === "failed" ? "failed" : status === "waiting" ? "waiting" : status === "running" ? "running" : "normal"
   const line = (
     <>
-      <TextSentenceLine verb={sentence.verb} object={sentence.object} title={sentence.title} tone={tone} />
+      <TextSentenceLine verb={stepNote ?? sentence.verb} object={stepNote ? undefined : sentence.object} title={stepNote ? undefined : sentence.title} tone={tone} />
+      <SandboxToolTag part={part} />
       {row.repeat > 1 ? <RailMeta><span data-tool-aggregate-repeat>×{row.repeat}</span></RailMeta> : null}
       {stats ? <TextDiffStats added={stats.added} removed={stats.removed} /> : null}
       {expandable ? <TrailingChevron open={open} /> : null}
@@ -116,13 +114,6 @@ function TextStepRow({ row, status, disclosureKey }: {
   )
 }
 
-/**
- * Consecutive local steps, text-first: one summary line ("Explored 2 files,
- * 1 search, ran 4 commands +11 −3 ›") that opens into one sentence per step.
- * While running, the summary is in the present tense ("Editing 2 files,
- * running 2 commands") and nothing else rides on the line; the step happening
- * now is one click away, and the Working line below is the one shimmer.
- */
 export function TextToolAggregateGroup({ parts, messageId, thoughts = [], className }: {
   parts: AnyToolPart[]
   messageId?: string
@@ -138,6 +129,7 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
 
   const inFlightPart = parts.find((part) => isToolPartInFlight(part))
   const currentLifecycle = resolveLifecycle(inFlightPart?.toolCallId ?? "", Boolean(inFlightPart))
+  const groupSandboxStep = useSandboxToolStep(inFlightPart, currentLifecycle === "running")
   const lifecycle = getToolAggregateLifecycle(parts, currentLifecycle)
   const running = lifecycle === "running"
   const rowStatus = (part: AnyToolPart): TextStepStatus => {
@@ -154,7 +146,6 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
     </div>
   )
 
-  // One step and no thoughts is the step itself: nothing to summarise.
   const solo = rows.length === 1 && thoughts.length === 0 ? rows[0] : undefined
   if (solo) {
     return (
@@ -183,7 +174,7 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
       >
         {lifecycle === "waiting" ? <TextSentenceLine verb={t("text_activity.waiting_for_you")} tone="waiting" className="shrink-0" /> : null}
         <span data-text-group-summary="" className="min-w-0 shrink truncate">
-          {segments.map((segment, index) => (
+          {groupSandboxStep ?? segments.map((segment, index) => (
             <Fragment key={segment.verb}>
               {index > 0 ? <span className="text-slate-9">, </span> : null}
               <span className="text-muted-foreground">{segment.verb}</span>
@@ -191,8 +182,9 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
             </Fragment>
           ))}
         </span>
+        <SandboxGroupTag parts={parts} />
         {stats ? <TextDiffStats added={stats.added} removed={stats.removed} /> : null}
-        {failedCount > 0 ? <RailMeta className="text-red-11">{t("text_activity.failed_count", { count: failedCount })}</RailMeta> : null}
+        {failedCount > 0 ? <RailMeta>{t("text_activity.failed_count", { count: failedCount })}</RailMeta> : null}
         <TrailingChevron open={expanded} />
       </button>
 

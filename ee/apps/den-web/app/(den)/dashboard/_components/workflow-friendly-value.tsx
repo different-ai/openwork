@@ -69,7 +69,6 @@ function LongText({ value }: { value: string }) {
   );
 }
 
-/** `**bold**` inside one line of text, rendered as React text (never as HTML). */
 function InlineText({ text }: { text: string }) {
   const parts = text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
   return <>{parts.map((part, index) => part.startsWith("**") && part.endsWith("**") && part.length > 4
@@ -77,7 +76,6 @@ function InlineText({ text }: { text: string }) {
     : <span key={index}>{part}</span>)}</>;
 }
 
-/** Text written in lines (a brief, a summary): paragraphs and "- " bullets, as the workflow wrote them. */
 function isReadableText(value: unknown): value is string {
   return typeof value === "string" && value.includes("\n") && !isoDate(value);
 }
@@ -128,7 +126,6 @@ function ObjectValue({ value }: { value: Record<string, unknown> }) {
   if (entries.length === 0) return <EmptyValue />;
   const scalars = entries.filter((entry) => !isCollection(entry[1]) && !isReadableText(entry[1]));
   const collections = entries.filter((entry) => isCollection(entry[1]) || isReadableText(entry[1]));
-  // A result that is only a written brief reads as the brief, without a label above it.
   const onlyText = scalars.length === 0 && collections.length === 1 && isReadableText(collections[0]?.[1]);
   if (onlyText) return <ReadableText value={collections[0]?.[1] as string} />;
   return (

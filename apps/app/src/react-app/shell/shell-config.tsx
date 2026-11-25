@@ -1,40 +1,20 @@
 /** @jsxImportSource react */
 import { createContext, useCallback, use, useMemo, useState, type ReactNode } from "react";
 
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
-
 export type ShellConfig = {
-  /** Display name shown in the title bar, sidebar, and welcome page. */
   appName: string;
-  /** Show live connection status inside the sidebar account menu. */
   statusBar: boolean;
-  /** Show the left sidebar with workspace/session list. */
   sidebar: boolean;
-  /** Show the Docs entry in the account menu. */
   docsButton: boolean;
-  /** Show the Feedback entry in the account menu. */
   feedbackButton: boolean;
-  /** Show the Cloud sign-in button when not signed in. */
   cloudSignin: boolean;
-  /** Show the welcome/onboarding page for new users. */
   welcomePage: boolean;
-  /** Show starter task cards in empty sessions. */
   starterCards: boolean;
-  /** Show the model picker / model change UI. */
   modelPicker: boolean;
-  /** Show the built-in browser panel. */
   browser: boolean;
-  /** Show the "Add workspace" button. */
   addWorkspace: boolean;
-  /** Show the notification bell in the header. */
   notifications: boolean;
 };
-
-/* ------------------------------------------------------------------ */
-/*  Defaults                                                           */
-/* ------------------------------------------------------------------ */
 
 export const DEFAULT_SHELL_CONFIG: ShellConfig = {
   appName: "OpenWork",
@@ -50,10 +30,6 @@ export const DEFAULT_SHELL_CONFIG: ShellConfig = {
   addWorkspace: true,
   notifications: true,
 };
-
-/* ------------------------------------------------------------------ */
-/*  Persistence                                                        */
-/* ------------------------------------------------------------------ */
 
 const STORAGE_KEY = "openwork.shell-config";
 
@@ -74,13 +50,8 @@ function writeShellConfig(config: ShellConfig): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
   } catch {
-    // Ignore storage errors.
   }
 }
-
-/* ------------------------------------------------------------------ */
-/*  Context                                                            */
-/* ------------------------------------------------------------------ */
 
 type ShellConfigContextValue = {
   config: ShellConfig;

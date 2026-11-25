@@ -1,27 +1,5 @@
 import { z } from "zod"
 
-/**
- * Smart Model Router (feature `autoRouter`; internal names keep "auto"):
- * organization admins create any number of Smart Routers. Each has a name,
- * the people it applies to (everyone, teams, members), and AI Gateway models,
- * each tagged with the tasks it should handle. Tasks are shared across the
- * organization (one row per name, case-insensitive) and can sit on several
- * models of a router.
- *
- * Members pick "Smart: <name>" in the desktop model picker, one entry per
- * router that applies to them. For every prompt the gateway asks Jev
- * (TypeSafe System One) to score how well the prompt matches each task, sums
- * each model's task scores, sends the prompt to the highest-scoring model, and
- * lets Jev score how much reasoning it needs to choose the thinking level.
- *
- * A model names an AI Gateway model the way the default model does: the
- * `ipr_…` provider and the catalog model id. The gateway turns it into the
- * member's own Gateway alias per request, because aliases differ per member.
- *
- * No relative value imports: the Den web build cannot resolve relative `.js`
- * imports from this package.
- */
-
 /** The runtime provider id desktops register every Smart Router model under. */
 export const AUTO_ROUTER_PROVIDER_ID = "openwork-auto"
 /** What people call the feature. */
@@ -66,13 +44,9 @@ export const AUTO_ROUTER_SESSION_ROUTES_MAX = 50
 
 /** One routing decision: when the gateway's response arrived and the model it chose. */
 export type AutoRouterReplyRoute = {
-  /** Milliseconds since the epoch, on the engine's clock. */
   at: number
-  /** Catalog provider family, for example `anthropic`. */
   provider: string
-  /** Catalog model id, for example `claude-haiku-5-5`. */
   model: string
-  /** Display name, for example `Claude Haiku 5.5`, when the gateway sent one. */
   name?: string
   thinking: string
 }
@@ -143,9 +117,7 @@ function isThinkingLevel(value: string): value is AutoRouterThinkingLevel {
   return AUTO_ROUTER_THINKING_LEVELS.some((level) => level === value)
 }
 
-/** Claude generations that only take a manual thinking budget, so no effort levels. */
 function manualThinkingClaude(rawModelId: string) {
-  // Snapshot dates (claude-3-7-sonnet-20250219) are not versions.
   const modelId = rawModelId.replace(/[-@]\d{8}(?=$|[-@:.])/g, "")
   const familyFirst = /(?:claude-)?(opus|sonnet|haiku)-(\d+)(?:[.-](\d+))?/i.exec(modelId)
   const versionFirst = /claude-(\d+)(?:[.-](\d+))?-(opus|sonnet|haiku)/i.exec(modelId)
@@ -202,11 +174,8 @@ export type AutoRouterAssignment = z.infer<typeof autoRouterAssignmentSchema>
 export const autoRouterModelSchema = z
   .object({
     id: z.string(),
-    /** The `ipr_…` AI Gateway provider. */
     providerId: z.string(),
-    /** The catalog model id within that provider, for example `claude-opus-5`. */
     modelId: z.string(),
-    /** The tasks this model handles, in the order the admin added them. */
     tasks: z.array(z.string()),
   })
   .meta({ ref: "AutoRouterModel" })
@@ -217,7 +186,6 @@ export const autoRouterSchema = z
     id: z.string(),
     name: z.string(),
     assignment: autoRouterAssignmentSchema,
-    /** In the order the admin listed them; the first wins ties and is used when Jev cannot answer. */
     models: z.array(autoRouterModelSchema),
     updatedAt: z.string().datetime(),
   })
@@ -237,7 +205,6 @@ export const autoRouterListSchema = z
     routing: z.enum(AUTO_ROUTER_ROUTING_STATES),
     canEdit: z.boolean(),
     routers: z.array(autoRouterSchema),
-    /** Every task in the organization, by name, for the task picker. */
     tasks: z.array(z.string()),
   })
   .meta({ ref: "AutoRouterList" })
@@ -249,7 +216,6 @@ export const autoRouterSavedSchema = autoRouterListSchema
   .meta({ ref: "AutoRouterSaved" })
 export type AutoRouterSaved = z.infer<typeof autoRouterSavedSchema>
 
-/** Stored normalized (normalizeAutoRouterTaskName); no transform, so the API schema stays plain. */
 const taskNameSchema = z.string().trim().min(1).max(AUTO_ROUTER_TASK_MAX_LENGTH)
 
 export const autoRouterModelWriteSchema = z
@@ -312,7 +278,6 @@ export const autoRouterModelOptionSchema = z
     modelId: z.string(),
     providerName: z.string(),
     modelName: z.string(),
-    /** The catalog provider family (for example `anthropic`) for the logo. */
     logoProviderId: z.string(),
     access: autoRouterModelAccessSchema,
   })
@@ -337,6 +302,15 @@ export const autoRouterConnectSchema = z
   })
   .meta({ ref: "AutoRouterConnect" })
 export type AutoRouterConnect = z.infer<typeof autoRouterConnectSchema>
+
+/**
+ * The Smart Routers the caller can use: those that apply to them and have at least one model they
+ * can use, while the AI Gateway can route. For setup screens that offer them in 3rd party tools.
+ */
+export const autoRouterMemberListSchema = z
+  .object({ routers: z.array(z.object({ id: z.string(), name: z.string() })) })
+  .meta({ ref: "AutoRouterMemberList" })
+export type AutoRouterMemberList = z.infer<typeof autoRouterMemberListSchema>
 
 /** Whether an assignment reaches a member, given the member's teams. */
 export function autoRouterAssignmentIncludes(assignment: AutoRouterAssignment, memberId: string, teamIds: readonly string[]) {

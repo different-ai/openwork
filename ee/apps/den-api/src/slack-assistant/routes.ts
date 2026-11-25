@@ -143,10 +143,6 @@ const webhookResponses = {
   413: textResponse("Slack payload exceeds the request size limit."),
 }
 
-/**
- * A request signed with this installation's Slack signing secret proves the
- * installation, whose organization is the audit tenant (origin webhook).
- */
 async function attributeSlackInstallation(c: Context, installation: { organizationId: string; connectionId: string }) {
   const audited = await attributeAuditRequest(c, {
     organizationId: installation.organizationId, origin: "webhook",
@@ -213,7 +209,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
     paramValidator(connectionParams),
     jsonValidator(configSchema),
     async (c) => {
-      // connections.manage is not sensitive; Slack assistant setup keeps its recent sign-in check.
       const fresh = ensureFreshPrivilegedSession(c)
       if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
       const org = c.get("organizationContext")
@@ -225,7 +220,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           { error: "individual_accounts_required", message: "Choose a Slack connection in Individual accounts mode." },
           400,
         )
-      // While the organization's default model applies, the installation's own model is kept as it was.
       const { model: _keptModel, ...settings } = c.req.valid("json")
       const body = settings
       if (body.enabled && !slackRunnerAvailable())
@@ -276,7 +270,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
     orgPermissionRoute("connections.manage"),
     paramValidator(connectionParams),
     async (c) => {
-      // connections.manage is not sensitive; Slack assistant installation keeps its recent sign-in check.
       const fresh = ensureFreshPrivilegedSession(c)
       if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
       const org = c.get("organizationContext")
@@ -285,7 +278,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       const connection = await getExternalMcpConnection({ organizationId: org.organization.id, connectionId })
       if (!connection || !isSlackConnection(connection)) return c.json({ error: "individual_accounts_required" }, 400)
       const client = await getOrgOAuthClient(org.organization.id, connectionId)
-      // primary: the settings (and signing secret) are usually saved just before.
       if (!client?.clientSecret || !(await getInstallation(connectionId, db.$primary)))
         return c.json(
           {
@@ -350,9 +342,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       if (!installation || !member?.userId || member.removedAt) return c.text("Access denied.", 403)
       const permissions = await resolvePermissionsForMember({ organizationId: installation.organizationId, memberId: member.id })
       if (!permissions.has("connections.manage")) return c.text("Access denied.", 403)
-      // Single-use state consumed and the installing admin re-verified: the
-      // installation's organization is the tenant (state consumption precedes
-      // attribution; nothing else has happened yet).
       const installer = auditSessionUserAttribution(member.userId, member.id)
       if (installer) {
         const audited = await attributeAuditRequest(c, { organizationId: installation.organizationId, ...installer })
@@ -488,7 +477,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         const id = await enqueueSlackEvent(installation, value.event_id, event)
         appLogger.info("slack_assistant_event_accepted", { event_id: id, ack_ms: Date.now() - startedAt })
       }
-      // Acknowledge only after durable insertion. No provider/runtime calls on ingress.
       return c.json({ ok: true })
     },
   )

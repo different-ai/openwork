@@ -5,7 +5,6 @@ import { db } from "./db.js"
 type ConfigObjectVersion = typeof ConfigObjectVersionTable.$inferSelect
 const VERSION_BATCH_SIZE = 100
 
-/** Select IDs before loading encrypted payloads: old revisions never need decoding. */
 export async function latestConfigObjectVersions(
   configObjectIds: ConfigObjectVersion["configObjectId"][],
   organizationId?: ConfigObjectVersion["organizationId"],

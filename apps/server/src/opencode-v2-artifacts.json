@@ -1,37 +1,37 @@
 {
-  "version": "2.2.0",
+  "version": "2.2.6",
   "platforms": {
     "linux-x64-baseline": {
-      "url": "https://registry.npmjs.org/@opencode/cli-linux-x64-baseline/-/cli-linux-x64-baseline-2.2.0.tgz",
-      "integrity": "sha512-ComUyKWDToJMBEI1IdxiCGSSdJ0BhXYPoOkb+o2BozDERtTg51UWiomfkiwMIJ3qgR1p/9Itdt/c8oVINUKNmg=="
+      "url": "https://registry.npmjs.org/@opencode/cli-linux-x64-baseline/-/cli-linux-x64-baseline-2.2.6.tgz",
+      "integrity": "sha512-GA7bnrvfJHOHXWsoiGLzzt2SKcL2oMD5LhHIyfQUP14L2XXpxzG/S8QoEMor1m/q9961f9nv4dTqYr9vuMOSjA=="
     },
     "linux-arm64": {
-      "url": "https://registry.npmjs.org/@opencode/cli-linux-arm64/-/cli-linux-arm64-2.2.0.tgz",
-      "integrity": "sha512-NCCltb8h/8WL30X9o2KTm3UFX0lmfk48lG8tglXJN9moscxeB7w2qOmfHVa32iFngk0iVAKH4xRPlBc88Y0qlw=="
+      "url": "https://registry.npmjs.org/@opencode/cli-linux-arm64/-/cli-linux-arm64-2.2.6.tgz",
+      "integrity": "sha512-/Hr0ZBwHY4t4NSoakRu6SrR4SZiXIQx5Qbgwrsfn6JoZ1/REvTo8ZhOJ2cJjCzoQLt1oToS1tLJgMJBHAdF4Vg=="
     },
     "linux-x64-baseline-musl": {
-      "url": "https://registry.npmjs.org/@opencode/cli-linux-x64-baseline-musl/-/cli-linux-x64-baseline-musl-2.2.0.tgz",
-      "integrity": "sha512-a2i5CONPImfufYzlLxIcuajpdxV73arWpUS3x+1zsiQ5QPjwTuToUPqIEN9fqRdLHFTonKsub1pmaT1uemB92w=="
+      "url": "https://registry.npmjs.org/@opencode/cli-linux-x64-baseline-musl/-/cli-linux-x64-baseline-musl-2.2.6.tgz",
+      "integrity": "sha512-MCxWAKiS+ui4/JN+Noiw2z6GPYSMqHZlpZMdL964KpYx1Ih0Wyw8kkH0TQn7U8Tgmo3QTe5jOujWaTVJdePubQ=="
     },
     "linux-arm64-musl": {
-      "url": "https://registry.npmjs.org/@opencode/cli-linux-arm64-musl/-/cli-linux-arm64-musl-2.2.0.tgz",
-      "integrity": "sha512-/HJnmU6a+a06RMVCZrsICO6FP4DQRWtgZdXgdtcduxtpCGd4PF2YOqhthuc0HBMr6YzjzJTxkFEhcsmgKMMVPg=="
+      "url": "https://registry.npmjs.org/@opencode/cli-linux-arm64-musl/-/cli-linux-arm64-musl-2.2.6.tgz",
+      "integrity": "sha512-bPbpkT1P5IpI1E4hmQhfprMmwFlu92JZMmKgQ4E/b/TJCqWm5MWehsrFU11bJVA184eOe/tkHq8S1dz5gJP7FQ=="
     },
     "darwin-x64-baseline": {
-      "url": "https://registry.npmjs.org/@opencode/cli-darwin-x64-baseline/-/cli-darwin-x64-baseline-2.2.0.tgz",
-      "integrity": "sha512-91JnM4NW91kufSeYbdScwsrWQIX1w87WRG2Gy9aG27/6DhmPwCqJZlOf1yZeER557QUs0xrtaSpNXa4T7hczmA=="
+      "url": "https://registry.npmjs.org/@opencode/cli-darwin-x64-baseline/-/cli-darwin-x64-baseline-2.2.6.tgz",
+      "integrity": "sha512-55awjTpuUNptG7Xbs2gkRagG9q0jiPrrjwKpTuapA6KsTRofzulGY+sOVe8D0tzkn00Dw6PbQbp1FLAngsqdTg=="
     },
     "darwin-arm64": {
-      "url": "https://registry.npmjs.org/@opencode/cli-darwin-arm64/-/cli-darwin-arm64-2.2.0.tgz",
-      "integrity": "sha512-y3q/sghk/xCengTlv1pH2+5t9j0cuxXcEAY9yvyM7loKLQIYE1eSLEkDacCAVNyfnATd3D2JpueFSEB/i6A0Qg=="
+      "url": "https://registry.npmjs.org/@opencode/cli-darwin-arm64/-/cli-darwin-arm64-2.2.6.tgz",
+      "integrity": "sha512-OZwkLtiDOvcsfWkRS4e0o/Vpgb7vw12xBLlIFyuDZfglsCmOSNzihS3Akg0Wh3kbob8JKDngIbktctgbfHmF8w=="
     },
     "windows-x64-baseline": {
-      "url": "https://registry.npmjs.org/@opencode/cli-windows-x64-baseline/-/cli-windows-x64-baseline-2.2.0.tgz",
-      "integrity": "sha512-pHacmWjCbm0BrCjVBJhPiPot579oCntWCsQcIIFUKBRJNZYiabxMxYRV6M9rXdq87tSdKOt5MQVg56cnajvBBw=="
+      "url": "https://registry.npmjs.org/@opencode/cli-windows-x64-baseline/-/cli-windows-x64-baseline-2.2.6.tgz",
+      "integrity": "sha512-wjj3zDmM6JCPXafftTvWBD2tQj7FLyJUkMGtMDNG8vKDKOYqgcb9S//qyQxz5pWhbRBXK6yXNc6WQtWntxUclA=="
     },
     "windows-arm64": {
-      "url": "https://registry.npmjs.org/@opencode/cli-windows-arm64/-/cli-windows-arm64-2.2.0.tgz",
-      "integrity": "sha512-IK9FGVGMC0akI2/NHWuwiUvMmaSDTTjjl0S5TUdgxBFQEfCvg/wL1S23BKPq4KDZuI4rfk7w36ajcp2CCZ9IGw=="
+      "url": "https://registry.npmjs.org/@opencode/cli-windows-arm64/-/cli-windows-arm64-2.2.6.tgz",
+      "integrity": "sha512-efXFT4J8p9KLVQ3+e4s9EQRZkskvcRZABd3W9sIsZ+zcMuLrZ77CU0YyeeSLrYcHpdpgcRFRVnD2AiF4yLlRPA=="
     }
   }
 }

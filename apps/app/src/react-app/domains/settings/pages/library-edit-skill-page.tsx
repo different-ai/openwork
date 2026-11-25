@@ -12,13 +12,8 @@ import { LibraryPage } from "./library-page";
 
 export type LibrarySkillDraft = { name: string; description: string; instructions: string };
 
-/**
- * Changing a skill the member made. When others have it, saving changes it for
- * them too, so the page names who and offers a private copy instead.
- */
 export function LibraryEditSkillPage(props: {
   skill: LibraryEditableSkill;
-  /** e.g. "Support", or null when only the member has it. */
   audienceName: string | null;
   audiencePeople: number;
   onCancel: () => void;

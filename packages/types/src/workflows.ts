@@ -83,8 +83,6 @@ export type WorkflowRunPreview = z.infer<typeof workflowRunPreviewSchema>
 
 export const workflowVersionSchema = z.object({
   id: idSchema,
-  // Authoring source and example input are OpenWork management data, not MCP
-  // runtime data. Non-manager detail responses intentionally return null.
   code: z.string().nullable(),
   graph: workflowGraphSchema.nullable(),
   inputSchema: z.unknown().nullable(),

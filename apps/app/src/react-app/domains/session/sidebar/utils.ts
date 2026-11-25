@@ -20,7 +20,6 @@ export type GlobalArchivedSessionEntry = {
 export const isSessionArchived = (session: SessionListItem): session is ArchivedSession =>
   typeof session.time?.archived === "number" && session.time.archived > 0;
 
-/** Active agent work shown as the left-lane loader (never a completion / unread state). */
 export const isActiveWorkSessionStatus = (status: string | undefined) =>
   status === "running" ||
   status === "busy" ||
@@ -50,18 +49,9 @@ const normalizeSessionParentID = (session: { parentID?: string | null }) => {
   return parentID || "";
 };
 
-/**
- * A session with a parentID is a sub-agent child, whether or not its parent is
- * in the loaded page (the parent may be archived, deleted, or beyond the list
- * limit). Children are only reached from the task card in their parent.
- */
 export const getRootSessions = <T extends { parentID?: string | null }>(sessions: T[]): T[] =>
   sessions.filter((session) => !normalizeSessionParentID(session));
 
-/**
- * Return every descendant of a session in stable session-list order. The
- * visited set keeps malformed cyclic parent data from looping forever.
- */
 export const getSessionDescendantIds = (
   sessions: WorkspaceSessionGroup["sessions"],
   sessionId: string,
@@ -100,7 +90,6 @@ export const getSessionDescendantIds = (
   return descendants;
 };
 
-/** Split sessions into active vs. archived. Archived sessions live in their own section. */
 export const partitionArchivedSessions = (sessions: WorkspaceSessionGroup["sessions"]) => {
   const active: SessionListItem[] = [];
   const archived: ArchivedSession[] = [];
@@ -167,9 +156,6 @@ export function buildGlobalArchivedSessions(groups: WorkspaceSessionGroup[]): Gl
   });
 }
 
-/**
- * Order root sessions by saved position and creation, never server recency.
- */
 export const orderRootSessions = (
   roots: SessionListItem[],
   pinnedIds: Set<string>,
@@ -185,17 +171,11 @@ export const orderRootSessions = (
     if (root) ordered.push(root);
   }
 
-  // Stable partition: pinned roots float to the top, preserving relative order.
   const pinned = ordered.filter((root) => pinnedIds.has(root.id));
   const rest = ordered.filter((root) => !pinnedIds.has(root.id));
   return [...pinned, ...rest];
 };
 
-/**
- * Sub-agent (child) sessions never render in the sidebar: they are reached
- * through the task card in their parent's transcript. Only root sessions
- * become rows.
- */
 export const flattenSessionRows = (
   sessions: WorkspaceSessionGroup["sessions"],
   rootLimit: number,

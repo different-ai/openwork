@@ -2,22 +2,15 @@ import type { ExampleProvider } from "../ai-gateway/example-parts";
 import { ANTHROPIC, GOOGLE, OPENAI } from "../ai-gateway/gateway-example-data";
 import type { ExampleService } from "../example-parts";
 
-/** Sample data only: no API calls (DESIGN.md I7). Rows follow the real My Library list. */
-
 export type LibraryExampleKind = "connector" | "skill" | "plugin" | "model";
 
 export type LibraryExampleRow = {
   name: string;
   kind: LibraryExampleKind;
-  /** Brand mark for connectors; skills and plugins use the Library's kind icon. */
   service?: ExampleService;
-  /** Provider mark for models, as on the Library's model rows. */
   provider?: ExampleProvider;
-  /** One line under the name, as on the Library row. */
   detail: string;
-  /** Who gave it, as in the Library's source column: "Everyone", a team, "From Ada", "You". */
   source: string;
-  /** Waits on the viewer to sign in first. */
   signIn?: boolean;
 };
 
@@ -26,7 +19,6 @@ const SLACK: ExampleService = { name: "Slack" };
 const LINEAR: ExampleService = { name: "Linear" };
 const NOTION: ExampleService = { name: "Notion" };
 
-/** Section example: grouped like the Library, what waits on you first. */
 export const libraryExampleGroups: ReadonlyArray<{ title: string; rows: readonly LibraryExampleRow[] }> = [
   {
     title: "Needs your sign-in",
@@ -73,7 +65,6 @@ export const libraryModelRows: readonly LibraryExampleRow[] = [
   { name: "Anthropic", kind: "model", provider: ANTHROPIC, detail: "Your key", source: "You" },
 ];
 
-/** "Use your own key": one key and the models it brings. */
 export const libraryModelKey = {
   provider: ANTHROPIC,
   name: "Anthropic",
@@ -81,7 +72,6 @@ export const libraryModelKey = {
   models: ["Claude Sonnet 5", "Claude Haiku 5"],
 } as const;
 
-/** "Share with your team": a skill of yours and who can use it. */
 export const libraryShareExample = {
   item: "Weekly report",
   kind: "Skill",

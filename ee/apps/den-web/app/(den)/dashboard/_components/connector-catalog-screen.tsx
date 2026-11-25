@@ -29,7 +29,6 @@ export function customConnectorQuery(input: { name: string; url: string }): stri
   return `?${new URLSearchParams({ name: input.name, url: input.url }).toString()}`;
 }
 
-/** Loads the catalog and its logos ahead of "Add a connector", so it opens filled in. */
 export function usePrefetchConnectorCatalog(): () => void {
   const queryClient = useQueryClient();
   return () => {
@@ -40,7 +39,6 @@ export function usePrefetchConnectorCatalog(): () => void {
   };
 }
 
-/** Google Workspace and Microsoft 365 are org OAuth apps, set up by admins only. */
 export const NATIVE_CATALOG_ENTRIES: CatalogEntry[] = [
   { id: GOOGLE_WORKSPACE_QUICK_ADD_ID, name: "Google Workspace", description: "Gmail, Drive, Calendar, Sheets and Chat", url: "https://workspace.google.com" },
   { id: MICROSOFT_365_QUICK_ADD_ID, name: "Microsoft 365", description: "Outlook, Calendar, OneDrive and Teams", url: "https://www.microsoft.com/microsoft-365" },
@@ -50,7 +48,6 @@ function nativeConnection(connections: readonly ExternalMcpConnection[], provide
   return connections.find((connection) => connection.id === providerKey || connection.nativeProviderKey === providerKey);
 }
 
-/** A1 to A3 and C1 to C2: pick what to connect. */
 export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
   const { orgSlug } = useOrgDashboard();
   const presets = useMcpConnectionPresets();

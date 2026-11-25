@@ -1,4 +1,3 @@
-/** Classify catalog input and extract pasted MCP addresses. */
 export type SmartAddInputKind = "empty" | "url" | "domain" | "name" | "invalid";
 
 const NAME_QUERY_PATTERN = /^[a-z0-9][a-z0-9 &_'-]{0,63}$/i;
@@ -29,10 +28,6 @@ export function classifySmartAddInput(rawQuery: string): SmartAddInputKind {
   return NAME_QUERY_PATTERN.test(query) ? "name" : "invalid";
 }
 
-/**
- * The MCP address a catalog search holds, when it holds one: a full URL or a
- * bare domain (given https). Names and invalid input return null.
- */
 export function pastedMcpAddress(rawQuery: string): { host: string; url: string } | null {
   const kind = classifySmartAddInput(rawQuery);
   if (kind !== "url" && kind !== "domain") return null;

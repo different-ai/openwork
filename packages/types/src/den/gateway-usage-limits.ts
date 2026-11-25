@@ -49,7 +49,6 @@ export const GATEWAY_DEFAULT_USAGE_SCOPE = ""
 export const gatewayUsagePolicyWriteSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
-    /** Omit or null for a default limit; an organization Gateway provider id for a provider limit. */
     providerId: z.string().min(1).max(64).nullable().optional(),
     hardLimit: z.boolean().default(true),
     allowRequestReset: z.boolean().default(true),
@@ -89,12 +88,7 @@ export type GatewayUsageLimitPolicy = {
   hardLimit: boolean
   allowRequestReset: boolean
   revision: number
-  /** Null for a default limit; the organization Gateway provider this limit applies to otherwise. */
   providerId?: string | null
-  /**
-   * Null for a default limit. "removed" when providerId names a provider that no
-   * longer exists in the organization: the limit then applies to no requests.
-   */
   providerStatus?: GatewayUsagePolicyProviderStatus | null
   limits: { timeframe: GatewayUsageTimeframe; costLimitMicroUsd: number }[]
   assignments: { id: string; memberId: string | null; teamId: string | null; organization: boolean }[]
@@ -167,7 +161,6 @@ export type GatewayUsageBucket = {
   allowRequestReset: boolean
   canRequestReset: boolean
   resetRequestStatus: GatewayUsageResetStatus | null
-  /** Null or absent for default buckets; the provider for provider-limit buckets. */
   providerId?: string | null
 }
 export type GatewayUsageState = "unlimited" | "within_limit" | "over_limit" | "blocked"
@@ -202,9 +195,7 @@ export type GatewayUsageStatus = {
     lastSettlementRequestId?: string | null
     settlementReady?: boolean
   }
-  /** Default limits: govern every provider the member has no provider limit for. */
   buckets: GatewayUsageBucket[]
-  /** Provider limits, present only when per-provider limits are on and assigned to the member. */
   providers?: GatewayProviderUsage[]
 }
 export type GatewayUsageResetRequest = {
@@ -425,6 +416,8 @@ export function gatewayRequestScope(
     : GATEWAY_DEFAULT_USAGE_SCOPE
 }
 export const GATEWAY_USAGE_LIMIT_ERROR_CODE = "openwork_gateway_usage_limit_exceeded"
+/** Every Gateway usage-limit message starts with this, with or without a provider name. */
+export const GATEWAY_USAGE_LIMIT_MESSAGE = "You have reached your AI Gateway usage limit"
 export const GATEWAY_USAGE_ACCOUNTING_ERROR_CODE = "openwork_gateway_accounting_unavailable"
 export function hasGatewayUsageLimitHttpMarker(
   response: Pick<Response, "status" | "headers">,
@@ -462,8 +455,8 @@ export function gatewayUsageLimitResponse(
         code: GATEWAY_USAGE_LIMIT_ERROR_CODE,
         source: "openwork_gateway",
         message: provider
-          ? `You have reached your AI Gateway usage limit for ${provider.name}. Models from another provider may still be available.`
-          : "You have reached your AI Gateway usage limit.",
+          ? `${GATEWAY_USAGE_LIMIT_MESSAGE} for ${provider.name}. Models from another provider may still be available.`
+          : `${GATEWAY_USAGE_LIMIT_MESSAGE}.`,
         details: { exhaustedBuckets, retryAt, ...(provider ? { provider } : {}) },
       },
     },

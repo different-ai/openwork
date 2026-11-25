@@ -3,45 +3,36 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
-import { Lock, Pencil, Plus } from "lucide-react";
+import { Pencil, Plus } from "lucide-react";
 import { ORG_PROMPT_MAX_LENGTH, type OrgPrompt } from "@openwork/types/den/prompts";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getEveryoneRoute, getOrgAccessFlags, permissionLockReason, type DenOrgContext } from "../../_lib/den-org";
+import { getEveryoneRoute, getOrgAccessFlags, type DenOrgContext } from "../../_lib/den-org";
 import { FeatureIntroGate } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
 import { ConfirmDialog } from "./item-list";
 import { usePromptSettings, useRemovePrompt, useSavePrompt } from "./prompts-data";
+import { ReadOnlyNotice } from "./scoped-setting";
 
 const PROMPT_ROWS = 15;
-/** Saved prompts and the editor share one type ramp, so Edit swaps the field in place. */
 const promptTextClass = "font-mono text-[13px] leading-5";
 const promptReadClass = `${promptTextClass} max-h-[480px] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border px-4 py-2.5`;
-/** The scope's own prompt: the focal element (P7). */
 const ownPromptClass = `${promptReadClass} border-gray-200 bg-white text-gray-900`;
-/** A prompt inherited from Everyone: same shape, quieter, no fill. */
 const inheritedPromptClass = `${promptReadClass} border-gray-100 text-gray-600`;
 
-/** The Prompts tab shows for people who can view prompts. */
 export function promptsTabVisible(orgContext: DenOrgContext | null): boolean {
   if (!orgContext) return false;
   return getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canViewPrompts;
 }
 
-/**
- * Members › Teams › a team (or Everyone) › Prompts: the scope's system prompt,
- * read-only until Edit. A team page lists the prompt for everyone first,
- * the order members' agents receive them in.
- */
 export function PromptsPanel({ team }: { team: { id: string; name: string } | null }) {
   const { orgId, orgSlug } = useOrgDashboard();
   const settings = usePromptSettings(orgId ?? "", Boolean(orgId));
   const searchParams = useSearchParams();
-  // "Add a prompt" from the Prompts intro arrives as ?write=1 and opens the editor (DESIGN.md I5).
   const [writing, setWriting] = useState(false);
   useEffect(() => {
     if (searchParams.get("write") !== "1") return;
@@ -64,11 +55,11 @@ export function PromptsPanel({ team }: { team: { id: string; name: string } | nu
 
   const prompt = team ? settings.data.teams.find((entry) => entry.teamId === team.id)?.prompt ?? null : settings.data.everyone;
   const everyonePrompt = team ? settings.data.everyone : null;
-  // With feature intros on, the Prompts intro replaces the empty editor while no prompt applies here (DESIGN.md I1).
   const introFacts = writing ? null : { hasPrompt: Boolean(prompt ?? everyonePrompt), canEditPrompts: settings.data.canEdit };
   return (
     <FeatureIntroGate introKey="team-detail.prompts" facts={introFacts}>
     <section className="flex flex-col gap-8" data-testid="prompts-panel">
+      {settings.data.canEdit ? null : <ReadOnlyNotice permission="prompts.manage" />}
       {everyonePrompt ? (
         <div className="flex flex-col gap-2">
           <PromptHeader
@@ -76,7 +67,7 @@ export function PromptsPanel({ team }: { team: { id: string; name: string } | nu
             state="Applies first"
             action={settings.data.canEdit ? (
               <Link href={`${getEveryoneRoute(orgSlug)}?tab=prompts`} className={buttonVariants({ variant: "ghost", size: "inline" })} data-testid="prompt-everyone-edit">
-                Edit on Everyone
+                Open Everyone
               </Link>
             ) : null}
           />
@@ -103,7 +94,6 @@ function PromptEditor({ orgId, team, prompt, canEdit, startEditing = false, onEd
   team: { id: string; name: string } | null;
   prompt: OrgPrompt | null;
   canEdit: boolean;
-  /** Open with the editor showing, e.g. from the Prompts intro's action. */
   startEditing?: boolean;
   onEditingDone?: () => void;
 }) {
@@ -153,12 +143,7 @@ function PromptEditor({ orgId, team, prompt, canEdit, startEditing = false, onEd
     }
   }
 
-  const headerAction = editing ? null : !canEdit ? (
-    <span className="inline-flex items-center gap-1.5 text-[12px] text-gray-500">
-      <Lock className="size-3.5 shrink-0" aria-hidden="true" />
-      {permissionLockReason("prompts.manage")}
-    </span>
-  ) : prompt ? (
+  const headerAction = !editing && canEdit && prompt ? (
     <DenButton variant="secondary" size="sm" icon={Pencil} onClick={() => setDraft(saved)} data-testid="prompt-edit">Edit</DenButton>
   ) : null;
 
@@ -237,7 +222,6 @@ function PromptEditor({ orgId, team, prompt, canEdit, startEditing = false, onEd
   );
 }
 
-/** One row above each prompt: its name and state on the left, at most one action on the right (S2). */
 function PromptHeader({ title, state, action }: { title: string; state: string | null; action: ReactNode }) {
   return (
     <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-4 gap-y-1">

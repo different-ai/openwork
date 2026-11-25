@@ -1,4 +1,3 @@
-/** "Today", "Yesterday", "Sep 3", or "Sep 3, 2025" for older years. */
 export function formatAddedDate(value: string | null | undefined, now = new Date()): string {
   if (!value) return "";
   const date = new Date(value);

@@ -17,8 +17,6 @@ const markerSchema = z.object({
   message: z.string(),
 }).strict();
 
-// Strip unexpected fields so neither inline bytes nor action descriptors can
-// leak from a transport response into the model-visible draft receipt.
 const receiptSchema = z.object({
   ok: z.literal(true),
   draftId: z.string().trim().min(1),
@@ -66,8 +64,6 @@ const UNKNOWN_OUTCOME = "Gmail draft creation outcome unknown; verify drafts bef
 const CANCELLED_BEFORE_UPLOAD = "Gmail attachment upload cancelled before dispatch; no draft created.";
 const NATIVE_GMAIL = /^native:(google-workspace|emc_[A-Za-z0-9]+):postCapabilitiesGoogleWorkspaceGmailDrafts$/;
 
-// These exact code/status pairs are returned before draft creation. In
-// particular, never classify google_api_error, a 5xx, or a lost response here.
 const LOCAL_NO_WRITE = new Set([
   "invalid_payload:400", "file_not_found:404", "file_too_large:413", "files_too_large:413",
   "cloud_not_connected:409", "cloud_endpoint_invalid:409", "gmail_host_unavailable:409",
@@ -94,8 +90,6 @@ export function createGmailAttachmentFulfillment(
   dependencies: GmailAttachmentDependencies,
   factoryContext: Record<string, unknown> = {},
 ) {
-  // Retain invocation guards until disposal, including cancelled preflights.
-  // A later busy event must not revive a previous call's cancelled controller.
   const calls = new Map<string, { sessionID: string; controller: AbortController; attempted: boolean }>();
   const idleSessions = new Set<string>();
   let disposed = false;
@@ -109,15 +103,12 @@ export function createGmailAttachmentFulfillment(
     return call;
   }
   const fulfill = async (input: unknown, output: unknown): Promise<void> => {
-    // OpenCode 1.18.18 McpCatalog.toolName preserves hyphens in server names.
     if (!isRecord(input) || input.tool !== "openwork-cloud_execute_capability") return;
     if (!isRecord(input.args) || typeof input.args.name !== "string") return;
     const native = NATIVE_GMAIL.exec(input.args.name);
     const connectionId = native?.[1];
     if (!connectionId || !isRecord(output) || output.isError === true) return;
 
-    // Only the whole native preflight payload is a marker, never embedded text
-    // or a nested descriptor from an external MCP. Conflicting projections fail closed.
     if (!Array.isArray(output.content) || output.content.length !== 1) return;
     const part: unknown = output.content[0];
     if (!isRecord(part) || part.type !== "text" || typeof part.text !== "string") return;
@@ -147,7 +138,6 @@ export function createGmailAttachmentFulfillment(
     } catch (error) {
       const message = noWriteMessage(error);
       if (message) throw new Error(message);
-      // A lost response cannot prove that Gmail did not create the draft.
       throw new Error(UNKNOWN_OUTCOME);
     }
     if (call.controller.signal.aborted) throw new Error(UNKNOWN_OUTCOME);
@@ -158,8 +148,6 @@ export function createGmailAttachmentFulfillment(
     if (!receipt.success) throw new Error(UNKNOWN_OUTCOME);
 
     const text = JSON.stringify(receipt.data);
-    // The pinned engine projects content AFTER this hook, not output. Keep
-    // both consistent for consumers that already have a text projection.
     output.content = [{ type: "text", text }];
     output.structuredContent = receipt.data;
     if ("output" in output) output.output = text;
@@ -176,8 +164,6 @@ export function createGmailAttachmentFulfillment(
       if (isRecord(body) && Array.isArray(body.attachments)) invocation(input.sessionID, input.callID);
     },
     event: async (input: unknown): Promise<void> => {
-      // OpenCode 1.18.18 Runner.cancel -> onIdle -> SessionStatus.set;
-      // Plugin.event receives { event: { type, properties } }. No input.abort exists.
       if (!isRecord(input) || !isRecord(input.event) || input.event.type !== "session.status") return;
       const props = input.event.properties;
       if (!isRecord(props) || typeof props.sessionID !== "string" || !isRecord(props.status)) return;

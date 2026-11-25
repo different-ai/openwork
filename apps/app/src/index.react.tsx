@@ -30,8 +30,6 @@ if (!root) {
   throw new Error("Root element not found");
 }
 
-// Keep one startup promise across StrictMode renders. Rejections now reach the
-// error boundary, and pending bootstrap IPC no longer leaves an empty root.
 const startup = Promise.resolve().then(async () => {
   startWebErrorMonitoring();
   bootstrapTheme();

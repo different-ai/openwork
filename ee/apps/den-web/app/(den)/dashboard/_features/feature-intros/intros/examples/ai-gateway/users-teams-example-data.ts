@@ -1,8 +1,6 @@
 import type { ExampleProvider } from "./example-parts";
 import { ANTHROPIC, GOOGLE, OPENAI, OPENWORK_MODELS } from "./gateway-example-data";
 
-/** Sample data only: no API calls (DESIGN.md I7). */
-
 export const usersTeamsExampleRows: ReadonlyArray<{
   name: string;
   initials: string;

@@ -123,6 +123,5 @@ export function writeStoredDefaultModel(model: ModelRef): void {
     window.localStorage.setItem(MODEL_PREF_KEY, value);
     window.dispatchEvent(new Event(storedDefaultModelChangedEvent));
   } catch {
-    // ignore quota errors
   }
 }

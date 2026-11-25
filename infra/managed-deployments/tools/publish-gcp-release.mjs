@@ -32,26 +32,39 @@ const policy = gcloud(["storage", "buckets", "get-iam-policy", `gs://${bucket}`,
 // policies, not arbitrary conditional IAM expressions or per-object ACLs.
 if (!policy.bindings?.some((binding) => binding.role === "roles/storage.objectViewer" && !binding.condition && binding.members?.includes("allUsers"))) throw new Error("The release bucket must already grant unconditional roles/storage.objectViewer to allUsers; publication does not change public-access policy.");
 const prefix = `releases/gcp/${manifest.version}/`;
-// Check the entire release before uploading anything. objects list includes
-// noncurrent generations too, so deleting a live object does not reuse a version.
-const existing = gcloud(["storage", "objects", "list", `gs://${bucket}/${prefix}**`, "--project", projectId]);
-if (!Array.isArray(existing) || existing.length !== 0) throw new Error("Release version already exists; refusing publication.");
-const uploaded = {};
-for (const name of artifacts) {
-  const key = `${prefix}${name}`;
-  execFileSync("gcloud", ["storage", "cp", resolve(directory, name), `gs://${bucket}/${key}`, "--project", projectId, "--if-generation-match=0", "--quiet"], { stdio: "inherit" });
-  const object = gcloud(["storage", "objects", "describe", `gs://${bucket}/${key}`, "--project", projectId]);
-  if (typeof object.generation !== "string" || !/^[1-9]\d*$/.test(object.generation)) throw new Error("Upload did not return an immutable generation.");
-  uploaded[name] = `https://storage.googleapis.com/${bucket}/${key}?generation=${object.generation}`;
-}
-// Verify unauthenticated access; publication is not readiness when the bucket
-// policy prevents customer installers from downloading these bytes.
-for (const [name, url] of Object.entries(uploaded)) {
+const publicUrl = (key, generation) => {
+  if (typeof generation !== "string" || !/^[1-9]\d*$/.test(generation)) throw new Error("Upload did not return an immutable generation.");
+  return `https://storage.googleapis.com/${bucket}/${key}?generation=${generation}`;
+};
+async function verify(name, url) {
   const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Published ${name} is not publicly readable (${response.status}). Configure the release bucket's public access policy, then verify before configuring Den.`);
   const digest = createHash("sha256").update(Buffer.from(await response.arrayBuffer())).digest("hex");
   if (digest !== digests[name]) throw new Error(`Published ${name} differs from the reviewed local artifact.`);
 }
+// objects list includes live AND noncurrent generations by default (not --stat).
+// Use raw API fields so names and generation strings cannot be reformatted.
+// Check all of them before writing; never hide conflicting historical bytes.
+const existing = gcloud(["storage", "objects", "list", `gs://${bucket}/${prefix}**`, "--raw", "--project", projectId]);
+if (!Array.isArray(existing)) throw new Error("Invalid release object inventory.");
+const uploaded = {};
+for (const object of existing) {
+  const name = object.name?.slice(prefix.length);
+  if (!object.name?.startsWith(prefix) || !artifacts.includes(name)) throw new Error("Unexpected existing release object.");
+  const url = publicUrl(object.name, object.generation);
+  await verify(name, url);
+  uploaded[name] = url;
+}
+for (const name of artifacts) {
+  if (uploaded[name]) continue;
+  const key = `${prefix}${name}`;
+  execFileSync("gcloud", ["storage", "cp", resolve(directory, name), `gs://${bucket}/${key}`, "--project", projectId, "--if-generation-match=0", "--quiet"], { stdio: "inherit" });
+  const object = gcloud(["storage", "objects", "describe", `gs://${bucket}/${key}`, "--raw", "--project", projectId]);
+  uploaded[name] = publicUrl(key, object.generation);
+}
+// Verify unauthenticated access; publication is not readiness when the bucket
+// policy prevents customer installers from downloading these bytes.
+for (const [name, url] of Object.entries(uploaded)) await verify(name, url);
 console.log(JSON.stringify({
   DEN_MANAGED_DEPLOYMENT_GCP_VERSION: manifest.version,
   DEN_MANAGED_DEPLOYMENT_GCP_TEMPLATE_URL: uploaded["tutorial.md"],

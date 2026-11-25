@@ -12,10 +12,6 @@ import { useDenAuth } from "./den-auth-provider";
 import { getOpenWorkModelsActionUrl, useOpenWorkModelsPromoEligibility } from "./openwork-models-promo";
 import { openWorkModelsLimitCopy, usageLimitActions, type OpenWorkModelsLimit, type UsageLimitAction, type UsageLimitActionId, type UsageLimitViewer } from "./usage-limit-state";
 
-/**
- * Who is looking at the limit: signed in or not, whether they can buy for the active organization (owners and
- * admins), and whether OpenWork Models is sold here. The role is read from Den; until it is known, nobody can buy.
- */
 export function useUsageLimitViewer(): UsageLimitViewer & { workspaceName: string | null; denBaseUrl: string } {
   const auth = useDenAuth();
   const modelsOffered = useOpenWorkModelsPromoEligibility();
@@ -50,20 +46,13 @@ export function useUsageLimitViewer(): UsageLimitViewer & { workspaceName: strin
   };
 }
 
-/**
- * One card for every usage limit (Desktop and Web share the anatomy): what ran out, when it resets, that the
- * message is saved, then one primary action for the person's role and a way to keep working. Blocked, not failed:
- * neutral ink, no red (DESIGN C5).
- */
 export function UsageLimitCard({ testId, kind, title, reset, saved = true, actions, children }: {
   testId: string;
   kind: string;
   title: ReactNode;
   reset: ReactNode | null;
-  /** A message was refused and kept. False when the limit is shown before anything was sent. */
   saved?: boolean;
   actions: ReactNode;
-  /** Extra state between the facts and the actions, such as a meter or a request form. */
   children?: ReactNode;
 }) {
   return (
@@ -81,7 +70,6 @@ export function UsageLimitCard({ testId, kind, title, reset, saved = true, actio
   );
 }
 
-/** A role-gated action stays visible with a lock and says who can do it (DESIGN P4). */
 export function UsageLimitLocked({ label, reason }: { label: string; reason: string }) {
   return (
     <Tooltip>
@@ -103,7 +91,6 @@ export function UsageLimitActions({ actions, onAction }: { actions: UsageLimitAc
       onClick={() => onAction(action.id)}>{action.label}</Button>)}</>;
 }
 
-/** Opens the destinations every usage-limit card shares; sign-in belongs to the caller (it keeps the draft). */
 export function useUsageLimitNavigation(sessionId: string, viewer: { signedIn: boolean; denBaseUrl: string }) {
   const platform = usePlatform();
   return (id: UsageLimitActionId, signIn?: () => void) => {
@@ -115,7 +102,6 @@ export function useUsageLimitNavigation(sessionId: string, viewer: { signedIn: b
   };
 }
 
-/** The organization used its OpenWork Models allowance. Classified, never retried, never "too many requests". */
 export function OpenWorkModelsLimitCard({ limit, sessionId }: { limit: OpenWorkModelsLimit; sessionId: string }) {
   const viewer = useUsageLimitViewer();
   const navigate = useUsageLimitNavigation(sessionId, viewer);

@@ -109,6 +109,7 @@ on:
       AUR_SSH_PRIVATE_KEY:
         required: false
 
+cache-mode: read
 permissions:
   contents: read
   actions: read
@@ -185,7 +186,7 @@ jobs:
             xorg-server-xvfb
 
       - name: Checkout target ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.ref || github.ref_name }}
           fetch-depth: 0
@@ -236,7 +237,7 @@ jobs:
 
       - name: Download local workflow artifact
         if: env.ARTIFACT_SOURCE == 'local-build-artifact' && env.INPUT_ASSET_URL_X86_64 == ''
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ${{ inputs.artifact_name || 'openwork-electron-linux-x64' }}
           run-id: ${{ inputs.artifact_run_id }}

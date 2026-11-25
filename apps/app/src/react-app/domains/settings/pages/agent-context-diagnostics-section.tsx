@@ -40,11 +40,6 @@ export type DiagnosticsScopeIdentitySignals = {
   principalId: string;
 };
 
-/**
- * `useMemo` owns the signal comparison. The value crossing into the diagnostics
- * section is deliberately an empty identity object so credentials and principal
- * fields can invalidate stale results without becoming readable report state.
- */
 export function createOpaqueDiagnosticsScopeKey(
   _signals: DiagnosticsScopeIdentitySignals,
 ): object {

@@ -7,18 +7,9 @@ import { readRemoteThread, sendRemoteFollowUp, stopRemoteThread } from "./remote
 import type { RemoteThreadEntry } from "./remote-thread-store"
 import { remoteThreadView } from "./remote-thread-view"
 
-/**
- * One task's conversation as the side panel and the main-pane helper view
- * both show it: the transcript, read when it opens and then only when the
- * shared status says the task changed (at most every few seconds, one at a
- * time), follow-ups shown as sent until the transcript has them, and Stop.
- * Nothing is read while neither shows it.
- */
-
 export const REMOTE_THREAD_PAGE_SIZE = 30
 export const REMOTE_THREAD_PAGE_MAX = 100
 const READ_GAP_MS = 4_000
-/** How close to the end counts as following along, so new steps keep the view at the bottom. */
 const FOLLOW_SLACK_PX = 48
 
 type FollowUp = { id: string; text: string }
@@ -29,7 +20,6 @@ function userTurn(id: string, text: string): UIMessage {
 
 export function useRemoteThreadConversation(entry: RemoteThreadEntry, options: {
   initialDraft?: string
-  /** Leave out the task's first message when the view shows it folded on its own. */
   foldTask?: boolean
 } = {}) {
   const [now, setNow] = useState(() => Date.now())
@@ -76,7 +66,6 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry, options: {
       if (outcome.kind === "page") {
         setPage(outcome.page)
         setReadError(null)
-        // A follow-up stays shown as sent until the transcript has it.
         setSent((current) => current.filter((followUp) => !outcome.page.messages.some((message) => message.role === "user" && message.text.trim() === followUp.text)))
       } else if (outcome.kind === "error") {
         setReadError(outcome.message)
@@ -90,7 +79,6 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry, options: {
     }
   }, [])
 
-  // On open, then once per status change (a step, an answer, a new state).
   useEffect(() => {
     if (!view.started) return
     const wait = Math.max(0, reads.current.lastAt + READ_GAP_MS - Date.now())
@@ -107,7 +95,6 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry, options: {
     const first = shown[0]
     const firstText = first?.role === "user" ? first.parts.map((part) => part.type === "text" ? part.text : "").join("").trim() : null
     return [
-      // The task as the agent sent it, until its computer's transcript arrives (unless shown folded).
       ...(page
         ? foldTask && prompt && firstText === prompt ? shown.slice(1) : shown
         : prompt && !foldTask ? [userTurn(`${entry.start.key}:prompt`, prompt)] : []),
@@ -115,7 +102,6 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry, options: {
     ]
   }, [page, running, entry.start.key, prompt, foldTask, sent])
 
-  // Keep following the newest step while the person is at the end.
   useLayoutEffect(() => {
     const element = scroller.current
     if (element && following.current) element.scrollTop = element.scrollHeight

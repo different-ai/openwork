@@ -14,7 +14,6 @@ const listeners = new Set<() => void>();
 const notify = () => { for (const listener of listeners) listener(); };
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 
-/** UI intent only. The credential is sent through the existing Den client. */
 export function openMemberApiKeyDialog(connectionId: string, options: { connectionName: string; replacing?: boolean }): Promise<boolean> {
   request?.finish(false);
   return new Promise((finish) => { request = { generation: ++requestGeneration, connectionId, connectionName: options.connectionName, replacing: options.replacing === true, finish }; notify(); });

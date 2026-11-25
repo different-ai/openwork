@@ -1,13 +1,10 @@
 import type { ExampleService } from "../example-parts";
 
-/** Sample data only: no API calls (DESIGN.md I7). */
-
 export const GOOGLE_WORKSPACE: ExampleService = { name: "Google Workspace" };
 export const SLACK: ExampleService = { name: "Slack" };
 export const LINEAR: ExampleService = { name: "Linear" };
 export const GITHUB: ExampleService = { name: "GitHub" };
 
-/** Rows as on Connectors: how people sign in, and who has it (right, like the list's source). */
 export const connectorsExampleRows: ReadonlyArray<{
   service: ExampleService;
   signIn: string;
@@ -19,7 +16,6 @@ export const connectorsExampleRows: ReadonlyArray<{
   { service: GITHUB, signIn: "One account for everyone", audience: "Engineering" },
 ];
 
-/** What people's AI did with them, as steps read in chat (C4): sentence first, result on the right. */
 export const connectorsExampleActivity: ReadonlyArray<{
   service: ExampleService;
   sentence: string;

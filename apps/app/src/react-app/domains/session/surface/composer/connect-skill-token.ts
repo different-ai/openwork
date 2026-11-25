@@ -1,15 +1,7 @@
 import { t } from "@/i18n";
 
-/**
- * Fields carried by a `[connect-skill …]` composer draft token.
- * The token keeps the full connect-skill invocation self-contained in the
- * draft text so the composer can render a compact `/slug` pill while the
- * send path expands it back into the full connect prompt.
- */
 export type ConnectSkillToken = {
-  /** Slash-command style display slug (e.g. `daytona-chrome-cdp`). */
   slug: string;
-  /** Human-readable skill name used in the prompt. */
   name: string;
   marketplace: string;
   capability: string;
@@ -39,7 +31,6 @@ export function parseConnectSkillToken(segment: string): ConnectSkillToken | nul
   return { slug, name, marketplace, capability };
 }
 
-/** Expand a connect-skill token into the full prompt sent to the model. */
 export function connectSkillPrompt(token: ConnectSkillToken) {
   return t("composer.connect_skill_prompt", {
     name: token.name,

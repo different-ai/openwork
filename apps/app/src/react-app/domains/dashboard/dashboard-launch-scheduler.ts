@@ -11,7 +11,6 @@ type QueuedLaunch = {
 
 const PRIORITY_AGING_MS = 30_000;
 
-// Four, matching the App startup queue, so a dashboard launches four tiles together.
 export function createDashboardLaunchScheduler(limit = 4) {
   if (!Number.isInteger(limit) || limit < 1) {
     throw new RangeError("Dashboard launch limit must be a positive integer");
@@ -74,8 +73,6 @@ export function createDashboardLaunchScheduler(limit = 4) {
           queueTiming();
           signal.removeEventListener("abort", abort);
           active += 1;
-          // A launch the person left stops counting at once, so the App on
-          // screen never queues behind one nobody is waiting for.
           let released = false;
           const release = () => {
             if (released) return;

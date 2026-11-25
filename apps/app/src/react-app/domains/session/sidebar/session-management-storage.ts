@@ -14,8 +14,6 @@ function decode(raw: string | null): { state: Record<string, unknown>; version?:
   return { state: value.state, ...(typeof value.version === "number" ? { version: value.version } : {}) };
 }
 
-/** Never persist a default over state that could not be hydrated. Desktop pin
- * mutations are fsynced before returning, independently of Chromium's cache. */
 export function sessionManagementStorage(): StateStorage {
   const journal = typeof window === "undefined" ? undefined : window.__OPENWORK_ELECTRON__?.sessionPins;
   let hydrated = false;
@@ -46,8 +44,6 @@ export function sessionManagementStorage(): StateStorage {
       }
       previous = pins;
       hydrated = true;
-      // The journal can recover pins even when Chromium cannot read its key.
-      // Do not subsequently replace that failed key with unrelated defaults.
       return JSON.stringify({ ...legacy, state: { ...legacy?.state, pinnedIds: pins } });
     },
     setItem(key, raw) {
@@ -65,7 +61,6 @@ export function sessionManagementStorage(): StateStorage {
       if (localReadable) localStorage.setItem(key, raw);
     },
     removeItem(key) {
-      // Clearing a UI cache is not an instruction to discard durable pins.
       if (hydrated && localReadable) localStorage.removeItem(key);
     },
   };

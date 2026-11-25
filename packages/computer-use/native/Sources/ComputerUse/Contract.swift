@@ -197,6 +197,16 @@ struct ObservationOptions {
 /// After a step that may have changed the view or focus, what the batch's next step
 /// reads back before it runs in the same call: the check a fresh observation would make.
 enum BatchContinuation {
+    /// A scroll or drag that follows only this batch's own scrolls, drags and waits: it carries on
+    /// moving the same view (a map panned, a list scrolled), so the image changing under the point
+    /// is the batch's own doing. What is under the point is still checked.
+    static func continuesPan(_ action: Action, after earlier: ArraySlice<Action>) -> Bool {
+        switch action { case .scroll, .drag: break; default: return false }
+        guard !earlier.isEmpty else { return false }
+        return earlier.allSatisfy { step in
+            switch step { case .scroll, .drag, .wait: return true; default: return false }
+        }
+    }
     enum Need: Equatable {
         /// Its exact observed control, unchanged.
         case control(String)
@@ -595,6 +605,16 @@ enum Action {
     var usesCoordinates: Bool {
         switch self { case .move, .click, .scroll, .drag, .rightClick, .hold: return true; default: return false }
     }
+    /// Steps that re-check exactly what they act on right before input: an observed control
+    /// (`validateRecord`) or the open file panel. They need that to match, not the whole window,
+    /// whose file list or preview can keep changing on its own.
+    var checksOwnTarget: Bool {
+        switch self { case .press, .setValue, .showMenu, .enterValue, .focus, .saveAs, .openInPanel: return true; default: return false }
+    }
+    /// A file step in an open Save or Open panel.
+    var usesFilePanel: Bool {
+        switch self { case .saveAs, .openInPanel: return true; default: return false }
+    }
     static func isStroke(_ action: Action) -> Bool {
         if case .drag = action { return true }; return false
     }
@@ -791,6 +811,9 @@ enum NativeKey {
         guard !isBlocked(key, flags) else { throw UseError("blocked_shortcut", "Clipboard and system/window escape shortcuts are unavailable. Use type, set_value or observed app controls.", next: "observe") }
         // Another Command shortcut runs only as the app's own menu command for it (`isMenuShortcut`).
         if policy == .embedded, isMenuShortcut(key, flags) { return (key, flags) }
+        // An app's own Control, Option or Shift chord outside the key list, such as Blender's
+        // Control-R (`isAppChord`): any app may have them, so the agent may try them anywhere.
+        if policy == .embedded, isAppChord(key, flags) { return (key, flags) }
         guard codes[key] != nil, (flags.isEmpty ? navigation[key] != nil : shortcuts.contains(chord(key, flags))) else {
             throw UseError("unsupported_key", "Use a listed base key and supported shortcut; type handles ordinary text.")
         }
@@ -807,6 +830,13 @@ enum NativeKey {
         return flags.contains(.maskCommand) && flags.isSubset(of: [.maskCommand, .maskShift, .maskAlternate])
             && key.count == 1 && key.unicodeScalars.allSatisfy { ("a"..."z").contains($0) || ("0"..."9").contains($0) }
             && !isBlocked(key, flags) && !clipboard.contains(chord) && !(codes[key] != nil && shortcuts.contains(chord))
+    }
+    /// A modified letter or digit that no other rule allows, such as Blender's Control-R or
+    /// Option-G: the app's own shortcut, sent as a key. Blocked and clipboard chords never are.
+    static func isAppChord(_ key: String, _ flags: CGEventFlags) -> Bool {
+        !flags.isEmpty && key.count == 1 && key.unicodeScalars.allSatisfy { ("a"..."z").contains($0) || ("0"..."9").contains($0) }
+            && !isBlocked(key, flags) && !clipboard.contains(chord(key, flags)) && !isMenuShortcut(key, flags) && !isToolKey(key, flags)
+            && !(codes[key] != nil && shortcuts.contains(chord(key, flags)))
     }
     static func isMenuShortcut(_ action: Action) -> Bool {
         if case .key(let key, let flags) = action { return isMenuShortcut(key, flags) }; return false
@@ -867,7 +897,8 @@ enum WindowFront {
     enum Way: String, CaseIterable { case raise, frontmost, mainWindow, keyRecords }
     static let refused = UseError("front_unavailable", "The app did not bring the selected window to the front, so nothing was sent. Observe again; the next step tries again.", next: "observe")
     /// Read back after each way, every `interval`, for at most `polls` reads.
-    @MainActor static func bring(ways: [Way] = Way.allCases, polls: Int = 4, interval: TimeInterval = 0.05,
+    /// Each way gets up to half a second: an app activated from the background takes that long.
+    @MainActor static func bring(ways: [Way] = Way.allCases, polls: Int = 10, interval: TimeInterval = 0.05,
         attempt: (Way) -> Void, inFront: () -> Bool, check: () throws -> Void, sleep: (TimeInterval) async throws -> Void) async throws -> Way {
         for way in ways {
             try check()
@@ -1134,6 +1165,8 @@ enum SharedDesktop {
     /// not a takeover, so the model looks again instead of waiting for Continue.
     static func yielding(_ error: UseError) -> UseError {
         guard error.code == "window_not_frontmost" else { return error }
+        // Real input says what was in the way, which the model and a test report both need.
+        if error.message.hasPrefix(RealInput.stoppedPrefix) { return UseError("focus_lost", error.message, next: "observe") }
         return UseError("focus_lost", "Another window came to the front, so input stopped there. Observe again; the selected window is brought back first.", next: "observe")
     }
     static func yielding(_ error: Error) -> Error {
@@ -1227,14 +1260,59 @@ enum WebBrowser {
 /// place, as QuickTime replaces its Open panel with an Audio Recording window: the session follows
 /// that window instead of failing on the closed one. Nothing when the window is still open, when
 /// no new window or several appeared, or when the session is in a dialog (which closes into its parent).
+/// macOS reports a new front app a moment after its window comes forward. A batch that took
+/// the front waits for that report (at most `limit`), so its first real event is not refused.
+enum FrontReport {
+    static let limit: TimeInterval = 1
+    static let step: TimeInterval = 0.05
+    @discardableResult
+    static func wait(for pid: pid_t, frontmost: () -> pid_t?,
+                     sleep: (TimeInterval) async -> Void = { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }) async -> Bool {
+        for _ in 0..<Int(limit / step) {
+            if frontmost() == pid { return true }
+            await sleep(step)
+        }
+        return frontmost() == pid
+    }
+    /// Waits (at most `limit`) for `window` to be the app windows' topmost at its own middle.
+    @MainActor static func waitOnTop(_ window: CGWindowID, pid: pid_t,
+                                     windows: () -> [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)] = FrontReport.onScreen,
+                                     sleep: (TimeInterval) async -> Void = { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }) async {
+        for _ in 0..<Int(limit / step) {
+            if onTop(window, pid: pid, windows: windows()) { return }
+            await sleep(step)
+        }
+    }
+    /// The helper's own see-through overlay (`helper`), which rides right above the window, never covers it.
+    static func onTop(_ window: CGWindowID, pid: pid_t, windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)],
+                      helper: pid_t = ProcessInfo.processInfo.processIdentifier) -> Bool {
+        guard let own = windows.first(where: { $0.id == window }) else { return true }
+        let middle = CGPoint(x: own.bounds.midX, y: own.bounds.midY)
+        return windows.first(where: { $0.layer == 0 && $0.pid != helper && $0.bounds.contains(middle) })?.id == window
+    }
+    static func onScreen() -> [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)] {
+        ((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []).compactMap { value in
+            guard let number = value[kCGWindowNumber as String] as? NSNumber, let owner = value[kCGWindowOwnerPID as String] as? NSNumber,
+                  let bounds = value[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
+            return (number.uint32Value, owner.int32Value, rect, (value[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0)
+        }
+    }
+}
+
 enum WindowReplacement {
     /// Only shortly after that input: a window the person swaps in later is not followed.
     static let within: TimeInterval = 15
-    static func replacement(before: Set<UInt32>, after: Set<UInt32>, target: UInt32) -> UInt32? {
+    static func replacement(before: Set<UInt32>, after: Set<UInt32>, target: UInt32, focused: UInt32? = nil) -> UInt32? {
         guard before.contains(target), !after.contains(target) else { return nil }
         let new = after.subtracting(before)
-        return new.count == 1 ? new.first : nil
+        if new.count == 1 { return new.first }
+        // Several new windows (Keynote's document and its theme chooser closing): the one the app focused.
+        return focused.flatMap { new.contains($0) ? $0 : nil }
     }
+    /// How long a step's own window may take to close and its replacement to appear before the
+    /// receipt is written: a new document window takes a moment.
+    static let settle: TimeInterval = 1.5
 }
 
 struct WindowChanges {

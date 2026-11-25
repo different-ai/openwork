@@ -5,9 +5,7 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleRow, ExampleRows, ExampleServiceMark } from "../example-parts";
 import { addExampleChecks, addExampleService } from "./add-example-data";
 
-/** Add a connector example: the checks run one after another; static and all done under reduced motion. */
 export function ConnectorAddExample() {
-  // One extra step holds everything done before starting again.
   const step = useExampleStep(addExampleChecks.length + 1, 1800);
   const doneCount = step === null ? addExampleChecks.length : step;
 

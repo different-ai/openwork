@@ -169,3 +169,19 @@ test("a key-file field is never drawn unmasked: a password input until the brows
   expect(html).toContain('type="password"')
   expect(html).not.toContain("<textarea")
 })
+
+test("OpenWork's own operation listed as a tool draws a key field; a connection's tool cannot", () => {
+  const body = JSON.stringify({ credentialPrompt: prompt })
+  const own = (toolName: string): DynamicToolUIPart => ({ ...toolPart(toolName, body), input: { connectionId: "emc_fixture" } })
+
+  expect(credentialPromptFromToolPart(own("openwork-cloud_den_postMcpConnectionsCredentialPrompt"))?.target).toEqual(prompt.target)
+  // Not an operation that answers with a prompt.
+  expect(credentialPromptFromToolPart(own("openwork-cloud_den_getMcpConnections"))).toBeNull()
+  // A connection can be named "Den" or after an operation, but never takes the `den` namespace.
+  for (const toolName of [
+    "openwork-cloud_den_2_postMcpConnectionsCredentialPrompt",
+    "openwork-cloud_evil_postMcpConnectionsCredentialPrompt",
+    "openwork-cloud_postMcpConnectionsCredentialPrompt",
+    "den_postMcpConnectionsCredentialPrompt",
+  ]) expect(credentialPromptFromToolPart(own(toolName))).toBeNull()
+})

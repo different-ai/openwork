@@ -191,19 +191,16 @@ type LinePattern = "solid" | "dashed" | "dotted";
 
 type ChartLine = {
   key: string;
-  /** Vendor and model, e.g. "OpenWork · Claude Sonnet 5". */
   label: string;
   series: CostSeries;
   stroke: string;
   width: number;
   pattern: LinePattern;
-  /** Stroke opacity; lighter lines stay at or above 3:1 against the panel. */
   opacity: number;
 };
 
 const dashArray: Record<LinePattern, string | undefined> = { solid: undefined, dashed: "7 5", dotted: "1.5 4.5" };
 
-// OpenWork is drawn in the landing accent, Claude in neutral gray (DESIGN.md V2).
 const accent = "var(--lp-blue)";
 const claudeGray = "var(--lp-muted)";
 
@@ -262,7 +259,6 @@ function CostChart({
   const tickStep = months >= 24 ? 12 : 3;
   const ticks = Array.from({ length: Math.floor(months / tickStep) + 1 }, (_, index) => index * tickStep);
 
-  // End labels are two lines (value, then vendor and model). Nudge them apart so they never overlap.
   const labelHeight = 40;
   const endLabels = [...lines]
     .map((line) => ({ line, y: y(line.series.total) }))
@@ -512,13 +508,11 @@ function percent(share: number): string {
   return `${Math.round(share * 100)}%`;
 }
 
-/** Plain verdict for Claude total minus OpenWork total. Says so when Claude is cheaper. */
 function verdict(delta: number): string {
   if (Math.abs(delta) < 0.5) return "Same price";
   return delta > 0 ? `You keep ${dollars.format(delta)}` : `Claude costs ${dollars.format(-delta)} less`;
 }
 
-/** "Claude Sonnet 5" -> "Sonnet 5" when the vendor already says Claude. */
 function shortClaudeModel(label: string): string {
   return label.replace(/^Claude\s+/, "");
 }
@@ -553,7 +547,6 @@ export function CoworkCostCalculator({
 
   const claudeLine = result.claude;
   const period = periodLabel(years);
-  // "Claude Team, Premium seats" -> vendor "Claude Team", seat "Premium seats".
   const [claudePlanVendor = claudeLine.name, claudeSeat] = result.claude.name.split(", ");
   const claudeVendor = claudePlanVendor;
   const claudeModelShort = shortClaudeModel(model.label);
@@ -562,7 +555,6 @@ export function CoworkCostCalculator({
   const openworkLabel = `OpenWork · ${model.label}`;
   const openPercent = Math.round(mixShare * 100);
   const claudePercent = 100 - openPercent;
-  // "DeepSeek V4 Pro" -> "DeepSeek"; the end label stays short enough for the chart gutter.
   const openModelShort = openModel.label.split(" ")[0] ?? openModel.label;
   const mixLineLabel = `OpenWork · ${openPercent}/${claudePercent} ${openModelShort} + ${claudeModelShort.split(" ")[0] ?? claudeModelShort}`;
 

@@ -14,13 +14,10 @@ import { workbotIntros } from "./workbot";
 import { apiKeysIntros } from "./api-keys";
 import { collectionsIntros } from "./collections";
 import { deploymentsIntros } from "./deployments";
+import { computersIntros } from "./computers";
 import { settingsIntros } from "./settings";
 import { toolTesterIntros } from "./tool-tester";
 
-/**
- * The feature intro registry (DESIGN.md I10). One file per section
- * (e.g. `./ai-gateway.tsx` exporting `aiGatewayIntros`), spread in here.
- */
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   ...aiGatewayIntros,
   ...analyticsIntros,
@@ -37,6 +34,7 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
   ...apiKeysIntros,
   ...collectionsIntros,
   ...deploymentsIntros,
+  ...computersIntros,
   ...settingsIntros,
   ...toolTesterIntros,
 ];

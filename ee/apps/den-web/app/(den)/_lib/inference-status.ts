@@ -15,7 +15,6 @@ export type InferenceStatus = {
   proxyBaseUrl: string;
   upstreamProviderConfigured: boolean;
   subscribed: boolean;
-  /** False when this deployment does not sell OpenWork Models; null from older Den APIs. */
   billingConfigured: boolean | null;
   buckets: InferenceUsageBucket[];
 };

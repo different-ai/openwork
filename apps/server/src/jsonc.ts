@@ -41,11 +41,6 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   throw fileReadError("ABORT_ERR", "File read aborted");
 }
 
-/**
- * Read a small diagnostics input without following symlinks or opening a FIFO
- * in blocking mode. The size is checked both before and while reading so a
- * file that grows after inspection cannot exceed the caller's memory budget.
- */
 export async function readBoundedRegularTextFile(
   path: string,
   options: { maxBytes: number; signal?: AbortSignal },

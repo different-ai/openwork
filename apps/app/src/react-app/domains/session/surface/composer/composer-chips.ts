@@ -6,17 +6,6 @@ import { composerConnectorLogoUrls } from "./composer-connector-logos";
 import { composerPillTitle, type ComposerPill } from "./composer-pills";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
-/**
- * How composer chips look. The composer draws them as raw Lexical DOM and the
- * transcript and queue draw them with React; both read this module, so a chip
- * looks the same before and after it is sent.
- *
- * - Badges (skills, agents, connectors, apps, computers, file mentions, pasted
- *   text): one neutral 26px style; only the 18px icon slot carries color.
- * - File chips (non-image attachments): 40px, a 28px type icon, the name, and
- *   the type and size.
- */
-
 type IconElement = readonly [tag: "path" | "rect" | "circle" | "line", attrs: Readonly<Record<string, string>>];
 
 const FILE_OUTLINE: IconElement[] = [
@@ -24,7 +13,6 @@ const FILE_OUTLINE: IconElement[] = [
   ["path", { d: "M14 2v5a1 1 0 0 0 1 1h5" }],
 ];
 
-/** Lucide shapes (24px grid) shared by the DOM and React renderers. */
 export const CHIP_ICONS = {
   book: [
     ["path", { d: "M12 7v14" }],
@@ -56,16 +44,12 @@ export type ChipIcon = keyof typeof CHIP_ICONS;
 export type BadgeTone = "violet" | "sky" | "cyan" | "gray";
 
 export type ComposerBadge = {
-  /** Stable kind, exposed as `data-composer-badge`. */
   kind: "skill" | "connect-skill" | "connector" | "computer" | "session" | "agent" | "file" | "pasted";
   label: string;
-  /** Muted detail after the label, e.g. "42 lines". */
   meta?: string;
   title: string;
   tone: BadgeTone;
-  /** `invertInDark`: a monochrome logo drawn in black, inverted on dark themes. */
   slot: { icon: ChipIcon } | { initial: string } | { logoUrls: string[]; fallback: ChipIcon; invertInDark?: boolean };
-  /** Shows a chevron: the badge opens a preview. */
   disclosure?: boolean;
 };
 
@@ -101,12 +85,10 @@ export function composerPillBadge(pill: ComposerPill): ComposerBadge {
   }
 }
 
-/** The OpenWork mark, the same one task links in the transcript use. */
 function openworkMarkSlot(): ComposerBadge["slot"] {
   return { logoUrls: [resolveExtensionIconSrc("/openwork-sidebar-mark.svg")], fallback: "message-square", invertInDark: true };
 }
 
-/** A referenced task. `title` is its current title when known, else the one saved with the reference. */
 export function sessionReferenceBadge(title: string, options?: { unavailable?: boolean }): ComposerBadge {
   const label = title.trim() || "Untitled task";
   return options?.unavailable
@@ -153,7 +135,6 @@ export function attachmentChipIcon(filename: string, mime: string): ChipIcon {
   return "file";
 }
 
-/** "MP4 · 18.4 MB"; the size is left out when unknown. */
 export function attachmentChipMeta(input: { filename: string; mime: string; bytes?: number }): string {
   const type = getMediaBadge({ filename: input.filename, mediaType: input.mime }) ?? "File";
   return input.bytes === undefined ? type : `${type} · ${formatAttachmentBytes(input.bytes)}`;
@@ -186,7 +167,6 @@ export function composerBadgeLogoClass(slot: ComposerBadge["slot"]) {
   return "invertInDark" in slot && slot.invertInDark ? "size-3.5 object-contain dark:invert" : "size-3.5 object-contain";
 }
 
-/** A logo carries its own color; icons and initials sit on the badge's tone. */
 export function composerBadgeSlotClass(badge: ComposerBadge, showsLogo: boolean) {
   return showsLogo ? COMPOSER_BADGE_SLOT_CLASS : `${COMPOSER_BADGE_SLOT_CLASS} ${COMPOSER_BADGE_TONE_CLASS[badge.tone]}`;
 }
@@ -224,7 +204,6 @@ function createBadgeSlotDom(badge: ComposerBadge) {
   return slot;
 }
 
-/** Fill `dom` with a badge. The composer's Lexical nodes own the outer element. */
 export function renderComposerBadgeDom(dom: HTMLElement, badge: ComposerBadge, disclosure?: HTMLElement) {
   dom.className = COMPOSER_BADGE_CLASS;
   dom.title = badge.title;
@@ -234,7 +213,6 @@ export function renderComposerBadgeDom(dom: HTMLElement, badge: ComposerBadge, d
   if (disclosure) dom.append(disclosure);
 }
 
-/** Fill `dom` with a file chip's icon, name and type. */
 export function renderAttachmentFileChipDom(dom: HTMLElement, input: { filename: string; mime: string; bytes?: number }) {
   dom.className = ATTACHMENT_CHIP_CLASS;
   const icon = span(ATTACHMENT_CHIP_ICON_CLASS);

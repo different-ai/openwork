@@ -8,12 +8,6 @@ import { buttonVariants } from "../../app/(den)/_components/ui/button";
 import { DenSkeleton } from "../../app/(den)/_components/ui/skeleton";
 import type { DiagnosticsTone } from "./diagnostics-copy";
 
-/**
- * Compact diagnostics rows (DESIGN.md S2, S3): chevron, leading icon or logo,
- * name with a muted sub, a right-aligned metric, one state badge and at most
- * one action. Detail lives in the row's disclosure.
- */
-
 const ROW_GRID = "grid min-h-[46px] text-[13px] leading-[1.5] grid-cols-[16px_20px_minmax(0,1fr)_auto] items-center gap-x-2.5 px-1 py-1.5 sm:grid-cols-[16px_20px_minmax(0,1fr)_minmax(0,170px)_128px_104px]";
 const NAME_CLASS = "font-medium text-[var(--dls-text-primary)]";
 const MUTED_CLASS = "text-[var(--dls-text-secondary)]";
@@ -52,7 +46,6 @@ function RowAction({ action }: { action: DiagnosticsRowAction }) {
 }
 
 function NameCell({ name, sub, metric, wrap = false, className = "" }: { name: ReactNode; sub?: ReactNode; metric?: ReactNode; wrap?: boolean; className?: string }) {
-  // Rows with a metric truncate to keep lanes aligned; plain rows wrap so a lock reason is never cut off.
   const text = wrap ? "[overflow-wrap:anywhere]" : "truncate";
   return (
     <span className={`min-w-0 ${className}`}>
@@ -69,7 +62,6 @@ function MetricCell({ metric }: { metric?: ReactNode }) {
   return <span className={`hidden truncate text-right tabular-nums sm:block ${MUTED_CLASS}`}>{metric}</span>;
 }
 
-/** An expandable row. `id` is the anchor attention links open and scroll to. */
 export function DiagnosticsRow({ id, lead, name, sub, metric, state, action, children, testId, detailsTestId, summaryTestId, stateTestId, onToggle }: {
   id?: string;
   lead: ReactNode;
@@ -95,7 +87,6 @@ export function DiagnosticsRow({ id, lead, name, sub, metric, state, action, chi
           <NameCell name={name} sub={sub} metric={metric} />
           <MetricCell metric={metric} />
           <span data-testid={stateTestId} className="flex min-w-0 justify-end">{state}</span>
-          {/* Reserves the action lane so rows line up; the action itself sits outside the summary. */}
           <span aria-hidden="true" className="hidden sm:block" />
         </summary>
         <div className="min-w-0 pb-4 pl-[60px] pr-1 pt-1 text-xs leading-[1.5]">{children}</div>
@@ -109,7 +100,6 @@ export function DiagnosticsRow({ id, lead, name, sub, metric, state, action, chi
   );
 }
 
-/** A row with nothing to expand: empty states and the managed installation row. */
 export function DiagnosticsPlainRow({ lead, name, sub, action, state, testId }: {
   lead: ReactNode;
   name: ReactNode;
@@ -122,7 +112,6 @@ export function DiagnosticsPlainRow({ lead, name, sub, action, state, testId }: 
     <li data-testid={testId} className={`${ROW_GRID} min-w-0 border-b border-[var(--dls-border)]`}>
       <span aria-hidden="true" />
       {lead}
-      {/* Nothing to measure: the name takes the metric lane, and the state lane too when there is no state. */}
       <NameCell name={name} sub={sub} wrap className={state ? "sm:col-span-2" : "col-span-2 sm:col-span-3"} />
       {state ? <span className="flex min-w-0 justify-end">{state}</span> : null}
       {action ? <span className="col-span-full flex justify-end sm:col-span-1"><RowAction action={action} /></span> : null}
@@ -130,7 +119,6 @@ export function DiagnosticsPlainRow({ lead, name, sub, action, state, testId }: 
   );
 }
 
-/** Presence with a lock (DESIGN.md P4, C5): neutral ink, says what is needed and who can grant it. */
 export function DiagnosticsLockedRow({ name, sub, testId }: { name: string; sub: string; testId?: string }) {
   return (
     <DiagnosticsPlainRow
@@ -163,7 +151,6 @@ export function DiagnosticsCode({ children }: { children: ReactNode }) {
   return <code className="rounded bg-[var(--dls-hover)] px-1 py-px font-mono text-xs">{children}</code>;
 }
 
-/** Layout-matching placeholder for a row while the first report loads. */
 export function DiagnosticsSkeletonRow() {
   return (
     <li className={`${ROW_GRID} border-b border-[var(--dls-border)]`}>

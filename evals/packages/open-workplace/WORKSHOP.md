@@ -47,6 +47,7 @@ Use OAuth with **per-member credentials**, not a shared organization connection.
 | Drive | `https://workshop.example.com/drive/mcp` |
 | Jira | `https://workshop.example.com/jira/mcp` |
 | Confluence | `https://workshop.example.com/confluence/mcp` |
+| Slack | `https://workshop.example.com/slack/mcp` |
 
 Transport: Streamable HTTP. On the first connection, the browser automatically joins a private workspace and shows the consent page. Check its guest label and permissions, then choose **Allow workplace access**. Later connectors in the same browser use that same workspace. Different browser profiles receive different workspaces.
 
@@ -54,7 +55,7 @@ OAuth consent is still explicit. Opening an authorization URL does **not** grant
 
 The server supports discovery, dynamic public-client registration, mandatory S256 PKCE, rotating refresh tokens and `/oauth/revoke`. The exact MCP URL is required as the RFC 8707 `resource` at authorization, code exchange and refresh. Tokens cannot be widened to another connector, arbitrary REST, state inspection, reset or root. There is no combined `/mcp` endpoint.
 
-Access tokens last one hour; refresh grants last at most eight hours from initial approval. Reusing a consumed refresh revokes its family. After grant expiry, approve again from the same remembered browser to retain the workspace. Automatic browser sessions last 30 days. Secure hosted cookies are HTTP-only, host-only and SameSite=Lax so legitimate top-level OAuth redirects reuse the workspace across client origins; unsafe mutations still require same-origin protection.
+Access tokens last one hour; refresh grants last at most eight hours from initial approval (30 days for the Slack connector, which an app uses in the background). Reusing a consumed refresh revokes its family. After grant expiry, approve again from the same remembered browser to retain the workspace. Automatic browser sessions last 30 days. Secure hosted cookies are HTTP-only, host-only and SameSite=Lax so legitimate top-level OAuth redirects reuse the workspace across client origins; unsafe mutations still require same-origin protection.
 
 Each new workspace's sample week starts when the workspace is first created, so "this week" questions find meetings
 whenever someone joins. Its clock is kept in the workshop's own metadata: restarts, idle eviction and resets bring back
@@ -78,6 +79,29 @@ through an Entra-compatible front door (`src/workshop-microsoft.mjs`):
 
 It is clearly labeled as a sample sign-in, not a Microsoft account. `GET /health` reports `microsoftSignIn: true`.
 
+## Slack for an app's own bot
+
+Apps that message people from their own Slack app (OpenWork Den's Workbot) can use a fictional Slack in the gateway
+(`src/workshop-slack.mjs`), so nobody needs a Slack workspace:
+
+- `POST /_workshop/slack/apps` with `{"bot_name":"Workbot"}` (optional) creates a sample Slack workspace with one app
+  and answers its `team_id`, `app_id`, `bot_user_id`, `bot_token` (shown once, stored hashed), `signing_secret` and
+  `api_base_url`. An app lasts 120 days from its last use.
+- `<api_base_url>/<method>` with `Authorization: Bearer <token>` is a subset of the Slack Web API: `auth.test`,
+  `users.info`, `conversations.open`, `chat.postMessage`, `chat.update`, `chat.getPermalink`,
+  `conversations.history` and `conversations.replies`. Like Slack, a refused call answers 200 with `ok: false`.
+- A person's token is the workshop OAuth token of their Slack connector (`/slack/mcp`). The app's first call with it
+  (`auth.test`) adds that browser workspace to the app's Slack workspace and answers its Slack user ID. The bot can
+  then open a direct message with that user. A bot reaches only people who joined its workspace; a person's token
+  reads only their own conversation.
+- `/slack` shows the person their messages with the app and lets them reply. New messages appear without a reload.
+- The Slack connector's tools (`slack_search_channels`, `slack_read_channel`, `slack_read_thread`,
+  `slack_send_message`) work over the person's own conversations.
+
+There are no channels yet, the workshop sends the app no events (so the app is not told about replies; it can read
+them with `conversations.history`), and the signing secret is not used. It is clearly labeled as a sample, not Slack.
+`GET /health` reports `slack: true`.
+
 ## Isolation and lifecycle
 
 - Mail, drafts, folders, calendars, files, Jira issues, Confluence pages/comments/history and audits are private to the workspace.
@@ -92,7 +116,7 @@ This is not cross-device account synchronization or an OS sandbox for hostile co
 
 ## Reset the demo
 
-**One attendee:** open `/_workshop/reset`, then confirm **Reset my sample data**. All five services return to their starting data for that browser workspace. Other attendees, the browser identity and existing OAuth connections are retained.
+**One attendee:** open `/_workshop/reset`, then confirm **Reset my sample data**. All five services return to their starting data for that browser workspace, and its sample Slack messages are cleared. Other attendees, the browser identity and existing OAuth connections are retained.
 
 **Whole workshop:** the facilitator can reset everyone's fictional business data without rebuilding desktops or reconnecting the five apps. Configure a private random `OPEN_WORKPLACE_RESET_TOKEN` on the gateway and in the facilitator's shell, together with `OPEN_WORKPLACE_RESET_URL` set to that workshop's origin. The command sends the key only to that configured origin. Never give that key to attendees or put it in a URL.
 
@@ -108,7 +132,7 @@ Then deliberately confirm:
 node src/workshop-reset.mjs --url https://workshop.example.com --all --confirm
 ```
 
-This resets Outlook, Calendar, Drive, Jira and Confluence changes, files and their audits. It preserves guest identities, browser sessions, OAuth registrations and grants. It **does not** erase local VM files or OpenWork chat history. Normal service restart is not a reset. No reset runs automatically as part of deployment.
+This resets Outlook, Calendar, Drive, Jira and Confluence changes, files and their audits, and clears sample Slack messages. It preserves guest identities, browser sessions, OAuth registrations and grants, and sample Slack apps and who joined them. It **does not** erase local VM files or OpenWork chat history. Normal service restart is not a reset. No reset runs automatically as part of deployment.
 
 The facilitator route is unavailable unless the private key is configured. Attendee cookies and MCP OAuth tokens cannot invoke it. A reset blocks new business requests while stopping workers and replacing business snapshots, so an old worker cannot write deleted data back. If current work cannot finish safely, the command reports busy instead of claiming success. Interrupted requests are not automatically replayed.
 

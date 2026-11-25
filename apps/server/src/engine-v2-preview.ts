@@ -1,7 +1,13 @@
 import { startupPhase } from "./startup-phase.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { assertSandboxEngineIdle, sandboxPolicyPending } from "./sandbox-engine-transition.js";
+import { localSandboxRuntime } from "./local-sandbox-runtime.js";
+import { applySandboxSettings, readAppliedSandboxSettings, readSandboxSettings } from "./sandbox-settings-store.js";
 import { withEngineSwitchFence } from "./engine-switch-fence.js";
+import { createEngineSystemProxy } from "./engine-system-proxy.js";
 import { engineAutoUpgradeRetry, waitForEngineIdle, type EngineAutoUpgradeRetry } from "./engine-auto-upgrade.js";
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
+import { createV2PrivateValuesBridge } from "./opencode-v2-private-values-bridge.js";
 import type { PrepareDriveUpload } from "./extensions/approved-drive-upload.js";
 import { createV2ProviderSessionBridge } from "./opencode-v2-provider-session.js";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
@@ -46,12 +52,6 @@ import type { ServerConfig } from "./types.js";
 import { approvedProviderEnvironmentNames, machineOwnedProviderIds, MACHINE_PROVIDER_TEMPLATE_OWNERSHIP, resolveProviderConfigTemplates, type ProviderConfigTemplateError } from "./provider-config-templates.js";
 import { readOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 
-/**
- * A stable id for this OpenWork app's engine config. Each desktop app gives
- * its server its own state path, so an installed build, a dev build and a
- * test world sharing one engine state directory stop overwriting each other's
- * engine config. A server without one keeps the shared layout.
- */
 export function engineInstanceId(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const key = env.OPENWORK_SERVER_STATE_PATH?.trim() || env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim();
   return key ? createHash("sha256").update(key).digest("hex").slice(0, 12) : undefined;
@@ -70,27 +70,19 @@ import {
   type EngineV2SkippedProviderReason,
 } from "./opencode-v2-local-auth.js";
 import { ORGANIZATION_PROVIDER_ID, organizationProviderGate } from "./organization-provider-gate.js";
+import { cloudSkillFoldersRoot } from "./cloud-skill-folders-root.js";
 
 export type { EngineV2SkippedProvider, EngineV2SkippedProviderReason } from "./opencode-v2-local-auth.js";
 
 const OPENCODE_V2_VERSION = constants.opencodeV2Version;
 const PREVIEW_STATE_FILE = "engine-v2-preview.json";
 const UNSET_API_KEY = "openwork-engine-v2-preview-unset";
-// A cold sidecar can return HTTP 503 while its model catalog initializes for 17–20 seconds.
 const CATALOG_MIRROR_TIMEOUT_MS = 60_000;
-// Upkeep waits are bounded and never fail a request, as in v1: the engine
-// serves what it has, and OpenWork only improves the next turn's odds.
-// MCP upkeep never holds a request. A registration the engine rejected, or a
-// connection that failed to start, is retried after `mcpRetryMs`, or at once
-// when its configuration changes. Every `mcpHealthMs` known folders are
-// checked for connections that failed or went missing.
 export const ENGINE_V2_UPKEEP_WAITS: Readonly<Record<"providerPushJoinMs" | "workspaceProviderReadyMs" | "mcpRetryMs" | "mcpHealthMs" | "engineRestartMs" | "engineRestartMaxMs", number>> = Object.freeze({
   providerPushJoinMs: 10_000,
   workspaceProviderReadyMs: 8_000,
   mcpRetryMs: 60_000,
   mcpHealthMs: 60_000,
-  // First wait before starting an engine that failed or exited again; it
-  // doubles per attempt up to the maximum.
   engineRestartMs: 2_000,
   engineRestartMaxMs: 300_000,
 });
@@ -99,7 +91,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Wait for `promise` at most `ms`, without leaving the timer behind. */
 async function joinBounded(promise: Promise<unknown>, ms: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([promise.catch(() => undefined), new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); })]);
@@ -115,7 +106,6 @@ export interface EngineV2PreviewStatus {
   forceUpgradePending: boolean;
   enabled: boolean;
   chatRouting: boolean;
-  /** Effective Gateway owner on the selected engine: managed v2, never v1. */
   liveProviderSync: boolean;
   running: boolean;
   version?: string;
@@ -123,22 +113,12 @@ export interface EngineV2PreviewStatus {
   binSource?: "env" | "path" | "cache";
   mirroredProviderIds: string[];
   skippedProviderIds: string[];
-  /**
-   * Why each provider in `skippedProviderIds` is not on this engine, including
-   * providers connected on this computer that never reached the mirror.
-   */
   skippedProviders?: EngineV2SkippedProvider[];
   catalogModelIds: string[];
   lastMirroredAt?: string;
   lastError?: string;
-  /** Most recent upkeep step that did not finish in time or was rejected; requests proceeded. */
   lastWarning?: string;
-  /**
-   * The signed-in organization's `opencodeV2Only` rollout is on: v2 serves every
-   * chat and switching to v1 is refused. Never saved: off when signed out or Den is unreachable.
-   */
   v2Only: boolean;
-  /** An adopted in-place v2 store cannot accept new v1 chat writes safely. */
   v1UnavailableReason?: string;
 }
 
@@ -160,33 +140,22 @@ export interface EngineV2Preview {
   setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
+  assertSandboxReady(directory: string): Promise<void>;
+  assertProjectConfigReady(): Promise<void>;
+  ensureProjectIsolation(options?: { deferBusy?: boolean }): Promise<void>;
+  projectIsolationStatus(): Promise<{ pending: boolean; effectiveAllowHostExecution: boolean }>;
   refreshProviders(): Promise<void>;
-  /**
-   * Reconcile a folder's MCP connections with the engine: register new or
-   * changed ones, remove revoked ones, and restart failed ones after a back-off.
-   * Healthy and starting connections are left alone. `reconnect` names are
-   * restarted now, without the back-off, when they are not healthy.
-   * The call rejects only for the connections it names (`reconnect`, or
-   * `servers` to check them without a restart); with neither, for any.
-   * Background upkeep: prompts never wait on it.
-   */
+  refreshGatewayInventory(): void;
   syncWorkspaceMcp(workspaceId: string, directory: string, options?: { reconnect?: string[]; servers?: string[] }): Promise<void>;
-  /** Explicit mutations join the native client's executable MCP registry. */
   settleWorkspaceMcp(workspaceId: string, directory: string, server: string): Promise<void>;
-  /** Start a folder's upkeep in the background the first time it is seen. Never waits or throws. */
   warmWorkspace(workspaceId: string, directory: string): void;
-  /** After OpenWork writes workspace skills, briefly wait for the engine to reflect them. Never throws. */
   settleWorkspaceSkills(directory: string): Promise<void>;
-  /**
-   * Apply the organization's `opencodeV2Only` rollout. Turning it on selects v2
-   * once v1 is idle. Upstream owns in-place migration on startup. Turning it off changes no engine selection.
-   */
   setV2Only(enabled: boolean): Promise<EngineV2PreviewStatus>;
+  syncSystemProxy(): Promise<void>;
   stop(): Promise<void>;
 }
 
 export interface EngineV2PreviewState {
-  /** Sticky selection only; prevents deleting the last v2 chat from changing stores. */
   historyDatabase?: string;
   enabled: boolean;
   chatRouting?: boolean;
@@ -225,10 +194,6 @@ const ENGINE_FAILURE_TITLES = {
   upgrade: "OpenCode v2 upgrade did not finish",
 } as const;
 
-/**
- * Error reporting gets the first line of an engine failure, with the home
- * folder shortened to ~, and never the engine output that follows it.
- */
 function reportEngineFailure(stage: keyof typeof ENGINE_FAILURE_TITLES, error: unknown): void {
   const home = homedir();
   const firstLine = errorMessage(error).split("\n", 1)[0] ?? "";
@@ -240,13 +205,6 @@ function statePath(config: Pick<ServerConfig, "configPath">): string {
   return join(runtimeStorageDir(config), PREVIEW_STATE_FILE);
 }
 
-/**
- * Engine selection as an earlier build saved it. Every build since v1 and v2
- * coexisted writes `enabled` and `chatRouting`. The short-lived v2-only build
- * stopped writing them because v2 was its only engine; its state means v2
- * serves this profile, so a later build must keep v2 rather than fall back to
- * v1 and hide every chat created since.
- */
 function savedEngineSelection(parsed: Record<string, unknown>): Pick<EngineV2PreviewState, "enabled" | "chatRouting" | "engineOrigin" | "engineForced"> | undefined {
   if (parsed.enabled === undefined && parsed.chatRouting === undefined) {
     return { enabled: true, chatRouting: true, engineOrigin: "forced", engineForced: true };
@@ -280,12 +238,6 @@ export function readEngineV2PreviewState(config: Pick<ServerConfig, "configPath"
   }
 }
 
-/**
- * The engine a brand-new install starts on. Desktop and the hosted web
- * bootstrap request it without overriding earlier OpenWork state. Updated installs, a
- * saved engine choice, OpenCode v1 history, or an explicit
- * OPENWORK_ENGINE_V2_PREVIEW all keep today's behavior.
- */
 export function freshInstallEngineState(input: {
   requested: ServerConfig["freshInstallEngine"];
   env: NodeJS.ProcessEnv;
@@ -302,15 +254,10 @@ function v1HistoryExists(env: NodeJS.ProcessEnv): boolean {
   try {
     return existsSync(opencodeV1DatabasePath(env));
   } catch {
-    // An unusable OPENCODE_DB is not a fresh profile we can reason about; keep v1.
     return true;
   }
 }
 
-/**
- * Save the fresh-install engine choice once, before the first read, so later
- * starts (which no longer look fresh) keep it and a switch back to v1 sticks.
- */
 export function seedFreshInstallEngineState(config: Pick<ServerConfig, "configPath" | "freshInstallEngine" | "engineAutoUpgrade" | "engineForcePolicy" | "externalOpencode" | "opencodeBaseUrl"> & Partial<Pick<ServerConfig, "workspaces">>, env: NodeJS.ProcessEnv = process.env): boolean {
   if (hasExternalOpencode(config)) return false;
   const state = freshInstallEngineState({
@@ -325,7 +272,6 @@ export function seedFreshInstallEngineState(config: Pick<ServerConfig, "configPa
     writeFileSync(statePath(config), `${JSON.stringify({ ...state, engineOrigin: "fresh", engineChangedAt: new Date().toISOString(), ...(config.engineAutoUpgrade !== false ? { engineForced: true } : {}) }, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
     return true;
   } catch {
-    // Another start wrote it first, or the folder is read-only: keep what is on disk.
     return false;
   }
 }
@@ -378,10 +324,6 @@ async function resolveBinaryInner(config: ServerConfig): Promise<ResolvedBinary>
 
 const BINARY_OVERRIDE_ADVICE = "Set OPENWORK_OPENCODE2_BIN to a working opencode2 binary to override resolution.";
 
-/**
- * Only failures to find or run the engine executable suggest a different
- * binary. Database and configuration errors retain their own diagnostics.
- */
 export function engineStartErrorMessage(error: unknown): string {
   const message = errorMessage(error);
   if (message.includes("OPENWORK_OPENCODE2_BIN")) return message;
@@ -406,8 +348,6 @@ export function mapRuntimeProvidersToV2Specs(
       skip(id, "metadata");
       continue;
     }
-    // Only built-in adapters: do not turn organization configuration into a
-    // request to install an arbitrary runtime package.
     const packages: Record<string, string> = {
       "@ai-sdk/openai": "@opencode/ai/providers/openai",
       "@ai-sdk/anthropic": "@opencode/ai/providers/anthropic",
@@ -417,8 +357,6 @@ export function mapRuntimeProvidersToV2Specs(
     };
     const options = isRecord(value.options) ? value.options : {};
     const isConfigured = configuredProviderIds.has(id);
-    // Catalog `api` metadata may use only the native adapter's trusted origin.
-    // Custom destinations must be explicitly configured (or use options.baseURL).
     const explicitBaseUrl = typeof options.baseURL === "string" && options.baseURL.trim()
       ? options.baseURL : undefined;
     const endpoint = explicitBaseUrl ?? value.api;
@@ -445,7 +383,7 @@ export function mapRuntimeProvidersToV2Specs(
         const url = new URL(typeof value.api === "string" ? value.api : "");
         trusted = typeof value.npm === "string" && Object.hasOwn(nativeOrigins, value.npm)
           && url.origin === nativeOrigins[value.npm];
-      } catch { /* Invalid endpoint metadata is never mirrored. */ }
+      } catch {}
       if (!trusted && !isConfigured) { skip(id, "unsupported"); continue; }
     }
     const packageName = typeof value.npm === "string" && Object.hasOwn(packages, value.npm) ? packages[value.npm] : undefined;
@@ -463,14 +401,12 @@ export function mapRuntimeProvidersToV2Specs(
           url.pathname = url.pathname.replace(/\/v1\/?$/, "");
           normalizedBaseUrl = url.toString().replace(/\/$/, "");
         }
-      } catch { /* The general safe endpoint check above rejects malformed URLs. */ }
+      } catch {}
     }
     const envNames = Array.isArray(value.env)
       ? value.env.filter((name): name is string => typeof name === "string") : [];
     const credentialName = selectPrimaryCredentialEnvName(envNames, storedCredentials.keys());
     const storedKey = credentialName ? storedCredentials.get(credentialName) : undefined;
-    // Resolve only this provider's declared credential, never inherit the
-    // server environment or copy unrelated secrets into the sidecar.
     const explicitKey = typeof apiKey === "string" && apiKey.trim() !== "" && !apiKey.includes("{env:") ? apiKey : undefined;
     const resolvedKey = explicitKey ?? storedKey ?? localApiKeys.get(id);
     if (envNames.length > 0 && !resolvedKey) {
@@ -505,19 +441,16 @@ export function mapRuntimeProvidersToV2Specs(
   return { specs, skippedProviderIds: skippedProviders.map(provider => provider.id), skippedProviders };
 }
 
-/** One entry per provider, sorted by id; the first reason given for a provider wins. */
 export function mergeSkippedProviders(...groups: ReadonlyArray<readonly EngineV2SkippedProvider[]>): EngineV2SkippedProvider[] {
   const merged = new Map<string, EngineV2SkippedProvider>();
   for (const provider of groups.flat()) if (!merged.has(provider.id)) merged.set(provider.id, provider);
   return [...merged.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
-/** A catalog provider of the engine: only its key goes into the config. */
 export function nativeProviderSpec(provider: { id: string; name: string; apiKey: string }): OpencodeV2ProviderSpec {
   return { id: provider.id, name: provider.name, apiKey: provider.apiKey, models: [], native: true };
 }
 
-/** The engine's catalog providers; none when it cannot answer, so the mirror falls back to full definitions. */
 export async function readEngineV2NativeProviders(
   active: Pick<ManagedOpencodeV2Server, "fetchJson">,
 ): Promise<Map<string, EngineV2NativeProvider>> {
@@ -525,12 +458,6 @@ export async function readEngineV2NativeProviders(
   return response?.status === 200 ? parseEngineV2NativeProviders(response.json) : new Map();
 }
 
-/**
- * Providers from this computer's own OpenCode config file (see
- * readUserConfigProviders). Settings definitions win for the same id. An
- * entry that only adds a key to a catalog provider (no package or endpoint of
- * its own) becomes a native provider; anything else is a full definition.
- */
 export async function userConfigProviders(
   configured: Record<string, unknown>,
   allows: ((providerId: string) => boolean) | null,
@@ -540,7 +467,6 @@ export async function userConfigProviders(
   read: () => Promise<{ directory: string; providers: Record<string, Record<string, unknown>> }> = readUserConfigProviders,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<{
-  /** Every id the file defines, so the auth.json path leaves them alone. */
   claimed: Record<string, unknown>;
   definitions: Record<string, unknown>;
   native: Array<{ id: string; name: string; apiKey: string }>;
@@ -556,7 +482,6 @@ export async function userConfigProviders(
     if (allows && !allows(id)) skipped.push({ id, reason: "policy" });
     else allowed[id] = provider;
   }
-  // Same rules as v1 for this file: its environment and files beside it.
   const templates = await resolveProviderConfigTemplates(allowed, {
     directory: file.directory, environment: credentials, localProviderIds: new Set(Object.keys(allowed)),
     remoteEnvironmentNames: new Map(), inheritedEnvironment: environment,
@@ -625,7 +550,6 @@ export async function waitForEngineV2Catalog(
   const modelIds = [...new Set(catalog.models?.flatMap((model) => mirrored.has(model.providerID) ? [model.id] : []) ?? [])]
     .sort((left, right) => left.localeCompare(right));
   if (catalog.ready) return { modelIds };
-  // Name models the way the model picker does: gateway ids are opaque.
   const after = `after ${Math.round(timeoutMs / 1000)} seconds`;
   if (catalog.status !== 200 || catalog.models === undefined) {
     const response = catalog.status === 0 ? "no response" : `HTTP ${catalog.status}`;
@@ -640,11 +564,6 @@ export async function waitForEngineV2Catalog(
   };
 }
 
-/**
- * The v2 engine lists organization skills as native skills
- * (openwork-cloud-skills-v2), so Den need not repeat them in Connect's server
- * instructions. Den only drops that list when it also serves native delivery.
- */
 const CONNECT_NATIVE_SKILLS_CAPABILITY = "native-skills-v1";
 
 function withClientCapability(headers: Record<string, string>, capability: string): Record<string, string> {
@@ -654,7 +573,6 @@ function withClientCapability(headers: Record<string, string>, capability: strin
   return existing.includes(capability) ? headers : { ...headers, [key]: [...existing, capability].join(",") };
 }
 
-/** Translate only fields supported by the pinned v2 MCP API. */
 export function mapRuntimeMcpToV2(value: unknown, name?: string): Record<string, unknown> | undefined {
   if (!isRecord(value)) return undefined;
   if (value.enabled === false || value.disabled === true) return undefined;
@@ -679,38 +597,25 @@ export function mapRuntimeMcpToV2(value: unknown, name?: string): Record<string,
   const headers = strings(value.headers);
   return { type: "remote", url: value.url,
     headers: name === "openwork-cloud" ? withClientCapability(headers, CONNECT_NATIVE_SKILLS_CAPABILITY) : headers,
-    // Only the managed Connect endpoint needs modern discovery and per-request
-    // clientInfo. Keep third-party servers on the engine's legacy default.
     ...(name === "openwork-cloud" ? { protocol: "auto" } : {}),
     ...(oauth === undefined ? {} : { oauth }), ...shared };
 }
 
 interface McpLocation {
   workspaceId: string;
-  /** Config fingerprint of each registration this mirror owns. */
   applied: Map<string, string>;
-  /** Last rejected registration or restart per name, for the back-off. */
   attempts: Map<string, { fingerprint: string; at: number }>;
-  /** The latest run; the next one starts after it. */
   tail?: Promise<McpFailures>;
-  /** A run that has not started yet; later triggers join it. */
   queued?: { promise: Promise<McpFailures>; reconnect: Set<string> };
 }
 
-/** One run's failure message per connection name. */
 type McpFailures = ReadonlyMap<string, string>;
 
-/**
- * A run serves every caller that joined it. Each one hears only about the
- * connections it named, so one broken server never fails another's request;
- * background upkeep names none and hears about all of them.
- */
 async function rejectMcpFailures(run: Promise<McpFailures>, names?: readonly string[]): Promise<void> {
   const failures = [...await run].filter(([name]) => !names || names.includes(name));
   if (failures.length) throw new Error(failures.map(([name, message]) => `${name}: ${message}`).join("; "));
 }
 
-/** Live MCP status per name for one location, or undefined when unknown. */
 async function readLiveMcpStatus(
   active: Pick<ManagedOpencodeV2Server, "fetchJson">,
   directory: string,
@@ -732,9 +637,9 @@ export function createEngineV2Preview(options: {
   deferStart?: boolean;
   hostReadRequest?: (path: string, init?: RequestInit) => Promise<unknown>;
   prepareDriveUpload?: PrepareDriveUpload;
+  fileSends?: Parameters<typeof createV2ContextBridge>[3];
   providerSession?: () => CloudProviderDenSession | null;
   waits?: Partial<typeof ENGINE_V2_UPKEEP_WAITS>;
-  /** Running-task probe for leaving v1; unknown is not idle. */
   autoUpgradeIdle?: () => Promise<boolean>;
   autoUpgradeError?: (error: string) => void;
 }): EngineV2Preview {
@@ -747,9 +652,6 @@ export function createEngineV2Preview(options: {
   let engineOrigin: EngineOrigin = initialState.engineOrigin ?? "manual";
   let engineChangedAt = initialState.engineChangedAt;
   let engineForced = initialState.engineForced === true;
-  // Only engines using this host's history can be migrated automatically. The
-  // bootstrap ownership snapshot survives managed global/workspace URL hydration.
-  // An explicit saved/pinned engine still wins; legacy policy cannot undo it.
   const autoUpgradeEnabled = !hasExternalOpencode(config) && config.engineAutoUpgrade !== false && !process.env.OPENWORK_ENGINE_V2_PREVIEW?.trim();
   let autoUpgradeRetry = initialState.autoUpgradeRetry;
   const autoUpgradeAbort = new AbortController();
@@ -757,10 +659,7 @@ export function createEngineV2Preview(options: {
   let stopping = false;
   let enabled = initialState.enabled;
   let chatRouting = initialState.chatRouting === true;
-  // A managed v2 child owns Gateway inventory whenever its private identity bridge is installed.
   const ownsGateway = () => options.providerSession !== undefined;
-  // The organization rollout, applied by the server once Den answers. Never
-  // persisted, so a revoked rollout or an offline start cannot keep it on.
   let v2Only = false;
   let v2OnlyJob: Promise<void> | undefined;
   let v1UnavailableReason: string | undefined;
@@ -769,8 +668,6 @@ export function createEngineV2Preview(options: {
   async function selectHistoryDatabase(): Promise<string> {
     if (!selectedHistoryDatabase) {
       selectedHistoryDatabase = await resolveOpencodeHistoryDatabase(rootDir);
-      // A path receipt, not a migration checkpoint: never switch databases
-      // after the user deletes their last chat, or resurrect an old history.
       await persistState();
     }
     if (selectedHistoryDatabase === opencodeV1DatabasePath()) {
@@ -779,8 +676,6 @@ export function createEngineV2Preview(options: {
     }
     return selectedHistoryDatabase;
   }
-  // Every write keeps `enabled`, `chatRouting` and `engineOrigin`: earlier
-  // builds read them to pick the engine, and treat a file without them as v1.
   const persistState = () => writeEngineV2PreviewState(config, {
     enabled, chatRouting, engineOrigin, engineForced,
     ...(selectedHistoryDatabase ? { historyDatabase: selectedHistoryDatabase } : {}),
@@ -788,6 +683,9 @@ export function createEngineV2Preview(options: {
     ...(autoUpgradeRetry ? { autoUpgradeRetry } : {}),
   });
   let allowRunning = true;
+  const systemProxy = createEngineSystemProxy(config);
+  let sidecarSystemProxy = false;
+  let systemProxySync: Promise<void> = Promise.resolve();
   let running = false;
   let version: string | undefined;
   let pid: number | undefined;
@@ -803,29 +701,25 @@ export function createEngineV2Preview(options: {
   let sidecar: ManagedOpencodeV2Server | undefined;
   let contextBridge: Awaited<ReturnType<typeof createV2ContextBridge>> | undefined;
   let providerSessionBridge: Awaited<ReturnType<typeof createV2ProviderSessionBridge>> | undefined;
+  let privateValuesBridge: Awaited<ReturnType<typeof createV2PrivateValuesBridge>> | undefined;
   let unsubscribe: (() => void) | undefined;
   let startPromise: Promise<void> | undefined;
   let restartAttempts = 0;
   let restartTimer: ReturnType<typeof setTimeout> | undefined;
   let healthySince: number | undefined;
   let mirrorInFlight: Promise<void> | undefined;
-  // Settles once a mirror has pushed providers to the engine, before its
-  // catalog confirmation; readiness joins this, never the whole mirror.
   let providerPush: Promise<void> | undefined;
-  // Resolves after local inventory is read, before any old push/confirmation.
   let providerDiscovery: Promise<void> | undefined;
   let mirrorDirty = false;
-  // The last mirror's push failure. A model the catalog has not listed is
-  // reported in status but never fails a caller whose providers were pushed.
   let mirrorError: string | undefined;
   const workspaceReadiness = new Map<string, Promise<void>>();
   let mirroredSpecs: OpencodeV2ProviderSpec[] = [];
-  // One MCP reconciler per folder, keyed by directory.
   const mcpLocations = new Map<string, McpLocation>();
   let mcpHealthTimer: ReturnType<typeof setInterval> | undefined;
   async function settleWorkspaceSkills(directory: string): Promise<void> {
     const active = sidecar;
     if (!active || !chatRouting) return;
+    await assertProjectConfigReady();
     await waitForEngineSkillChanges(directory, async () => {
       const response = await active.fetchJson("/api/skill", { directory, timeoutMs: 5_000 });
       if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
@@ -841,9 +735,6 @@ export function createEngineV2Preview(options: {
       mcpLocations.set(directory, location);
     }
     location.workspaceId = workspaceId;
-    // Serialize each folder. Triggers that arrive while a run is in flight
-    // share one follow-up run, which re-reads config and live status, so a
-    // burst coalesces and never reuses a snapshot taken before a change.
     if (location.queued) {
       for (const name of options.reconnect ?? []) location.queued.reconnect.add(name);
       return rejectMcpFailures(location.queued.promise, named);
@@ -862,26 +753,20 @@ export function createEngineV2Preview(options: {
   async function reconcileWorkspaceMcp(directory: string, location: McpLocation, reconnect: ReadonlySet<string>): Promise<McpFailures> {
     const active = sidecar;
     if (!active) throw new Error("OpenCode v2 is not running");
+    await assertProjectConfigReady();
     const effective = await readEffectiveRuntimeOpencodeConfig(config, location.workspaceId);
     const runtime = runtimeMcpMap(effective);
     const agentPermissionRules = agentPermissionRulesOf(effective.managedPolicy);
-    // Local servers the member's agent permissions block are not registered,
-    // and an earlier registration is removed below like any other unwanted entry.
-    // The agent permissions plugin learns of new organization servers first,
-    // so it does not disable them as they are registered.
     const mcpRules = agentPermissionRules.some((rule) => rule.action === "mcp");
     if (mcpRules) await active.refreshConfig();
     const organizationMcp = mcpRules ? await registeredOrganizationMcpServers(config, [location.workspaceId]) : {};
+    const hostAllowed = await managedDesktopPolicy(config).assertHostExecution().then(() => true, () => false);
     const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
-      if (agentPermissionEngineMcpDenial(agentPermissionRules, name, value, organizationMcp)) return [];
+      if (!hostAllowed || agentPermissionEngineMcpDenial(agentPermissionRules, name, value, organizationMcp)) return [];
       const mapped = mapRuntimeMcpToV2(value, name);
       return mapped ? [[name, { config: mapped, fingerprint: JSON.stringify(mapped) }] as const] : [];
     }));
     const { applied, attempts } = location;
-    // The engine's live status, not our record of what we sent, decides
-    // whether a connection is healthy. A 204 only means the engine accepted
-    // the config; the connection starts afterwards and can fail (a local app
-    // that was closed), and the engine never retries it on its own.
     const live = await readLiveMcpStatus(active, directory);
     const backedOff = (name: string, fingerprint: string) => {
       const attempt = attempts.get(name);
@@ -893,7 +778,7 @@ export function createEngineV2Preview(options: {
       applied.delete(name);
     };
     const register = async (name: string, mcpConfig: Record<string, unknown>, fingerprint: string) => {
-      // The engine connects before it answers (up to the startup timeout).
+      await managedDesktopPolicy(config).assertHostExecution();
       const status = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}`, {
         method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
       }).then((result) => result.status, (error) => { warn(`MCP ${name}: ${errorMessage(error)}`); return 0; });
@@ -906,18 +791,13 @@ export function createEngineV2Preview(options: {
       applied.set(name, fingerprint);
     };
     const restart = async (name: string, fingerprint: string) => {
-      // The engine ignores a PUT identical to the config it has, so a failed
-      // connection is restarted with /connect. On a healthy client /connect
-      // closes and reopens it, which is why only unhealthy ones get here.
+      await managedDesktopPolicy(config).assertHostExecution();
       attempts.set(name, { fingerprint, at: Date.now() });
       warn(`MCP ${name}: connection ${live?.get(name) ?? "missing"}; reconnecting`);
       const result = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", directory, timeoutMs: 30_000 });
       if (result.status !== 204) warn(`MCP ${name}: reconnect failed (${result.status})`);
     };
     const tasks: Array<[string, Promise<void>]> = [];
-    // Only registrations owned by this mirror are removed. A changed config is
-    // removed before it is registered again, so a failed replacement cannot
-    // leave an old credential or revoked tool active.
     for (const name of applied.keys()) {
       const wanted = desired.get(name);
       if (!wanted) tasks.push([name, remove(name)]);
@@ -929,18 +809,13 @@ export function createEngineV2Preview(options: {
       const status = live?.get(name);
       if (applied.has(name) && applied.get(name) !== fingerprint) continue;
       if (!applied.has(name) || (live && status === undefined)) {
-        // New, or the engine lost it (an identical PUT to a live entry is a no-op).
         if (!backedOff(name, fingerprint)) tasks.push([name, register(name, mcpConfig, fingerprint)]);
         continue;
       }
-      // Connected and starting connections are left alone. `disabled` is only
-      // ever set by an OpenWork repair, and needs_auth is retried only on request.
       const unhealthy = status === "failed" || status === "disabled" || (status === "needs_auth" && reconnect.has(name));
       if (status === "connected") attempts.delete(name);
       else if (unhealthy && !backedOff(name, fingerprint)) tasks.push([name, restart(name, fingerprint)]);
     }
-    // A failed run keeps its record as is: only successful registrations are
-    // recorded, and the live status check catches anything unhealthy.
     const failures = new Map<string, string>();
     const results = await Promise.allSettled(tasks.map(([, task]) => task));
     results.forEach((result, index) => {
@@ -950,8 +825,6 @@ export function createEngineV2Preview(options: {
   }
 
   async function settleWorkspaceMcp(workspaceId: string, directory: string, server: string): Promise<void> {
-    // While v1 serves chats, or v2 is not up, the saved config is the whole
-    // change: v2 reads each folder's connections from it when it opens the folder.
     if (!sidecar || !chatRouting) return;
     await ensureWorkspaceReady(directory);
     await syncWorkspaceMcp(workspaceId, directory, { servers: [server] });
@@ -964,6 +837,107 @@ export function createEngineV2Preview(options: {
     if (result.status !== 200 || !isRecord(result.json) || !isRecord(result.json.output) || result.json.output.ready !== true) {
       throw new ApiError(503, "mcp_tools_not_ready", "This connection is saved, but its tools are not ready yet. Retry.");
     }
+  }
+
+  let isolationInFlight: Promise<void> | undefined;
+  let isolationRefreshing = false;
+  let isolationTimer: ReturnType<typeof setInterval> | undefined;
+  async function localSandboxSettingsPending(): Promise<boolean> {
+    const [desired, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
+    return desired.forceSandbox !== applied.forceSandbox;
+  }
+  async function projectIsolationStatus(): Promise<{ pending: boolean; effectiveAllowHostExecution: boolean }> {
+    const policy = managedDesktopPolicy(config);
+    const [desired, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
+    const required = await policy.requiresSandbox(desired.forceSandbox);
+    return {
+      pending: isolationRefreshing || policy.projectIsolationTransition() || desired.forceSandbox !== applied.forceSandbox
+        || (sidecar !== undefined && sidecar.projectConfigDisabled !== required),
+      effectiveAllowHostExecution: !policy.projectIsolationTransition() && (sidecar ? !sidecar.projectConfigDisabled : !applied.forceSandbox),
+    };
+  }
+  function handleIsolationError(error: unknown, deferBusy = false): void {
+    if (error instanceof ApiError && ["engine_busy", "sandbox_engine_busy", "sandbox_engine_activity_unavailable"].includes(error.code)) {
+      if (deferBusy) return;
+      throw sandboxPolicyPending();
+    }
+    throw error;
+  }
+  async function waitForIsolation(refresh: Promise<void>): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([refresh, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ApiError(503, "sandbox_engine_refresh_failed", "OpenWork is still applying your sandbox setting. Try again in a moment.")), 30_000);
+        timer.unref();
+      })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  async function ensureProjectIsolation(change: { deferBusy?: boolean } = {}): Promise<void> {
+    if (isolationInFlight) return waitForIsolation(isolationInFlight).catch(error => handleIsolationError(error, change.deferBusy));
+    const pending = (async () => {
+      if (startPromise) await startPromise;
+      const policy = managedDesktopPolicy(config);
+      if (!sidecar) { if (!policy.projectIsolationTransition()) await applySandboxSettings(config); return; }
+      const needsChange = async () => sidecar !== undefined && (sidecar.projectConfigDisabled !== await policy.requiresSandbox() || await localSandboxSettingsPending());
+      if (!await needsChange()) return;
+      await withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => {
+        const active = sidecar;
+        if (!active) throw new ApiError(503, "sandbox_unavailable", "OpenWork stopped before it could apply your sandbox setting. Try again. Nothing ran.");
+        if (!await policy.requiresSandbox()) {
+          try { await policy.verifySandboxHostAuthority(); }
+          catch (error) { if (!await policy.requiresSandbox()) throw error; }
+        }
+        if (!await needsChange()) return;
+        await assertSandboxEngineIdle(active);
+        isolationRefreshing = true;
+        policy.setProjectIsolationTransition(true);
+        const resume = allowRunning;
+        await stopRuntime();
+        if (stopping || !enabled || !resume) throw new ApiError(503, "sandbox_unavailable", "OpenWork stopped while applying your sandbox setting. Start it and try again.");
+        allowRunning = true;
+        try { await start(); }
+        catch (error) {
+          recordStartError(error);
+          throw new ApiError(503, "sandbox_engine_refresh_failed", "Your sandbox setting is saved, but OpenWork couldn’t apply it. Try again. Nothing ran.");
+        }
+        if (!sidecar || sidecar.projectConfigDisabled !== await policy.requiresSandbox()) {
+          throw new ApiError(503, "sandbox_engine_permission_changed", "Your sandbox permissions changed while OpenWork was applying them. Send your message again.");
+        }
+      } });
+    })();
+    const settled = pending.finally(() => {
+      if (isolationInFlight === settled) { isolationInFlight = undefined; isolationRefreshing = false; }
+    });
+    isolationInFlight = settled;
+    return waitForIsolation(settled).catch(error => handleIsolationError(error, change.deferBusy));
+  }
+
+  async function assertProjectConfigReady(): Promise<void> {
+    const status = await projectIsolationStatus();
+    const refresh = isolationRefreshing ? isolationInFlight : undefined;
+    if (refresh) await waitForIsolation(refresh);
+    if ((refresh || status.pending) && (await projectIsolationStatus()).pending) throw sandboxPolicyPending();
+  }
+
+  async function assertSandboxReady(directory: string): Promise<void> {
+    const policy = managedDesktopPolicy(config);
+    await policy.assertHostExecution().catch(() => undefined);
+    await ensureProjectIsolation();
+    if (!await policy.requiresSandbox()) return;
+    const active = sidecar;
+    if (!active || !contextBridge?.sandbox) throw new ApiError(503, "sandbox_unavailable", "The sandbox is not ready. Wait a moment and send your message again.");
+    if (!active.projectConfigDisabled) throw new ApiError(503, "sandbox_engine_restart_required", "Restart OpenWork to apply your sandbox setting, then send your message again.");
+    if (version?.replace(/^v/, "") !== OPENCODE_V2_VERSION) throw new ApiError(503, "sandbox_engine_unsupported", "This version of OpenWork can’t enforce your sandbox setting. Update OpenWork and try again.");
+    const plugins = await active.fetchJson("/api/plugin", { directory, timeoutMs: 10_000 });
+    const instance = engineInstanceId();
+    const expected = join(rootDir, ...(instance ? ["instances", instance] : []), "sandbox-plugin");
+    const data = isRecord(plugins.json) && Array.isArray(plugins.json.data) ? plugins.json.data : [];
+    const installed = data.filter(isRecord).some(plugin => plugin.id === "openwork.sandbox"
+      && isRecord(plugin.state) && plugin.state.status === "active"
+      && isRecord(plugin.source) && plugin.source.type === "local" && plugin.source.path === expected);
+    if (plugins.status !== 200 || !installed) throw new ApiError(503, "sandbox_unavailable", "OpenWork couldn’t verify that the sandbox is ready. Restart OpenWork and try again.");
   }
 
   function checkMcpHealth(): void {
@@ -1018,35 +992,36 @@ export function createEngineV2Preview(options: {
   async function pushAndConfirmProviders(active: ManagedOpencodeV2Server, pushed: () => void, discovered: () => void): Promise<void> {
     const globalRuntime = await readGlobalRuntimeOpencodeConfig(config);
     const configured = runtimeProviderMap(globalRuntime);
-    // Same list v1 receives as `disabled_providers` (e.g. a disconnected
-    // OpenCode Zen). Re-enabling removes the entry and this mirror restores it.
     const disabledProviderIds = runtimeDisabledProviderList(globalRuntime);
     const disabled = new Set(disabledProviderIds);
-    // "Only models you provide": the providers v1 omits from `enabled_providers`
-    // never reach v2 either, whether configured or connected on this computer.
     const allowsProvider = organizationProviderGate(globalRuntime.managedPolicy);
-    const localAuth = await readLocalProviderAuth();
+    const unreadable: string[] = [];
+    const localAuth = await readLocalProviderAuth().catch((error: unknown) => {
+      unreadable.push(errorMessage(error));
+      return { apiKeys: new Map<string, string>(), signIns: new Set<string>() };
+    });
     const localKeys = allowsProvider
       ? new Map([...localAuth.apiKeys].filter(([id]) => allowsProvider(id)))
       : localAuth.apiKeys;
-    const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
-    // Providers the engine's own catalog knows need only a key from us.
+    const storedEnvOrEmptyWhenUnreadable = options.env
+      ? await options.env.list().catch((error: unknown) => {
+        unreadable.push(errorMessage(error));
+        return [];
+      })
+      : [];
+    const credentials = new Map(storedEnvOrEmptyWhenUnreadable.map((entry) => [entry.key, entry.value]));
     const native = await readEngineV2NativeProviders(active);
-    // v1 reads catalog keys from its environment: the server's, plus Settings › Environment.
     const environment: NodeJS.ProcessEnv = { ...process.env, ...Object.fromEntries(credentials) };
     const userFile = await userConfigProviders(configured, allowsProvider, native, localKeys, credentials, undefined, environment);
     const local = await localProviderDefinitions(config, localAuth, { ...configured, ...userFile.claimed }, {
       allows: allowsProvider, native, environment,
+      onCatalogError: () => { unreadable.push("Could not read locally connected provider metadata"); },
     });
     const blockedConfigured = Object.keys(configured).filter(id => allowsProvider && !allowsProvider(id));
     const combinedProviders = { ...local.providers, ...Object.fromEntries(Object.entries(configured)
       .filter(([id]) => !allowsProvider || allowsProvider(id))) };
-    // Native plugin is the sole Gateway owner. Local and legacy providers still
-    // use the old mirror, including their normal readiness/catalog checks.
     const providerMap = Object.fromEntries(Object.entries(combinedProviders)
       .filter(([id]) => !ownsGateway() || !/^ipr_/i.test(id)));
-    // Persisted cloud ownership is written before managed runtime rows. Do not
-    // treat a Den-pushed definition as local merely because it is in that map.
     const ownership = await readOpenworkWorkspaceConfig(config, "__cloud_provider_ownership__");
     const managedIds = new Set(Array.isArray(ownership.providerIds) ? ownership.providerIds : []);
     const localOwnership = await readOpenworkWorkspaceConfig(config, MACHINE_PROVIDER_TEMPLATE_OWNERSHIP);
@@ -1058,7 +1033,6 @@ export function createEngineV2Preview(options: {
       directory: runtimeStorageDir(config), environment: credentials, localProviderIds,
       remoteEnvironmentNames: approvedProviderEnvironmentNames(ownership.providerEnvHashes, credentials),
     });
-    // Hand-written definitions are trusted like Settings ones: the person wrote their endpoints.
     const mapped = mapRuntimeProvidersToV2Specs({ ...templates.providers, ...userFile.definitions }, credentials, localKeys,
       new Set([...Object.keys(configured), ...Object.keys(userFile.definitions)]));
     const specs = [...mapped.specs, ...[...local.native, ...userFile.native].map(nativeProviderSpec)]
@@ -1088,11 +1062,10 @@ export function createEngineV2Preview(options: {
     skippedProviders = skipped;
     lastMirroredAt = new Date().toISOString();
     pushed();
-    // Re-check folders already in use now, so their next prompt pays nothing.
     for (const directory of mcpLocations.keys()) void ensureWorkspaceReady(directory).catch(() => undefined);
     const catalog = await waitForEngineV2Catalog(active, workspaceDir, specs, CATALOG_MIRROR_TIMEOUT_MS, ownsGateway);
     currentCatalogModelIds = catalog.modelIds;
-    lastError = [...templates.errors, ...userFile.errors].map(error => error.message)
+    lastError = [...unreadable, ...[...templates.errors, ...userFile.errors].map(error => error.message)]
       .concat(catalog.lastError ? [catalog.lastError] : []).join("\n") || undefined;
   }
 
@@ -1134,6 +1107,8 @@ export function createEngineV2Preview(options: {
     mcpLocations.clear();
     if (mcpHealthTimer) clearInterval(mcpHealthTimer);
     mcpHealthTimer = undefined;
+    if (isolationTimer) clearInterval(isolationTimer);
+    isolationTimer = undefined;
     running = false;
     version = undefined;
     pid = undefined;
@@ -1141,8 +1116,10 @@ export function createEngineV2Preview(options: {
     contextBridge = undefined;
     const sessionBridge = providerSessionBridge;
     providerSessionBridge = undefined;
+    const valuesBridge = privateValuesBridge;
+    privateValuesBridge = undefined;
     try {
-      await Promise.all([bridge?.close(), sessionBridge?.close(), active?.close()]);
+      await Promise.all([bridge?.close(), sessionBridge?.close(), valuesBridge?.close(), active?.close()]);
     } catch (error) {
       lastError = errorMessage(error);
     }
@@ -1153,30 +1130,39 @@ export function createEngineV2Preview(options: {
     binSource = resolved.source;
     if (!enabled || !allowRunning) return;
     await mkdir(workspaceDir, { recursive: true });
-    // Remove copies left by the former v2-only Cloud materializer. Cloud
-    // skills now use the same metadata/on-demand Connect path as v1.
     await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
-    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, options.prepareDriveUpload) : undefined;
+    await applySandboxSettings(config);
+    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, options.prepareDriveUpload, options.fileSends, config) : undefined;
     providerSessionBridge = options.providerSession ? await createV2ProviderSessionBridge(() =>
       options.providerSession?.() ?? null) : undefined;
+    await privateValuesBridge?.close();
+    privateValuesBridge = await createV2PrivateValuesBridge();
     const globalSkills = globalSkillDirectories();
     const historyDatabase = await selectHistoryDatabase();
+    const policy = managedDesktopPolicy(config);
+    const startedWithSystemProxy = systemProxy.wanted();
+    const systemProxyEnv = startedWithSystemProxy ? await systemProxy.env() : {};
     const managed = await createManagedOpencodeV2Server({
+      ...(policy.projectIsolationTransition() && contextBridge?.sandbox ? {
+        isolateProjectConfig: async () => {
+          try { await policy.verifySandboxHostAuthority(); } catch { return true; }
+          return policy.requiresSandbox();
+        },
+      } : {}),
       historyDatabase,
       contextTools: contextBridge,
+      cloudSkillFoldersDirectory: cloudSkillFoldersRoot(config),
       ...(providerSessionBridge ? { providerSession: providerSessionBridge } : {}),
+      privateValues: { url: privateValuesBridge.url, token: privateValuesBridge.token },
       bin: resolved.bin,
       rootDir,
       instanceId: engineInstanceId(),
-      env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
+      env: { ...systemProxyEnv, OPENCODE_MODELS_URL: opencodeModelsUrl },
       permissions: async () => {
         const runtime = await readGlobalRuntimeOpencodeConfig(config);
         return executionRules(runtime.managedPolicy?.execution);
       },
-      // The engine reads ~/.claude/skills and ~/.agents/skills itself, but its
-      // config folder is OpenWork's own, so it never sees these two global
-      // folders the skill picker lists, and a picked skill there can't be sent.
       skills: [globalSkills.openwork, globalSkills.agentLegacy],
       agentPermissions: async () => {
         const rules = agentPermissionRulesOf((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy);
@@ -1187,6 +1173,7 @@ export function createEngineV2Preview(options: {
       onExit: (error) => engineExited(managed, error),
     });
     sidecar = managed;
+    sidecarSystemProxy = startedWithSystemProxy;
     if (!enabled || !allowRunning) {
       await closeSidecar();
       return;
@@ -1201,8 +1188,6 @@ export function createEngineV2Preview(options: {
       const unsubscribeConfig = onRuntimeOpencodeConfigWrite((_writeConfig, workspaceId) => {
         const global = isEngineGlobalRuntimeConfigId(workspaceId);
         if (global) scheduleMirror();
-        // Connections installed through OpenWork also update already-open
-        // locations while a conversation is active.
         for (const [directory, location] of mcpLocations) {
           if (global || location.workspaceId === workspaceId) void syncWorkspaceMcp(location.workspaceId, directory).catch((error) => {
             if (sidecar) lastError = `MCP: ${errorMessage(error)}`;
@@ -1211,16 +1196,23 @@ export function createEngineV2Preview(options: {
       });
       mcpHealthTimer = setInterval(checkMcpHealth, waits.mcpHealthMs);
       mcpHealthTimer.unref?.();
+      isolationTimer = setInterval(() => {
+        if (stopping || !allowRunning || !sidecar) return;
+        void ensureProjectIsolation({ deferBusy: true }).catch(error => warn(`Permissions: ${errorMessage(error)}`));
+      }, 500);
+      isolationTimer.unref?.();
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
       unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
       scheduleMirror();
-      // Readiness joins the provider push itself; it must not wait for the
-      // mirror's slower catalog confirmation.
       warmActiveWorkspace();
       if (mirrorInFlight) await mirrorInFlight;
       if (!enabled || !allowRunning) {
         await closeSidecar();
         return;
+      }
+      if (policy.projectIsolationTransition() && running && managed === sidecar
+        && managed.projectConfigDisabled === await policy.requiresSandbox() && managed === sidecar) {
+        policy.setProjectIsolationTransition(false);
       }
     } catch (error) {
       await closeSidecar();
@@ -1246,17 +1238,10 @@ export function createEngineV2Preview(options: {
   function recordStartError(error: unknown): void {
     running = false;
     lastError = engineStartErrorMessage(error);
-    // One report per incident: retries of an engine that keeps failing stay local.
     if (restartAttempts === 0) reportEngineFailure("start", error);
-    // Never infer that v1 is safe from a failed executable/configuration read:
-    // upstream may already have adopted this store during an earlier boot.
-    // Keep the selected engine and retry it, including fresh/forced profiles.
     scheduleRestart();
   }
 
-  // An engine that serves chats and failed to start, or exited on its own,
-  // starts again after a wait that doubles per attempt. An explicit stop
-  // keeps v2 down on purpose.
   function scheduleRestart(): void {
     if (restartTimer || stopping || !allowRunning || !enabled || !chatRouting) return;
     const wait = Math.min(waits.engineRestartMs * 2 ** restartAttempts, waits.engineRestartMaxMs);
@@ -1269,9 +1254,6 @@ export function createEngineV2Preview(options: {
     restartTimer.unref?.();
   }
 
-  // The engine stopped without being asked. Drop it so callers see that v2 is
-  // not running, then start a new one. An engine that stayed up longer than
-  // the longest wait starts over at the first wait.
   function engineExited(exited: ManagedOpencodeV2Server, error: Error): void {
     if (sidecar !== exited) return;
     if (healthySince !== undefined && Date.now() - healthySince >= waits.engineRestartMaxMs) restartAttempts = 0;
@@ -1279,6 +1261,30 @@ export function createEngineV2Preview(options: {
     reportEngineFailure("exit", error);
     void closeSidecar().then(scheduleRestart);
   }
+
+  async function applySystemProxy(): Promise<void> {
+    if (!systemProxy.available || stopping) return;
+    await systemProxy.record(await managedDesktopPolicy(config).systemProxyEnabled());
+    if (startPromise) await startPromise.catch(() => undefined);
+    const mismatched = () => sidecar !== undefined && sidecarSystemProxy !== systemProxy.wanted();
+    if (!mismatched() || stopping) return;
+    await withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => {
+      const active = sidecar;
+      if (!active || !mismatched() || stopping || !enabled || !allowRunning) return;
+      await assertSandboxEngineIdle(active);
+      await stopRuntime();
+      if (stopping || !enabled) return;
+      allowRunning = true;
+      await start().catch(recordStartError);
+    } });
+  }
+  function syncSystemProxy(): Promise<void> {
+    systemProxySync = systemProxySync.then(applySystemProxy).catch(() => undefined);
+    return systemProxySync;
+  }
+
+  const signedOutSystemProxyCheck = systemProxy.available ? setTimeout(() => { void syncSystemProxy(); }, 30_000) : undefined;
+  signedOutSystemProxyCheck?.unref?.();
 
   async function stopRuntime(): Promise<void> {
     allowRunning = false;
@@ -1293,6 +1299,7 @@ export function createEngineV2Preview(options: {
   }
 
   async function requireV1Allowed(): Promise<void> {
+    await managedDesktopPolicy(config).assertLegacyHostExecution();
     if (v2Only) {
       throw new ApiError(409, "engine_v2_only", "Your organization runs every chat on OpenCode v2. Switching to OpenCode v1 is turned off.");
     }
@@ -1307,13 +1314,10 @@ export function createEngineV2Preview(options: {
     if (nextEnabled && enabled && running) return status();
     if (nextEnabled) {
       await selectHistoryDatabase();
-      // An enable-only request cannot leave chats on a v1 store that this
-      // process is about to adopt. Separate-store preview behavior is unchanged.
       if (v1UnavailableReason) chatRouting = true;
     }
     enabled = nextEnabled;
     engineOrigin = "manual";
-    // A recorded time marks an explicit choice, which the background upgrade respects.
     engineChangedAt = new Date().toISOString();
     engineForced = false;
     await persistState();
@@ -1323,9 +1327,6 @@ export function createEngineV2Preview(options: {
     }
     allowRunning = true;
     lastError = undefined;
-    // Fire and forget: binary resolution can install from npm and boot can take
-    // tens of seconds, while renderer config requests time out after 10s. The
-    // status endpoint reports progress and records failures via lastError.
     void start().catch(recordStartError);
     return status();
   }
@@ -1355,23 +1356,14 @@ export function createEngineV2Preview(options: {
   }
 
   async function ensureWorkspaceReady(directory: string): Promise<void> {
-    // Read local inventory first so mixed local/Gateway startup keeps local
-    // readiness. This is not the provider push or catalog confirmation join.
+    await assertProjectConfigReady();
     if (ownsGateway() && providerDiscovery) await providerDiscovery;
-    // Gateway discovery is native: no old push join or catalog/readiness poll
-    // is owed when the mirror has no local/legacy providers to prepare.
     if (!shouldWaitForMirroredProviders(ownsGateway(), mirroredSpecs)) return;
-    // Join a mirror only until its providers are pushed; its catalog
-    // confirmation can take a minute and is status, not readiness.
     if (providerPush) await joinBounded(providerPush, waits.providerPushJoinMs);
     const active = sidecar;
     if (!active) throw new Error("OpenCode v2 is not running");
     const existing = workspaceReadiness.get(directory);
     if (existing) return existing;
-    // V2 loads each new location's configuration asynchronously: for about
-    // 200 ms its catalog omits configured providers. v1's engine waits for its
-    // own folder setup instead. This wait is bounded, never fails the request,
-    // and its result is reused until the next provider mirror.
     const pending = (async () => {
       const deadline = Date.now() + waits.workspaceProviderReadyMs;
       do {
@@ -1391,20 +1383,17 @@ export function createEngineV2Preview(options: {
 
   function warmWorkspace(workspaceId: string, directory: string): void {
     if (!sidecar || mcpLocations.has(directory)) return;
+    void localSandboxRuntime(config).prepare(directory, "workspace-ready");
     void ensureWorkspaceReady(directory).catch(() => undefined);
     void syncWorkspaceMcp(workspaceId, directory).catch((error) => warn(`MCP: ${errorMessage(error)}`));
   }
 
-  // When v2 serves chats, open the active workspace as soon as the sidecar is
-  // up, so the window's first model read does not wait on the location's setup.
   function warmActiveWorkspace(): void {
     if (!chatRouting || !sidecar) return;
     const workspace = findManagedEngineWorkspace(config.workspaces);
     if (workspace?.path) warmWorkspace(workspace.id, workspace.path);
   }
 
-  // OpenCode owns schema conversion on startup. OpenWork only waits for the
-  // engine being left to become idle and changes the existing routing choice.
   async function autoUpgrade(): Promise<boolean> {
     try {
       if (autoUpgradeRetry && Date.now() < autoUpgradeRetry.retryAt) return false;
@@ -1419,7 +1408,10 @@ export function createEngineV2Preview(options: {
       if (!stopping) await start();
       return true;
     } catch (error) {
-      // Never return to v1 after v2 may have converted the database in place.
+      if (stopping && error === autoUpgradeAbort.signal.reason) {
+        warn(`Automatic upgrade paused: ${errorMessage(error)}`);
+        return false;
+      }
       lastError = errorMessage(error);
       autoUpgradeRetry = engineAutoUpgradeRetry(autoUpgradeRetry?.attempts ?? 0);
       reportEngineFailure("upgrade", error);
@@ -1452,12 +1444,9 @@ export function createEngineV2Preview(options: {
   }
 
   async function setV2Only(next: boolean): Promise<EngineV2PreviewStatus> {
-    // A policy refresh must still retry a switch deferred by running v1 work.
     const needsSwitch = next && !chatRouting;
     if (v2Only === next && !needsSwitch) return status();
     v2Only = next;
-    // Turning the rollout off keeps the engine selection, routing and any
-    // copy in progress exactly as they are: nothing moves back to v1.
     if (next && !v2OnlyJob) {
       v2OnlyJob = applyV2Only()
         .catch(error => { warn(`OpenCode v2 only: ${errorMessage(error)}`); })
@@ -1467,33 +1456,30 @@ export function createEngineV2Preview(options: {
   }
 
   function setForcePolicy(_policy: { upgrade: boolean }): EngineV2PreviewStatus {
-    // Compatibility for older Den/desktop heartbeats. Automatic migration no
-    // longer depends on org rollout policy, including legacy upgrade:false.
     return status();
   }
 
   async function stop(): Promise<void> {
     stopping = true;
+    clearTimeout(signedOutSystemProxyCheck);
     autoUpgradeAbort.abort(new Error("Automatic upgrade paused while OpenWork closes."));
     await autoUpgradeJob;
     await v2OnlyJob;
     await stopRuntime();
   }
 
-  // Someone explicitly switched this install back to OpenCode v1. Installs that
-  // never chose report "manual" too (the default), but have no recorded time.
   function chosenV1Manually(): boolean {
     return engineOrigin === "manual" && Boolean(engineChangedAt) && !chatRouting;
   }
 
   function startWhenReady(): void {
     if (stopping) return;
-    // Boot returns immediately; migration makes at most one background attempt
-    // per boot and preserves explicit local engine choices.
     if (autoUpgradeEnabled && !config.readOnly && !chatRouting && !autoUpgradeJob && !chosenV1Manually()) {
       autoUpgradeJob = autoUpgrade().then(success => { if (success) autoUpgradeJob = undefined; });
     } else if (enabled && engineOrigin !== "reverted" && !(autoUpgradeEnabled && !chatRouting && !chosenV1Manually())) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
+  return { start: startWhenReady, syncSystemProxy, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, assertSandboxReady, assertProjectConfigReady, ensureProjectIsolation, projectIsolationStatus, refreshProviders,
+    refreshGatewayInventory: () => { providerSessionBridge?.invalidateInventory(); },
+    syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }

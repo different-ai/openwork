@@ -10,6 +10,9 @@
 
 ## What was the situation before?
 
+<!-- A chain of cause, a changed path between parts, or several cases? Show it: one short
+     Mermaid flowchart or a small before / after table here, in place of the prose. -->
+
 
 ## How is this implemented?
 

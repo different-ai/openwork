@@ -116,6 +116,21 @@ a real account (`live-desktop` always is). `--env` cannot turn it back on; a
 spec or world opts in in code with `env: { OPENWORK_AUTOMATION_RUNNER: "on" }`,
 as `preview-full` does for its own disposable Den.
 
+## OpenWork Bench runs
+
+[OpenWork Bench](https://github.com/different-ai/openwork-bench) runs against
+the plain `preview-desktop` world. Its
+[`docs/openwork-desktop.md`](https://github.com/different-ai/openwork-bench/blob/main/docs/openwork-desktop.md)
+covers installing the benchmark next to the desktop and starting a run.
+
+[`evals/proofs/openwork-bench.proof.test.ts`](../evals/proofs/openwork-bench.proof.test.ts)
+records one task in the app, from the openwork-bench revision pinned in
+`evals/worlds/openwork-bench-source.ts`: the brief goes in through the
+composer, a scripted model works through the task world (attached as the
+`owb-world` MCP server, as the harness attaches it), and the task's own checks
+grade the result. Its before and after screenshots are footage for published
+results. It spends nothing on models and needs `uvx` or `pipx` on the runner.
+
 ## Writing a world
 
 In a script, declare a one-line summary and the supported targets as literals

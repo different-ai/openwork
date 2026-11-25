@@ -1,5 +1,7 @@
 # Steady chat while a reply runs
 
+> **Generally available:** `steadyLiveTurn` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 Feature: `steadyLiveTurn`. Cloud and self-hosted. Author: `benjaminshafii`.
 Off by default.
 
@@ -32,9 +34,12 @@ With the feature on:
 Turn it on for an organization or member in `/admin` › Features, then send a
 prompt that mixes tool calls, a short message and more tool calls. No gap
 appears between the steps and the message, and the Working line does not jump
-up while it runs. The `measure-chat-flicker` skill counts upward jumps.
+up while it runs.
 
 ## Turning it off
 
-Takes effect on the next render: the previous live layout returns. Nothing is
-stored; history is unaffected.
+Takes effect on the next render: the live turn again splits at its latest text.
+The steps area no longer retains its tallest height with either setting, so
+folded tool details cannot leave an empty panel between steps and the answer.
+Only the feature-on path reserves released room below the Working line.
+Nothing is stored; history is unaffected.

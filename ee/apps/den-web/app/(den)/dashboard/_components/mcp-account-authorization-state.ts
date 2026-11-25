@@ -21,11 +21,6 @@ export function resolveMcpAuthorizationPollOutcome(input: {
   return "pending";
 }
 
-/**
- * One poll of the sign-in tab. The tab's state is read before fetching: the
- * callback saves the account and then closes the tab, so only a fetch that
- * started after the tab closed can show the sign-in did not finish.
- */
 export async function pollMcpAuthorization(input: {
   authorizationWindow: Pick<Window, "closed">;
   readConnected: () => Promise<boolean>;
