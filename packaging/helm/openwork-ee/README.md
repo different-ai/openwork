@@ -16,6 +16,39 @@ See [Gateway configuration and stable contracts](../../../ee/apps/gateway/README
 - optional Ingress for web and API hosts
 - pre-install/pre-upgrade migration Job scaffold
 
+## Two-file deployment handoff
+
+1. **Deployment operator:** copy [values.minimal-capabilities.yaml](examples/values.minimal-capabilities.yaml)
+   to `values.yaml`. Replace the example host and bootstrap email, provide HTTPS
+   routing, and pre-create the referenced Secret in the release namespace. See
+   [Migration TCP configuration](#migration-tcp-configuration) for the database
+   requirement. Use this YAML with `helm upgrade --install ... -f values.yaml`.
+   For an existing release, start from its current values; the example is not
+   a replacement for its infrastructure settings and Secret references.
+2. **Organization admin:** copy [org-config.example.json](examples/org-config.example.json)
+   to `acme.config.json`. Replace or remove the placeholder connector and review
+   the workspace policy, skill and team before applying. Once Den is running,
+   open **Config → Import**, upload the JSON and review the plan in merge mode.
+   To omit an area, remove it from both `scope` and `areas`. See the
+   [Org Config format](../../../docs/features/config-blobs/format.md).
+
+Optional per-org previews: a platform admin can add `settings.features` (or
+`settings.preview_flags` on releases that use that name) to `scope` and the
+matching area under `areas.settings`. Use `specVersion: 1` and an item with
+`id` set to an active preview key, its display `name`, and `spec: { "enabled": true }`.
+Leave this out unless you want early access. Import can opt in, not turn previews off.
+
+- Only for deployment-wide environment locks, put supported `config.features` keys in `previews.values.yaml`.
+- Layer it with `-f values.yaml -f previews.values.yaml`; never pass `acme.config.json` to Helm.
+- Keep the overlay out of ordinary installs and remove a lock when its preview retires.
+
+Audit availability and its installation-wide gates stay in `config.audit`.
+To set capture for one organization, import `settings.audit` with
+`spec.captureOn`; `config.audit.captureOn` in Helm values is rejected. The
+organization setting does not grant audit entitlement or override the install gates.
+See the [chart values audit](../../../docs/managed-deployments/helm-values-audit.md)
+for the deployment settings that cannot be replaced by an import.
+
 ## Gateway Compatibility (Chart 0.2.0)
 
 `gateway: {}` is intentionally sparse, with **no canonical defaults** that could
