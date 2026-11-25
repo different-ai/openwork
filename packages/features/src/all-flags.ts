@@ -15,6 +15,7 @@ export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
 export { default as gmailThreadRead } from "@openwork/features/flags/gmail-thread-read"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
+export { default as litellmEntraConnectCheck } from "@openwork/features/flags/litellm-entra-connect-check"
 export { default as lowStorageWarning } from "@openwork/features/flags/low-storage-warning"
 export { default as managedDeploymentAssistants } from "@openwork/features/flags/managed-deployment-assistants"
 export { default as managedDeploymentAwsSignIn } from "@openwork/features/flags/managed-deployment-aws-sign-in"

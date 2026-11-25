@@ -29,9 +29,17 @@ const LITELLM_ADMIN_KEY = "sk-litellm-admin-fixture"
 const TOKEN_URL = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`
 const JWKS_URL = `https://login.microsoftonline.com/${TENANT}/discovery/v2.0/keys`
 
-// A key-based LiteLLM proxy, for the modes that existed before.
+// A key-based LiteLLM proxy, for the modes that existed before, plus optional override for Entra connect-check tests.
+let liteLlmModelsHandler: ((authHeader: string) => { status: number; body: unknown }) | null = null
 const liteLlm = await startFakeHttpServer((request, _body, response) => {
   const path = (request.url ?? "/").split("?")[0]
+  if (path === "/v1/models" && liteLlmModelsHandler) {
+    const result = liteLlmModelsHandler(String(request.headers.authorization ?? ""))
+    response.statusCode = result.status
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify(result.body))
+    return
+  }
   const body = path === "/v1/models" ? { data: [{ id: "gpt-fixture" }, { id: "claude-fixture" }] }
     : path === "/model_group/info" ? { data: [] }
       : path === "/team/list" ? []
@@ -430,6 +438,68 @@ test("a key-based LiteLLM provider and Microsoft Foundry sign-in work as before"
   assert.equal(tokenRequests[0]?.get("scope"), COGNITIVE_SIGN_IN)
   const listed = await admin("GET", "/v1/inference-providers")
   assert.equal(list(field(listed.body, "inferenceProviders")).find((provider) => provider.id === foundryId)?.credentialStatus, "ready")
+})
+
+test("litellmEntraConnectCheck probes the proxy on Entra callback only when enabled and warns on mismatch without blocking sign-in", async () => {
+  const created = await owner("POST", "/v1/inference-providers/litellm", entraProvider({ name: "LiteLLM (Connect Check)", baseUrl: liteLlm.url }))
+  assert.equal(created.status, 201, summary(created))
+  const checkProviderId = text(field(created.body, "inferenceProvider", "id"), "provider id")
+
+  let probeCount = 0
+  const seenBearers: string[] = []
+  let nextResponse: { status: number; body: unknown } = { status: 200, body: { data: [{ id: "gpt-fixture" }, { id: "claude-fixture" }] } }
+  liteLlmModelsHandler = (authHeader) => {
+    probeCount += 1
+    seenBearers.push(authHeader)
+    return nextResponse
+  }
+
+  try {
+    // Flag off by default: callback does not contact LiteLLM.
+    const offSignIn = await signIn(person, checkProviderId)
+    assert.equal(offSignIn.callback.status, 200, summary(offSignIn.callback))
+    assert.equal(probeCount, 0)
+    assert.match(offSignIn.callback.text, /Connection complete/)
+    assert.doesNotMatch(offSignIn.callback.text, /Connection verified with LiteLLM/)
+
+    // Turn on for this organization: verified when all configured models are listed.
+    assert.equal((await den.asPlatformAdmin("PUT", `/v1/admin/organizations/${workspace.orgId}/capabilities`, { capabilities: { litellmEntraConnectCheck: true } })).status, 200)
+    const verifiedSignIn = await signIn(person, checkProviderId)
+    assert.equal(verifiedSignIn.callback.status, 200, summary(verifiedSignIn.callback))
+    assert.equal(probeCount, 1)
+    assert.equal(seenBearers[0], `Bearer ${ACCESS_TOKEN}`)
+    assert.match(verifiedSignIn.callback.text, /Connection verified with LiteLLM\./)
+    assert.doesNotMatch(verifiedSignIn.callback.text, /LiteLLM needs attention/)
+
+    // Missing configured model renders an amber warning while keeping sign-in stored.
+    nextResponse = { status: 200, body: { data: [{ id: "gpt-fixture" }] } }
+    const missingSignIn = await signIn(person, checkProviderId)
+    assert.equal(missingSignIn.callback.status, 200, summary(missingSignIn.callback))
+    assert.match(missingSignIn.callback.text, /LiteLLM needs attention/)
+    assert.match(missingSignIn.callback.text, /claude-fixture/)
+    assert.equal((await usable(person, checkProviderId))?.credentialStatus, "ready")
+
+    // 401 JWT issuer mismatch renders actionable JWT guidance without echoing the token.
+    nextResponse = { status: 401, body: { error: { message: `Invalid issuer for ${ACCESS_TOKEN}` } } }
+    const rejectedSignIn = await signIn(person, checkProviderId)
+    assert.equal(rejectedSignIn.callback.status, 200, summary(rejectedSignIn.callback))
+    assert.match(rejectedSignIn.callback.text, /LiteLLM needs attention/)
+    assert.match(rejectedSignIn.callback.text, /issuer, audience, and v2 access token settings/)
+    assert.equal(rejectedSignIn.callback.text.includes(ACCESS_TOKEN), false)
+
+    // Kill switch immediately stops outbound proxy checks.
+    assert.equal((await den.asPlatformAdmin("PUT", "/v1/admin/features/litellmEntraConnectCheck", { killed: true })).status, 200)
+    const beforeKilled = probeCount
+    const killedSignIn = await signIn(person, checkProviderId)
+    assert.equal(killedSignIn.callback.status, 200, summary(killedSignIn.callback))
+    assert.equal(probeCount, beforeKilled)
+    assert.match(killedSignIn.callback.text, /Connection complete/)
+    assert.equal((await den.asPlatformAdmin("PUT", "/v1/admin/features/litellmEntraConnectCheck", { killed: false })).status, 200)
+    assert.equal((await den.asPlatformAdmin("PUT", `/v1/admin/organizations/${workspace.orgId}/capabilities`, { capabilities: { litellmEntraConnectCheck: null } })).status, 200)
+  } finally {
+    liteLlmModelsHandler = null
+    await owner("DELETE", `/v1/inference-providers/${checkProviderId}`)
+  }
 })
 
 test("no API response carries a token or the client secret", () => {

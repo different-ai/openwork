@@ -31,7 +31,9 @@ import { AwsSsoError, logoutAwsSso } from "@openwork-ee/gateway-upstreams"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeUpstreamCredentials } from "../../llm/inference-provider-lifecycle.js"
 import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
 import { getModelsDevCatalogProviders, getModelsDevProvider } from "../../llm/models-dev.js"
-import { LiteLlmError, createLiteLlmClient, liteLlmStaticModels, normalizeLiteLlmBaseUrl } from "../../llm/litellm.js"
+import { LiteLlmError, createLiteLlmClient, liteLlmStaticModels, normalizeLiteLlmBaseUrl, verifyLiteLlmEntraToken } from "../../llm/litellm.js"
+import { organizationFeatureEnabled } from "../../features.js"
+import { markFeaturesUsed } from "../../feature-usage.js"
 import { isLiteLlmEntraSignIn, liteLlmCatalogProvider } from "../../llm/litellm-settings.js"
 import { liteLlmMemberIssueStatus, provisionLiteLlmMember, pruneLiteLlmIssuedKeys, reconcileLiteLlmIssuedKeys, scheduleLiteLlmProvisioning } from "../../llm/litellm-issued.js"
 import { applyLiteLlmSync, connectLiteLlmMemberKey, createLiteLlmEntraProvider, createLiteLlmProvider, liteLlmAdminKey, updateLiteLlmEntraProvider, updateLiteLlmIssueSettings, disconnectLiteLlmMember, emptyEntraSettings, emptySettings, liteLlmEndpoints, liteLlmErrorResponse, liteLlmMemberSet, planLiteLlmCatalog, planLiteLlmSync, pruneLiteLlmAssignments, readLiteLlmSettings, recordLiteLlmSyncError, replaceLiteLlmSyncKey, verifyLiteLlmKey } from "../../llm/litellm-sync.js"
@@ -1021,6 +1023,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     const cleanupWarning = stateMethod === "google" ? " Cleanup revocation may affect existing Google connections using the same OAuth client, including your previous connection. You may need to reconnect those connections." : ""
     let issuedToken: string | null = null
     const redirectUri = `${publicBase(c.req.raw)}/v1/inference-providers/oauth/callback`
+    let entraAccessToken: string | null = null
     try {
       const exchangeStartedAt = Date.now()
       let values: { kind: "oauth_google" | "oauth_azure"; secret: string; expires_at: Date; scopes: string | null }
@@ -1028,6 +1031,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         const tenantId = set.oauth_tenant_id ?? ""
         const tokens = await exchangeMicrosoftAuthorizationCode({ tenantId, clientId, clientSecret, code: query.code, codeVerifier: attempt.verifier, redirectUri, apiScope: signInScope })
         const identity = await verifyMicrosoftIdentity({ idToken: tokens.idToken, tenantId, clientId, nonce: microsoftOAuthNonce(attempt.verifier, state.state) })
+        entraAccessToken = signInScope !== null ? tokens.accessToken : null
         values = { kind: "oauth_azure", expires_at: new Date(exchangeStartedAt + tokens.expiresIn * 1000), scopes: tokens.scope,
           secret: JSON.stringify({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, tokenType: "Bearer", microsoftIdentity: { ...identity, authorizationRevision: randomBytes(32).toString("base64url"), ...(signInScope === null ? {} : { scope: signInScope }) } }) }
       } else {
@@ -1050,7 +1054,37 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const message = error instanceof OAuthTokenExchangeError ? error.message : `OpenWork could not finish ${brand} sign-in. Try Connect again.`
       return fail(issuedToken ? `${message}${cleanupWarning}` : message, redirectTo, error instanceof OAuthTokenExchangeError ? error.code : "oauth_callback_failed")
     }
-    return redirectTo ? c.redirect(redirectTo, 302) : c.html(connectCallbackPage({ ok: true, name: set.name }))
+    let callbackDetail: string | undefined
+    let callbackWarning: string | undefined
+    if (entraAccessToken !== null && isLiteLlmProviderId(provider.provider_id)) {
+      const checkEnabled = await organizationFeatureEnabled(provider.organization_id, "litellmEntraConnectCheck", { userId: attempt.userId }).catch(() => false)
+      if (checkEnabled) {
+        markFeaturesUsed({ organizationId: provider.organization_id, memberId: state.org_membership_id, keys: ["litellmEntraConnectCheck"] })
+        const upstreamBaseUrl = typeof provider.settings.upstreamBaseUrl === "string" ? provider.settings.upstreamBaseUrl : ""
+        const configuredModels = readLiteLlmSettings(provider.settings)?.catalog.map((model) => model.id) ?? []
+        const check = await verifyLiteLlmEntraToken({ baseUrl: upstreamBaseUrl, accessToken: entraAccessToken, configuredModels })
+        console.info("litellm_entra_connect_check", {
+          requestId,
+          providerId: provider.id,
+          outcome: check.outcome,
+          ...(check.outcome === "rejected"
+            ? { status: check.status, reason: check.reason }
+            : check.outcome === "missing_models"
+              ? { missingCount: check.missingModels.length }
+              : check.outcome === "skipped"
+                ? { status: check.status, reason: check.reason }
+                : { listedCount: check.listedCount }),
+        })
+        if (check.outcome === "verified") callbackDetail = "Connection verified with LiteLLM."
+        else if (check.outcome === "rejected" || check.outcome === "missing_models") callbackWarning = check.warning
+      }
+    }
+    if (redirectTo) {
+      const destination = new URL(redirectTo)
+      if (callbackWarning) destination.searchParams.set("warning", callbackWarning)
+      return c.redirect(destination.toString(), 302)
+    }
+    return c.html(connectCallbackPage({ ok: true, name: set.name, ...(callbackDetail ? { detail: callbackDetail } : {}), ...(callbackWarning ? { warning: callbackWarning } : {}) }))
   })
 
   app.post("/v1/inference-providers/oauth/browser-aws-start", route("Start member AWS sign-in from a signed-in browser", "For Amazon Bedrock member credential sets. Consumes the ten-minute entry handle from oauth/start, with the signed-in browser session of the same user, and starts an IAM Identity Center device sign-in against the set's own Identity Center instance. Returns AWS's approval page and code to show the person, and a new attempt handle for browser-aws-poll. Bearer authentication alone is not accepted.", z.object({ attempt: z.string(), verificationUri: z.string(), verificationUriComplete: z.string(), userCode: z.string(), interval: z.number().int(), expiresIn: z.number().int() }), 200, true, { security: [] }), publicRoute, async (c, next) => {
