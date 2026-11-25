@@ -42,7 +42,7 @@ test("an administrator downloads private work with Whole organization and review
     await target.see({ text: "Applied" }, { timeoutMs: 60_000 });
     const creator = user.on(await world.joinCreator());
     await creator.see({ testId: "library-screen" }, { timeoutMs: 60_000 });
-    await creator.click({ text: world.name });
+    await creator.click({ role: "link", label: world.name });
     await creator.click({ text: "Field notes migration" });
     await creator.see({ text: "Read the synthetic field notes." });
     await creator.click({ role: "link", label: "Edit skill" });
