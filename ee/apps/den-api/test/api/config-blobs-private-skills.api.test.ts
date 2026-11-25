@@ -56,7 +56,7 @@ test("Config moves a private skill and its file to a member joining later, witho
     const plan = expectStatus(await b("GET", `/v1/config-blobs/change-requests/${id}/plan`), 200)
     assert.equal(field(plan, "plan", "summary", "blocking"), 0, JSON.stringify(plan))
     const planHash = text(field(plan, "plan", "planHash"), "plan hash")
-    expectStatus(await b("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash }), 202)
+    expectStatus(await b("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash }), 200)
     const applied = await settle(b, id)
     assert.equal(field(applied, "changeRequest", "status"), "applied", JSON.stringify(applied))
   }
