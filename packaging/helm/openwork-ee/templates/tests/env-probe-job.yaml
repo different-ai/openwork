@@ -140,6 +140,20 @@ spec:
               console.log("OpenWork Helm env probe passed.");
               console.log(`DEN_ORG_MODE=${process.env.DEN_ORG_MODE}; PROVISIONER_MODE=${process.env.PROVISIONER_MODE}; NODE_OPTIONS=${JSON.stringify(process.env.NODE_OPTIONS || "")}`);
               if (process.env.NODE_EXTRA_CA_CERTS) console.log(`NODE_EXTRA_CA_CERTS=${process.env.NODE_EXTRA_CA_CERTS} is loaded by node.`);
+              {{- if (.Values.tests).liveHealthCheck }}
+
+              const healthUrl = {{ printf "http://%s:%v/health" (include "openwork-ee.denApiServiceName" .) .Values.denApi.service.port | toJson }};
+              async function checkHealth() {
+                const response = await fetch(healthUrl, { redirect: "error", signal: AbortSignal.timeout(10000) });
+                await response.body?.cancel();
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                console.log(`Den API health probe passed: ${healthUrl} (HTTP ${response.status}).`);
+              }
+              checkHealth().catch((error) => {
+                console.error(`Den API health probe failed: ${healthUrl}: ${error.message}`);
+                process.exitCode = 1;
+              });
+              {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "openwork-ee.configName" . }}
@@ -163,6 +177,7 @@ spec:
             - name: DEN_ALLOW_PRIVATE_MCP_URLS
               value: "1"
             {{- end }}
+            {{- include "openwork-ee.legacyStubEnv" . | nindent 12 }}
             {{- range $key, $value := .Values.denApi.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}

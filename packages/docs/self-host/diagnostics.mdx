@@ -47,6 +47,12 @@ Installation administrators see each service and how long its check took:
 
 Installation administrators are the people on your installation's administrator list: the first administrator from setup, plus anyone in `DEN_BOOTSTRAP_ADMIN_EMAILS`. Organization owners and admins don't get installation details unless they are on that list.
 
+## Check a new installation
+
+First check `/health` and `/ready` in your deployment. Those endpoints do not prove that organization settings, provider credentials, or integrations work. If your Helm chart supports the optional live health test, opt in with `tests.liveHealthCheck: true` before running `helm test`. This adds a request to Den API’s in-cluster `/health` endpoint; it does not check readiness, external ingress, or the result of an Org Config import.
+
+After `/setup` and any [Org Config import](/self-host/export-import-configuration), open **Settings › Diagnostics**. Check the installation and AI provider sections for AI Gateway, the Workbot and headless runner checks for Workbot, and the Connectors section for the Slack assistant. Diagnostics does not run a scheduled Automation or start a Cloud computer; verify those with an approved test run on deployments that support them.
+
 ## Check from a script
 
 Use an organization API key to read the same data after a deploy:

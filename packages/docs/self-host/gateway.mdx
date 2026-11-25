@@ -1,9 +1,11 @@
 ---
-title: "Enable OpenWork Gateway"
-description: "Configure Gateway with matching images, explicit destinations, and shared secrets for admins in every organization."
+title: "Enable AI Gateway"
+description: "Install AI Gateway with matching images and configure organization providers, credentials, and access."
 ---
 
-OpenWork Gateway routes model requests to configured providers with server-held credentials, model groups, credential sets, and access grants. It runs from `ee/apps/gateway`, normally on port `8791`.
+AI Gateway routes model requests to configured providers with server-held credentials, model groups, credential sets, and access grants. It runs from `ee/apps/gateway`, normally on port `8791`.
+
+Enable AI Gateway on the installation first (`gateway.enabled: true` on Helm). After `/setup`, configure providers, credentials and access in **AI Gateway › AI Providers**, or review and apply those supported settings from `<org>.config.json` in [Settings › Config › Import](/self-host/export-import-configuration). Neither a dashboard save nor an import can turn on the installation capability.
 
 It is **not** `den-gateway`, the separate OpenWork Web proxy, and it is not the [OpenWork MCP gateway](/cloud/run-in-the-cloud/cloud-mcp). **OpenWork Models** is still the managed model catalog and subscription product. Its billing, keys, and legacy API contracts are separate.
 
