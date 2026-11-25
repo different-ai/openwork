@@ -23,15 +23,43 @@ This guide uses **Agent Platform** for the Google product and retains the provid
 
 ### Prepare Google Cloud
 
-1. Open the [Google Cloud console](https://console.cloud.google.com/) and select a project with billing enabled, or create a dedicated test project and link it to a billing account. Copy the **Project ID** from the project dashboard.
-2. Under **APIs & Services → Library**, enable `aiplatform.googleapis.com`. Google may label it **Gemini Enterprise Agent Platform API** or **Vertex AI API**.
-3. Open **Agent Platform → Model Garden** and pick a managed Gemini chat model. Check its model ID and supported locations. Managed Gemini inference uses Google's publisher endpoint, so you can call it as soon as your project has access to the model. For Claude, also complete the [model access steps](#claude).
-4. Under **IAM & Admin → Service Accounts**, create a dedicated service account for OpenWork. Grant it **Agent Platform User** (also called **Vertex AI User**, `roles/aiplatform.user`) on the project, or a custom role that allows inference with `aiplatform.endpoints.predict`.
-5. Open the service account and select **Keys → Add key → Create new key → JSON**. Keep the downloaded file private. If your organization blocks service account keys, use [per-member Google sign-in](#set-up-per-member-google-sign-in) where available. [Google's service account key documentation](https://docs.cloud.google.com/iam/docs/keys-create-delete) explains the required permissions and policies.
+<Steps>
+  <Step title="Select a Google Cloud project">
+    Open the [Google Cloud console](https://console.cloud.google.com/) and select a project with billing enabled, or create a dedicated test project and link it to a billing account. Copy the **Project ID** from the project dashboard.
+  </Step>
 
-<Frame caption="Confirm the Agent Platform API shows Enabled in your Google Cloud project.">
-  <img src="/images/google-agent-platform/vertex-api-enabled.jpg" alt="Google Cloud API details showing aiplatform.googleapis.com with status Enabled" />
-</Frame>
+  <Step title="Enable the Agent Platform API">
+    Under **APIs & Services → Library**, enable `aiplatform.googleapis.com`. Google may label it **Gemini Enterprise Agent Platform API** or **Vertex AI API**.
+
+    <Frame caption="Confirm the Agent Platform API shows Enabled in your Google Cloud project.">
+      <img src="/images/google-agent-platform/vertex-api-enabled.jpg" alt="Google Cloud API details showing aiplatform.googleapis.com with status Enabled" />
+    </Frame>
+  </Step>
+
+  <Step title="Choose a managed model">
+    Open **Model Garden** from **Agent Platform**. In some console views, this appears under **Gemini Platform → Models**. Select a managed Gemini chat model and check its model ID and supported locations. Managed Gemini inference uses Google's publisher endpoint. For Claude, also complete the [model access steps](#claude).
+
+    <Frame caption="The Gemini 4 Neon model card in Google Cloud Model Garden.">
+      <img src="/images/google-agent-platform/model-garden-gemini.jpg" alt="Gemini 4 Neon selected in Model Garden, with its publisher model ID visible" />
+    </Frame>
+  </Step>
+
+  <Step title="Create a service account and grant inference access">
+    Go to **IAM & Admin → Service Accounts → Create service account**. Enter a name for the dedicated account and select **Create and continue**. Under **Permissions**, grant **Agent Platform User** (also called **Vertex AI User**, `roles/aiplatform.user`) on the project, or a custom role that allows inference with `aiplatform.endpoints.predict`.
+
+    <Frame caption="Create a dedicated service account and continue to the permissions step.">
+      <img src="/images/google-agent-platform/create-service-account.jpg" alt="Google Cloud Create service account form with name, ID, and Create and continue controls" />
+    </Frame>
+  </Step>
+
+  <Step title="Download a JSON key">
+    Open the service account and select **Keys → Add key → Create new key**. Select **JSON**, then **Create** to download the key. Keep the downloaded file private. If your organization blocks service account keys, use [per-member Google sign-in](#set-up-per-member-google-sign-in) where available. [Google's service account key documentation](https://docs.cloud.google.com/iam/docs/keys-create-delete) explains the required permissions and policies.
+
+    <Frame caption="Select JSON as the key type before downloading the key file.">
+      <img src="/images/google-agent-platform/select-json-key.jpg" alt="Google Cloud private key dialog with JSON selected and the Create button visible" />
+    </Frame>
+  </Step>
+</Steps>
 
 ### Add and test Vertex in OpenWork Cloud
 
