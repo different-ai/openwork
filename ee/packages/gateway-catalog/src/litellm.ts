@@ -67,3 +67,52 @@ export function withLiteLlmProvider(raw: unknown): JsonRecord {
 export function liteLlmSpendTrackingEnabled(credentialMode: "org" | "member"): boolean {
   return credentialMode === "org"
 }
+
+export type LiteLlmKeySource = "personal" | "issued" | "entra"
+
+export function liteLlmKeySource(provider: { provider_id: string; settings: unknown }): LiteLlmKeySource | null {
+  if (!isLiteLlmProviderId(provider.provider_id) || !isRecord(provider.settings)) return null
+  const litellm = provider.settings.litellm
+  if (!isRecord(litellm) || litellm.mode !== "member") return null
+  if (litellm.keySource === "issued" || litellm.keySource === LITELLM_ENTRA_KEY_SOURCE) return litellm.keySource
+  return "personal"
+}
+
+export type LiteLlmAuthErrorReason = "model_denied" | "jwt_mismatch" | "user_not_found" | "budget_exceeded" | "other"
+
+function extractErrorText(rawBody: string): string {
+  const trimmed = rawBody.trim()
+  if (!trimmed) return ""
+  try {
+    const parsed: unknown = JSON.parse(trimmed)
+    if (isRecord(parsed)) {
+      const error = parsed.error
+      if (typeof error === "string") return error
+      if (isRecord(error) && typeof error.message === "string") return error.message
+      const detail = parsed.detail
+      if (typeof detail === "string") return detail
+      if (isRecord(detail)) {
+        if (typeof detail.error === "string") return detail.error
+        if (typeof detail.message === "string") return detail.message
+      }
+      if (typeof parsed.message === "string") return parsed.message
+    }
+  } catch {
+    return trimmed
+  }
+  return trimmed
+}
+
+export function classifyLiteLlmAuthError(rawBody: string): LiteLlmAuthErrorReason {
+  const text = extractErrorText(rawBody)
+  if (!text) return "other"
+  if (/budget.{0,30}(?:exceeded|limit|reached)|(?:exceeded|max).{0,20}budget/i.test(text)) return "budget_exceeded"
+  if (/user(?:_id)?\b.{0,30}(?:not found|does not exist|not in db|not valid)|unknown user|not a valid user/i.test(text)) return "user_not_found"
+  if (/invalid issuer|audience\b.{0,24}(?:match|invalid|mismatch)|invalid audience|invalid jwt|signature verification|jwks|jwt.{0,24}(?:invalid|expired|verify|validation)|token.{0,20}(?:invalid|expired|issuer|audience)/i.test(text)) {
+    return "jwt_mismatch"
+  }
+  if (/not available for this|not allowed to access model|model\b.{0,40}(?:not allowed|not permitted|not available|not found|access denied)|invalid model|team.{0,30}not allowed.{0,20}model|key.{0,30}not allowed.{0,20}model/i.test(text)) {
+    return "model_denied"
+  }
+  return "other"
+}

@@ -91,7 +91,7 @@ def headlines(report):
         for run in ('cold', 'warm'):
             results = [summarize(phase, f'headline-in-n{n}', f'permissions-{run}') for phase in ('before', 'after')]
             print(f"| Signed in, {n} workspaces, +150 ms | {run} | {' | '.join(results)} |")
-    for plan, scenario in [('on', 'permissions-cold'), ('slow', 'permissions-den-slow'), ('off', 'flag-off')]:
+    for plan, scenario in [('on', 'permissions-cold'), ('slow', 'permissions-den-slow')]:
         results = [summarize(phase, f'signed-out-{plan}', scenario) for phase in ('before', 'after')]
         print(f"| Signed out, {plan} | cold | {' | '.join(results)} |")
 

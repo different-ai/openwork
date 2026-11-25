@@ -27,7 +27,6 @@ export type SidebarContextValue = {
   onOpenDeleteSession?: (sessionId: string, workspaceId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => void;
   onArchiveSessions?: (sessions: { workspaceId: string; sessionId: string }[], archived: boolean) => void;
-  multiSelectEnabled: boolean;
   isSessionArchived: (workspaceId: string, sessionId: string) => boolean;
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;

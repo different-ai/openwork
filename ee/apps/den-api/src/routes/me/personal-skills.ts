@@ -6,7 +6,6 @@ import {
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { bodyLimit } from "hono/body-limit"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, userSessionRoute, type OrganizationContextVariables } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
@@ -45,7 +44,7 @@ export function registerMePersonalSkillsRoutes<T extends { Variables: Variables 
   const errors = {
     401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
     403: jsonResponse("A signed-in user session and the workspace's recent sign-in policy are required.", forbiddenSchema),
-    404: jsonResponse("Workspace not found or private skill portability is off.", notFoundSchema),
+    404: jsonResponse("Workspace not found.", notFoundSchema),
     413: jsonResponse("The bundle is too large.", invalidRequestSchema),
   }
   app.get(
@@ -62,7 +61,6 @@ export function registerMePersonalSkillsRoutes<T extends { Variables: Variables 
     noStore,
     userSessionRoute(),
     orgMemberRoute(),
-    requireFeature("personalSkillPortability"),
     requireFreshSession,
     async (c) => {
       const organizationContext = c.get("organizationContext")
@@ -88,7 +86,6 @@ export function registerMePersonalSkillsRoutes<T extends { Variables: Variables 
     noStore,
     userSessionRoute(),
     orgMemberRoute(),
-    requireFeature("personalSkillPortability"),
     requireFreshSession,
     bodyLimit({ maxSize: PERSONAL_SKILLS_MAX_BYTES, onError: (c) => c.json({ error: "personal_skills_bundle_too_large", message: "The private skills bundle must fit within 8 MiB." }, 413) }),
     jsonValidator(bundleSchema),

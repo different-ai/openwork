@@ -2,7 +2,8 @@
 
 OpenWork installed in a customer's own cloud account, launched and monitored
 from hosted OpenWork. AWS uses CloudFormation/CodeBuild; GCP adds a
-customer-approved Cloud Shell installer and Cloud Run platform behind the
+customer-approved installer that runs as a Cloud Build build in the customer's
+project, and a Cloud Run platform, behind the
 default-off `managedDeployments` rollout, shared with AWS and the deployment
 agent tools. Azure remains unsupported.
 GCP offline validation is not a live-install or publication receipt; do not
@@ -19,7 +20,7 @@ aws/
     modules/health-agent/  AWS health agent building block
 gcp/
   bootstrap/         Customer approval tutorial (immutable GCS artifact)
-  runner/            Cloud Shell bootstrap and impersonated Terraform runner
+  runner/            Approval and bootstrap, then the Terraform runner in Cloud Build
   health/            Read-only Cloud Run health job
   terraform/         Cloud Run, Cloud SQL, HTTPS load balancer, DNS and secrets
   README.md          GCP permission, identity, state and rollout gates
@@ -388,7 +389,7 @@ these failures or count process/HTTPS/backup health as an inference completion.
 1. **Bootstrap** the customer approves in their own console. It creates only an
    installer identity, a runner and encrypted, retained Terraform state. AWS:
    CloudFormation quick-create. Azure: a "Deploy to Azure" ARM/Bicep template.
-   GCP: Infrastructure Manager or a Cloud Shell tutorial.
+   GCP: a Cloud Shell approval that bootstraps and starts a Cloud Build build.
 2. **Runner** that enrolls with a cloud identity proof, verifies the release
    checksum, runs `terraform plan` + `apply` against the cloud root, refuses to
    delete data-bearing resources, verifies services and HTTPS health, and reports

@@ -9,7 +9,6 @@ import { gatewayEnvironment, startAcmeGateway } from "../../worlds/lib/acme-gate
 import { isRecord, records } from "./library.ts";
 import { seededOrganizationId } from "./organization-capabilities.ts";
 
-export const LITELLM_ENTRA_FEATURE = "litellmEntraMemberSignIn";
 /** The name the proxy's model_list gives its one model; the admin types it into OpenWork. */
 export const LITELLM_ENTRA_MODEL = "gpt-4o-mini";
 export const LITELLM_ENTRA_MODEL_OUTPUT_LIMIT = 16_384;
@@ -118,7 +117,7 @@ async function answerLoginHost(stack: AsyncDisposableStack, surface: AttachedSur
  *   as login.microsoftonline.com through an HTTPS proxy it is told to trust; the member's browser is answered
  *   by it over CDP; LiteLLM reads its signing keys. A real tenant is never contacted.
  *
- * The feature starts off. The owner is signed in on Add a provider › LiteLLM; the member's browser is signed in
+ * The owner is signed in on Add a provider › LiteLLM; the member's browser is signed in
  * to OpenWork and not to Microsoft.
  */
 export async function liteLlmEntraSignInWorld(seed: Seed, { place }: { place: Place }) {
@@ -203,21 +202,6 @@ export async function liteLlmEntraSignInWorld(seed: Seed, { place }: { place: Pl
       /** What the admin copies from the Entra app registration and the proxy's configuration. */
       setup: { proxyUrl: ingress.origin, tenantId: entra.tenantId, clientId: entra.clientId, clientSecret: entra.clientSecret, scope: entra.apiScope, model: LITELLM_ENTRA_MODEL },
       memberObjectId: entra.accounts.member?.objectId ?? "",
-      /** The platform administrator's switch for this organization, as /admin sets it. */
-      async setFeature(enabled: boolean) {
-        const changed = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-          method: "PUT", body: JSON.stringify({ capabilities: { [LITELLM_ENTRA_FEATURE]: enabled } }),
-        });
-        if (!changed.response.ok) throw new Error(`Setting ${LITELLM_ENTRA_FEATURE} failed: HTTP ${changed.response.status}.`);
-      },
-      /** What the API answers an admin who asks for this mode directly. */
-      async addProviderThroughApi() {
-        const answered = await seed.api(den.admin, "/v1/inference-providers/litellm", {
-          method: "POST", body: JSON.stringify({ name: "LiteLLM", baseUrl: ingress.origin, mode: "entra", oauthTenantId: entra.tenantId, oauthClientId: entra.clientId,
-            oauthClientSecret: entra.clientSecret, oauthScope: entra.apiScope, modelIds: [LITELLM_ENTRA_MODEL], allMembers: true }),
-        });
-        return { status: answered.response.status, error: isRecord(answered.body) ? text(answered.body.error) : null };
-      },
       provider,
       /** The admin adds the provider's redirect URI to the app registration, as its page tells them to. */
       addRedirectUri: (uri: string) => entra.addRedirectUri(uri),

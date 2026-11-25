@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
-import { Check, Globe, LockKeyhole, Plus, RefreshCw, User, Users } from "lucide-react";
+import { Check, Globe, Plus, RefreshCw, User, Users } from "lucide-react";
 import type { GatewayAccessGrantWrite } from "@openwork/types/den/gateway";
 import { createAuditOperationContext } from "@openwork/types/den/audit";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
@@ -17,13 +17,13 @@ import { DenSegmented } from "../../_components/ui/segmented";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, useOrgInferenceProviders } from "./inference-provider-data";
 import { ProviderRemovalUsageLimits, useProviderRemovalUsageLimits } from "./provider-removal-usage-limits";
 import type { DenInferenceProviderDetails } from "./inference-provider-request";
 import {
-  EMPTY_LITELLM_ENTRA, LITELLM_DOC_URL, LITELLM_ENTRA_DOC_URL, LITELLM_ENTRA_FEATURE, buildLiteLlmEntraUpdateBody, createLiteLlmProvider, liteLlmAccessGroupId, liteLlmAccessTitle,
+  EMPTY_LITELLM_ENTRA, LITELLM_DOC_URL, LITELLM_ENTRA_DOC_URL, buildLiteLlmEntraUpdateBody, createLiteLlmProvider, liteLlmAccessGroupId, liteLlmAccessTitle,
   liteLlmAttentionLabel, liteLlmCreateError, liteLlmEntraError, liteLlmEntraUpdateSignsPeopleOut, liteLlmIssueStrategyLabel, liteLlmKeyLabel,
   liteLlmMirrorFallbackLabel, liteLlmModeLabel, liteLlmModeOptions, liteLlmSpendLabel, liteLlmStatusMode, liteLlmSyncSummary, liteLlmSyncedLabel, replaceLiteLlmKey, syncLiteLlmProvider,
   updateLiteLlmEntra, updateLiteLlmIssue, type LiteLlmEntraInput, type LiteLlmIssueStrategy, type LiteLlmMirrorFallback, type LiteLlmMode,
@@ -137,8 +137,7 @@ function LiteLlmEntraFields({ value, onChange, disabled = false, secretSaved = f
 export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
-  const { orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
-  const entraAvailable = orgFeatureEnabled(orgContext, LITELLM_ENTRA_FEATURE);
+  const { orgSlug, runReauthableAction } = useOrgDashboard();
   const [baseUrl, setBaseUrl] = useState("");
   const [mode, setMode] = useState<LiteLlmMode>("org");
   const [entra, setEntra] = useState<LiteLlmEntraInput>(EMPTY_LITELLM_ENTRA);
@@ -184,9 +183,8 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
         <label className={LABEL}>Proxy URL
           <DenInput className="mt-1.5 font-mono text-[12px]" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://litellm.example.com" data-testid="litellm-base-url" autoComplete="off" />
         </label>
-        <DenSegmented<LiteLlmMode> className="mt-3" aria-label="Authentication" value={mode} options={liteLlmModeOptions(entraAvailable)}
+        <DenSegmented<LiteLlmMode> className="mt-3" aria-label="Authentication" value={mode} options={liteLlmModeOptions()}
           onChange={(next) => { setMode(next); setApiKey(""); }} />
-        {entraAvailable ? null : <DenNotice className="mt-3" tone="neutral" icon={LockKeyhole} message="Microsoft sign-in for LiteLLM is turned off for your account. Ask your deployment administrator to turn it on." />}
         {mode === "issued" ? (
           <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
             <span className="flex items-center gap-2 text-[12px] text-gray-700">Keys
@@ -235,11 +233,10 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
 export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { provider: DenInferenceProviderDetails; reload: () => Promise<void>; embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
-  const { orgId, orgSlug, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
+  const { orgId, orgSlug, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
   const status = provider.litellm;
   const uiMode: LiteLlmMode = status ? liteLlmStatusMode(status) : "org";
   const entraMode = uiMode === "entra";
-  const entraAvailable = orgFeatureEnabled(orgContext, LITELLM_ENTRA_FEATURE);
   const [busy, setBusy] = useState<"sync" | "key" | "access" | "issue" | "entra" | "remove" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -406,7 +403,6 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
       {entraMode ? (
         <section className={`${CARD} mt-3`} aria-labelledby="litellm-entra-heading">
           <h2 id="litellm-entra-heading" className={CARD_TITLE}>Microsoft sign-in</h2>
-          {entraAvailable ? null : <DenNotice className="mt-3" tone="neutral" icon={LockKeyhole} message="Read only. Microsoft sign-in for LiteLLM is turned off for your account. Ask your deployment administrator to turn it on." />}
           {provider.oauthCallbackUrl ? (
             <div className={`${ROW} mt-1 border-b border-gray-100`}>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5"><span className="text-[12px] font-medium text-gray-700">Redirect URI</span><code className="break-all font-mono text-[12px] text-gray-900" data-testid="litellm-entra-redirect-uri">{provider.oauthCallbackUrl}</code></span>
@@ -418,11 +414,11 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
               }}>{callbackCopied ? "Copied" : "Copy redirect URI"}</DenButton>
             </div>
           ) : <DenNotice className="mt-3" tone="neutral" message="Redirect URI unavailable. Ask your deployment administrator to configure the public Den API origin." />}
-          <LiteLlmEntraFields value={entra} secretSaved={set?.hasOauthClientSecret === true} disabled={!entraAvailable || busy !== null}
+          <LiteLlmEntraFields value={entra} secretSaved={set?.hasOauthClientSecret === true} disabled={busy !== null}
             onChange={(next) => { setEntraDraft(next); setSignOutAcknowledged(false); }} />
           {entraSignsPeopleOut ? <label className="mt-3 flex items-center gap-3 text-[13px] text-gray-900"><DenSwitch checked={signOutAcknowledged} onChange={setSignOutAcknowledged} aria-label="Confirm that people sign in again" testId="litellm-entra-confirm-sign-out" /><span>Sign everyone out on save. People sign in with Microsoft again.</span></label> : null}
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <DenButton size="sm" loading={busy === "entra"} disabled={!entraAvailable || !entraChanges || (busy !== null && busy !== "entra")} onClick={() => void saveEntra()} data-testid="litellm-entra-save">Save changes</DenButton>
+            <DenButton size="sm" loading={busy === "entra"} disabled={!entraChanges || (busy !== null && busy !== "entra")} onClick={() => void saveEntra()} data-testid="litellm-entra-save">Save changes</DenButton>
             {entraDraft ? <DenButton size="sm" variant="ghost" disabled={busy !== null} onClick={() => { setEntraDraft(null); setSignOutAcknowledged(false); setError(null); }}>Discard changes</DenButton> : null}
             <Link href={LITELLM_ENTRA_DOC_URL} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>Read setup instructions</Link>
           </div>

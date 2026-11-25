@@ -1,15 +1,14 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { sessionMultiSelectWorld } from "../worlds/session-multi-select.ts";
+import { sessionSelectionWorld } from "../worlds/session-multi-select.ts";
 
-const test = spec.world(sessionMultiSelectWorld, {
+const test = spec.world(sessionSelectionWorld, {
   timeout: 600_000,
   resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
 });
 
 const selectedRows = '[data-session-multi-selected="true"]';
 const bar = "[data-session-selection-bar]";
-const multiSelectOn = '[data-session-multi-select="on"]';
 
 test("a member selects three sessions with Ctrl-click and Shift-click and archives them in one step, with one undo", async ({ world, user, probe, step, evidence }) => {
   const [draft, compare, summarize, offsite] = world.sessions;
@@ -22,33 +21,9 @@ test("a member selects three sessions with Ctrl-click and Shift-click and archiv
   const toasts = async () => (await probe.dom("[data-sonner-toast]")).elements.map(element => element.text.replace(/\s+/g, " ").trim());
   await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
 
-  await step("before: Ctrl-clicking a session in the sidebar just opens it", async () => {
+  await step("Shift-click selects a range of three from the open session, and Ctrl-click toggles a fourth in and out", async () => {
     await user.see("composer", { timeoutMs: 60_000 });
     for (const session of world.sessions) await user.see(row(session.sessionId), { timeoutMs: 60_000 });
-    await user.click(row(compare.sessionId), { modifiers: ["Control"] });
-    const route = await probe.eventually(() => probe.hash(), {
-      within: 15_000, label: "the Ctrl-clicked session opens", until: hash => hash.includes(compare.sessionId),
-    });
-    const selected = await selectedIds();
-    const bars = (await probe.dom(bar)).elements.length;
-    const enabled = (await probe.dom(multiSelectOn)).elements.length;
-    evidence.recordAssertionEvidence(
-      "Without multi-select, a modified click opens one session and selects nothing",
-      `opened=${compare.title}; selected rows=${selected}; selection bars=${bars}; multi-select lists=${enabled}`,
-      route.includes(compare.sessionId) && selected === 0 && bars === 0 && enabled === 0,
-    );
-    await user.screenshot();
-    expect(selected).toBe(0);
-    expect(bars).toBe(0);
-  });
-
-  await step("after: Shift-click selects a range of three from the open session, and Ctrl-click toggles a fourth in and out", async () => {
-    await world.turnOnMultiSelect();
-    await user.reload();
-    await user.see(row(offsite.sessionId), { timeoutMs: 60_000 });
-    await probe.eventually(() => probe.dom(multiSelectOn), {
-      within: 60_000, label: "the organization's multi-select setting reaches the sidebar", until: value => value.elements.length === 1,
-    });
     await user.click(row(summarize.sessionId));
     await probe.eventually(() => probe.hash(), {
       within: 15_000, label: "the starting session opens", until: hash => hash.includes(summarize.sessionId),
@@ -72,7 +47,7 @@ test("a member selects three sessions with Ctrl-click and Shift-click and archiv
     expect(offsiteSelected).toBe(0);
   });
 
-  await step("after: one Archive click archives all three and one Undo brings them back", async () => {
+  await step("one Archive click archives all three and one Undo brings them back", async () => {
     await user.click({ role: "button", label: "Archive 3 sessions" });
     const shown = await probe.eventually(() => toasts(), {
       within: 30_000, label: "one toast reports the three archived sessions", until: list => list.some(entry => entry.includes("3 sessions archived")),

@@ -6,7 +6,7 @@ import { workbotSettingsInTeams } from "../_lib/workbot-settings-rollout";
 import { Popover } from "@base-ui/react/popover";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -65,7 +65,6 @@ import {
   buildDashboardNavSections,
   type DashboardNavChild,
 } from "../_lib/dashboard-navigation";
-import { denShellAppearance, readRememberedDenShell, rememberDenShell, subscribeToRememberedDenShell } from "../_lib/den-shell-appearance";
 import { DenCommandPalette } from "./command-palette/den-command-palette";
 import {
   DenSearchBar,
@@ -409,9 +408,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     commandPaletteWasOpenRef.current = commandPaletteOpen;
   }, [commandPaletteOpen]);
 
-  const rememberedShell = useSyncExternalStore(subscribeToRememberedDenShell, readRememberedDenShell, () => null);
-  const shellAppearance = denShellAppearance(orgContext, rememberedShell);
-  useEffect(() => { rememberDenShell(orgContext); }, [orgContext]);
 
   const sidebarQueriesEnabled = !orgSelectionOpen && !isOnboarding && Boolean(activeOrg);
   const libraryModels = useLibraryModels(sidebarQueriesEnabled);
@@ -822,7 +818,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div data-den-shell={shellAppearance} className="flex min-h-screen flex-col bg-[var(--den-shell-canvas)] md:h-screen md:flex-row">
+    <div data-den-shell="" className="flex min-h-screen flex-col bg-[var(--den-shell-canvas)] md:h-screen md:flex-row">
       <WorkspaceFavicon metadata={orgContext?.organization.metadata} />
       <aside className="hidden min-h-0 shrink-0 overflow-hidden border-r border-[var(--den-shell-line)] bg-[var(--den-shell-sidebar)] md:flex md:h-screen md:w-[260px] md:flex-col">
         {sidebarContent}

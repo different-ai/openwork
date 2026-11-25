@@ -16,6 +16,7 @@ export type ExtensionCardProps = {
   iconSlug?: string;
   iconSrc?: string;
   url?: string;
+  icon?: ReactNode;
   taxonomy?: ExtensionTaxonomy;
   connected?: boolean;
   enablement?: EnablementResult[];
@@ -35,6 +36,7 @@ type ReadinessState = "ready" | "partial" | "none";
 function ExtensionIcon(props: {
   name: string;
   iconSrc: string | null;
+  icon?: ReactNode;
   connecting: boolean;
 }) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
@@ -42,6 +44,8 @@ function ExtensionIcon(props: {
     <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-dls-hover">
       {props.connecting ? (
         <Loader2 size={15} className="animate-spin text-dls-secondary" />
+      ) : props.icon ? (
+        <div className="flex size-5 items-center justify-center">{props.icon}</div>
       ) : props.iconSrc && failedSrc !== props.iconSrc ? (
         <div className="flex size-5 items-center justify-center rounded-md bg-white">
           <img src={props.iconSrc} alt="" width={16} height={16} loading="lazy" style={{ display: "block" }} onError={() => setFailedSrc(props.iconSrc)} />
@@ -79,7 +83,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
   return (
     <div className="group flex h-[52px] w-full items-center gap-3" data-library-integrated-row>
       <button type="button" disabled={disabled || connecting} onClick={onClick} data-library-row={name} title={summary || undefined} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <ExtensionIcon name={name} iconSrc={resolvedIconSrc} connecting={connecting} />
+        <ExtensionIcon name={name} iconSrc={resolvedIconSrc} icon={props.icon} connecting={connecting} />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-[13px] font-medium text-foreground">{name}</span>
           <span data-library-description className="truncate text-xs text-muted-foreground">{summary || extensionTaxonomyLabel(taxonomy)}</span>

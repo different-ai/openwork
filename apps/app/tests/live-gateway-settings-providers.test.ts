@@ -7,6 +7,7 @@ import {
   resolveGatewayProviderIds,
   resolveLiveGatewayConnectProviders,
   resolveLiveGatewayImportedProviders,
+  resolveLiveGatewayReadyProviders,
   resolvePendingGatewaySignIns,
   type LiveGatewayProvider,
 } from "../src/react-app/domains/connections/provider-auth/cloud-provider-config";
@@ -173,5 +174,13 @@ describe("listOrgUsableGatewayProviders", () => {
     await withFetch(() => Response.json({ error: "forbidden" }, { status: 403 }), async (client) => {
       await expect(client.listOrgUsableGatewayProviders("org-a")).rejects.toThrow();
     });
+  });
+});
+
+describe("AI Providers shows the organization's ready Gateway providers", () => {
+  test("lists every provider with usable models and skips ones already listed or still waiting for sign-in", () => {
+    expect(resolveLiveGatewayReadyProviders([ready, memberOnly, mixed, missing]).map((provider) => provider.id)).toEqual(["ipr_ready", mixed.id]);
+    expect(resolveLiveGatewayReadyProviders([ready, mixed], ["ipr_ready"]).map((provider) => provider.id)).toEqual([mixed.id]);
+    expect(resolveLiveGatewayReadyProviders(null)).toEqual([]);
   });
 });

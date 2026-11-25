@@ -5,7 +5,6 @@ import {
   renderRestoreMarkerExistsCommand,
   type OpenWorkBootstrapConfig,
   type OpenWorkCheckpointConfig,
-  type OpenWorkDocumentsEditorConfig,
 } from "../bootstrap/openwork-runtime"
 import { runtimeProviderErrorCode } from "@openwork/sandbox"
 import type {
@@ -73,7 +72,6 @@ export type CloudRuntimeOrchestratorConfig = {
   pollIntervalMs: number
   stopFlushTimeoutMs?: number
   activityHeartbeatUrl: (workerId: string) => string
-  documentsEditor?: OpenWorkDocumentsEditorConfig
   bootstrap: {
     cloudComputerDisplay?: string
     imageDescription: string
@@ -188,7 +186,6 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
       cloudComputerDisplay: config.bootstrap.cloudComputerDisplay,
       imageDescription: config.bootstrap.imageDescription,
       rebuildHint: config.bootstrap.rebuildHint,
-      ...(config.documentsEditor ? { documentsEditor: config.documentsEditor } : {}),
     }
   }
 

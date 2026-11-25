@@ -1,11 +1,10 @@
 import { Hono, type MiddlewareHandler } from "hono"
-import { bodyLimit } from "hono/body-limit"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
-import { documentIdSchema, documentSaveSchema, editorDocumentSchema } from "@openwork/documents/model"
-import { openExcel, openWord, patchExcel, patchWord } from "@openwork/documents/office"
+import { documentIdSchema, editorDocumentSchema } from "@openwork/documents/model"
+import { openExcel, openWord } from "@openwork/documents/office"
 import { MicrosoftGraphScopeError } from "../../capability-sources/microsoft-graph.js"
-import { jsonValidator, paramValidator, queryValidator } from "../../middleware/index.js"
+import { paramValidator, queryValidator } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
 import { documentMediaKind, documentMediaRange, documentMediaRangeHeader, documentMediaResponse, documentMediaUnsatisfiable, readDocumentMediaRange } from "./document-media.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -22,7 +21,7 @@ const errorSchema = z.object({ error: z.string(), message: z.string() })
 
 type Context = Parameters<MiddlewareHandler<{ Variables: OrgRouteVariables }>>[0]
 export type MicrosoftDocumentsAccess =
-  | { ok: true; accessToken: string; graphBaseUrl?: string; canWrite: boolean; otherDrives: { read: boolean; write: boolean } }
+  | { ok: true; accessToken: string; graphBaseUrl?: string; otherDrives: { read: boolean } }
   | { ok: false; reply: Response }
 type Granted = Extract<MicrosoftDocumentsAccess, { ok: true }>
 
@@ -34,9 +33,9 @@ export type MicrosoftDocumentsOptions = {
 }
 
 async function boundedBytes(response: Response): Promise<Uint8Array> {
-  if (Number(response.headers.get("content-length")) > MAX_BYTES) { await response.body?.cancel(); throw new Error("This file is too large for inline editing.") }
+  if (Number(response.headers.get("content-length")) > MAX_BYTES) { await response.body?.cancel(); throw new Error("This file is too large to preview.") }
   const buffer = new Uint8Array(await response.arrayBuffer())
-  if (buffer.byteLength > MAX_BYTES) throw new Error("This file is too large for inline editing.")
+  if (buffer.byteLength > MAX_BYTES) throw new Error("This file is too large to preview.")
   return buffer
 }
 
@@ -52,7 +51,7 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     await next()
   }
   const description = (operationId: string, summary: string, schema: z.ZodType) => {
-    const options: DescribeRouteOptions & { "x-mcp": false } = { operationId, tags: ["Documents"], "x-mcp": false, summary, description: "Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Other people's drives and SharePoint need the read-all-files permission. Saves also require Document editing, OneDrive write access (full file access outside the member's own OneDrive) and a matching file version.", responses: { 200: jsonResponse("Document result.", schema), 400: jsonResponse("Unsupported file or edit.", errorSchema), 409: jsonResponse("Connect Microsoft 365, or reload the changed file.", errorSchema) } }
+    const options: DescribeRouteOptions & { "x-mcp": false } = { operationId, tags: ["Documents"], "x-mcp": false, summary, description: "Requires organization membership and Documents, and the member's Microsoft 365 connection with OneDrive read access. Other people's drives and SharePoint need the read-all-files permission.", responses: { 200: jsonResponse("Document result.", schema), 400: jsonResponse("Unsupported file.", errorSchema), 409: jsonResponse("Connect Microsoft 365.", errorSchema) } }
     return describeRoute(options)
   }
   const failure = (c: Context, message: string) => c.json({ error: "document_unavailable", message }, 400)
@@ -72,7 +71,6 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     if (response.status === 401) return { ok: false, reply: c.json({ error: "needs_connection", message: "Microsoft 365 rejected this connection. Reconnect Microsoft 365, then try again." }, 409) } as const
     if (response.status === 403) return { ok: false, reply: c.json({ error: "forbidden", message: `You don't have access to this OneDrive item.${detail}` }, 403) } as const
     if (response.status === 404) return { ok: false, reply: c.json({ error: "not_found", message: "This OneDrive item no longer exists or isn't shared with you." }, 404) } as const
-    if (response.status === 412) return { ok: false, reply: c.json({ error: "drive_conflict", message: "This file changed in OneDrive. Your edits are kept here; reload the file before saving again." }, 409) } as const
     return { ok: false, reply: c.json({ error: "microsoft_graph_error", message: `Microsoft 365 returned HTTP ${response.status}.${detail}` }, 502) } as const
   }
   const ownDrive = async (c: Context, access: Granted) => {
@@ -82,15 +80,15 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     if (!drive.success) return { ok: false, reply: c.json({ error: "microsoft_graph_error", message: "Microsoft 365 did not report your OneDrive." }, 502) } as const
     return { ok: true, id: drive.data.id } as const
   }
-  const reachable = async (c: Context, access: Granted, driveId: string, write: boolean) => {
-    if (write ? access.otherDrives.write : access.otherDrives.read) return { ok: true } as const
+  const reachable = async (c: Context, access: Granted, driveId: string) => {
+    if (access.otherDrives.read) return { ok: true } as const
     const own = await ownDrive(c, access); if (!own.ok) return own
     return own.id === driveId ? { ok: true } as const : { ok: false, reply: c.json({ error: "needs_connection", message: new MicrosoftGraphScopeError().message }, 409) } as const
   }
-  const item = async (c: Context, access: Granted, fileId: string, write = false) => {
+  const item = async (c: Context, access: Granted, fileId: string) => {
     const ids = decodeMicrosoftDocumentId(fileId)
     if (!ids) return { ok: false, reply: failure(c, "This is not a OneDrive file.") } as const
-    const allowed = await reachable(c, access, ids.driveId, write); if (!allowed.ok) return allowed
+    const allowed = await reachable(c, access, ids.driveId); if (!allowed.ok) return allowed
     const path = `drives/${encodeURIComponent(ids.driveId)}/items/${encodeURIComponent(ids.itemId)}`
     const url = graphUrl(access, path); url.searchParams.set("$select", FIELDS)
     const result = await graph(c, access.accessToken, url); if (!result.ok) return result
@@ -101,12 +99,6 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
   const download = async (c: Context, access: Granted, path: string) => {
     const result = await graph(c, access.accessToken, graphUrl(access, `${path}/content`)); if (!result.ok) return result
     return { ok: true, bytes: await boundedBytes(result.response) } as const
-  }
-
-  const downloadOrThrow = async (c: Context, access: Granted, path: string) => {
-    const source = await download(c, access, path)
-    if (!source.ok) throw source.reply
-    return source.bytes
   }
 
   const listQuery = z.object({
@@ -136,7 +128,7 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     } else {
       const ids = decodeMicrosoftDocumentId(input.folderId)
       if (!ids) return failure(c, "This is not a OneDrive folder.")
-      const allowed = await reachable(c, access, ids.driveId, false); if (!allowed.ok) return allowed.reply
+      const allowed = await reachable(c, access, ids.driveId); if (!allowed.ok) return allowed.reply
       url = graphUrl(access, `drives/${encodeURIComponent(ids.driveId)}/items/${encodeURIComponent(ids.itemId)}/children`); url.searchParams.set("$top", String(PAGE_SIZE)); url.searchParams.set("$select", FIELDS)
     }
     const result = await graph(c, access.accessToken, url); if (!result.ok) return result.reply
@@ -164,12 +156,11 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
   })
 
   const editorQuery = z.object({ sheetId: z.string().max(200).optional(), startRow: z.coerce.number().int().min(1).max(1_048_526).default(1), connectionId: z.literal("microsoft-365").optional() }).strict()
-  app.get(`${base}/:fileId/editor`, description("openMicrosoft365DocumentEditor", "Open a OneDrive file in the inline editor", editorDocumentSchema), options.memberRoute, guard, paramValidator(params), queryValidator(editorQuery), async c => {
+  app.get(`${base}/:fileId/editor`, description("openMicrosoft365DocumentEditor", "Open a read-only view of a OneDrive file", editorDocumentSchema), options.memberRoute, guard, paramValidator(params), queryValidator(editorQuery), async c => {
     const access = await options.access(c); if (!access.ok) return access.reply
     const { fileId } = c.req.valid("param"); const input = c.req.valid("query")
     const meta = await item(c, access, fileId); if (!meta.ok) return meta.reply
-    const canEdit = c.get("organizationContext")!.features.workbotDocumentEditing && access.canWrite && !!meta.revision && (await reachable(c, access, meta.ids.driveId, true)).ok
-    const common = { fileId, name: meta.file.name ?? "Untitled", revision: meta.revision, canEdit, connectionId: "microsoft-365" }
+    const common = { fileId, name: meta.file.name ?? "Untitled", revision: meta.revision, canEdit: false, connectionId: "microsoft-365" }
     c.header("cache-control", "no-store")
     try {
       if (meta.mimeType === XLSX || meta.mimeType === DOCX || meta.mimeType.startsWith("text/")) {
@@ -180,33 +171,7 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
       }
       const playable = documentMediaKind(meta.mimeType)
       return c.json({ ...common, kind: "preview", mimeType: meta.mimeType, canEdit: false, ...(playable ? { media: playable } : {}) })
-    } catch (error) { return failure(c, error instanceof Error ? error.message : "This file cannot be edited inline.") }
-  })
-
-  app.post(`${base}/:fileId/editor`, description("saveMicrosoft365DocumentEdits", "Save explicit inline edits to the same OneDrive file", z.object({ ok: z.literal(true) })), options.memberRoute, guard, bodyLimit({ maxSize: 2 * 1024 * 1024 }), paramValidator(params), jsonValidator(documentSaveSchema), async c => {
-    if (!c.get("organizationContext")!.features.workbotDocumentEditing) return c.json({ error: "feature_disabled", message: "Document editing is off for this workspace." }, 403)
-    const access = await options.access(c); if (!access.ok) return access.reply
-    if (!access.canWrite) return c.json({ error: "read_only", message: "The Microsoft 365 connector doesn't allow saving to OneDrive. An admin can enable OneDrive write access." }, 403)
-    const { fileId } = c.req.valid("param"); const save = c.req.valid("json")
-    if (save.connectionId !== "microsoft-365") return failure(c, "This edit belongs to another connection.")
-    const meta = await item(c, access, fileId, true); if (!meta.ok) return meta.reply
-    if (!meta.revision || meta.revision !== save.revision) return c.json({ error: "drive_conflict", message: "This file changed in OneDrive. Your edits are kept here; reload the file before saving again." }, 409)
-    c.header("cache-control", "no-store")
-    try {
-      let updated: Uint8Array
-      if (meta.mimeType === XLSX && save.kind === "spreadsheet") updated = await patchExcel(await downloadOrThrow(c, access, meta.path), save)
-      else if (meta.mimeType === DOCX && save.kind === "document") updated = await patchWord(await downloadOrThrow(c, access, meta.path), save)
-      else if (meta.mimeType.startsWith("text/") && save.kind === "text") updated = new TextEncoder().encode(save.text)
-      else return failure(c, "This file type does not support these edits.")
-      const result = await graph(c, access.accessToken, graphUrl(access, `${meta.path}/content`), { method: "PUT", body: new Uint8Array(updated).buffer, headers: { "content-type": meta.mimeType, "if-match": meta.revision }, redirect: "error" })
-      if (!result.ok) return result.reply
-      const receipt = graphItemSchema.safeParse(await result.response.json().catch(() => null))
-      if (!receipt.success || receipt.data.id !== meta.ids.itemId) return c.json({ error: "save_unconfirmed", message: "OneDrive did not confirm the save. Keep your edits and check OneDrive before trying again." }, 502)
-      return c.json({ ok: true })
-    } catch (error) {
-      if (error instanceof Response) return error
-      return failure(c, error instanceof Error ? error.message : "These edits could not be saved. Your draft is kept here.")
-    }
+    } catch (error) { return failure(c, error instanceof Error ? error.message : "This file cannot be previewed.") }
   })
 
   app.get(`${base}/:fileId/content`, description("readMicrosoft365DocumentContent", "Preview a OneDrive PDF or image, or play a video or audio file", z.unknown()), options.memberRoute, guard, paramValidator(params), queryValidator(z.object({ connectionId: z.literal("microsoft-365") }).strict()), async c => {
