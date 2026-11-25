@@ -9,7 +9,7 @@ import { DenNotice } from "../../../_components/ui/notice";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { DenSwitch } from "../../../_components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../_components/ui/tooltip";
-import { getLibraryRoute, orgFeatureEnabled } from "../../../_lib/den-org";
+import { getLibraryRoute } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { configBlobPaths, useConfigAreas, useConfigDownload } from "./config-blobs-data";
 import { areaLeafLabel, configExportFileName, exportAreasParam, groupConfigAreas, isExportable } from "./config-blobs-model";
@@ -24,8 +24,7 @@ function areaBlockedReason(area: ConfigAreaDescriptor): string | null {
 }
 
 export function ConfigExportSection() {
-  const { orgId, activeOrg, orgContext } = useOrgDashboard();
-  const personalSkillsEnabled = orgFeatureEnabled(orgContext, "personalSkillPortability");
+  const { orgId, activeOrg } = useOrgDashboard();
   const areasQuery = useConfigAreas(orgId);
   const download = useConfigDownload(orgId);
   const areas = useMemo(() => areasQuery.data?.areas ?? [], [areasQuery.data]);
@@ -111,9 +110,7 @@ export function ConfigExportSection() {
         tone="neutral"
         presentation="inline"
         message="Private skills and plugins are not included. Credentials, billing, and activity history are also excluded."
-        action={personalSkillsEnabled ? (
-          <DenButton href={`${getLibraryRoute(activeOrg?.slug)}/private-skills`} variant="secondary" size="sm">Move my private skills</DenButton>
-        ) : undefined}
+        action={<DenButton href={`${getLibraryRoute(activeOrg?.slug)}/private-skills`} variant="secondary" size="sm">Move my private skills</DenButton>}
       />
 
       {areasQuery.isError ? (

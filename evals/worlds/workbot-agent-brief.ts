@@ -120,10 +120,6 @@ export async function workbotAgentBriefWorld(seed: Seed) {
     );
 
     const headers = (session: DenSession) => ({ authorization: `Bearer ${session.token}`, "x-openwork-org-id": organizationId, "content-type": "application/json" });
-    const setBrief = async (on: boolean) => {
-      const result = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, { method: "PUT", headers: headers(den.admin), body: JSON.stringify({ capabilities: { workbotAgentBrief: on } }) });
-      if (!result.response.ok) throw new Error(`Setting workbotAgentBrief failed: ${result.text.slice(0, 300)}`);
-    };
     const viewport = { width: 1280, height: 1700, deviceScaleFactor: 1 };
     const owner = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/workbot-settings", headless: true, viewport });
     const web = await seed.web({ den, signedInAs: den.members.member, startPath: "/dashboard/library/my-agent", headless: true, viewport: { width: 1280, height: 2100, deviceScaleFactor: 1 } });
@@ -135,8 +131,6 @@ export async function workbotAgentBriefWorld(seed: Seed) {
       requested,
       why,
       sayInChat: (name: string, body?: unknown) => chatAs(den.members.member, organizationId, name, body),
-      /** The platform admin turns the brief on or off for this organization, as /admin does. */
-      setBrief,
       async [Symbol.asyncDispose]() {
         await stack.disposeAsync();
       },

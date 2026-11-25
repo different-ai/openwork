@@ -211,10 +211,9 @@ function renderSchema(full) {
 // shrinks: write the doc, set `docs`, and remove the key here.
 const FEATURES_WITHOUT_DOCS = new Set([
   "administratorRecovery",
-  "connectionMcpServers", "workbotDocuments",
-  "workbotDocumentEditing", "workbotWorkspaceAssistant",
+  "workbotDocuments",
+  "workbotWorkspaceAssistant",
   "remoteComputers",
-  "connectStandardTools",
 ])
 
 /** The internal doc exists under docs/ (not the published packages/docs) and its images resolve. */

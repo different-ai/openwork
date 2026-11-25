@@ -4,20 +4,6 @@ import { t } from "@/i18n";
 export type SandboxSwitchNote = "managed" | "included" | null;
 export type SandboxToggle = { setting: "use" | "force"; checked: boolean };
 
-export function sandboxPanelVisibility(
-  rollout: boolean | undefined,
-  read: "loading" | "error" | "settled",
-  settings?: OpenworkSandboxSettingsResponse | null,
-) {
-  const visible = rollout === true || (read !== "error" && Boolean(settings && (
-    settings.useSandbox || settings.forceSandbox || settings.managedUse || settings.managedForce || settings.pending
-  )));
-  return {
-    visible,
-    ready: read !== "loading" && (visible || rollout !== undefined),
-  };
-}
-
 export function sandboxPanelState(settings: OpenworkSandboxSettingsResponse, update?: SandboxSettingsUpdate) {
   const managedForce = settings.managedForce;
   const managedUse = settings.managedUse || managedForce;
@@ -30,7 +16,6 @@ export function sandboxPanelState(settings: OpenworkSandboxSettingsResponse, upd
     force,
     useNote,
     forceNote,
-    unavailable: !settings.featureEnabled && (force || managedUse || (settings.pending && settings.effectiveForceSandbox)),
     pending: settings.pending ? settings.effectiveForceSandbox ? "sandbox" : "computer" : null,
     verification: settings.verification,
   };

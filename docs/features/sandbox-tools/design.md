@@ -1,5 +1,7 @@
 # Local sandbox tools and sandbox-only mode
 
+> Historical record from before the sandbox rollout switch was retired. See [modes.md](modes.md) for current behavior.
+
 Feature: `sandboxTools`, cloud and self-hosted, **off by default**. Owner: `benjaminshafii`.
 Scope: local microsandbox only. Remote options appear solely as future work below. No production configuration or
 rollout is changed by this PR.

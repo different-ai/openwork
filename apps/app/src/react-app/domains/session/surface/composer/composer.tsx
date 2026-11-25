@@ -1167,7 +1167,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       && event.target instanceof HTMLElement && event.target.closest("[data-composer-editor]")
     ) {
       event.preventDefault();
-      markFeatureUsed("followUpSuggestions");
       props.onDraftChange(followUpSuggestion);
       return;
     }

@@ -17,8 +17,8 @@ export async function uxScriptedInference() {
   return { url: `${fixture.url}/v1`, token: "local-scripted-ux", records, arrivals, close: () => fixture.stop() };
 }
 
-/** Signed-out loopback contract, based on sandboxDenFixture. Delay only the flag endpoint. */
-export async function uxDenFixture(flag: boolean, delayMs: number, offline: boolean, delayAll = false) {
+/** Signed-out loopback contract, based on sandboxDenFixture. Delay only the features endpoint unless delayAll is set. */
+export async function uxDenFixture(delayMs: number, offline: boolean, delayAll = false) {
   const requests: { path: string; at: string; ms: number; method: string; status?: number; durationMs?: number }[] = [];
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://fixture").pathname.replace(/^\/api\/den/, "");
@@ -27,7 +27,7 @@ export async function uxDenFixture(flag: boolean, delayMs: number, offline: bool
     response.once("finish", () => { entry.status = response.statusCode; entry.durationMs = performance.now() - entry.ms; });
     const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "content-type": "application/json" };
     if (request.method === "OPTIONS") { response.writeHead(204, headers).end(); return; }
-    const body = path === "/v1/features" ? { features: { sandboxTools: flag } }
+    const body = path === "/v1/features" ? { features: {} }
       : path === "/v1/app-version" ? { minAppVersion: "0.0.0", latestAppVersion: "0.0.0", publishedDesktopVersions: [] } : null;
     void delay(delayAll || path === "/v1/features" ? delayMs : 0, undefined, { ref: false }).then(() => {
       if (!response.destroyed) response.writeHead(body ? 200 : 404, headers).end(JSON.stringify(body ?? { error: "fixture_not_found" }));

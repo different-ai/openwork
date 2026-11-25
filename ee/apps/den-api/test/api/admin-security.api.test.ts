@@ -158,7 +158,6 @@ test("platform admins can time-limit and lift a free model safety pause", async 
   assert.equal((await den.request(admin.token, "PUT", path, { body: { ...body, hours: 169 } })).status, 400)
   const saved = await den.request(admin.token, "PUT", path, { body })
   assert.equal(saved.status, 200)
-  assert.equal(field(ok(saved), "enforcementEnabled"), false)
   const active = async () => {
     const [rows] = await query("SELECT actor_id FROM free_auto_safety_pause WHERE identifier = ? AND expires_at > CURRENT_TIMESTAMP(3)", [body.identifier])
     return rows

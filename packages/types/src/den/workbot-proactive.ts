@@ -55,7 +55,7 @@ export const AGENT_CORE_SOURCE_COPY: Record<AgentCoreSource, { label: string; vi
 }
 
 /**
- * `workbotAgentBrief`: an admin's choice for one tool on one connection, which wins over everything but a provider
+ * An admin's choice for one tool on one connection, which wins over everything but a provider
  * marking the tool destructive ("Tools agents may use").
  */
 export const AGENT_TOOL_OVERRIDES = ["allow", "deny"] as const
@@ -173,7 +173,7 @@ export const agentCoreSourceConnectionSchema = agentSourceConnectionSchema.exten
 export type AgentCoreSourceConnection = z.infer<typeof agentCoreSourceConnectionSchema>
 
 /**
- * A connection in Other context. `workbotAgentBrief` adds whether it is one of Den's own providers (read there for what
+ * A connection in Other context, with whether it is one of Den's own providers (read for what
  * isn't the calendar: mail, chat, files) and the policy it has now, which can differ from `settings.sources.connections`: a
  * reviewed connection an admin took out of Other context before every connection was listed stays not allowed.
  */
@@ -191,7 +191,7 @@ export const agentSourceOptionSchema = agentSourceConnectionSchema.extend({
 })
 export type AgentSourceOption = z.infer<typeof agentSourceOptionSchema>
 
-/** `workbotAgentBrief`: one of a connection's tools, and whether members' agents may call it. */
+/** One of a connection's tools, and whether members' agents may call it. */
 export const agentToolDecisionViewSchema = z.object({
   name: z.string(),
   title: z.string().nullable(),
@@ -311,7 +311,7 @@ export const DEFAULT_AGENT_BRIEF = [
   "Skip newsletters, routine automated notifications and anything routine, unless one carries a real cost, security or deadline risk.",
 ].join("\n")
 
-/** The organization's rhythm, limits and brief under `workbotAgentBrief`. */
+/** The organization's rhythm, limits and brief. */
 export const agentBriefPolicySchema = z.object({
   checkEveryHours: agentCheckEveryHoursSchema,
   dailyCap: z.number().int().min(1).max(AGENT_BRIEF_DAILY_CAP_MAX),
@@ -431,7 +431,7 @@ export const workbotProactiveViewSchema = z.object({
     other: z.array(agentOtherSourceConnectionSchema),
     all: z.array(agentSourceOptionSchema),
   }).nullable(),
-  brief: agentBriefViewSchema.optional(),
+  brief: agentBriefViewSchema,
   checkGate: z.object({ model: z.boolean() }).optional(),
   sendCheck: z.object({ ready: z.boolean() }).optional(),
 })
@@ -633,8 +633,8 @@ export const memberAgentViewSchema = z.object({
   changes: z.array(memberAgentChangeSchema).optional(),
   sources: z.array(memberAgentSourceSchema).optional(),
   link: z.string().optional(),
-  brief: z.object({ lines: z.string(), organization: z.string(), carriedOver: z.boolean() }).optional(),
-  nextChecks: z.array(z.object({ at: z.iso.datetime(), kind: z.enum(["scheduled", "requested"]), why: z.string().nullable() })).optional(),
+  brief: z.object({ lines: z.string(), organization: z.string(), carriedOver: z.boolean() }),
+  nextChecks: z.array(z.object({ at: z.iso.datetime(), kind: z.enum(["scheduled", "requested"]), why: z.string().nullable() })),
 })
 export type MemberAgentView = z.infer<typeof memberAgentViewSchema>
 
@@ -790,7 +790,7 @@ export function carriedOverAgentBrief(template: AgentTemplateContent): string {
 }
 
 /**
- * What agents follow under `workbotAgentBrief`: each field the admin saved, else carried over. The brief from the
+ * What agents follow: each field the admin saved, else carried over. The brief from the
  * template (above); the daily limit an admin chose, or the new default 4 when they never moved it from the old default
  * 3; a check every 2 hours and 3 extra checks a day, which had no earlier setting.
  */
