@@ -134,8 +134,8 @@ export function SandboxOrgsPage() {
 
   if (!data.enabled) return <section className="py-5" data-testid="admin-sandbox-orgs-off">
     <h1 className="flex items-center gap-2 text-base font-medium text-[color:var(--dls-text-primary)]"><Lock size={16} aria-hidden="true" />Sandbox organizations are off</h1>
-    <p className="mt-2 text-sm text-[color:var(--dls-text-secondary)]">Turn on Sandbox organizations for everyone in Feature rollouts to create try-it-out organizations here.</p>
-    <Link href="/admin/features" prefetch={false} className="mt-3 inline-block text-sm text-[color:var(--dls-text-secondary)] underline underline-offset-2">Open Feature rollouts</Link>
+    <p className="mt-2 text-sm text-[color:var(--dls-text-secondary)]">Turn on Sandbox organizations for everyone in Preview flags to create try-it-out organizations here.</p>
+    <Link href="/admin/features" prefetch={false} className="mt-3 inline-block text-sm text-[color:var(--dls-text-secondary)] underline underline-offset-2">Open Preview flags</Link>
   </section>;
 
   const busy = saving || loading;

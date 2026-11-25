@@ -76,7 +76,7 @@ function visibleKeys(features: AdminOrganizationFeatures): FeatureKey[] {
 export type FeatureSettingsGrouping = "recent" | "category" | "author";
 export type FeatureKeyGroup = { id: string; label: string; keys: FeatureKey[] };
 const SETTINGS_GROUPINGS = [
-  { value: "recent", label: "Newest" }, { value: "category", label: "Category" }, { value: "author", label: "Author" },
+  { value: "recent", label: "Newest" }, { value: "category", label: "Category" }, { value: "author", label: "Owner" },
 ] as const satisfies readonly { value: FeatureSettingsGrouping; label: string }[];
 
 const newestFirst = (keys: readonly FeatureKey[]) => [...keys].sort((a, b) => FEATURES[b].added.localeCompare(FEATURES[a].added));
@@ -85,7 +85,7 @@ export function groupFeatureKeys(keys: readonly FeatureKey[], grouping: FeatureS
   if (grouping === "category") return featuresByCategory(keys).map(({ category, keys: inCategory }) => ({ id: category, label: FEATURE_CATEGORIES[category].label, keys: inCategory }));
   const groups = new Map<string, FeatureKeyGroup>();
   for (const key of newestFirst(keys)) {
-    const { added, author } = FEATURES[key];
+    const { added, owner: author } = FEATURES[key];
     const [id, label] = grouping === "author" ? [author, `@${author}`]
       : isNewFeature(key, now) ? ["new", `New in the last ${NEW_FEATURE_DAYS} days`] : [added.slice(0, 7), monthLabel(`${added}T00:00:00.000Z`)];
     const group = groups.get(id) ?? { id, label, keys: [] };
@@ -113,12 +113,12 @@ function addedWithin(key: FeatureKey, added: FeatureAddedWindow, now: number): b
 }
 
 export function filterFeatureKeys(keys: readonly FeatureKey[], filter: FeatureSettingsFilter, now = Date.now()): FeatureKey[] {
-  return keys.filter((key) => (filter.author === null || FEATURES[key].author === filter.author) && addedWithin(key, filter.added, now));
+  return keys.filter((key) => (filter.author === null || FEATURES[key].owner === filter.author) && addedWithin(key, filter.added, now));
 }
 
 export function featureAuthors(keys: readonly FeatureKey[]): { author: string; count: number }[] {
   const counts = new Map<string, number>();
-  for (const key of keys) counts.set(FEATURES[key].author, (counts.get(FEATURES[key].author) ?? 0) + 1);
+  for (const key of keys) counts.set(FEATURES[key].owner, (counts.get(FEATURES[key].owner) ?? 0) + 1);
   return [...counts].map(([author, count]) => ({ author, count })).sort((a, b) => a.author.localeCompare(b.author, undefined, { sensitivity: "base" }));
 }
 
@@ -159,7 +159,7 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
       else if (result.access === "signed-out" || result.access === "forbidden") onAccessFailure({ access: result.access, message: result.message });
       else setLoadError(result.message);
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setLoadError(error instanceof Error ? error.message : "Could not load features.");
+      if (!controller.signal.aborted) setLoadError(error instanceof Error ? error.message : "Could not load preview flags.");
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [path, refreshKey, attempt, onAccessFailure]);
@@ -185,7 +185,7 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
       setFeatures(next);
     } catch (error: unknown) {
       setFeatures(previous);
-      setSaveError(error instanceof Error ? error.message : "Could not save this feature.");
+      setSaveError(error instanceof Error ? error.message : "Could not save this preview flag.");
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -193,44 +193,44 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
   }
 
   return (
-    <section className="min-w-0 py-5" aria-label={memberId ? "Member features" : "Organization features"} aria-busy={loading || saving} data-testid="admin-organization-features">
+    <section className="min-w-0 py-5" aria-label={memberId ? "Member preview flags" : "Organization preview flags"} aria-busy={loading || saving} data-testid="admin-organization-features">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-gray-900">Features</h2>
-        <Link href="/admin/features" prefetch={false} className="text-xs font-medium text-slate-500 underline-offset-2 hover:underline">Feature rollouts</Link>
+        <h2 className="text-sm font-semibold text-gray-900">Preview flags</h2>
+        <Link href="/admin/features" prefetch={false} className="text-xs font-medium text-slate-500 underline-offset-2 hover:underline">All preview flags</Link>
       </div>
       <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-gray-600">
         <span>Group by</span>
-        <DenSegmented aria-label="Group feature settings by" options={SETTINGS_GROUPINGS} value={grouping} onChange={setGrouping} className="max-w-full flex-wrap"
+        <DenSegmented aria-label="Group preview flags by" options={SETTINGS_GROUPINGS} value={grouping} onChange={setGrouping} className="max-w-full flex-wrap"
           optionTestId={(value) => `admin-feature-settings-group-${value}`} />
       </div>
       {features ? <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-gray-600" data-testid="admin-feature-settings-filters">
         <div className="w-44 max-w-full">
-          <DenSelect aria-label="Filter features by author" size="sm" menuWidth="trigger" value={filter.author ?? ANY_AUTHOR} data-testid="admin-feature-settings-filter-author"
+          <DenSelect aria-label="Filter preview flags by owner" size="sm" menuWidth="trigger" value={filter.author ?? ANY_AUTHOR} data-testid="admin-feature-settings-filter-author"
             onChange={(event) => setFilter((current) => ({ ...current, author: event.target.value === ANY_AUTHOR ? null : event.target.value }))}>
-            <option value={ANY_AUTHOR}>Author: anyone</option>
+            <option value={ANY_AUTHOR}>Owner: anyone</option>
             {featureAuthors(available).map(({ author, count }) => <option key={author} value={author}>{`@${author} · ${count}`}</option>)}
           </DenSelect>
         </div>
         <div className="w-52 max-w-full">
-          <DenSelect aria-label="Filter features by date added" size="sm" menuWidth="trigger" value={filter.added} data-testid="admin-feature-settings-filter-added"
+          <DenSelect aria-label="Filter preview flags by date added" size="sm" menuWidth="trigger" value={filter.added} data-testid="admin-feature-settings-filter-added"
             onChange={(event) => setFilter((current) => ({ ...current, added: ADDED_WINDOWS.find((option) => option.value === event.target.value)?.value ?? "any" }))}>
             {ADDED_WINDOWS.map((option) => <option key={option.value} value={option.value}>{option.value === "any" ? "Added: any time" : `Added: ${option.label.toLowerCase()}`}</option>)}
           </DenSelect>
         </div>
         {filtered ? <>
-          <span data-testid="admin-feature-settings-filter-count">{shown.length} of {available.length} features</span>
+          <span data-testid="admin-feature-settings-filter-count">{shown.length} of {available.length} preview flags</span>
           <DenButton variant="ghost" size="inline" type="button" data-testid="admin-feature-settings-filter-clear" onClick={() => setFilter(NO_FEATURE_SETTINGS_FILTER)}>Clear filters</DenButton>
         </> : null}
       </div> : null}
       {loadError ? <div className="mt-3 text-sm text-red-700" role="alert">
         <p>{loadError}</p>
-        <DenButton variant="secondary" size="sm" onClick={() => setAttempt((value) => value + 1)}>Retry features</DenButton>
+        <DenButton variant="secondary" size="sm" onClick={() => setAttempt((value) => value + 1)}>Retry</DenButton>
       </div> : null}
-      {loading && !features ? <div className="mt-3 grid gap-2" role="status" aria-label="Loading organization features" data-testid="admin-features-loading">
+      {loading && !features ? <div className="mt-3 grid gap-2" role="status" aria-label="Loading preview flags" data-testid="admin-features-loading">
         {[0, 1, 2].map((row) => <div key={row} className="h-16 rounded-lg bg-gray-100" aria-hidden="true" />)}
       </div> : null}
       {saveError ? <p data-testid="admin-capability-error" role="alert" className="mt-3 text-sm text-red-700">Could not confirm the save. Showing the previous setting. {saveError}</p> : null}
-      {features && filtered && shown.length === 0 ? <p className="mt-4 text-sm text-gray-500" data-testid="admin-feature-settings-filter-empty">No features match these filters.</p> : null}
+      {features && filtered && shown.length === 0 ? <p className="mt-4 text-sm text-gray-500" data-testid="admin-feature-settings-filter-empty">No preview flags match these filters.</p> : null}
       {features ? groupFeatureKeys(shown, grouping).map(({ id: groupId, label, keys }) => {
         const sectionId = grouping === "category" ? `admin-feature-group-${groupId}` : `admin-feature-group-${grouping}-${groupId}`;
         return <section key={sectionId} className="mt-4 min-w-0" aria-labelledby={sectionId} data-testid={sectionId}>
@@ -250,7 +250,7 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
                   <span className="mt-1 block text-xs leading-5 text-slate-500">{definition.description}</span>
                   {state.lastChange ? <span className="mt-1 block text-xs text-slate-500" data-testid={`admin-capability-last-change-${key}`}>Last change: {describeFeatureChange(state.lastChange, { showScope: true })}</span> : null}
                   <span className="mt-1 block text-xs text-slate-500">
-                    Added {formatAddedDay(definition.added)} · Author @{definition.author}
+                    Added {formatAddedDay(definition.added)} · Owner @{definition.owner} · Expires {formatAddedDay(definition.expiresOn)}
                     {featureDocsUrl(key) ? <> · <a href={featureDocsUrl(key) ?? undefined} target="_blank" rel="noreferrer" className="font-medium text-slate-700 underline-offset-2 hover:underline">Internal docs</a></> : null}
                   </span>
                 </span>

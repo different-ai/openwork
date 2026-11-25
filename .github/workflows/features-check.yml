@@ -1,7 +1,8 @@
 name: Feature registry check
 
-# Each feature is one file under packages/features/src/flags. This job fails
-# when the generated list of them (all-flags.ts) is stale, when the chart in
+# Every preview flag is one export in packages/features/src/previews.ts. This
+# job fails when a preview has no owner or expiry date or has expired, when the
+# capability catalog depends on a preview without saying so, when the chart in
 # git lists feature keys, when the published chart would render DEN_FEATURE_* names that
 # den-api does not read, when a Dockerfile misses a workspace package its
 # service needs, or when code adds a DEN_*_ENABLED switch or reads

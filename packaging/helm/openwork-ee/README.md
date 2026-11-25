@@ -393,7 +393,7 @@ helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
 
 ### Features
 
-OpenWork features are declared once, one file each under `packages/features/src/flags`,
+OpenWork features are declared once, as preview flags in `packages/features/src/previews.ts`,
 and rolled out along several dimensions: which products a feature exists on,
 on or off for everyone, per-organization overrides, and a kill switch.
 Platform admins change these in `/admin` without a redeploy. As the operator,
@@ -422,7 +422,7 @@ OpenWork Cloud. Don't change it on a customer install.
 
 For supported keys, defaults and descriptions, run
 `helm show values oci://ghcr.io/different-ai/charts/openwork-ee` and read
-`config.features`. The [feature registry](../../../packages/features/src/flags)
+`config.features`. The [feature registry](../../../packages/features/src/previews.ts)
 is the source of truth.
 
 The chart in git lists no feature keys, so adding a feature never changes it.
