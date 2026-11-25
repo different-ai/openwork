@@ -1,7 +1,7 @@
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { connect } from "@openwork/cdp/cdp";
-import type { Seed } from "@openwork/env";
+import { createAdmin, type Seed } from "@openwork/env";
 import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 export async function configPrivateItemsWorld(seed: Seed) {
@@ -40,6 +40,10 @@ export async function configPrivateItemsWorld(seed: Seed) {
         throw error;
       }
       return { async [Symbol.asyncDispose]() { browser.close(); } };
+    },
+    async joinCreator() {
+      const member = await createAdmin(target, { email: creator.email, name: "Skill Creator", password: "SyntheticConfig123!" });
+      return seed.web({ den: target, signedInAs: member, startPath: "/dashboard/library", headless: true });
     },
     async enable() {
       await enableOrganizationCapabilities(seed, source.admin, { configPrivateItems: true });
