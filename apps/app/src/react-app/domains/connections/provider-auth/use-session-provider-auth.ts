@@ -18,7 +18,7 @@ import {
 import { createSessionOpenworkServer, type SessionServerEndpoint } from "./session-openwork-server";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
 import { useLiveProviderSync } from "./use-live-provider-sync";
-import { skipsLegacyProviderRefresh } from "./live-provider-sync";
+import { resyncAfterGatewaySignIn, skipsLegacyProviderRefresh } from "./live-provider-sync";
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
   id: "",
@@ -193,6 +193,14 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
     return providerList;
   }, [cloudProviderSyncContext, loadCloudProviderSync]);
+  const resyncGatewaySignIn = useCallback(() => resyncAfterGatewaySignIn({
+    runSync: () => store.runCloudProviderSync("manual", { refreshGatewayCatalog: true }),
+    refreshProviders: async () => {
+      const providerList = await store.refreshProviders({ force: true });
+      if (!liveProviderSyncRef.current) setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
+    },
+    gatewayUsageProviderScope: () => store.getSnapshot().gatewayUsageProviderScope,
+  }), [cloudProviderSyncContext, store]);
 
   useEffect(() => { store.syncFromOptions(); }, [store]);
 
@@ -315,6 +323,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     cloudProviderSyncReady,
     cloudProviderList: liveProviderSync ? null : currentCloudProviderSync?.providerList ?? null,
     refreshCloudProviderSync,
+    resyncGatewaySignIn,
     liveProviderSync,
   };
 }

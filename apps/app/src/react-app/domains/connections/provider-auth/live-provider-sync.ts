@@ -29,6 +29,19 @@ export function skipsLegacyProviderRefresh(reason: string, liveProviderSync: boo
   return liveProviderSync && (reason === "model_picker_open" || reason === "new_chat" || reason === "manual");
 }
 
+export type GatewaySignInSyncOutcome = void | { outcome: "handled_server_side" | "handled_live" };
+
+export async function resyncAfterGatewaySignIn(input: {
+  runSync: () => Promise<GatewaySignInSyncOutcome>;
+  refreshProviders: () => Promise<unknown>;
+  gatewayUsageProviderScope: () => number | null | undefined;
+}): Promise<boolean> {
+  const result = await input.runSync();
+  await input.refreshProviders();
+  if (result && (result.outcome === "handled_live" || result.outcome === "handled_server_side")) return true;
+  return input.gatewayUsageProviderScope() != null;
+}
+
 export function pickerFallbackModels<T>(input: { liveProviderSync: boolean; engineListLoaded: boolean; assigned: readonly T[] }): readonly T[] {
   return input.liveProviderSync && input.engineListLoaded ? [] : input.assigned;
 }

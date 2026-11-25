@@ -445,7 +445,6 @@ export type OpenworkAuthorizedFoldersResponse = {
 };
 
 export type OpenworkSandboxSettingsResponse = {
-  featureEnabled: boolean;
   useSandbox: boolean;
   forceSandbox: boolean;
   effectiveUseSandbox: boolean;

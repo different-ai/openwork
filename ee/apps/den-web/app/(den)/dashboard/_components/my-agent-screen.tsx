@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute, getLibraryRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute, getLibraryRoute } from "../../_lib/den-org";
 import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
@@ -77,7 +77,7 @@ export function MyAgentScreen() {
     <MyAgentPanel
       view={{ ...agent.data, sources: agent.data.sources?.map((source) => source.readTools === null && toolCounts.data?.[source.id] != null
         ? { ...source, readTools: toolCounts.data[source.id] } : source) }}
-      setAll={orgFeatureEnabled(orgContext, "workbotEnableAllConnectors") ? (batches) => save.mutate(batches) : undefined}
+      setAll={(batches) => save.mutate(batches)}
       bulkDirection={save.isPending && Array.isArray(save.variables) ? save.variables[0]?.sources?.[0]?.on ?? undefined : undefined}
       pendingSources={save.isPending && !Array.isArray(save.variables) ? save.variables?.sources : undefined}
       now={Date.now()}

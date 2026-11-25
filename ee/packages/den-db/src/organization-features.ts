@@ -98,27 +98,6 @@ export async function readFeatures(
 }
 
 /**
- * Whether free models need a signed desktop session: cross-organization
- * budgets count usage per desktop, so they need it for every member, and
- * desktop-only free models need it for everyone. Pass null for `organization`
- * when the caller is signed out. The gateway enforces this rule; hosted
- * callers check it so they never choose a free model the gateway refuses.
- */
-export function freeAutoDesktopProofRequiredBy(deployment: FeatureMap, organization: FeatureMap | null): boolean {
-  if (organization && deployment.freeAutoCrossOrgBudgets) return true
-  return (organization ?? deployment).desktopOnlyFreeAuto
-}
-
-export async function freeAutoDesktopProofRequired(
-  database: FeatureDatabase,
-  organizationId: string | null,
-  environment: FeatureEnvironment,
-): Promise<boolean> {
-  const deployment = await readFeatures(database, null, environment)
-  return freeAutoDesktopProofRequiredBy(deployment, organizationId ? await readFeatures(database, organizationId, environment) : null)
-}
-
-/**
  * A single feature held stable for a mutation. Materializing its default row
  * gives a concurrent first kill switch an actual row to serialize against,
  * including on databases without gap locks. Existing rollout values are never

@@ -76,7 +76,6 @@ import { ActionContextMenu } from "@/components/ui/action-context-menu";
 import { ActionMenuItems } from "@/components/ui/action-menu-items";
 import type { MenuAction } from "@/components/ui/action-menu-model";
 import { buildSelectedSessionsMenuActions, buildSessionMenuActions } from "./session-menu-actions";
-import { markFeatureUsed } from "../../../../app/lib/den";
 import { sessionSelectionKey, useSessionSelectionStore, visibleSessionRowOrder, type SessionSelectionRef } from "./session-selection-store";
 import {
   DropdownMenu,
@@ -430,9 +429,8 @@ function useSessionMenuActions({
 }
 
 function useRowSelection(row: SessionSelectionRef): SessionSelectionRef[] | null {
-  const ctx = useSidebarContext();
   const selected = useSessionSelectionStore((state) => state.selected);
-  if (!ctx.multiSelectEnabled || selected.length < 2) return null;
+  if (selected.length < 2) return null;
   const key = sessionSelectionKey(row);
   return selected.some((ref) => sessionSelectionKey(ref) === key) ? selected : null;
 }
@@ -476,7 +474,7 @@ function useSelectedSessionsMenuActions(row: SessionSelectionRef, workspaceGroup
 function SessionSelectionBar() {
   const ctx = useSidebarContext();
   const selected = useSessionSelectionStore((state) => state.selected);
-  if (!ctx.multiSelectEnabled || selected.length < 2) return null;
+  if (selected.length < 2) return null;
   const count = selected.length;
   const clear = () => useSessionSelectionStore.getState().clear();
   const unarchived = selected.filter((ref) => !ctx.isSessionArchived(ref.workspaceId, ref.sessionId));
@@ -656,7 +654,6 @@ export type AppSidebarProps = {
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   sessionAttentionKindById?: Record<string, SessionWaitingKind>;
   sessionTreeEnabled?: boolean;
-  sessionMultiSelectEnabled?: boolean;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -770,7 +767,6 @@ export function AppSidebar(props: AppSidebarProps) {
     [sessionTrees],
   );
 
-  const multiSelectEnabled = props.sessionMultiSelectEnabled === true;
   const archivedSessionKeys = React.useMemo(() => new Set(props.workspaceSessionGroups.flatMap((group) =>
     group.sessions.filter(isSessionArchived).map((session) => sessionSelectionKey({ workspaceId: group.workspace.id, sessionId: session.id })))),
   [props.workspaceSessionGroups]);
@@ -801,7 +797,6 @@ export function AppSidebar(props: AppSidebarProps) {
     onOpenDeleteSession: props.onOpenDeleteSession,
     onArchiveSession: props.onArchiveSession,
     onArchiveSessions: props.onArchiveSessions,
-    multiSelectEnabled,
     isSessionArchived: isSelectedSessionArchived,
     archiveDisabledReason: props.archiveDisabledReason,
     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
@@ -925,7 +920,6 @@ export function AppSidebar(props: AppSidebarProps) {
             data-slot="sidebar-content"
             data-sidebar="content"
             data-session-number-modifier-held={props.sessionNumberShortcuts.modifierHeld ? "true" : undefined}
-            data-session-multi-select={multiSelectEnabled ? "on" : undefined}
             className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto [overflow-anchor:none] [--radius:var(--radius-md)] group-data-[collapsible=icon]:overflow-hidden"
           >
             <SidebarLayoutAnimationGate />
@@ -2421,14 +2415,13 @@ export function SessionMenuItem({
     : sessionNumberAriaKeyShortcut(ctx.sessionNumberShortcutOs, shortcutDigit);
 
   const rowRef = { workspaceId, sessionId: session.id };
-  const isMultiSelected = useSessionSelectionStore((state) => ctx.multiSelectEnabled && state.selected.length > 1
+  const isMultiSelected = useSessionSelectionStore((state) => state.selected.length > 1
     && state.selected.some((ref) => ref.workspaceId === workspaceId && ref.sessionId === session.id));
   const openSession = (event: React.MouseEvent<HTMLElement>) => {
     const selection = useSessionSelectionStore.getState();
     const mode = event.shiftKey ? "range" : event.metaKey || event.ctrlKey ? "toggle" : null;
-    if (ctx.multiSelectEnabled && mode) {
+    if (mode) {
       event.preventDefault();
-      markFeatureUsed("sessionMultiSelect");
       const root = event.currentTarget.closest("[data-sidebar=content]") ?? event.currentTarget.ownerDocument;
       const open = ctx.selectedSessionId ? { workspaceId: ctx.selectedWorkspaceId, sessionId: ctx.selectedSessionId } : null;
       selection.click({ target: rowRef, mode, order: visibleSessionRowOrder(root), open });

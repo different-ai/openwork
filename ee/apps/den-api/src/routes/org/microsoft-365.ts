@@ -546,7 +546,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       const read = ["filesRead", "filesWrite", "filesReadAll", "filesFull"]
       if (!featureEnabled(token, read)) return { ok: false, reply: c.json({ error: "needs_connection", message: disabledFeatureMessage("OneDrive access") }, 409) }
       if (!featureGranted(token, read)) return { ok: false, reply: c.json({ error: "needs_connection", message: missingPermissionMessage("OneDrive read") }, 409) }
-      return { ok: true, accessToken: token.accessToken, graphBaseUrl: token.graphBaseUrl, canWrite: featureGranted(token, FILE_WRITE_FEATURES), otherDrives: { read: !ownDriveOnly(token, false), write: !ownDriveOnly(token, true) } }
+      return { ok: true, accessToken: token.accessToken, graphBaseUrl: token.graphBaseUrl, otherDrives: { read: !ownDriveOnly(token, false) } }
     },
   })
 

@@ -16,7 +16,7 @@ function safeFixLink(link: ConnectCallbackFixLink | undefined): ConnectCallbackF
 }
 
 export function connectCallbackPage(input:
-  | { ok: true; name: string }
+  | { ok: true; name: string; detail?: string; warning?: string }
   | { ok: false; name: string; message: string; referenceId?: string; fixLink?: ConnectCallbackFixLink }, workbotReturn?: WorkbotOAuthReturn & { connectionId: string }): string {
   const fixLink = input.ok ? undefined : safeFixLink(input.fixLink)
   const brand = workbotReturn ? "Workbot" : "OpenWork"
@@ -31,8 +31,12 @@ export function connectCallbackPage(input:
     : input.ok
     ? `<div class="status-row success">
         <span class="status-icon" aria-hidden="true">✓</span>
-        <span><strong>${escapeHtml(input.name)} is connected to OpenWork.</strong><small>Connection complete</small></span>
-      </div>
+        <span><strong>${escapeHtml(input.name)} is connected to OpenWork.</strong><small>${escapeHtml(input.detail ?? "Connection complete")}</small></span>
+      </div>${input.warning ? `
+      <div class="status-row warning" role="status">
+        <span class="status-icon" aria-hidden="true">!</span>
+        <span><strong>LiteLLM needs attention</strong><small>${escapeHtml(input.warning)}</small></span>
+      </div>` : ""}
       <p>You can close this window and return to OpenWork.</p>`
     : `<div class="status-row failure">
         <span class="status-icon" aria-hidden="true">!</span>
@@ -106,6 +110,8 @@ function callbackPageShell(page: { title: string; brand: string; workbot: boolea
       .status-icon { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; color: var(--dls-text-secondary); background: var(--dls-hover); font-size: 17px; }
       .failure { border-color: #fecaca; background: #fef2f2; }
       .failure .status-icon { color: #b42318; background: #fee2e2; }
+      .warning { margin-top: 12px; border-color: #fde68a; background: #fffbeb; }
+      .warning .status-icon { color: #b45309; background: #fef3c7; }
       .reference { margin-top: 18px; font-size: 13px; }
       .fix-link { color: var(--dls-text-primary); font-weight: 500; text-underline-offset: .2em; }
       code { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; user-select: all; }

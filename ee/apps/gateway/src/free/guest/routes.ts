@@ -27,7 +27,7 @@ export type FreeRouteDependencies = {
   store: FreeAllowanceStore;
   fetch: typeof fetch;
   now?: () => number;
-  requireDesktop?: typeof desktopProofRequired;
+  requireDesktop?: (config: AutoConfig) => boolean;
   clientAddress: (c: Context) => string | null;
 }
 function defaults(): FreeRouteDependencies {
@@ -89,7 +89,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     if (!config.anonymousEnabled) return { error: switchedOff() }
     const token = bearer(c.req.raw)
     const address = dependencies.clientAddress(c)
-    const strict = await dependencies.requireDesktop?.(null)
+    const strict = (dependencies.requireDesktop ?? desktopProofRequired)(config)
     if (openRequest(c.req.raw)) {
       if (strict) return { error: desktopChallenge(config.minimumVersion) }
       if (!untaggedAutoEnabled(config)) return { principal: { kind: "installation", id: "", deviceless: true }, minimumVersion: null, currentVersion: "",

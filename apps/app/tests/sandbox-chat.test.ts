@@ -20,7 +20,7 @@ for (const [source, renderer] of Object.entries({ sandbox_shell: "bash", sandbox
 }
 
 const off: OpenworkSandboxSettingsResponse = {
-  featureEnabled: true, useSandbox: false, forceSandbox: false,
+  useSandbox: false, forceSandbox: false,
   effectiveUseSandbox: false, effectiveForceSandbox: false, managedUse: false, managedForce: false,
   pending: false, verification: "verified", allowHostExecution: true, effectiveAllowHostExecution: true, managed: false,
 };

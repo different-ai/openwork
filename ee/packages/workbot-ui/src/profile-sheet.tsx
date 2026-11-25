@@ -49,9 +49,6 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
   }
   const tabId = useId();
 
-  const computers = workbotHost().profileComputers === true;
-  const tabs = TABS.filter((entry) => computers || entry.id !== "computers");
-  if (!tabs.some((entry) => entry.id === tab)) setTab("tasks");
   const drag = useSheetDrag(onClose);
   return <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <Dialog.Portal {...surface.portal}>
@@ -67,20 +64,20 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
           </Dialog.Description>
           {activity.working ? <p className="flex max-w-full items-center gap-1.5 text-[12px] text-[var(--wb-muted)]"><StatusIcon activity={activity} size={12} /><span className="truncate">{activity.label}</span></p> : null}
           <div role="tablist" aria-label={`${name}'s profile`} className="mt-3 flex w-full max-w-[320px] items-center justify-between rounded-full bg-[var(--wb-surface)] p-1 shadow-[0_0_0_1px_var(--wb-ring)]">
-            {tabs.map(({ id, label, icon: Icon }, index) => <button key={id} type="button" role="tab" id={`${tabId}-${id}`} aria-controls={`${tabId}-panel`} tabIndex={tab === id ? 0 : -1} aria-selected={tab === id} aria-label={label} title={label} onClick={() => setTab(id)}
+            {TABS.map(({ id, label, icon: Icon }, index) => <button key={id} type="button" role="tab" id={`${tabId}-${id}`} aria-controls={`${tabId}-panel`} tabIndex={tab === id ? 0 : -1} aria-selected={tab === id} aria-label={label} title={label} onClick={() => setTab(id)}
               onKeyDown={(event) => {
-                const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
-                const entry = next === null ? null : tabs[next];
+                const next = event.key === "ArrowRight" ? (index + 1) % TABS.length : event.key === "ArrowLeft" ? (index + TABS.length - 1) % TABS.length : event.key === "Home" ? 0 : event.key === "End" ? TABS.length - 1 : null;
+                const entry = next === null ? null : TABS[next];
                 if (!entry) return;
                 event.preventDefault(); setTab(entry.id); document.getElementById(`${tabId}-${entry.id}`)?.focus();
               }}
-              className={`flex ${computers ? "h-11" : "h-9"} min-w-0 flex-1 items-center justify-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === id ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:text-[var(--wb-text)]"}`}>
+              className={`flex h-11 min-w-0 flex-1 items-center justify-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === id ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:text-[var(--wb-text)]"}`}>
               <Icon size={18} strokeWidth={1.6} aria-hidden />
             </button>)}
           </div>
         </div>
         <div role="tabpanel" id={`${tabId}-panel`} aria-labelledby={`${tabId}-${tab}`} tabIndex={0} className="min-h-0 flex-1 overflow-y-auto pb-[calc(env(safe-area-inset-bottom)+2rem)] outline-none sm:pb-6">
-          {tab === "tasks" ? <TasksTab name={name} activity={activity} /> : tab === "files" ? <FilesTab name={name} open={surface.open} onClose={onClose} /> : tab === "permissions" ? <AppsTab name={name} /> : tab === "schedules" ? <SchedulesTab /> : tab === "computers" && computers ? <ComputersTab onClose={onClose} /> : <MemoryTab name={name} />}
+          {tab === "tasks" ? <TasksTab name={name} activity={activity} /> : tab === "files" ? <FilesTab name={name} open={surface.open} onClose={onClose} /> : tab === "permissions" ? <AppsTab name={name} /> : tab === "schedules" ? <SchedulesTab /> : tab === "computers" ? <ComputersTab onClose={onClose} /> : <MemoryTab name={name} />}
         </div>
         <PhoneSheetEdge />
       </Dialog.Popup>

@@ -17,7 +17,6 @@ import {
   getLibraryLlmProviderRoute,
   getLibraryRoute,
   getYourConnectionsRoute,
-  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FilterInput, ItemMenu, ItemPanel, removeEntry } from "./item-list";
@@ -311,11 +310,9 @@ function LibraryContent() {
         action={filter === "models" ? <DenButton size="sm" variant="secondary" icon={Plus} href={addKeyHref}>Add key</DenButton> : !empty ? <DenButton size="sm" variant="secondary" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
       />
 
-      {orgFeatureEnabled(orgContext, "personalSkillPortability") ? (
-        <div className="flex">
-          <DenButton href={`${getLibraryRoute(orgSlug)}/private-skills`} variant="secondary" size="sm">Move private skills</DenButton>
-        </div>
-      ) : null}
+      <div className="flex">
+        <DenButton href={`${getLibraryRoute(orgSlug)}/private-skills`} variant="secondary" size="sm">Move private skills</DenButton>
+      </div>
 
       {library.error ? (
         <p role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
