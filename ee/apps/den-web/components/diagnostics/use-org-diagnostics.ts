@@ -15,8 +15,8 @@ export class DiagnosticsRequestError extends Error {
   }
 }
 
-export function orgDiagnosticsQueryKey(orgId: string) {
-  return ["org-diagnostics", orgId] as const;
+export function orgDiagnosticsQueryKey(orgId: string, includeConfig: boolean) {
+  return ["org-diagnostics", orgId, includeConfig ? "with-config" : "plain"] as const;
 }
 
 function failureOf(error: unknown): DiagnosticsFailure | null {
@@ -24,9 +24,9 @@ function failureOf(error: unknown): DiagnosticsFailure | null {
   return error instanceof DiagnosticsRequestError ? error.failure : "error";
 }
 
-export function useOrgDiagnostics(orgId: string, enabled: boolean) {
+export function useOrgDiagnostics(orgId: string, { enabled, includeConfig }: { enabled: boolean; includeConfig: boolean }) {
   const queryClient = useQueryClient();
-  const queryKey = orgDiagnosticsQueryKey(orgId);
+  const queryKey = orgDiagnosticsQueryKey(orgId, includeConfig);
   const [pollUntil, setPollUntil] = useState<number | null>(null);
   const [cooldown, setCooldown] = useState<{ until: number; seconds: number } | null>(null);
 
@@ -36,7 +36,7 @@ export function useOrgDiagnostics(orgId: string, enabled: boolean) {
     retry: false,
     refetchOnWindowFocus: false,
     queryFn: async ({ signal }): Promise<OrgDiagnostics> => {
-      const result = await readOrgDiagnostics(orgId, signal);
+      const result = await readOrgDiagnostics(orgId, { includeConfig, signal });
       if (!result.ok) throw new DiagnosticsRequestError(result.failure, result.status);
       const checking = isChecking(result.data);
       setPollUntil((current) => (checking ? current ?? Date.now() + DIAGNOSTICS_POLL_LIMIT_MS : null));
@@ -49,7 +49,7 @@ export function useOrgDiagnostics(orgId: string, enabled: boolean) {
     mutationKey: [...queryKey, "check"],
     retry: false,
     mutationFn: async () => {
-      const result = await startOrgDiagnosticsCheck(orgId);
+      const result = await startOrgDiagnosticsCheck(orgId, { includeConfig });
       if (!result.ok) throw new DiagnosticsRequestError(result.failure, result.status);
       return result;
     },
