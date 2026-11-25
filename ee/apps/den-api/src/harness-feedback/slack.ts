@@ -13,10 +13,16 @@ export function escapeSlack(value: string) {
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 }
 
-export function neutralizeHarnessFeedbackSlackText(value: string) {
+const WORD_JOINER = "\u2060"
+
+export function cleanHarnessFeedbackText(value: string) {
   return value.replace(/\s+/gu, " ").replace(/\p{C}/gu, "").trim()
+}
+
+export function neutralizeHarnessFeedbackSlackText(value: string) {
+  return cleanHarnessFeedbackText(value)
     .replace(/(?:[\w+.-]+:\/\/[^\s<>]+|[\p{L}\p{N}-]+(?:[.\u3002\uff0e\uff61][\p{L}\p{N}-]+)+)/gu,
-      (link) => link.replace("://", "[:]//").replace(/[.\u3002\uff0e\uff61]/gu, "[.]"))
+      (link) => link.replace("://", `:${WORD_JOINER}//`).replace(/[.\u3002\uff0e\uff61]/gu, (dot) => `${dot}${WORD_JOINER}`))
     .replaceAll("@", "＠").replaceAll("<", "‹").replaceAll(">", "›")
 }
 

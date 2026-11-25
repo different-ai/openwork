@@ -1,7 +1,7 @@
 import { HARNESS_FEEDBACK_THEMES } from "@openwork-ee/den-db/schema"
 import { z } from "zod"
 import type { HarnessFeedbackEvidence } from "../harness-feedback/classifier.js"
-import { neutralizeHarnessFeedbackSlackText } from "../harness-feedback/slack.js"
+import { cleanHarnessFeedbackText } from "../harness-feedback/slack.js"
 import { harnessFeedbackTheme } from "../harness-feedback/themes.js"
 import { boundedJson } from "../utils/bounded-json.js"
 
@@ -16,7 +16,7 @@ const completion = z.object({ choices: z.tuple([z.object({
   finish_reason: z.literal("stop"), message: z.object({ content: z.string(), refusal: z.null().optional() }),
 })]) })
 const issue = z.strictObject({
-  title: z.string().transform((title) => [...neutralizeHarnessFeedbackSlackText(title)].slice(0, TITLE_LIMIT).join("").trim()).pipe(z.string().min(1)),
+  title: z.string().transform((title) => [...cleanHarnessFeedbackText(title)].slice(0, TITLE_LIMIT).join("").trim()).pipe(z.string().min(1)),
   theme: harnessFeedbackTheme,
 })
 export type HarnessFeedbackIssueName = z.output<typeof issue>
