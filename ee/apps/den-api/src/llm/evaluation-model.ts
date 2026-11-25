@@ -1,3 +1,5 @@
+import { boundedJson } from "../utils/bounded-json.js"
+
 const ENDPOINT = "https://ai-gateway.vercel.sh/v4/ai/evaluation-model"
 const MODEL = "typesafe-ai/jev"
 const RESPONSE_BYTE_LIMIT = 64 * 1024
@@ -13,31 +15,6 @@ export type EvaluationModel = (request: EvaluationRequest) => Promise<Evaluation
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-async function boundedJson(response: Response): Promise<unknown> {
-  if (!response.body || Number(response.headers.get("content-length")) > RESPONSE_BYTE_LIMIT) throw new Error("unreadable body")
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    for (;;) {
-      const chunk = await reader.read()
-      if (chunk.done) break
-      size += chunk.value.byteLength
-      if (size > RESPONSE_BYTE_LIMIT) throw new Error("oversized body")
-      chunks.push(chunk.value)
-    }
-  } finally {
-    void reader.cancel().catch(() => {})
-  }
-  const bytes = new Uint8Array(size)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
 }
 
 export function createEvaluationModel(options: { apiKey: string; fetch?: typeof globalThis.fetch; timeoutMs?: number }): EvaluationModel {
@@ -63,7 +40,7 @@ export function createEvaluationModel(options: { apiKey: string; fetch?: typeof 
         void response.body?.cancel().catch(() => {})
         throw new Error("evaluation model unavailable")
       }
-      const body = await boundedJson(response)
+      const body = await boundedJson(response, RESPONSE_BYTE_LIMIT)
       if (!isRecord(body) || !isRecord(body.answers)) throw new Error("unreadable answer")
       const usage = isRecord(body.usage) ? body.usage.inputTokens : null
       return {

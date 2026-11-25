@@ -10,6 +10,7 @@ import { startSlackDesktopHandoffWorker } from "./slack-assistant/desktop-handof
 import { startWorkbotProactiveWorker } from "./workbot-proactive/worker.js"
 import { startHarnessFeedbackNotifier } from "./harness-feedback/notifier.js"
 import { startHarnessFeedbackWorker } from "./harness-feedback/worker.js"
+import { startSupportTriageWorker } from "./support-triage/worker.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
@@ -38,6 +39,7 @@ const stopMcpEventWorker = startMcpEventWorker()
 const stopNativeEventWorker = startNativeEventWorker()
 const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
 const stopHarnessFeedbackWorker = startHarnessFeedbackWorker()
+const stopSupportTriageWorker = startSupportTriageWorker()
 const stopHarnessFeedbackNotifier = startHarnessFeedbackNotifier()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
@@ -92,6 +94,7 @@ async function stopBackgroundLoops() {
     stopWorkbotProactiveWorker(),
     stopHarnessFeedbackWorker(),
     stopHarnessFeedbackNotifier(),
+    stopSupportTriageWorker(),
     stopMcpEventWorker(),
     stopNativeEventWorker(),
     stopCloudIdleStopLoop(),
