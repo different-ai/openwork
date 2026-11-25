@@ -224,6 +224,7 @@ import {
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { cloudSurfaceAvailable } from "@/react-app/domains/cloud/cloud-surface-availability";
+import { SandboxTrialNotice } from "./sandbox-trial-notice";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import {
   hasOpenWorkModelsAvailable,
@@ -3783,6 +3784,7 @@ export function SessionRoute() {
       />
     ) : null}
     <SessionPage
+      sandboxTrialNotice={<SandboxTrialNotice />}
       ref={composerImpressionRef}
       currentSessionArchive={currentSessionArchive}
       sessionReferenceInventories={sessionReferenceInventories}

@@ -1,3 +1,4 @@
+import { memberSandboxStatusSchema } from "@openwork/types/den/sandbox-organizations";
 import { builtMcpAppCatalogSchema, type BuiltMcpAppCatalogEntry } from "./built-mcp-app-catalog";
 import {
   normalizeDesktopConfig,
@@ -3549,6 +3550,13 @@ export function createDenClient(options: {
       const payload = await requestJson<unknown>(baseUrls, "/v1/features", { method: "GET", ...(options.cache ? { cache: options.cache } : {}) });
       const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
       return Object.fromEntries(Object.entries(features).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
+    },
+
+    async getSandboxStatus(orgId: string, signal?: AbortSignal) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org/sandbox-status", {
+        method: "GET", token, organizationId: orgId, signal, cache: "no-store",
+      });
+      return memberSandboxStatusSchema.parse(payload).state;
     },
 
     async getOrgFeatures(orgId: string): Promise<Record<string, boolean>> {

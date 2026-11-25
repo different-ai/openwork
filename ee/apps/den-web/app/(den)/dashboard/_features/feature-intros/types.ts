@@ -69,7 +69,8 @@ export type FeatureIntroKey =
   | "analytics"
   | "analytics.library"
   | "analytics.workflow-runs"
-  | "audit-logs";
+  | "audit-logs"
+  | "admin.support-triage";
 
 export type FeatureIntroSetupState = "none" | "partial" | "done";
 

@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./sandbox-trial-notice": {
+      "types": "./src/react/sandbox-trial-notice.tsx",
+      "default": "./src/react/sandbox-trial-notice.tsx"
+    },
     "./provider-icon": {
       "types": "./src/react/provider-icon.tsx",
       "development": "./src/react/provider-icon.tsx",
