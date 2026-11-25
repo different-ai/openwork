@@ -7,10 +7,10 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 vite",
+    "dev": "node ../../scripts/dev.mjs ui",
     "prebuild": "pnpm --filter @openwork/types build",
     "build": "vite build",
-    "dev:web": "OPENWORK_DEV_MODE=1 vite",
+    "dev:web": "node ../../scripts/dev.mjs ui",
     "prebuild:web": "pnpm --filter @openwork/types build",
     "build:web": "VITE_OPENWORK_DEPLOYMENT=web VITE_DEN_REQUIRE_SIGNIN=1 vite build",
     "prebuild:selfhost": "pnpm --filter @openwork/types build",
