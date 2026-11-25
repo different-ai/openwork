@@ -173,6 +173,7 @@ import { appendQuoteToDraft } from "@/react-app/domains/session/links/selection-
 import { SIDE_QUESTION_COMMAND } from "@/react-app/domains/session/links/side-question";
 import { showSideChatTab, useSideQuestionStore } from "@/react-app/domains/session/links/side-question-store";
 import { withSideChatActivity } from "@/react-app/domains/session/sidebar/side-chat-status";
+import { useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { resolveWorkbenchPaneEndpoint } from "@/react-app/domains/session/chat/pane-runtime";
 import {
   useModelCollectionsStore,
@@ -561,6 +562,8 @@ export function SessionRoute() {
     endpointForSessionWorkspace,
     refreshRouteState,
     reloadWorkspaceSessions,
+    previewSessionArchive,
+    confirmSessionArchive,
     rememberPendingCreatedSession,
     createWorkspaceSessionMetadataCallbacks,
     handleRuntimeSessionCreated,
@@ -904,7 +907,8 @@ export function SessionRoute() {
     if (!canLinkSessionTo(sessionsByWorkspaceIdRef.current[workspaceId] ?? [], parent.sessionId)) return undefined;
     return { kind: "side", parentID: parent.sessionId };
   }, [sessionTreeEnabled, sessionsByWorkspaceIdRef]);
-  const sidebarSessionAttention = useMemo(() => {
+  const computerRequests = useComputerStore((state) => state.requests);
+  const resolveSidebarSessionAttention = useCallback((requests?: typeof computerRequests) => {
     const remoteAttention = remoteThreadAttentionBySession(remoteAttentionKey);
     const statusById: Record<string, string> = {};
     const labelById: Record<string, string> = {};
@@ -915,12 +919,13 @@ export function SessionRoute() {
         statuses: sessionActivityByWorkspaceId[group.workspace.id],
         waiting: sessionWaitingByWorkspaceId[group.workspace.id],
         childIds: sessionChildIdsByWorkspaceId[group.workspace.id],
+        computerRequests: requests,
       });
       for (const session of group.sessions) {
         const entry = attention.get(session.id);
         if (!entry) continue;
         statusById[session.id] = sessionAttentionSidebarStatus(entry);
-        const kind = entry.blockedBy?.kind ?? sessionWaitingByWorkspaceId[group.workspace.id]?.[session.id];
+        const kind = entry.blockedBy?.kind ?? (requests?.[session.id] ? "permission" : sessionWaitingByWorkspaceId[group.workspace.id]?.[session.id]);
         if (entry.status === "waiting" && kind) kindById[session.id] = kind;
         if (entry.blockedBy) {
           labelById[session.id] = sessionAttentionLabel(entry.blockedBy);
@@ -939,6 +944,10 @@ export function SessionRoute() {
     }
     return { statusById: withSideChatActivity(statusById, sideChats, workspaceSessionGroups), labelById, sourceById, kindById };
   }, [attentionLocale, remoteAttentionKey, selectWorkspaceAttention, sideChats, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
+  const sidebarRunAttention = useMemo(() => resolveSidebarSessionAttention(), [resolveSidebarSessionAttention]);
+  const sidebarSessionAttention = useMemo(() => Object.keys(computerRequests).length
+    ? resolveSidebarSessionAttention(computerRequests)
+    : sidebarRunAttention, [computerRequests, resolveSidebarSessionAttention, sidebarRunAttention]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
   const selectedSidebarSession = useMemo(() => {
     if (!selectedWorkspaceId || !selectedSessionId) return null;
@@ -2991,15 +3000,8 @@ export function SessionRoute() {
     navigateToWorkspaceSession,
     reloadWorkspaceSessions,
     draftScope: sessionDraftScope,
-    onArchivedChange: (workspaceId, sessionId, archived) => {
-      setSessionsByWorkspaceId(current => {
-        const sessions = current[workspaceId];
-        if (!sessions) return current;
-        return { ...current, [workspaceId]: sessions.map(session => session.id === sessionId
-          ? { ...session, time: { ...session.time, archived: archived ? Date.now() : 0 } }
-          : session) };
-      });
-    },
+    previewArchivedChange: previewSessionArchive,
+    onArchivedChange: confirmSessionArchive,
   });
   const handleArchiveSession = async (sessionId: string, archived: boolean, workspaceId: string) => {
     await archiveSessionInWorkspace(workspaceId, sessionId, archived);
@@ -3948,6 +3950,7 @@ export function SessionRoute() {
       onSessionTabsChange={(tabs) => {
         sessionTabNavRef.current = { ...sessionTabNavRef.current, options: tabs };
       }}
+      runtimeSessionStatusById={sidebarRunAttention.statusById}
       sidebar={{
         workspaceSessionGroups,
         selectedWorkspaceId,

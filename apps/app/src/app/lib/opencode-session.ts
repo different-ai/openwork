@@ -88,8 +88,8 @@ export async function setSessionArchived(
   archived: boolean,
   directory?: string,
   options?: { signal?: AbortSignal },
-): Promise<void> {
-  unwrap(
+): Promise<Session> {
+  return unwrap(
     await client.session.update({
       sessionID,
       directory,
