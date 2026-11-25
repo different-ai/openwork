@@ -9,8 +9,15 @@ export type CatalogProvider = {
   api: string | null
   env: string[]
   modelApiPaths?: ReadonlyMap<string, string>
+  requestHeaders?: readonly string[]
   family?: "microsoft_foundry"
 }
+
+const opencodeRequestHeaders = ["x-opencode-session", "x-opencode-request", "x-opencode-project", "x-opencode-client"]
+const providerRequestHeaders = new Map<string, readonly string[]>([
+  ["opencode", opencodeRequestHeaders],
+  ["opencode-go", opencodeRequestHeaders],
+])
 
 export type ProviderCatalog = {
   getCatalogProvider(providerId: string): CatalogProvider | null
@@ -45,8 +52,10 @@ export function createProviderCatalog(raw: unknown): ProviderCatalog {
     for (const [id, value] of Object.entries(withTrueFoundryProvider(withLiteLlmProvider(withMicrosoftFoundryProvider(withBedrockMantleProvider(raw)))))) {
       const provider = readCatalogProvider(value)
       if (!provider) continue
-      providers.set(id, id === BEDROCK_MANTLE_PROVIDER_ID ? { ...provider, modelApiPaths: bedrockMantleApiPathsFromCatalog(raw) }
-        : id === MICROSOFT_FOUNDRY_PROVIDER_ID ? { ...provider, family: "microsoft_foundry" } : provider)
+      const entry = id === BEDROCK_MANTLE_PROVIDER_ID ? { ...provider, modelApiPaths: bedrockMantleApiPathsFromCatalog(raw) }
+        : id === MICROSOFT_FOUNDRY_PROVIDER_ID ? { ...provider, family: "microsoft_foundry" as const } : provider
+      const requestHeaders = providerRequestHeaders.get(id)
+      providers.set(id, requestHeaders ? { ...entry, requestHeaders } : entry)
     }
   }
   providers.set(GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomCatalogProvider)
