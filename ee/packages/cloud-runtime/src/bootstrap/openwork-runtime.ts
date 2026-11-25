@@ -25,77 +25,6 @@ export type OpenWorkBootstrapConfig = OpenWorkCheckpointConfig & {
   runtimeProvider: string
   imageDescription: string
   rebuildHint: string
-  documentsEditor?: OpenWorkDocumentsEditorConfig
-}
-
-export type OpenWorkDocumentsEditorConfig = {
-  port: number
-  wopiHost: string
-  frameAncestor: string
-}
-
-/** Installed by the worker image beside the engine. */
-export const DOCUMENTS_EDITOR_PROXY_PATH = "/opt/openwork/documents-editor-proxy.mjs"
-
-function documentsEditorScript(config: OpenWorkDocumentsEditorConfig, rebuildHint: string) {
-  const enginePort = config.port + 1
-  const options = [
-    "--use-env-vars",
-    "--o:sys_template_path=/opt/cool/systemplate",
-    "--o:child_root_path=/opt/cool/child-roots",
-    "--o:file_server_root_path=/usr/share/coolwsd",
-    "--o:cache_files.path=/opt/cool/cache",
-    "--o:logging.color=false",
-    "--o:logging.level=warning",
-    "--o:stop_on_config_change=false",
-    "--o:ssl.enable=false",
-    "--o:ssl.termination=true",
-    "--o:net.proto=IPv4",
-    "--o:net.listen=loopback",
-    `--port=${enginePort}`,
-    `--o:net.frame_ancestors=${config.frameAncestor}`,
-    "--o:admin_console.enable=false",
-    "--o:security.capabilities=false",
-    "--o:security.enable_macros_execution=false",
-    "--o:security.enable_websocket_urp=false",
-    "--o:num_prespawn_children=1",
-  ].map(shellQuote).join(" ")
-  return `documents_editor_loop() {
-  editor_attempt=0
-  while [ "$editor_attempt" -lt 5 ]; do
-    editor_attempt=$((editor_attempt + 1))
-    # The engine refuses to run as root; aliasgroup1 is its WOPI host allowlist.
-    if [ "$(id -u)" = 0 ]; then
-      runuser -u cool -- env aliasgroup1=${shellQuote(config.wopiHost)} coolwsd ${options}
-    else
-      env aliasgroup1=${shellQuote(config.wopiHost)} coolwsd ${options}
-    fi
-    echo "document editor exited (attempt $editor_attempt); retrying in 5s" >&2
-    sleep 5
-  done
-  echo "document editor stopped after repeated failures; ${rebuildHint} if this persists" >&2
-}
-
-documents_editor_proxy_loop() {
-  proxy_attempt=0
-  while [ "$proxy_attempt" -lt 5 ]; do
-    proxy_attempt=$((proxy_attempt + 1))
-    node ${shellQuote(DOCUMENTS_EDITOR_PROXY_PATH)} ${config.port} ${enginePort}
-    echo "document editor proxy exited (attempt $proxy_attempt); retrying in 5s" >&2
-    sleep 5
-  done
-}
-
-editor_pid=""
-editor_proxy_pid=""
-if command -v coolwsd >/dev/null 2>&1 && [ -f ${shellQuote(DOCUMENTS_EDITOR_PROXY_PATH)} ]; then
-  documents_editor_loop &
-  editor_pid=$!
-  documents_editor_proxy_loop &
-  editor_proxy_pid=$!
-else
-  echo "document editor is not installed in this image; ${rebuildHint} to edit Office files here"
-fi`
 }
 
 export function checkpointDirectory(config: Pick<OpenWorkCheckpointConfig, "dataMountPath">) {
@@ -337,15 +266,11 @@ on_term() {
     kill "$checkpoint_pid" 2>/dev/null || true
     wait "$checkpoint_pid" 2>/dev/null || true
   fi
-  for documents_pid in "\${editor_pid:-}" "\${editor_proxy_pid:-}"; do
-    [ -n "$documents_pid" ] && kill "$documents_pid" 2>/dev/null || true
-  done
   exit 143
 }
 trap on_term TERM INT
 
 hydrate_checkpoint
-${config.documentsEditor ? documentsEditorScript(config.documentsEditor, config.rebuildHint) : ""}
 attempt=0
 while [ "$attempt" -lt 3 ]; do
   attempt=$((attempt + 1))

@@ -1,9 +1,8 @@
 # Workbot: Your agent's brief and check rhythm
 
-Feature `workbotAgentBrief` (cloud and self-hosted, off by default). Author: `benjaminshafii`.
-It works on top of [Your agent](../workbot-proactive/README.md) (`workbotProactive`): both must be on for a member.
-Off, Your agent works exactly as before (the legacy prompts are pinned by hash in
-`ee/apps/den-api/test/workbot-agent-brief.test.ts`).
+Generally available on Cloud and self-hosted (retired rollout: `workbotAgentBrief`). Owner: `benjaminshafii`.
+This is the standard behavior when [members' agents](../workbot-proactive/README.md) are enabled in Manage › Workbot.
+Before/after comparisons and replay results below describe the original rollout; there is no brief rollout switch now.
 
 Your agent stops having four fixed message types (morning brief, meeting prep with a lead time, calendar changes,
 waiting on you) and gets the shape every proactive product we looked at shares: **one rhythm, a free-text brief the
@@ -78,7 +77,7 @@ labeled lines ("Never tell me about: newsletters").
 
 ## Carrying the earlier settings over
 
-Nothing is written when the flag turns on. Until an admin or member saves, Den reads the brief from what they had
+Retirement does not rewrite stored agent settings. Until an admin or member saves, Den reads the brief from what they had
 (`resolveAgentBrief`, `carriedOverMemberBrief` in `@openwork/types/den/workbot-proactive`), and shows "From your
 earlier settings":
 
@@ -89,7 +88,7 @@ earlier settings":
 - The meeting lead time is dropped: the agent asks for an extra check before a meeting that matters instead.
 - A member's only-urgent window becomes quiet hours.
 
-Turning the flag off goes back to the template, mutes and words, which are untouched.
+The original template, mutes and words are kept for carry-over.
 
 ## The pipeline
 
@@ -143,19 +142,18 @@ replay evals measured the previous two-turn pipeline, not this one.
 ## API
 
 - `GET /v1/org/workbot-settings/proactive`: `brief` `{checkEveryHours, dailyCap, extraChecksPerDay, text, defaultText,
-  carriedOver}` with the flag on. `PUT` takes `brief` (any subset); without the flag, 400.
-- `GET /v1/org/workbot-settings/proactive/health`: `rhythm` `{checks, quiet, sent}` with the flag on.
+  carriedOver}`. `PUT` takes `brief` (any subset).
+- `GET /v1/org/workbot-settings/proactive/health`: `rhythm` `{checks, quiet, sent}`.
 - `GET /v1/me/agent` (`getMeAgent`): `brief` `{lines, organization, carriedOver}`, `nextChecks` `[{at, kind, why}]`,
   `limits.checkEveryHours`, `limits.admin.checkEveryHours`, `limits.extraChecksPerDay`; `responsibilities` is empty.
 - `PUT /v1/me/agent` (`putMeAgent`): `checkEveryHours` (1–4, never more often than the admin's, null for theirs) and
-  `brief` `{add?, remove?, set?}`; errors `limit_wider_than_admin`, `brief_line_not_found`, `brief_too_long`, and
-  `brief_unavailable` without the flag.
-- Connect tells chat, with the flag on: "To change what Your agent tells the user ("also watch our Render bill", "never
+  `brief` `{add?, remove?, set?}`; errors `limit_wider_than_admin`, `brief_line_not_found`, and `brief_too_long`.
+- Connect tells chat: "To change what Your agent tells the user ("also watch our Render bill", "never
   tell me about newsletters": lines added to their brief) or how often it checks, use putMeAgent…".
 
 ## Any connected connector as a source
 
-Same flag. Before, Manage › Workbot › Connectors (then "What agents read") and My bot offered only Den's own
+Before retirement, Manage › Workbot › Connectors (then "What agents read") and My bot offered only Den's own
 providers for the calendar and MCP connections whose service had a hand-reviewed list of read tools (Slack, Linear,
 Notion, GitHub, Granola; #6630). Every other connector the organization or member had connected was invisible. With
 the brief on, **every connection is offered**: each MCP connection (custom ones included) and Den's own providers for
@@ -220,7 +218,7 @@ token, which is per check by construction.
   admin's `override` and `locked`; `readTools`; `status` `needs_connection` when the admin's own account isn't connected
   (per-member connectors), `unavailable` when the server didn't answer. Needs View connections.
 - `PUT /v1/org/workbot-settings/proactive`: `sources.toolOverrides` `{<connection id>: {<tool>: "allow" | "deny" | null} | null}`.
-  Off, 400. `sources.connections` takes any connection with the flag on.
+  `sources.connections` takes any connection in the organization.
 - `GET /v1/org/workbot-settings/proactive`: `sourceConnections.other` lists every connection, each with `native` and the
   `policy` it has now.
 - `GET /v1/me/agent`: every connection the member can use is a source; other sources carry `readTools` (null while
@@ -254,16 +252,14 @@ I checked the ticket updates and your sent mail and found no response. I can dra
 - The member's page waits up to 4 seconds for a connector's tools (Den's tool cache answers most at once) and shows
   nothing about them if it can't.
 
-## Turning it off
+## Turning agents off
 
-The kill switch (or the organization override) sends every member back to today's agent on the next wake: the worker
-picks the wake per member and per check. A message about to be sent re-checks the flag right before sending. The
-brief settings, members' lines and extra-check requests stay stored and come back when it's turned on again. Today's
-settings page and agent never read or drop them.
+The organization or team policy and the member's own settings still decide whether an agent runs. A message about
+to be sent rechecks access and the worker's lease. Turning agents off does not erase the brief or members' lines.
 
-## Follow-up: what retiring the old path deletes
+## Original cleanup plan (historical)
 
-Once the brief is on everywhere:
+Retirement removed the legacy wake and UI. Stored carry-over, historical check records and older API inputs remain compatible. The original list of candidates was:
 
 - `packages/types/src/den/workbot-proactive.ts`: `AGENT_RESPONSIBILITIES`, `AGENT_RESPONSIBILITY_COPY`,
   `WORKBOT_PROACTIVE_LEAD_MINUTES`, `leadMinutes`, `dailyCap` (the brief's becomes the one), the template content and
@@ -292,7 +288,7 @@ Once the brief is on everywhere:
 
 ```sh
 pnpm dev:den:mysql && pnpm dev:workbot
-# /admin › Features › Workbot: Your agent and Workbot: Your agent's brief and check rhythm › on for your organization
+# Enable members’ agents in Manage › Workbot
 ```
 
 `pnpm --filter @openwork/automations test` (prompts, rhythm across DST, requests, parsing, Den's limits),

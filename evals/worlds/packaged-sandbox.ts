@@ -17,7 +17,7 @@ import { GUEST_TOOLS, hasOnlyDirectGuestTools, hasStoppedAssistantAnswer, infere
 import { acquirePackagedSandboxLock } from "./packaged-sandbox-lock.ts";
 
 const exec = promisify(execFile);
-export const CASES = ["a", "b", "c", "c-ro", "d", "e", "f1", "f2", "f3", "g", "i", "i-off", "j-use", "j-force"];
+export const CASES = ["a", "b", "c", "c-ro", "d", "e", "f1", "f2", "f3", "g", "i", "j-use", "j-force"];
 const ADDITIVE = GUEST_TOOLS.map(tool => `sandbox_${tool}`);
 const UNAME = "Run exactly `uname -s` using the shell tool and report its output. Do not guess.";
 type Options = { binary: string; model: ModelKey; realKey: string; evidenceDir: string; caseName: string; signal?: AbortSignal; artifact?: Awaited<ReturnType<typeof packagedBundle>>; keepRoot?: boolean; expectedGitSha?: string; expectedBundleSha256?: string };
@@ -26,7 +26,6 @@ type Assertion = { name: string; ok: boolean; detail: unknown };
 export async function packagedSandboxWorld(options: Options) {
   if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("This packaged microVM journey requires macOS arm64");
   const artifact = options.artifact ?? await packagedBundle(options.binary);
-  const flag = options.caseName !== "i-off";
   if (options.expectedBundleSha256 && artifact.identity.sha256 !== options.expectedBundleSha256) throw new Error("The supplied bundle does not match --expected-bundle-sha256");
   const checkoutHead = (await exec("git", ["rev-parse", "HEAD"], { cwd: import.meta.dirname })).stdout.trim();
   const checkoutStatus = (await exec("git", ["status", "--porcelain=v1", "--untracked-files=all"], { cwd: import.meta.dirname })).stdout;
@@ -49,7 +48,7 @@ export async function packagedSandboxWorld(options: Options) {
   await Promise.all([writeFile(files.reference, initial), writeFile(files.notes, "status: draft\n"), writeFile(files.private, hostSecret)]);
   const profile = profiles[options.model];
   const state = { phase: "boot", hostSecret };
-  const den = await sandboxDenFixture(flag);
+  const den = await sandboxDenFixture();
   const inference = await inferenceFixture(options.model, options.realKey, state);
   const provider = { provider: { [profile.provider]: { npm: profile.npm, name: profile.name,
     options: { baseURL: inference.url, apiKey: inference.token },
@@ -122,9 +121,7 @@ export async function packagedSandboxWorld(options: Options) {
   const statusPath = () => `/workspace/${encodeURIComponent(workspaceId)}/sandbox-status`;
   async function settingsRoute() {
     await control(surface(), "route.settings.authorized_folders");
-    if (flag) await waitForLocated(surface(), { testId: "sandbox-use-switch" }, { timeoutMs: 30_000 });
-    else await waitFor(surface(), () => document.querySelector('[data-testid="sandbox-panel"][data-ready="true"][hidden]') !== null,
-      { timeoutMs: 30_000, label: "verified hidden rollout marker" });
+    await waitForLocated(surface(), { testId: "sandbox-use-switch" }, { timeoutMs: 30_000 });
   }
   async function clickSwitch(name: "use" | "force") { await clickTarget(surface(), { testId: `sandbox-${name}-switch` }); }
   async function returnToChat() {
@@ -256,9 +253,9 @@ export async function packagedSandboxWorld(options: Options) {
     let evidenceFailure: unknown;
     try {
       await writeFile(join(evidenceDir, "report.json"), redact(JSON.stringify({
-        scope: "Branch-built packaged macOS arm64 Electron, its embedded app.asar server and staged runtime; real provider inference and microVM. Signed-out Den rollout is a loopback contract fixture, not a production organization.",
+        scope: "Branch-built packaged macOS arm64 Electron, its embedded app.asar server and staged runtime; real provider inference and microVM. Signed-out Den is a loopback contract fixture, not a production organization.",
         artifact, sourceContext, bakedBuildInfo, expectedGitSha: options.expectedGitSha ?? null, model: profile.model, provider: profile.provider, upstream: profile.upstream, root, workspaceId, sessionId,
-        caseName: options.caseName, flag, assertions, timings, measurements, notices, frames, inference: inference.records, denReads: den.reads, processes, pluginConfigs: plugins,
+        caseName: options.caseName, assertions, timings, measurements, notices, frames, inference: inference.records, denReads: den.reads, processes, pluginConfigs: plugins,
         fatal: error instanceof Error ? error.stack : error ? String(error) : null,
       }, null, 2), [options.realKey, inference.token]), { mode: 0o600 });
       await writeFile(join(evidenceDir, "transcript.json"), redact(JSON.stringify(transcripts, null, 2), [options.realKey, inference.token]), { mode: 0o600 });
@@ -337,7 +334,7 @@ export async function packagedSandboxWorld(options: Options) {
     }, [profile.provider, profile.model]));
     await reload(surface());
     await waitForText(surface(), profile.name, { timeoutMs: 120_000 });
-    const ordinary = await waitSettings(body => body.featureEnabled === flag && body.verification === "verified");
+    const ordinary = await waitSettings(body => body.verification === "verified");
     check("starts with both settings off", ordinary.pending === false && ordinary.useSandbox === false && ordinary.forceSandbox === false, ordinary);
     await settingsRoute();
     await screenshot("initial-permissions");
@@ -740,11 +737,8 @@ export async function packagedSandboxWorld(options: Options) {
         check("nothing the commands wrote reached the Mac after Retry", await untouched());
         break;
       }
-      case "i":
-      case "i-off": {
+      case "i": {
         await settingsRoute();
-        const panel = await evaluateOnSurface(surface(), () => document.querySelector('[data-testid="sandbox-panel"]')?.hasAttribute("hidden"));
-        check("rollout controls visibility matches the fixture flag", panel === !flag, panel);
         await returnToChat();
         await uname("ordinary-host", "shell", "Darwin");
         check("ordinary host catalog offers no sandbox tools", phaseRequests().length > 0 && phaseRequests().every(entry => ![...entry.offeredTools, ...entry.codeModeTools].some(tool => tool.startsWith("sandbox_"))), phaseRequests());

@@ -37,19 +37,18 @@ describe("panelSessionForChatItem", () => {
     primarySessionId: "main",
     primaryWorkspaceId: "ws",
     split: { workspaceId: "ws", sessionId: "side" },
-    splitTakesPanel: false,
   };
 
-  test("shows a split pane file in the main chat's panel when that is the only panel", () => {
-    expect(panelSessionForChatItem(link)).toBe("main");
+  test("opens the split pane chat's own panel for a split pane file", () => {
+    expect(panelSessionForChatItem(link)).toBe("side");
   });
 
-  test("opens the split pane chat's own panel when it can take the panel", () => {
-    expect(panelSessionForChatItem({ ...link, splitTakesPanel: true })).toBe("side");
+  test("shows a split pane draft's file in the main chat's panel", () => {
+    expect(panelSessionForChatItem({ ...link, split: { ...link.split, draftDestination: {} } })).toBe("main");
   });
 
   test("opens the main chat's panel for a main chat file while the split pane's panel shows", () => {
-    expect(panelSessionForChatItem({ ...link, sourceSessionId: "main", panelSessionId: "side", splitTakesPanel: true })).toBe("main");
+    expect(panelSessionForChatItem({ ...link, sourceSessionId: "main", panelSessionId: "side" })).toBe("main");
   });
 
   test("uses the panel on screen for a file from its own chat or from no chat", () => {

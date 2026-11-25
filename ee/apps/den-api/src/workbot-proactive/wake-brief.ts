@@ -5,6 +5,7 @@ import {
   zonedDayStart,
   type AgentItem,
   type AgentState,
+  type AgentWakeReason,
 } from "@openwork/automations/proactive"
 import {
   AGENT_ONE_MESSAGE_LIMIT,
@@ -33,16 +34,17 @@ import {
   type AgentSentRecord,
 } from "@openwork/automations/proactive-brief"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import { resolveAgentBrief, type AgentCheckKind, type AgentCheckReason } from "@openwork/types/den/workbot-proactive"
+import { resolveAgentBrief, type AgentCheckKind, type AgentCheckReason, type AgentDestinationBlock, type WorkbotProactiveSettings } from "@openwork/types/den/workbot-proactive"
 import type { AgentMemberCheckMessage, AgentMemberCheckSource } from "@openwork-ee/den-db/schema"
 import { agentReadScopes } from "../mcp/agent-read-sources.js"
 import { appLogger } from "../observability/logger.js"
-import { describeAgentCheck } from "./checks.js"
+import type { MemberCalendarRead } from "../routes/org/google-workspace.js"
+import { describeAgentCheck, type AgentCheckRecord } from "./checks.js"
 import type { DeliveryResult } from "./deliver.js"
 import { memberBriefLines, memberRhythm, nextScheduledCheck } from "./brief.js"
 import { memberAgentOn } from "./policy.js"
 import { memberLimits, parseStoredPreferences } from "./preferences.js"
-import { AGENT_RHYTHM_COUNTER, type AgentInstanceRow, type AgentSettle } from "./repository.js"
+import { AGENT_RHYTHM_COUNTER, type AgentCheckCount, type AgentInstanceRow, type AgentSettle, type DeliveryOutcome } from "./repository.js"
 import {
   blockedConnections,
   connectionLinkDomains,
@@ -57,14 +59,37 @@ import { peekArrivals, type AgentCheckGate } from "./check-gate.js"
 import type { AgentSendCheck } from "./send-check.js"
 import type { MemberConnection } from "./sources.js"
 import type { AgentRawTurnResult } from "./turn.js"
-import type { AgentWakeDeps, AgentWakeOutcome } from "./wake.js"
+import type { AgentTemplateVersion } from "./template.js"
 import { checkSources, noticeStoppedSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService, type CheckRecordInput } from "./wake-shared.js"
 
 const HOUR_MS = 3_600_000
 const CONVERSATION_DAYS = 2
 
-export type AgentBriefWakeDeps = AgentWakeDeps & {
-  briefOn: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
+export type AgentBriefWakeDeps = {
+  now: () => number
+  allowed: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
+  settings: (organizationId: DenTypeId<"organization">) => Promise<WorkbotProactiveSettings>
+  template: (organizationId: DenTypeId<"organization">) => Promise<AgentTemplateVersion>
+  teamPolicy?: (member: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }) => Promise<{ settings: WorkbotProactiveSettings; template: AgentTemplateVersion } | null>
+  user: (organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">) => Promise<DenTypeId<"user"> | null>
+  calendar: (input: { organizationId: DenTypeId<"organization">; orgMembershipId: DenTypeId<"member">; connectionId: string; timeMin: string; timeMax: string }) => Promise<MemberCalendarRead>
+  model: (actor: { userId: DenTypeId<"user">; organizationId: DenTypeId<"organization"> }) => Promise<string | null>
+  connections: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }) => Promise<MemberConnection[]>
+  connectedMembers?: (organizationId: DenTypeId<"organization">) => Promise<ReadonlyMap<string, number>>
+  connectLink: (connectionId: string) => string
+  agentLink: () => string
+  sessionId: (organizationId: string, memberId: string) => string
+  messageId: (memberId: string, wakeAt: number) => string
+  told: (memberId: DenTypeId<"member">, items: readonly AgentItem[]) => Promise<Set<string>>
+  reserve: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; item: AgentItem; outcome?: DeliveryOutcome; kind?: string }) => Promise<string | null>
+  finish: (id: string, outcome: DeliveryOutcome) => Promise<void>
+  sentSince: (memberId: DenTypeId<"member">, since: Date) => Promise<number>
+  holdsLease: (row: AgentInstanceRow) => Promise<boolean>
+  settle: (row: AgentInstanceRow, changes: AgentSettle) => Promise<boolean>
+  destinationBlock: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user"> }) => Promise<AgentDestinationBlock | null>
+  deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; text: string }) => Promise<DeliveryResult>
+  recordChecks: (input: { organizationId: DenTypeId<"organization">; day: string; counts: readonly AgentCheckCount[] }) => Promise<void>
+  recordCheck: (record: AgentCheckRecord) => Promise<void>
   person: (organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">) => Promise<string | null>
   check: (input: { actor: { userId: string; organizationId: string }; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes: readonly string[] }) => Promise<AgentRawTurnResult>
   conversation: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; since: number }) => Promise<AgentConversationTurn[] | null>
@@ -74,7 +99,12 @@ export type AgentBriefWakeDeps = AgentWakeDeps & {
   sendCheck?: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }) => Promise<AgentSendCheck | null>
 }
 
-type Skip = "off" | "not_allowed" | "opted_out" | "snoozed" | "outside_hours" | "quiet_hours" | "no_destination" | "slack_app_not_installed" | "member_not_linked" | "no_sources" | "nothing_due"
+type Skip = "off" | "not_allowed" | "opted_out" | "snoozed" | "outside_hours" | "quiet_hours" | "no_destination" | AgentDestinationBlock | "no_sources" | "nothing_due"
+type Delivered = "sent" | "failed" | "nothing_new" | "daily_limit" | "quiet_hours" | "quiet_window" | "snoozed" | null
+
+export type AgentWakeOutcome =
+  | { status: "skipped"; reason: Exclude<Skip, "quiet_hours"> }
+  | { status: "ran"; reasons: AgentWakeReason["kind"][]; reply: "message" | "quiet" | "unavailable"; delivered: Delivered }
 
 const KIND_OF: Record<AgentCheckOccasion["kind"], AgentCheckKind> = { first: "morning", scheduled: "scheduled", requested: "requested" }
 
@@ -167,7 +197,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     deps.connectedMembers ? deps.connectedMembers(organizationId).catch(() => undefined) : Promise.resolve(undefined),
   ])
   const looked = await readMemberCalendar({
-    sources: resolveMemberSources({ connections: listed ?? [], policy: settings.sources, choices: stored.sources, lastLook: state.lastLook, connectedMembers, mode: "any" }),
+    sources: resolveMemberSources({ connections: listed ?? [], policy: settings.sources, choices: stored.sources, lastLook: state.lastLook, connectedMembers }),
     read: (connectionId) => deps.calendar({ organizationId, orgMembershipId: memberId, connectionId, timeMin: iso(now), timeMax: iso(now + HOUR_MS) }),
     memberId,
   })
@@ -329,7 +359,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   let outcome: { reason: AgentCheckReason; sources?: AgentMemberCheckSource[]; message?: AgentMemberCheckMessage | null; messages?: number } | null = { reason: "no_findings" }
   let sent = 0
   const sentRecords: AgentSentRecord[] = []
-  let delivered: "sent" | "failed" | "nothing_new" | "daily_limit" | "quiet_hours" | "quiet_window" | "snoozed" | null = null
+  let delivered: Delivered = null
   if (reply.kind !== "quiet" && sentToday >= limits.dailyCap) {
     outcome = { reason: "daily_limit" }
     delivered = "daily_limit"
@@ -385,7 +415,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
         const id = lead ? await deps.reserve({ organizationId, memberId, item: lead.item, outcome: "pending", kind: "brief" }) : null
         if (!id) continue
         for (const entry of folded) await deps.reserve({ organizationId, memberId, item: entry.item, outcome: "folded", kind: "brief" })
-        const allowedNow = (await deps.holdsLease(row)) && (await deps.allowed(organizationId, userId)) && (await deps.briefOn(organizationId, userId))
+        const allowedNow = (await deps.holdsLease(row)) && (await deps.allowed(organizationId, userId))
         const result: DeliveryResult | { ok: false; code: "lease_or_feature_lost" } = allowedNow
           ? await deps.deliver({ organizationId, userId, text: cleanAgentMessage(message.text, { limit: AGENT_ONE_MESSAGE_LIMIT, linkDomains }) })
           : { ok: false, code: "lease_or_feature_lost" }

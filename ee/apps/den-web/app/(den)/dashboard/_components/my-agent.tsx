@@ -6,11 +6,8 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   AGENT_CHECK_EVERY_HOURS,
   AGENT_MEMBER_BRIEF_MAX,
-  AGENT_PREFERENCE_COPY,
-  AGENT_PREFERENCE_FIELDS,
   AGENT_PREFERENCE_MAX,
   type AgentChangeField,
-  type AgentPreferenceField,
   type MemberAgentCheck,
   type MemberAgentInput,
   type MemberAgentSource,
@@ -166,48 +163,12 @@ function CheckRow({ check, label }: { check: MemberAgentCheck; label: string }) 
   );
 }
 
-function wordsChange(field: AgentPreferenceField, text: string): NonNullable<MemberAgentInput["preferences"]> {
-  const preferences: NonNullable<MemberAgentInput["preferences"]> = {};
-  preferences[field] = text;
-  return preferences;
-}
-
-function WordsField({ view, field, now, saving, onChange }: { view: MemberAgentView; field: AgentPreferenceField; now: number; saving: boolean; onChange: Change }) {
-  const id = useId();
-  const value = view.preferences?.[field] ?? "";
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-  const changed = draft.trim() !== value.trim();
-  const change = latestChange(view, field);
-  return (
-    <div className="grid gap-1.5 py-2.5 sm:grid-cols-[180px_minmax(0,1fr)] sm:items-start sm:gap-x-4" data-testid={`my-agent-words-${field}`}>
-      <label htmlFor={id} className="text-[13px] font-medium text-gray-900 sm:pt-2.5">{AGENT_PREFERENCE_COPY[field].label}</label>
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <DenTextarea id={id} rows={growRows(draft)} maxLength={AGENT_PREFERENCE_MAX} value={draft} disabled={saving} placeholder={AGENT_PREFERENCE_COPY[field].placeholder}
-          className={GROW} onChange={(event) => setDraft(event.target.value)} />
-        {change || changed ? (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <ChangeNote view={view} field={field} now={now} saving={saving} onChange={onChange} />
-            {changed ? (
-              <span className="ml-auto flex gap-2">
-                <DenButton variant="secondary" size="xs" onClick={() => setDraft(value)}>Discard</DenButton>
-                <DenButton size="xs" disabled={saving} onClick={() => onChange({ preferences: wordsChange(field, draft.trim()) })}>Save</DenButton>
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 function BriefSection({ view, now, saving, onChange }: { view: MemberAgentView; now: number; saving: boolean; onChange: Change }) {
   const id = useId();
   const brief = view.brief;
-  const value = brief?.lines ?? "";
+  const value = brief.lines;
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
-  if (!brief) return null;
   const changed = draft.trim() !== value.trim();
   const change = latestChange(view, "brief");
   return (
@@ -253,7 +214,7 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
   links: MyAgentLinks;
   saving: boolean;
   error: string | null;
-  setAll?: (batches: MemberAgentInput[]) => void;
+  setAll: (batches: MemberAgentInput[]) => void;
   bulkDirection?: boolean;
   pendingSources?: MemberAgentInput["sources"];
   earlier: { open: boolean; onToggle: (open: boolean) => void; checks: MemberAgentCheck[] | null; loading: boolean; error: string | null };
@@ -268,8 +229,8 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
   const fix = view.lastCheck?.fix ?? null;
   const reconnect = view.lastCheck?.sources[0] ?? null;
   const google = links.google;
-  const enable = setAll ? connectorBatches(view.sources ?? [], true) : [];
-  const disable = setAll ? connectorBatches(view.sources ?? [], false) : [];
+  const enable = connectorBatches(view.sources ?? [], true);
+  const disable = connectorBatches(view.sources ?? [], false);
 
   return (
     <ItemPage testId="my-agent-screen">
@@ -316,34 +277,9 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
         </details>
       </ItemSection>
 
-      {view.brief ? <BriefSection view={view} now={now} saving={saving} onChange={onChange} /> : null}
+      <BriefSection view={view} now={now} saving={saving} onChange={onChange} />
 
-      {view.brief ? null : (
-      <ItemSection title="What it tells you about" variant="rule" testId="my-agent-responsibilities">
-        <div className="flex flex-col divide-y divide-gray-100">
-          {view.responsibilities.map((responsibility) => (
-            <Row key={responsibility.id} label={responsibility.label} hint={responsibility.tells} testId={`my-agent-${responsibility.id}`}
-              note={!responsibility.enabled
-                ? <LockNote>Turned off by your admin.</LockNote>
-                : <ChangeNote view={view} field={responsibility.id} now={now} saving={saving} onChange={onChange} />}>
-              <DenSwitch size="sm" aria-label={responsibility.label} checked={responsibility.enabled && !responsibility.muted} disabled={!responsibility.enabled || saving}
-                onChange={(on) => onChange(on ? { unmute: [responsibility.id] } : { mute: [responsibility.id] })} />
-            </Row>
-          ))}
-        </div>
-      </ItemSection>
-
-      )}
-
-      {view.brief ? null : (
-      <ItemSection title="In your words" variant="rule" testId="my-agent-words">
-        <div className="flex flex-col divide-y divide-gray-100">
-          {AGENT_PREFERENCE_FIELDS.map((field) => <WordsField key={field} view={view} field={field} now={now} saving={saving} onChange={onChange} />)}
-        </div>
-      </ItemSection>
-      )}
-
-      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses" meta={setAll && (enable.length > 0 || disable.length > 0 || bulkDirection !== undefined) ? (
+      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses" meta={enable.length > 0 || disable.length > 0 || bulkDirection !== undefined ? (
         <div className="flex flex-wrap justify-end gap-2">
           <DenButton size="xs" variant="secondary" disabled={saving || !view.available || !enable.length} loading={bulkDirection === true}
             onClick={() => setAll(enable)}>Enable all connected apps</DenButton>
@@ -390,7 +326,7 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
               </div>
             </Row>
             {limits.quietWindow ? (
-              <Row label={view.brief ? "Quiet hours" : "Only urgent"} testId="my-agent-quiet-window" note={<ChangeNote view={view} field="quietWindow" now={now} saving={saving} onChange={onChange} />}>
+              <Row label="Quiet hours" testId="my-agent-quiet-window" note={<ChangeNote view={view} field="quietWindow" now={now} saving={saving} onChange={onChange} />}>
                 <span className="text-[13px] text-gray-900">{hoursLabel(limits.quietWindow)}</span>
               </Row>
             ) : null}

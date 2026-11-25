@@ -109,7 +109,7 @@ async function fixtureProvider() {
 }
 
 /**
- * Any connected connector as a source of Your agent (`workbotAgentBrief`): Den with Workbot (a runner that only answers
+ * Any connected connector as a source of Your agent: Den with Workbot (a runner that only answers
  * health checks), the Workbot Slack app (synthetic credentials), Google Workspace and Slack, and ten custom MCP
  * connectors on a loopback provider, all shared with everyone. Nothing is due, so no model runs. Fictional names only.
  */
@@ -130,8 +130,6 @@ export async function workbotAgentAnyConnectorWorld(seed: Seed) {
     });
     const organizationId = await seededOrganizationId(seed, den.admin);
     const headers = (session: DenSession) => ({ authorization: `Bearer ${session.token}`, "x-openwork-org-id": organizationId, "content-type": "application/json" });
-    const brief = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, { method: "PUT", headers: headers(den.admin), body: JSON.stringify({ capabilities: { workbotAgentBrief: true } }) });
-    if (!brief.response.ok) throw new Error(`Turning on workbotAgentBrief failed: ${brief.text.slice(0, 300)}`);
     const enabled = await seed.api(den.admin, "/v1/org/workbot-settings/proactive", { method: "PUT", body: JSON.stringify({ enabled: true }) });
     if (!enabled.response.ok) throw new Error(`Turning on Your agent failed: ${enabled.text.slice(0, 300)}`);
 

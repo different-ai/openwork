@@ -2,7 +2,6 @@ import { browserScript, evaluateOnSurface, type Surface } from "@openwork/cdp";
 import type { Seed } from "@openwork/testkit";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 import { acquirePermissionsMachine, permissionsDescendants, pollPermissions } from "./sandbox-ux-permissions.ts";
 import { uxDenProxy } from "./sandbox-ux-signed-in.ts";
 
@@ -13,7 +12,6 @@ export async function permissionsOpensFast(seed: Seed, { place }: { place: { kin
   cleanup.defer(await acquirePermissionsMachine("permissions-opens-fast proof / local Den"));
   try {
     const den = cleanup.use(await seed.den({ web: false, org: { name: "Permissions timing proof", members: { riley: { name: "Riley Test Member" } } } }));
-    await enableOrganizationCapabilities(seed, den.admin, { sandboxTools: true });
     const proxy = await uxDenProxy(den.ref.apiUrl);
     cleanup.defer(proxy.close);
     const root = await realpath(await mkdtemp("/tmp/owperm-"));
@@ -30,7 +28,7 @@ export async function permissionsOpensFast(seed: Seed, { place }: { place: { kin
     return {
       app, proxy, workspaceCount, statusPath: `${base}/sandbox-status`,
       processes: () => permissionsDescendants(app.handle.pid).then(rows => rows.filter(row => row.executable === "msb").map(row => row.pid)),
-      measure: (captureMs: number, limitMs: number) => pollPermissions(app, { modes: true, expectSwitch: true, captureMs, limitMs }),
+      measure: (captureMs: number, limitMs: number) => pollPermissions(app, { modes: true, captureMs, limitMs }),
       hangSettings: () => installSettingsFault(app, `${base}/sandbox-settings`),
       [Symbol.asyncDispose]: () => cleanup.disposeAsync(),
     };

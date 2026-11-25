@@ -91,7 +91,7 @@ test("embedded docs text ships in desktop, docs screenshots do not", () => {
 
 test("review CSS and runner cross-workspace assets remain watched", () => {
   assert.equal(isBuildAffected("review", ["apps/app/src/styles/colors.css"]), true);
-  for (const file of ["packages/workbook/src/index.ts", "packages/sandbox-freestyle/src/index.ts", "packages/sandbox-differently/src/index.ts", "ee/apps/den-worker-runtime/scripts/cloud-desktop.sh"]) {
+  for (const file of ["packages/workbook/src/index.ts", "packages/sandbox-freestyle/src/index.ts", "ee/apps/den-worker-runtime/scripts/cloud-desktop.sh"]) {
     assert.equal(isBuildAffected("headless-runner", [file]), true, file);
   }
 });

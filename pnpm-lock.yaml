@@ -1415,9 +1415,6 @@ importers:
       '@openwork/sandbox-daytona':
         specifier: workspace:*
         version: link:../../../packages/sandbox-daytona
-      '@openwork/sandbox-differently':
-        specifier: workspace:*
-        version: link:../../../packages/sandbox-differently
       '@openwork/sandbox-freestyle':
         specifier: workspace:*
         version: link:../../../packages/sandbox-freestyle
@@ -1648,6 +1645,15 @@ importers:
         version: 1.3.14
       typescript:
         specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/cli:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.19.2
+      typescript:
+        specifier: ^5.9.0
         version: 5.9.3
 
   packages/codemode:

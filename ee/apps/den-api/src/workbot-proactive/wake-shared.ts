@@ -122,16 +122,13 @@ export async function noticeStoppedSources(input: {
     holdsLease: (row: AgentInstanceRow) => Promise<boolean>
     allowed: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
     deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; text: string }) => Promise<DeliveryResult>
-    stoppedSources?: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }) => Promise<{ link: string } | null>
+    agentLink: () => string
   }
   record: (input: CheckRecordInput) => Promise<void>
 }): Promise<Record<string, number>> {
   const { deps } = input
   const stopped = stoppedSources({ sources: input.sources, choices: input.choices, now: input.now })
-  const feature = stopped.length && deps.stoppedSources
-    ? await deps.stoppedSources({ organizationId: input.organizationId, memberId: input.row.memberId, userId: input.userId }).catch(() => null)
-    : null
-  if (!feature) return {}
+  if (!stopped.length) return {}
   const notices: Record<string, number> = {}
   const untold: ResolvedSource[] = []
   for (const source of stopped) {
@@ -150,7 +147,7 @@ export async function noticeStoppedSources(input: {
     const many = group.sources.length > 1
     const text = group.byAdmin
       ? `Quick check: I've stopped reading your ${what} because your admin turned ${many ? "them" : "it"} off for agents.${rest}`
-      : `Quick check: I've stopped reading your ${what} because ${many ? "they are" : "it is"} no longer on for me.${rest} <${feature.link}|Choose what I read>`
+      : `Quick check: I've stopped reading your ${what} because ${many ? "they are" : "it is"} no longer on for me.${rest} <${deps.agentLink()}|Choose what I read>`
     const sent = (await deps.holdsLease(input.row)) && (await deps.allowed(input.organizationId, input.userId))
       ? await deps.deliver({ organizationId: input.organizationId, userId: input.userId, text })
       : { ok: false as const, code: "lease_or_feature_lost" }

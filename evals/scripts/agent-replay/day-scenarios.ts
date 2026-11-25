@@ -292,7 +292,7 @@ const askedNotTo: DayScenario = {
 /**
  * Lumen Support Desk, a custom MCP nobody reviewed, with its server's own annotations: two reads (one labelled, one
  * not), a write it mislabels read-only, a labelled write, a destructive one, and a write without labels. Only the reads
- * may reach the check (`workbotAgentBrief`); today's pipeline can't read it at all.
+ * may reach the check; the earlier pipeline can't read it at all.
  */
 const supportDesk: DayConnector = {
   id: "conn_desk",
