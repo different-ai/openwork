@@ -6,7 +6,7 @@ import { classifySupportTriage } from "./classifier.js"
 import { createPlainClient, type PlainClient } from "./plain.js"
 import { claimTriageThreads, enqueueTriagePage, MAX_ATTEMPTS, updateTriageThread, type ClaimedTriageThread } from "./repository.js"
 import { advanceTriagePoll, currentTriageSettings, readTriageSettings, type TriageSettings } from "./settings.js"
-import { sendEnterpriseLead } from "./slack.js"
+import { postsToSlack, sendTriagedThread } from "./slack.js"
 
 const POLL_MS = 60_000
 const RETRY_BASE_MS = 60_000
@@ -80,13 +80,13 @@ export async function processTriageThread(row: ClaimedTriageThread, plain: Plain
         if (!await save({ dispositionApplied: true })) return
       }
     }
-    if (category !== "enterprise" || slackState === "delivered") return await complete("completed")
+    if (!postsToSlack(category) || slackState === "delivered") return await complete("completed")
     if (slackState === "sending" || slackState === "failed") return await complete("failed", { slackState: "failed" })
     if (!settings.slackWebhookUrl) return await complete("completed")
     if (senderDomain === undefined) senderDomain = await plain.senderDomain(threadId)
     if (!await current() || !await save({ slackState: "sending" })) return
     slackState = "sending"
-    const outcome = await sendEnterpriseLead({ webhookUrl: settings.slackWebhookUrl, webUrl: env.webUrl, fetch: slackFetch }, { ...row, senderDomain })
+    const outcome = await sendTriagedThread({ webhookUrl: settings.slackWebhookUrl, webUrl: env.webUrl, fetch: slackFetch }, category, { ...row, senderDomain })
     if (outcome === "delivered") return await complete("completed", { slackState: "delivered" })
     if (outcome !== "transient") return await complete("failed", { slackState: "failed" })
     slackState = "pending"

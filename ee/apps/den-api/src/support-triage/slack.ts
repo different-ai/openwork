@@ -1,13 +1,17 @@
 import { escapeSlack, postToSlack, slackPayload } from "../harness-feedback/slack.js"
 
 type SlackOptions = { webhookUrl: string; fetch?: typeof fetch }
-type EnterpriseLead = { title: string; senderDomain: string | null; workspaceId: string; plainThreadId: string }
-const heading = "Possible enterprise lead"
+type SlackCategory = "bug" | "enterprise"
+type TriagedThread = { title: string; senderDomain: string | null; workspaceId: string; plainThreadId: string }
+const headings: Record<SlackCategory, string> = { bug: "Possible product bug", enterprise: "Possible enterprise lead" }
 
-export function sendEnterpriseLead(options: SlackOptions & { webUrl: string }, lead: EnterpriseLead) {
-  const plainLink = `https://app.plain.com/workspace/${encodeURIComponent(lead.workspaceId)}/thread/${encodeURIComponent(lead.plainThreadId)}/`
+export const postsToSlack = (category: string): category is SlackCategory => Object.hasOwn(headings, category)
+
+export function sendTriagedThread(options: SlackOptions & { webUrl: string }, category: SlackCategory, thread: TriagedThread) {
+  const heading = headings[category]
+  const plainLink = `https://app.plain.com/workspace/${encodeURIComponent(thread.workspaceId)}/thread/${encodeURIComponent(thread.plainThreadId)}/`
   const adminLink = new URL("/admin/support-triage", options.webUrl).href
-  const details = `${escapeSlack(lead.title)}\nSender domain: ${escapeSlack(lead.senderDomain ?? "Unknown")}`
+  const details = `${escapeSlack(thread.title)}\nSender domain: ${escapeSlack(thread.senderDomain ?? "Unknown")}`
   return postToSlack(options, {
     ...slackPayload(`${heading}\n${details}\n${escapeSlack(plainLink)}\n${escapeSlack(adminLink)}`),
     blocks: [
