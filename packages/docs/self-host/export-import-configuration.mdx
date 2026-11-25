@@ -138,11 +138,10 @@ Some areas carry only part of what their screen shows:
   the domain, test, then enable it); SCIM tokens are never carried.
 - **Skills** that a source syncs are not imported (the source brings them), and the
   Workbot "Your agent" template travels with `workbot.proactive`.
-- **Plugins and skills** are exported only when they are shared with the
-  organization (with everyone, a team or other people). Personal ones, which only
-  their creator can reach (each member's own Workflows plugin, a skill someone made
-  and never shared), are left out, and an import never touches them. Share an item
-  before exporting if it should travel.
+- **Plugins and skills** include private server-stored items when the private Config
+  migration feature is enabled. Use **Whole organization** to carry People, Plugins,
+  and Skills together. Creator-only items are not matched by name. With the feature
+  off, exports include only shared plugins and skills.
 - **OAuth apps** (`connectors.oauth-clients`) are the organization's own apps for
   the built-in providers, such as Google Workspace or Microsoft 365. The client ID,
   the optional features chosen and the tenant ID are exported; the client secret
@@ -487,20 +486,24 @@ curl -sS -H "x-api-key: $CONFIG_TOKEN" "$DEN_API_URL/v1/config-blobs/change-requ
 Use this to start a second organization from an existing one, on the same server
 or another.
 
-1. **In the source organization**, share what should travel: personal plugins and
-   skills are not exported. Then export (Settings › Config › Export).
+1. **In the source organization**, export **Whole organization** from Settings › Config › Export. Enable private Config migrations in the source to include private server-stored items.
 2. **In the target organization**, upload the file in Settings › Config › Import,
-   in `merge` mode.
-3. **Review the plan.** Plugins and skills the target already has under the same
-   key or name are matched, not duplicated; the rest are created. People become
-   invitations. Map or drop references to people and teams the target lacks.
+   in `merge` mode. If the target uses SCIM, provision people before importing.
+3. **Review the plan.** Shared items can match by name; creator-only items match
+   by ID or stable key. People who are not yet members can become pending invitations
+   and hold seats while those invitations are valid. They need an allowed email
+   domain. With private Config migrations enabled in the destination, Config
+   invitations last 90 days; regular invitations still last seven days. A late SSO
+   join can claim an expired placeholder only if the organization would admit
+   that person anyway.
 4. **Secrets:** enter each API key, request header value and OAuth client secret
    again, or leave it unset and finish on the resource's page.
 5. **Approve and apply.**
 6. **Afterwards:** add the connections to built-in providers (Google Workspace,
    Microsoft 365…) in the target's Connectors; sign in to shared OAuth connections; ask members to connect their own accounts and enter
-   their own keys. A skill someone kept personal has to be shared in the source and
-   exported again, or recreated.
+   their own keys. If the destination uses SCIM and a person is not provisioned yet,
+   return to review after provisioning that person. The import cannot invite someone
+   whose account is managed by SCIM.
 7. **Later copies** of the same source start with your earlier answers and match
    plugins and skills by key, so only what changed shows up.
 
