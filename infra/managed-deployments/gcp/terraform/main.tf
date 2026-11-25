@@ -1,6 +1,11 @@
 # Dedicated-project root: bootstrap owns identities, APIs and retained state.
+# It names no identity. Whoever runs it supplies the credentials: the
+# deployment's runner service account inside Cloud Build, or the customer after
+# taking the deployment over.
 terraform {
   required_version = "= 1.16.5"
+  # Bucket and prefix come from the runner, or from applied/backend.tf.json
+  # saved in this directory as backend_override.tf.json.
   backend "gcs" {}
   required_providers {
     google = { source = "hashicorp/google", version = "~> 8.7" }
@@ -25,6 +30,12 @@ variable "project_id" { type = string }
 variable "project_number" { type = string }
 variable "region" { type = string }
 variable "dns_zone_name" { type = string }
+# Removal only (see "Remove" in ../README.md). The installer never sets it and
+# it is not an override: a managed run always keeps deletion protection on.
+variable "allow_destroy" {
+  type    = bool
+  default = false
+}
 variable "images" {
   type = object({ den_api = string, den_web = string, health = string })
   validation {
@@ -44,6 +55,17 @@ module "contract" {
 }
 
 locals {
+  # Capacity profiles map the neutral size to Google Cloud choices: CPU in
+  # units of 1024 per vCPU and memory in MiB, as in overrides.json.
+  profiles = {
+    small = {
+      database = { tier = local.database.tier, disk_size_gb = local.database.disk_size_gb, high_availability = false }
+      den_api  = { cpu = 2048, memory = 2048, min_instances = 1, max_instances = 10 }
+      den_web  = { cpu = 1024, memory = 1024, min_instances = 1, max_instances = 10 }
+    }
+  }
+  profile = local.profiles[var.size]
+
   name          = module.contract.name
   labels        = module.contract.labels
   runtime_sa    = "${local.name}-runtime@${var.project_id}.iam.gserviceaccount.com"
@@ -55,10 +77,9 @@ locals {
   service_names = { den_api = "${local.name}-api", den_web = "${local.name}-web" }
 }
 provider "google" {
-  project                     = var.project_id
-  region                      = var.region
-  impersonate_service_account = "${module.contract.name}-runner@${var.project_id}.iam.gserviceaccount.com"
-  default_labels              = local.labels
+  project        = var.project_id
+  region         = var.region
+  default_labels = local.labels
 }
 
 data "google_project" "target" { project_id = var.project_id }
@@ -103,10 +124,20 @@ module "platform" {
   managed_legacy                    = true
   managed_maintenance               = var.managed_maintenance
   write_only_secrets                = false
-  deletion_protection               = true
+  deletion_protection               = !var.allow_destroy
   restrict_ingress_to_load_balancer = true
   # Retain existing allUsers bindings in the managed root.
   public_access = false
+  # Fixed settings and the small size's database, with the tuned tier, disk and
+  # availability on top. Nothing else about the database can be tuned.
+  database          = merge(local.database, local.tuned.database)
+  den_api           = local.tuned.den_api
+  den_web           = local.tuned.den_web
+  extra_environment = var.overrides.extra_environment
+  depends_on        = [terraform_data.target]
+}
+
+locals {
   # No automatic major-version upgrade, including on adoption of existing state.
   # Moving managed customers to 8.4 is a separate owner-approved operation.
   database = {
@@ -115,9 +146,6 @@ module "platform" {
     disk_size_gb     = 20
     backup_location  = contains(local.regions_needing_in_region_backup, var.region) ? var.region : null
   }
-  den_api    = { cpu = "2", memory = "2Gi", min_instances = 1, max_instances = 10 }
-  den_web    = { cpu = "1", memory = "1Gi", min_instances = 1, max_instances = 10 }
-  depends_on = [terraform_data.target]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "public" {
