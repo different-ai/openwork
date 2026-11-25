@@ -146,6 +146,7 @@ import {
   connectorSummary,
   LibraryConnectorCatalogPage,
   type LibraryConnectorCatalogSignIn,
+  type LibraryConnectorCatalogState,
   LibraryConnectorSetupPage,
   type LibraryConnectorSetupInput,
 } from "./library-connector-pages";
@@ -535,9 +536,10 @@ export function McpView(props: McpViewProps) {
   const libraryCloudSignedIn = cloudSession.isSignedIn
     || (Boolean(cloudSession.authToken.trim()) && denAuth.isSignedIn);
   const activeOrganizationId = cloudSession.activeOrganization?.id.trim() ?? "";
+  const canLoadConnectorPresets = libraryCloudSignedIn && Boolean(activeOrganizationId);
   const connectorPresetsQuery = useQuery({
     queryKey: ["library-connector-presets", cloudSession.baseUrl, activeOrganizationId],
-    enabled: libraryCloudSignedIn && Boolean(activeOrganizationId),
+    enabled: canLoadConnectorPresets,
     staleTime: 10 * 60_000,
     queryFn: () => cloudSession.client.listMcpConnectionPresets(activeOrganizationId),
   });
@@ -2019,9 +2021,20 @@ export function McpView(props: McpViewProps) {
     );
   }
   if (screen.kind === "catalog") {
+    let loadState: LibraryConnectorCatalogState = { kind: "ready" };
+    if (canLoadConnectorPresets && connectorPresetsQuery.data === undefined) {
+      if (connectorPresetsQuery.isFetching) {
+        loadState = { kind: "loading" };
+      } else if (connectorPresetsQuery.isError) {
+        loadState = { kind: "error", onRetry: () => {
+          void connectorPresetsQuery.refetch();
+        } };
+      }
+    }
     return (
       <LibraryConnectorCatalogPage
         presets={connectorPresets}
+        loadState={loadState}
         addedUrls={addedConnectorUrls}
         signInsByUrl={connectorSignInsByUrl}
         onBack={toList}
