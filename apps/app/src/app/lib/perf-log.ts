@@ -111,7 +111,6 @@ export const recordPerfLog = (
 
     console.log(`[OWPERF] ${scope}:${event}`, payload);
   } catch {
-    // ignore
   }
 };
 

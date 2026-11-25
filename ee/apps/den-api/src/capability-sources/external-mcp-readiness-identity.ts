@@ -16,26 +16,17 @@ function configurationIdentity(connection: ReadinessIdentity) {
     connection.oauthConfiguration?.authorizationServerIssuer, connection.oauthConfiguration?.requestedScopes,
     connection.oauthConfiguration?.callbackMode, connection.oauthIssuerReviewRequiredAt,
     connection.oauthConfiguration?.manualOAuthEndpoints,
+    ...(connection.oauthConfiguration?.requestSelectedScopesOnly === true ? ["selected-scopes-only"] : []),
   ]
 }
 
 export function fingerprintReadinessIdentity(connection: ReadinessIdentity, account?: ReadinessAccountIdentity | null) {
-  // Only public configuration, credential presence and a random credential
-  // revision are retained. No key/token material or password verifier is stored.
-  // OAuth revisions change on re-authorization, not routine token refresh;
-  // API-key revisions change atomically with key replacement, even while off.
   const credentialIdentity = connection.credentialMode === "shared"
     ? [connection.authType === "apikey" ? Boolean(connection.apiKey) : Boolean(connection.accessToken), connection.readinessCredentialBinding]
     : [Boolean(account?.accessToken), account?.readinessCredentialBinding, account?.externalAccountId]
   return JSON.stringify([...configurationIdentity(connection), credentialIdentity])
 }
 
-/**
- * The organization-level identity of a per-member connection: its
- * configuration only. A member's Ready check is copied here so admins can see
- * the connector works without signing in themselves. It never makes another
- * member Ready; each member's own view keeps using their own fingerprint.
- */
 export function fingerprintOrganizationReadinessIdentity(connection: ReadinessIdentity) {
   return JSON.stringify(["organization", ...configurationIdentity(connection)])
 }
@@ -53,7 +44,6 @@ export function visibleReadiness(check: ExternalMcpReadinessCheck | null, finger
   }
 }
 
-/** The most recent Ready check among members' own checks that still match their current sign-in. */
 export function latestMemberReady(
   connection: ReadinessIdentity,
   accounts: Array<ReadinessAccountIdentity & { readinessCheck: ExternalMcpReadinessCheck | null }>,

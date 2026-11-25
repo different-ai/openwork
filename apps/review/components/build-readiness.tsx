@@ -7,7 +7,6 @@ export { advance, startTracking, type BuildStepView, type BuildTracker } from ".
 
 const SPINNER = ["◐", "◓", "◑", "◒"];
 
-/** A CLI-like view of a first build: finished steps with times, the running one, what is left. */
 export function BuildReadiness({ tracker, world, worldName }: { tracker: BuildTracker; world: string; worldName: string }) {
   const [now, setNow] = useState(() => Date.now());
   const [frame, setFrame] = useState(0);

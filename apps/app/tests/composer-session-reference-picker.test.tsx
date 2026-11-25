@@ -4,10 +4,12 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 const ownsDom = !GlobalRegistrator.isRegistered;
 if (ownsDom) GlobalRegistrator.register({ url: "http://localhost/" });
 
-mock.module("../src/react-app/domains/session/surface/composer/use-native-dictation-feature", () => ({
-  useNativeDictationFeature: () => false,
-}));
-mock.module("../src/components/model-select", () => ({ ModelSelect: () => null }));
+type ModelControls = Parameters<typeof import("../src/components/model-select")["ModelSelect"]>[0];
+let capturedModelControls: ModelControls | null = null;
+mock.module("../src/components/model-select", () => ({ ModelSelect: (props: ModelControls) => {
+  capturedModelControls = props;
+  return null;
+} }));
 mock.module("../src/react-app/domains/connections/use-org-mcp-connections", () => ({
   useOrgMcpConnections: () => ({ connections: [], loading: false, refresh: () => {} }),
 }));
@@ -90,7 +92,7 @@ function composerProps(draft: string, onDraftChange: (value: string) => void, on
   };
 }
 
-async function mountComposer(initial = "") {
+async function mountComposer(initial = "", overrides: Partial<ComposerProps> = {}) {
   const host = document.createElement("div");
   document.body.append(host);
   const drafts: string[] = [];
@@ -104,7 +106,7 @@ async function mountComposer(initial = "") {
     return (
       <QueryClientProvider client={new QueryClient()}>
         <SessionReferenceProvider inventories={inventories} onOpenReference={(reference) => opened.push(reference.sessionId)}>
-          <ReactSessionComposer {...composerProps(draft, (value) => { current = value; drafts.push(value); setDraft(value); }, () => sent.push(current))} />
+          <ReactSessionComposer {...composerProps(draft, (value) => { current = value; drafts.push(value); setDraft(value); }, () => sent.push(current))} {...overrides} />
         </SessionReferenceProvider>
       </QueryClientProvider>
     );
@@ -163,6 +165,66 @@ test("# opens the task picker, filters fuzzily, and Enter inserts a stable refer
     chip?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
   expect(view.opened).toEqual(["ses_pricing"]);
+  await act(async () => { view.root.unmount(); });
+});
+
+test("inline mentions ignore hashes and dismiss only the current at sign", async () => {
+  const view = await mountComposer("", { inlineSuggestions: true });
+  const popup = () => document.querySelector("[data-composer-suggestions]");
+  const mentionOptions = () => document.querySelectorAll('[aria-label="Mentions"] [role="option"]');
+  await view.typeText(view.editor, "#pricing");
+  expect(popup()).toBeNull();
+  await view.typeText(view.editor, " @pricing");
+  expect(mentionOptions()[0]?.textContent).toContain("Pricing page");
+  await press(view.editor, "Escape");
+  await view.typeText(view.editor, " page");
+  expect(popup()).toBeNull();
+  await view.typeText(view.editor, " @pricing page");
+  expect(mentionOptions()).toHaveLength(1);
+  await press(view.editor, "Enter");
+  expect(view.draft()).toBe("#pricing @pricing page [session ws_1 ses_pricing Pricing page] ");
+  expect(view.editor.querySelector("[data-session-reference-session]")?.textContent).toContain("Pricing page");
+  await view.typeText(view.editor, "@zzqxxzzq");
+  expect(popup()).toBeNull();
+  await press(view.editor, "Enter");
+  expect(view.sent).toHaveLength(1);
+  await act(async () => { view.root.unmount(); });
+});
+
+test("Enter sends prose after a file name instead of inserting a file chip", async () => {
+  const view = await mountComposer("", {
+    inlineSuggestions: true,
+    searchFiles: async () => ["weekly-notes.txt"],
+  });
+  await view.typeText(view.editor, "@weekly-notes.txt");
+  expect(document.querySelector('[aria-label="Mentions"] [role="option"]')?.textContent).toContain("weekly-notes.txt");
+  await view.typeText(view.editor, " please summarise");
+  expect(document.querySelector("[data-composer-suggestions]")).toBeNull();
+  await press(view.editor, "Enter");
+  expect(view.sent).toEqual(["@weekly-notes.txt please summarise"]);
+  await act(async () => { view.root.unmount(); });
+});
+
+test("slash Escape applies to one trigger and Enter sends when the next trigger has no match", async () => {
+  const view = await mountComposer("", {
+    inlineSuggestions: true,
+    listCommands: async () => [
+      { id: "skill", name: "analytics-dashboard", source: "skill" },
+      { id: "command", name: "analyze", source: "command" },
+    ],
+  });
+  const slashOptions = () => [...document.querySelectorAll('[aria-label="Commands"] [role="option"]')];
+  await view.typeText(view.editor, "hello /analy");
+  expect(slashOptions().map((option) => option.textContent)).toEqual([expect.stringContaining("/analytics-dashboard")]);
+  await press(view.editor, "Escape");
+  await view.typeText(view.editor, "tics dash");
+  expect(slashOptions()).toHaveLength(0);
+  await view.typeText(view.editor, " /analy");
+  expect(slashOptions()).toHaveLength(1);
+  await view.typeText(view.editor, " zzxyz");
+  expect(slashOptions()).toHaveLength(0);
+  await press(view.editor, "Enter");
+  expect(view.sent).toEqual(["hello /analytics dash /analy zzxyz"]);
   await act(async () => { view.root.unmount(); });
 });
 
@@ -244,6 +306,29 @@ test("outside a page that can resolve tasks, # never opens the picker", async ()
   await settle();
   expect(options()).toHaveLength(0);
   await act(async () => { root.unmount(); });
+});
+
+test("model and effort edits wait for a session's bound model instead of editing an unrelated fallback", async () => {
+  const edits: string[] = [];
+  const controls = () => {
+    if (!capturedModelControls) throw new Error("Model controls did not render");
+    return capturedModelControls;
+  };
+  for (const pending of [true, false]) {
+    const mounted = await mountComposer("", {
+      modelSelectionPending: pending,
+      onModelVariantChange: (value) => edits.push(`effort:${value}`),
+      onModelChange: (model) => edits.push(`model:${model.modelID}`),
+    });
+    expect(Boolean(controls().disabled)).toBe(pending);
+    await act(async () => {
+      controls().onBehaviorChange?.("low");
+      controls().onChange({ providerID: "remote-provider", modelID: "launch-model" });
+    });
+    expect(edits).toEqual(pending ? [] : ["effort:low", "model:launch-model"]);
+    await act(async () => mounted.root.unmount());
+    mounted.host.remove();
+  }
 });
 
 test("a sent reference shows the current title and opens the task; a missing task is marked unavailable", async () => {

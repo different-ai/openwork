@@ -12,7 +12,6 @@ export interface ProviderConfigTemplateError {
 
 export const MACHINE_PROVIDER_TEMPLATE_OWNERSHIP = "__machine_provider_template_ownership__";
 
-/** The approval covers the exact definition, not just its reusable provider ID. */
 export function providerConfigFingerprint(value: unknown): string {
   const stable = (entry: unknown): unknown => {
     if (Array.isArray(entry)) return entry.map(stable);
@@ -27,8 +26,6 @@ export function machineOwnedProviderIds(providers: Record<string, unknown>, owne
     typeof ownership[id] === "string" && ownership[id] === providerConfigFingerprint(provider)).map(([id]) => id));
 }
 
-/** Only the value delivered by this provider is an approved remote binding.
- * A reused env name must not expose another provider's later replacement key. */
 export function approvedProviderEnvironmentNames(
   ownership: unknown,
   environment: ReadonlyMap<string, string>,
@@ -47,17 +44,11 @@ export function approvedProviderEnvironmentNames(
   return approved;
 }
 
-/** V1 substitutes env first, then trimmed file contents. Remote definitions are
- * less trusted than local config: they can reference stored user variables only
- * and never host files. Local files must remain inside the declaring directory.
- * Neither resolved values nor substituted file paths belong in diagnostics.
- */
 export async function resolveProviderConfigTemplates(
   providers: Record<string, unknown>,
   options: {
     directory: string;
     environment: ReadonlyMap<string, string>;
-    /** Only machine-declared, non-managed runtime providers may use local sources. */
     localProviderIds: ReadonlySet<string>;
     remoteEnvironmentNames: ReadonlyMap<string, ReadonlySet<string>>;
     inheritedEnvironment?: NodeJS.ProcessEnv;
@@ -88,8 +79,6 @@ export async function resolveProviderConfigTemplates(
           errors.push({ providerId, field, code: "disallowed_environment_variable", message: `Provider ${providerId}: ${field} references environment variable ${name}, which is not an approved credential binding for this provider. Reconnect the provider with its own credentials.` });
           return "";
         }
-        // The managed v1 child removes this server-only secret too. Remote
-        // definitions must never consult the server process, even as a fallback.
         const replacement = name.toUpperCase() === "OPENWORK_ENCRYPTION_KEY" ? undefined
           : local ? inherited[name] ?? options.environment.get(name) : options.environment.get(name);
         if (!replacement) {
@@ -113,7 +102,6 @@ export async function resolveProviderConfigTemplates(
             if (!within(directory, file)) blocked();
             else output += (await readText(file)).trim();
           } catch {
-            // OS errors and file paths may contain substituted credentials.
             errors.push({ providerId, field, code: "unreadable_file_reference", message: `Provider ${providerId}: ${field} references a file that could not be read. Check the file reference inside the provider configuration directory.` });
           }
         }

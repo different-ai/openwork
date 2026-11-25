@@ -2,7 +2,6 @@ import { NextRequest } from "next/server";
 import { proxyUpstream } from "../../../_lib/upstream-proxy";
 
 export const dynamic = "force-dynamic";
-// Existing browser workflow/tool calls can wait up to 170 seconds.
 export const maxDuration = 180;
 
 async function proxy(request: NextRequest) {

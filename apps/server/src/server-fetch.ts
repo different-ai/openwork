@@ -24,7 +24,6 @@ async function resolveExternalFetch(): Promise<ExternalFetch> {
       return (input, init) => net.fetch(input, init);
     }
   } catch {
-    // Electron is optional when the server runs standalone or under tests.
   }
   return globalFetch;
 }
@@ -34,10 +33,6 @@ export function externalFetch(input: string, init?: RequestInit): Promise<Respon
   return externalFetchPromise.then((resolvedFetch) => resolvedFetch(input, init));
 }
 
-/**
- * Rule: external egress → externalFetch; loopback → loopbackFetch; bare fetch is banned in apps/server/src.
- * Use loopbackFetch only for 127.0.0.1, localhost, and managed OpenCode engine traffic where CA trust is irrelevant and streaming performance matters.
- */
 export function loopbackFetch(
   input: Parameters<typeof globalThis.fetch>[0],
   init?: Parameters<typeof globalThis.fetch>[1],
@@ -45,14 +40,6 @@ export function loopbackFetch(
   return globalThis.fetch(input, init);
 }
 
-/**
- * Transfer a response body into a new stream before wrapping it in another
- * Response. Node's fetch registers the original Response with an undici GC
- * finalizer that cancels an unlocked body when that Response becomes
- * unreachable. pipeThrough locks the source synchronously, so dropping the
- * original Response cannot cancel the stream while a wrapper is waiting to be
- * consumed. Cancellation and backpressure still propagate through the pipe.
- */
 export function transferResponseBody(response: Response): ReadableStream<Uint8Array> | null {
   return response.body?.pipeThrough(new TransformStream<Uint8Array, Uint8Array>()) ?? null;
 }
@@ -65,11 +52,6 @@ export type RuntimeDiagnosticTransportInfo = {
   transport: RuntimeDiagnosticTransport;
 };
 
-/**
- * Identifies the JavaScript runtime and fetch transport behind
- * runtimeDiagnosticFetch, so a diagnostic can attribute its own egress path
- * instead of implying it exercised Chromium networking or the OpenCode engine.
- */
 export function runtimeDiagnosticTransportInfo(): RuntimeDiagnosticTransportInfo {
   const versions: Record<string, string | undefined> = process.versions;
   if (versions.bun) return { runtimeFamily: "bun", transport: "bun-fetch" };
@@ -78,15 +60,6 @@ export function runtimeDiagnosticTransportInfo(): RuntimeDiagnosticTransportInfo
   return { runtimeFamily: "unknown", transport: "unknown" };
 }
 
-/**
- * Deliberate runtime-diagnostic egress. Unlike externalFetch, this must stay
- * on the embedding JavaScript runtime's own fetch stack (Node/undici inside
- * Electron main and standalone Node, Bun's fetch in the compiled binary) and
- * must never route through Chromium's electronNet or the OpenCode engine —
- * that independence is what lets diagnostics compare the OpenWork runtime's
- * network path against the engine's report. Pair every use with
- * runtimeDiagnosticTransportInfo so reports state which stack actually ran.
- */
 export function runtimeDiagnosticFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   return globalThis.fetch(input, init);
 }

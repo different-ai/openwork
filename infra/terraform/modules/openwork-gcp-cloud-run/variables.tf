@@ -2,6 +2,24 @@
 # Required
 # ---------------------------------------------------------------------------
 
+variable "managed_legacy" {
+  description = "Managed-installer compatibility: retain its physical names, 48-character legacy generators, backup settings and separate unprivileged web identity. Does not convert secret storage mode; the managed root must explicitly set write_only_secrets=false. Direct consumers should leave false."
+  type        = bool
+  default     = false
+}
+
+variable "managed_maintenance" {
+  description = "Managed runner only: keep services disabled while migration-gated API-only revisions are prepared. Restore false only after verifying the new revisions own all traffic."
+  type        = bool
+  default     = false
+}
+
+variable "web_service_account_email" {
+  description = "Separate existing web identity for managed_legacy. It receives no secret or database grants."
+  type        = string
+  default     = ""
+}
+
 variable "project_id" {
   description = "Google Cloud project to deploy into."
   type        = string
@@ -346,7 +364,7 @@ variable "cloud_sql_connection_name" {
 }
 
 variable "database" {
-  description = "Cloud SQL settings. den-api reaches the instance through Cloud Run's Cloud SQL connector (IAM-authorized, verified TLS). For a private-IP instance or another database, set create_database = false and pass database_url."
+  description = "Cloud SQL settings. den-api reaches the instance through Cloud Run's Cloud SQL connector (IAM-authorized, verified TLS). For a private-IP instance or another database, set create_database = false and pass database_url. backup_location is the Cloud SQL region or multi-region that stores new backups; null leaves Google's default, the multi-region nearest the instance, which can lie outside the instance's region."
   type = object({
     tier                = optional(string, "db-g1-small")
     edition             = optional(string, "ENTERPRISE")
@@ -354,6 +372,7 @@ variable "database" {
     disk_size_gb        = optional(number, 20)
     availability_type   = optional(string, "ZONAL")
     backup_enabled      = optional(bool, true)
+    backup_location     = optional(string)
     deletion_protection = optional(bool) # Deprecated alias; null uses deletion_protection.
   })
   default = {}

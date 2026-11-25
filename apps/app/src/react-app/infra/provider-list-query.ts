@@ -9,9 +9,7 @@ import { liveProviderSyncStatusQueryKey, usesLiveProviderSync, type LiveProvider
 import type { ConfigProvidersResponse, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 export const PROVIDER_LIST_CACHE_MS = 5 * 60 * 1000;
-// Connected providers only: what pickers, availability checks and defaults read.
 const PROVIDER_LIST_QUERY_ROOT = ["opencode-provider-list"] as const;
-// Every provider the engine knows (~6 MB on v1), for connecting a new one.
 const PROVIDER_CATALOG_QUERY_ROOT = ["opencode-provider-catalog"] as const;
 const SAVED_PROVIDER_LIST_PREFIX = "openwork.providerList.v1:";
 
@@ -28,9 +26,6 @@ export type ConnectedProviderSnapshotChange = {
   next: ConnectedProviderSnapshot;
 };
 
-// Bounded module-scope cache: snapshots are keyed by (baseUrl, directory) and
-// would otherwise accumulate for every workspace ever opened in this app run.
-// Recording refreshes a key's recency; the oldest keys are evicted past the cap.
 const CONNECTED_PROVIDER_SNAPSHOT_LIMIT = 16;
 const connectedProviderSnapshots = new Map<string, ConnectedProviderSnapshot>();
 const connectedProviderSnapshotChanges = new Map<string, ConnectedProviderSnapshotChange>();
@@ -63,7 +58,6 @@ export async function refreshProviderListQueries(queryClient: QueryClient) {
   await queryClient.refetchQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT, type: "active" });
 }
 
-/** Drop account-sensitive provider snapshots when the Den session ends. */
 export function clearProviderListQueries(queryClient: QueryClient) {
   queryClient.removeQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT });
   queryClient.removeQueries({ queryKey: PROVIDER_CATALOG_QUERY_ROOT });
@@ -72,16 +66,11 @@ export function clearProviderListQueries(queryClient: QueryClient) {
   clearSavedProviderLists();
 }
 
-/** The connected providers as the `{all, connected, default}` shape every reader already uses. */
 export function providerListFromConnected(value: ConfigProvidersResponse): ProviderListResponse {
   const all = value.providers ?? [];
   return { all, connected: all.map((provider) => provider.id), default: value.default ?? {} };
 }
 
-/**
- * Connected providers only. On v1 `/config/providers` answers in a few
- * milliseconds with ~30 KB, where `/provider` sends the whole ~6 MB catalog.
- */
 export async function fetchProviderList(input: {
   client: Client;
   baseUrl?: string | null;
@@ -97,7 +86,6 @@ export async function fetchProviderList(input: {
   return value;
 }
 
-/** Every provider the engine knows, connected or not. Only for connecting a new provider. */
 export async function fetchProviderCatalog(input: {
   client: Client;
   directory?: string | null;
@@ -160,11 +148,6 @@ function providerListStorage(): Storage | null {
   }
 }
 
-/**
- * Remember the last connected providers per folder, so the next launch can
- * show them while the engine is still starting. Keyed by folder, not engine
- * URL: the engine port changes on every launch.
- */
 function saveProviderList(directory: string | null | undefined, value: ProviderListResponse) {
   const storage = providerListStorage();
   if (!storage) return;
@@ -181,11 +164,9 @@ function saveProviderList(directory: string | null | undefined, value: ProviderL
   try {
     storage.setItem(savedProviderListKey(directory), JSON.stringify(saved));
   } catch {
-    // Storage full or unavailable: the next launch simply waits for the engine.
   }
 }
 
-/** The connected providers last seen for this folder, or undefined. Never fresh: always revalidate. */
 export function readSavedProviderList(directory?: string | null): ProviderListResponse | undefined {
   const storage = providerListStorage();
   if (!storage) return undefined;
@@ -210,7 +191,6 @@ function clearSavedProviderLists() {
     }
     for (const key of keys) storage.removeItem(key);
   } catch {
-    // ignore storage failures
   }
 }
 
@@ -264,7 +244,6 @@ function recordConnectedProviderSnapshot(
   const previous = connectedProviderSnapshots.get(key) ?? null;
   const next = getConnectedProviderSnapshot(value);
   const changed = previous !== null && JSON.stringify(previous) !== JSON.stringify(next);
-  // Delete before set so a refreshed key moves to the newest insertion slot.
   connectedProviderSnapshots.delete(key);
   connectedProviderSnapshotChanges.delete(key);
   connectedProviderSnapshots.set(key, next);
@@ -360,7 +339,6 @@ export function ensureProviderListQuery(
 
 const pendingCatalogInvalidations = new WeakMap<QueryClient, Set<string>>();
 
-/** Many model/provider events and mounted pickers can describe one catalog write. */
 function invalidateProviderCatalogScope(queryClient: QueryClient, scope: {
   baseUrl: string;
   directory?: string;
@@ -382,7 +360,6 @@ function invalidateProviderCatalogScope(queryClient: QueryClient, scope: {
 
 export function handleProviderCatalogChange(queryClient: QueryClient, scope: ProviderCatalogScope) {
   if (!scope.reason) {
-    // Existing catalog.updated behavior is unchanged, including when off.
     void queryClient.invalidateQueries({ queryKey: providerListQueryKey(scope) });
     return;
   }
@@ -398,11 +375,6 @@ export function useProviderListQuery(input: {
   baseUrl?: string | null;
   directory?: string | null;
   enabled?: boolean;
-  /**
-   * Show the providers last seen for this folder until the engine answers.
-   * Only for pickers: `isPlaceholderData` is true meanwhile, and nothing that
-   * changes a selection automatically should act on it.
-   */
   showSavedWhileLoading?: boolean;
 }) {
   const queryClient = useQueryClient();

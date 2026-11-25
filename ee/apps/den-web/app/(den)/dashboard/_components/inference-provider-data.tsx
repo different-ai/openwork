@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayModelGroupWrite, GatewayProviderTestResult } from "@openwork/types/den/gateway";
+import type { GatewayProviderTestResult } from "@openwork/types/den/gateway";
 import { auditOperationHeaders, type AuditOperationContext } from "@openwork/types/den/audit";
 import { gatewayProviderHasUsageLimitsSchema, type GatewayProviderRemovalLimitChoice, type GatewayProviderRemovalUsageLimit } from "@openwork/types/den/gateway-usage-limits";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
@@ -11,6 +11,8 @@ import {
   readInferenceProviderFromPayload,
   readInferenceProvidersFromPayload,
   readInferenceProviderDetails,
+  readSavedGatewayResourceId,
+  type GatewayResourceWrite,
   type DenInferenceProviderDetails,
   type DenInferenceProvider,
   type InferenceProviderRequestBody,
@@ -55,7 +57,6 @@ export function useOrgInferenceProviders(orgId: string | null) {
   return { inferenceProviders, busy, error, reloadProviders: loadProviders };
 }
 
-/** One provider with its access grants and credential list (no secret values). */
 export function useInferenceProvider(orgId: string | null, inferenceProviderId: string | null) {
   const generation = useRef(0);
   const [provider, setProvider] = useState<DenInferenceProviderDetails | null>(null);
@@ -144,7 +145,6 @@ function readProviderTestResult(value: unknown): GatewayProviderTestResult | nul
   return null;
 }
 
-/** Asks AI Gateway to send one short prompt with these unsaved settings. Nothing is stored. */
 export async function testInferenceProvider(body: InferenceProviderTestBody): Promise<GatewayProviderTestResult> {
   const { response, payload } = await requestJson(`/v1/inference-providers/test-connection`, { method: "POST", body: JSON.stringify(body) }, 45000);
   if (!response.ok) {
@@ -155,17 +155,15 @@ export async function testInferenceProvider(body: InferenceProviderTestBody): Pr
   return result;
 }
 
-type GatewayResourceWrite =
-  | { resource: "model-groups"; body: GatewayModelGroupWrite }
-  | { resource: "credential-sets"; body: GatewayCredentialSetWrite }
-  | { resource: "access-grants"; body: GatewayAccessGrantWrite };
-
-export async function saveGatewayResource(providerId: string, id: string | null, input: GatewayResourceWrite, auditContext?: AuditOperationContext) {
-  const path = `/v1/inference-providers/${encodeURIComponent(providerId)}/${input.resource}${id ? `/${encodeURIComponent(id)}` : ""}`;
+export async function saveGatewayResource(providerId: string, id: string | null, input: GatewayResourceWrite, auditContext?: AuditOperationContext): Promise<string> {
+  const path = `/v1/inference-providers/${encodeURIComponent(providerId)}/${input.resource}${id !== null ? `/${encodeURIComponent(id)}` : ""}`;
   const { response, payload } = await requestJson(path, {
-    method: id ? "PATCH" : "POST", body: JSON.stringify(input.body), headers: auditOperationHeaders(auditContext),
+    method: id !== null ? "PATCH" : "POST", body: JSON.stringify(input.body), headers: auditOperationHeaders(auditContext),
   }, 20000);
   if (!response.ok) throw getRequestError(payload, response, `Could not save ${input.resource} (${response.status}).`);
+  const savedId = readSavedGatewayResourceId(input.resource, payload) ?? id;
+  if (savedId === null) throw new Error("The server did not return the saved resource ID.");
+  return savedId;
 }
 
 export async function deleteGatewayResource(providerId: string, resource: GatewayResourceWrite["resource"], id: string, auditContext?: AuditOperationContext) {
@@ -176,7 +174,6 @@ export async function deleteGatewayResource(providerId: string, resource: Gatewa
   if (!response.ok) throw getRequestError(payload, response, `Could not delete ${resource} (${response.status}).`);
 }
 
-/** The provider still has usage limits; the person chooses where they go before it is removed. */
 export class ProviderHasUsageLimitsError extends Error {
   constructor(message: string, readonly usageLimits: GatewayProviderRemovalUsageLimit[]) {
     super(message);
@@ -201,7 +198,6 @@ export async function deleteInferenceProvider(inferenceProviderId: string, audit
   }
 }
 
-/** Moves a models.dev BYOK provider to the gateway; returns the new gateway provider. */
 export async function migrateLlmProviderToGateway(llmProviderId: string): Promise<DenInferenceProvider> {
   const { response, payload } = await requestJson(
     `/v1/inference-providers/migrate-from-llm-provider`,

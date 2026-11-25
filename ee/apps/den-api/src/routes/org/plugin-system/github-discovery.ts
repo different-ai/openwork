@@ -21,6 +21,7 @@ export type GithubDiscoveryClassification =
   | "claude_multi_plugin_repo"
   | "claude_single_plugin_repo"
   | "folder_inferred_repo"
+  | "skill_folders_repo"
   | "unsupported"
 
 export type GithubDiscoveredPluginSourceKind =
@@ -29,6 +30,7 @@ export type GithubDiscoveredPluginSourceKind =
   | "plugin_manifest"
   | "standalone_claude"
   | "folder_inference"
+  | "skill_folder"
 
 export type GithubDiscoveredPluginComponentKind =
   | "skill"
@@ -303,6 +305,30 @@ function hasAnyComponentPaths(componentPaths: GithubDiscoveredPlugin["componentP
   return Object.values(componentPaths).some((paths) => paths.length > 0)
 }
 
+function isSameOrInside(path: string, parent: string) {
+  return path === parent || path.startsWith(`${parent}/`)
+}
+
+function mergeComponentPaths(
+  declared: GithubDiscoveredPlugin["componentPaths"],
+  defaults: GithubDiscoveredPlugin["componentPaths"],
+): GithubDiscoveredPlugin["componentPaths"] {
+  const merge = (first: string[], second: string[]) => {
+    const unique = [...new Set([...first, ...second])]
+    return unique.filter((path) => !unique.some((other) => other !== path && isSameOrInside(path, other)))
+  }
+  return {
+    agents: merge(declared.agents, defaults.agents),
+    commands: merge(declared.commands, defaults.commands),
+    hooks: merge(declared.hooks, defaults.hooks),
+    lspServers: merge(declared.lspServers, defaults.lspServers),
+    mcpServers: merge(declared.mcpServers, defaults.mcpServers),
+    monitors: merge(declared.monitors, defaults.monitors),
+    settings: merge(declared.settings, defaults.settings),
+    skills: merge(declared.skills, defaults.skills),
+  }
+}
+
 function componentKindsFromPaths(componentPaths: GithubDiscoveredPlugin["componentPaths"]): GithubDiscoveredPluginComponentKind[] {
   const kinds: GithubDiscoveredPluginComponentKind[] = []
   if (componentPaths.skills.length > 0) kinds.push("skill")
@@ -336,7 +362,7 @@ function buildDiscoveredPlugin(input: {
     rootPath: input.rootPath,
   })
   const componentPaths = input.componentPathsOverride
-    ?? (hasAnyComponentPaths(manifestDeclaredPaths) ? manifestDeclaredPaths : collectComponentPaths(input.knownPaths, input.rootPath))
+    ?? mergeComponentPaths(manifestDeclaredPaths, collectComponentPaths(input.knownPaths, input.rootPath))
   const displayName = input.displayName?.trim()
     || metadata.name
     || basename(input.rootPath)
@@ -440,7 +466,7 @@ function agentPluginAssetWarnings(input: {
     )).length
   }, 0)
   return extraAssetCount > 0
-    ? [`${extraAssetCount} additional skill asset${extraAssetCount === 1 ? " was" : "s were"} found. OpenWork imports the SKILL.md entrypoint; referenced skill assets are not installed yet.`]
+    ? [`${extraAssetCount} additional skill file${extraAssetCount === 1 ? " was" : "s were"} found. OpenWork imports text files beside SKILL.md; binary or very large files are left out.`]
     : []
 }
 
@@ -467,9 +493,22 @@ function inferredRootsFromKnownFolders(entries: GithubDiscoveryTreeEntry[]) {
   return [...inferred]
 }
 
+export function discoverSkillFolderEntrypoints(entries: GithubDiscoveryTreeEntry[]) {
+  const blobs = entries.filter((entry) => entry.kind === "blob").map((entry) => normalizePath(entry.path))
+  if (blobs.includes("SKILL.md")) return ["SKILL.md"]
+  return blobs
+    .filter((path) => {
+      const segments = path.split("/")
+      if (segments.at(-1) !== "SKILL.md" || segments.some((segment) => segment.startsWith("."))) return false
+      return segments.length === 2 || (segments.length === 3 && segments[0] === "skills")
+    })
+    .sort()
+}
+
 export function buildGithubRepoDiscovery(input: {
   entries: GithubDiscoveryTreeEntry[]
   fileTextByPath: Record<string, string | null | undefined>
+  skillFoldersPluginName?: string
 }) {
   const knownPaths = buildPathSet(input.entries)
   const warnings: string[] = []
@@ -490,6 +529,12 @@ export function buildGithubRepoDiscovery(input: {
           version: asString(marketplaceJson.version),
         }
       : { description: null, name: null, owner: null, version: null }
+
+    const pluginsPerRoot = new Map<string, number>()
+    for (const entry of marketplaceEntries) {
+      const root = localMarketplaceRoot(entry)
+      if (root !== null) pluginsPerRoot.set(root, (pluginsPerRoot.get(root) ?? 0) + 1)
+    }
 
     const discoveredPlugins = marketplaceEntries.map((entry, index) => {
       const rootPath = localMarketplaceRoot(entry)
@@ -518,7 +563,9 @@ export function buildGithubRepoDiscovery(input: {
         description: asString(entry.description),
         displayName: asString(entry.name),
         fileTextByPath: input.fileTextByPath,
-        key: `marketplace:${rootPath}`,
+        key: (pluginsPerRoot.get(rootPath) ?? 0) > 1
+          ? `marketplace:${rootPath}:${asString(entry.name) ?? index}`
+          : `marketplace:${rootPath}`,
         knownPaths,
         manifestPath: joinPath(rootPath, ".claude-plugin/plugin.json"),
         rootPath,
@@ -534,9 +581,6 @@ export function buildGithubRepoDiscovery(input: {
     } satisfies GithubRepoDiscoveryResult
   }
 
-  // Preserve the existing Claude-compatible interpretation when a repository
-  // deliberately carries both formats. Agent Plugins become the repo format
-  // only when no explicit Claude plugin manifest is present.
   const manifestRoots = [...new Set(pluginRootsFromManifests(input.entries))]
   const agentPluginCandidates = manifestRoots.length === 0 ? agentPluginManifestCandidates(input) : []
   if (agentPluginCandidates.length > 0) {
@@ -609,32 +653,39 @@ export function buildGithubRepoDiscovery(input: {
     } satisfies GithubRepoDiscoveryResult
   }
 
-  // Intentionally disabled for now: directory-based inference can over-classify
-  // arbitrary repos as plugins. Until we support a broader compatibility model,
-  // discovery should only accept explicit Claude plugin markers.
-  // const inferredRoots = inferredRootsFromKnownFolders(input.entries)
-  // const standaloneRoot = inferredRoots.includes("") && (
-  //   hasDescendant(knownPaths, ".claude/skills")
-  //   || hasDescendant(knownPaths, ".claude/commands")
-  //   || hasDescendant(knownPaths, ".claude/agents")
-  // )
-  // const folderRoots = standaloneRoot ? inferredRoots : inferredRoots.filter((root) => root !== "")
-  //
-  // if (folderRoots.length > 0) {
-  //   const discoveredPlugins = folderRoots.map((rootPath) => buildDiscoveredPlugin({
-  //     fileTextByPath: input.fileTextByPath,
-  //     key: `${standaloneRoot && rootPath === "" ? "standalone" : "folder"}:${rootPath || "root"}`,
-  //     knownPaths,
-  //     rootPath,
-  //     sourceKind: standaloneRoot && rootPath === "" ? "standalone_claude" : "folder_inference",
-  //   }))
-  //
-  //   return {
-  //     classification: "folder_inferred_repo",
-  //     discoveredPlugins,
-  //     warnings,
-  //   } satisfies GithubRepoDiscoveryResult
-  // }
+  const skillEntrypoints = input.skillFoldersPluginName ? discoverSkillFolderEntrypoints(input.entries) : []
+  if (input.skillFoldersPluginName && skillEntrypoints.length > 0) {
+    const warning = "This repository has no plugin manifest. Choose each skill folder to import; none are selected for you."
+    return {
+      classification: "skill_folders_repo",
+      discoveredPlugins: [{
+        componentKinds: ["skill"],
+        componentPaths: {
+          agents: [],
+          commands: [],
+          hooks: [],
+          lspServers: [],
+          mcpServers: [],
+          monitors: [],
+          settings: [],
+          skills: skillEntrypoints,
+        },
+        description: null,
+        displayName: input.skillFoldersPluginName,
+        key: "skill-folders",
+        manifestPath: null,
+        metadata: {},
+        rootPath: "",
+        selectedByDefault: false,
+        sourceKind: "skill_folder",
+        sourceSchemaVersion: null,
+        supported: true,
+        warnings: [],
+      }],
+      marketplace: null,
+      warnings: [warning],
+    } satisfies GithubRepoDiscoveryResult
+  }
 
   warnings.push(`OpenWork supports Agent Plugins ${AGENT_PLUGIN_V1_SUPPORTED_VERSIONS.join(" and ")} and Claude-compatible plugins. Add a standards-compliant plugin.json, .claude-plugin/marketplace.json, or .claude-plugin/plugin.json to this repository.`)
 

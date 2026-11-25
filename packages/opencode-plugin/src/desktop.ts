@@ -30,9 +30,6 @@ export interface DesktopSession {
   readonly inferenceKey: string
 }
 
-// The shared inventory helpers accept a token-shaped identity key. In desktop
-// mode this is ONLY an opaque hash, never a Den bearer, and the transport below
-// replaces those helper headers with an identity-bound local inventory request.
 function inventorySession(value: DesktopSession): DenSession {
   return { apiBaseUrl: value.apiBaseUrl, token: value.identity, orgId: value.orgId }
 }
@@ -97,8 +94,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
   return {
     id: "openwork",
     async setup(ctx) {
-      // The server supplies the resolved registry value, not a new environment flag.
-      if (ctx.options.liveProviderSync !== true) return
       const endpoint = ctx.options.desktopSession
       const capability = deps.capability?.()
       if (!isDesktopSessionEndpoint(endpoint)) return
@@ -143,14 +138,12 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         const fingerprint = digest(next)
         if (fingerprint === applied) return
         await ctx.provider.reload()
-        if (providers === next) applied = fingerprint // Failed/stale reloads remain retryable.
+        if (providers === next) applied = fingerprint
       }
       const safeHeaders = (headers: Record<string, string> | undefined) => headers ? Object.fromEntries(Object.entries(headers)
         .filter(([name]) => !["authorization", "x-api-key", "api-key", "x-goog-api-key", "cookie", "host"].includes(name.toLowerCase()))) : undefined
       const records = (value: Inventory | null): readonly ProviderRecord[] => {
         if (!session || value?.gateway?.apiKey !== "ow_local_catalog") return []
-        // Cached catalog definitions stay portable/public. Only publication binds
-        // them to this engine's current loopback origin and identity-scoped key.
         const source = session
         return snapshotFrom(value, options, { type: "env", name: "openwork-desktop" }).providers.map(provider => {
           const baseURL = `${source.inferenceOrigin}/api/v1/providers/${provider.info.id}`
@@ -167,7 +160,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         refreshController = new AbortController()
         inventory = null
         queued = false
-        // Keep the session/stream: membership can return without a new token.
         void ctx.storage.remove(CACHE_KEY).catch(() => {})
         void publish([]).catch(() => {})
       }
@@ -177,8 +169,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         refreshController.abort()
         stream?.abort()
         stream = null
-        // Keep the rejected identity key so local session checks cannot reopen
-        // it. Only a changed handoff (or engine restart) can authorize it again.
         session = null
         inventory = null
         queued = false
@@ -196,13 +186,10 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         const ticket = inventoryRequestTicket()
         running = (async () => {
           try {
-            // Deliberately no 30s freshness shortcut: every event/reconnect is authoritative.
             const gateway = await fetchSharedGatewayInventory({ fetch: inventoryFetch(source), session: inventorySession(source), scope: "desktop", ticket, signal: refreshController.signal })
             if (!current()) return
             const next: Inventory = { version: 1, connectionKey: accountKey, apiBaseUrl: source.apiBaseUrl, fetchedAt: now(), gateway, mcp: null }
             inventory = next
-            // Public definitions + a dummy credential only. Never persist raw
-            // reusable credentials or engine-specific origin/ephemeral keys.
             const json: Json = JSON.parse(JSON.stringify(next))
             await ctx.storage.set(CACHE_KEY, json).catch(() => {})
             if (!current()) return
@@ -224,16 +211,12 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         })
         return running
       }
-      // A slow or failed local check is not a sign-out. On unknown, keep the
-      // session, providers, cache and stream; the next tick asks again.
-      // Inference stays safe: the local bridge re-checks identity per request.
       const applySession = async (check: SessionCheck) => {
         if (lifetime.signal.aborted || check.kind === "unknown") return
         const next = check.kind === "session" ? check.value : null
         const nextKey = next ? digest({ apiBaseUrl: next.apiBaseUrl, identity: next.identity, orgId: next.orgId }) : ""
         if (nextKey === key) {
           if (session) session = next
-          // A failed reload is independent of the network subscription and remains retryable.
           await publish(records(inventory)).catch(() => {})
           return
         }
@@ -246,7 +229,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         session = next
         key = nextKey
         inventory = null
-        // Drop stale providers before reading cache or issuing any new-account request.
         await publish([]).catch(() => {})
         if (!next) {
           await ctx.storage.remove(CACHE_KEY).catch(() => {})
@@ -260,7 +242,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         if (lifetime.signal.aborted) return
         const controller = new AbortController()
         stream = controller
-        // Re-resolve the handoff on reconnect, rather than retaining an expired token.
         void subscribeSharedInventory({
           identity: inventorySession(next),
           unauthorized,
@@ -275,7 +256,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         })
         void refresh()
       }
-      // Checks are applied one at a time, in order; a burst collapses to the latest.
       let pending: SessionCheck | null = null
       let applying: Promise<void> | null = null
       const receive = (check: SessionCheck) => {
@@ -292,8 +272,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
           if (pending) receive(pending)
         })
       }
-      // This local-only check detects sign-out/account/org/token changes without
-      // polling Den inventory. One poll per process serves every Location.
       const checkNow = joinDesktopSessionPoll(endpoint, capability, {
         check: signal => checkDesktopSession(fetcher, endpoint, capability, signal),
         receive,

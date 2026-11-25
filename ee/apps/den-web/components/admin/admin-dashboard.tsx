@@ -30,7 +30,6 @@ type Day = Dashboard["daily"][number];
 type UsageWindow = { requests: number; tokens: number; costMicroUsd: number };
 const sumDays = (days: Day[]): UsageWindow => days.reduce((total, day) => ({ requests: total.requests + day.requests, tokens: total.tokens + day.tokens, costMicroUsd: total.costMicroUsd + day.costMicroUsd }), { requests: 0, tokens: 0, costMicroUsd: 0 });
 
-/** Last 7 complete-or-current UTC days against the 7 before them. */
 function weekOverWeek(daily: Day[]) {
   const days = [...daily].sort((a, b) => a.date.localeCompare(b.date));
   return { current: sumDays(days.slice(-7)), previous: sumDays(days.slice(-14, -7)), days };
@@ -187,7 +186,6 @@ export function AdminDashboard({ totalOrganizations, totalUsers, refreshKey, onA
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [attempt, onAccessDenied, refreshKey]);
-  // Counting active users scans 30 days of platform activity, so it runs only when an admin asks for it.
   const [activeUsers, setActiveUsers] = useState<AdminActiveUsers | null>(null);
   const [activeUsersLoading, setActiveUsersLoading] = useState(false);
   const [activeUsersError, setActiveUsersError] = useState<string | null>(null);

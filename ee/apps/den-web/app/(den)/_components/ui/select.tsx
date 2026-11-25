@@ -19,6 +19,7 @@ import {
 import {
   denDropdownChevronSlotClass,
   denDropdownFieldBaseClass,
+  denDropdownFieldCompactClass,
   denDropdownFieldOpenClass,
   denDropdownListClass,
   denDropdownRowActiveClass,
@@ -32,21 +33,17 @@ type DenSelectOption = {
   value: string;
   disabled: boolean;
   content: ReactNode;
-  /** Full text for the hover tooltip when the option truncates. */
   title: string;
+  testId?: string;
 };
 
-export type DenSelectProps = Omit<SelectHTMLAttributes<HTMLSelectElement>, "disabled"> & {
+export type DenSelectProps = Omit<SelectHTMLAttributes<HTMLSelectElement>, "disabled" | "size"> & {
   disabled?: boolean;
-  /** Adds a filter field above long option lists. The trigger stays a button. */
   searchLabel?: string;
   searchEmptyLabel?: string;
-  /**
-   * "trigger" keeps the menu exactly as wide as the field, with one-line rows
-   * that truncate and show their full text on hover. Give an `<option title>`
-   * when its content holds more than the name.
-   */
   menuWidth?: DenDropdownWidth;
+  size?: "md" | "sm";
+  "data-testid"?: string;
 };
 
 function getOptionText(node: ReactNode): string {
@@ -98,6 +95,8 @@ export function DenSelect({
   searchLabel,
   searchEmptyLabel = "No options match this search.",
   menuWidth = "content",
+  size = "md",
+  "data-testid": testId,
 }: DenSelectProps) {
   const fitTrigger = menuWidth === "trigger";
   const [open, setOpen] = useState(false);
@@ -122,6 +121,7 @@ export function DenSelect({
         disabled?: boolean;
         title?: string;
         children?: ReactNode;
+        "data-testid"?: string;
       }>;
 
       return [
@@ -130,6 +130,7 @@ export function DenSelect({
           disabled: option.props.disabled === true,
           content: option.props.children,
           title: option.props.title ?? getOptionText(option.props.children),
+          testId: option.props["data-testid"],
         } satisfies DenSelectOption,
       ];
     });
@@ -349,6 +350,7 @@ export function DenSelect({
         ref={triggerRef}
         id={id}
         type="button"
+        data-testid={testId}
         disabled={disabled}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
@@ -369,7 +371,7 @@ export function DenSelect({
           handleTriggerKeyDown(event);
         }}
         className={[
-          denDropdownFieldBaseClass,
+          size === "sm" ? denDropdownFieldCompactClass : denDropdownFieldBaseClass,
           "flex items-center justify-between gap-3 rounded-lg text-left",
           "focus-visible:border-gray-300 focus-visible:ring-2 focus-visible:ring-gray-900/5",
           open ? denDropdownFieldOpenClass : "",
@@ -435,6 +437,7 @@ export function DenSelect({
                   role="option"
                   tabIndex={-1}
                   aria-selected={selected}
+                  data-testid={option.testId}
                   disabled={option.disabled}
                   onPointerMove={(event) => {
                     if (event.pointerType !== "touch" && !option.disabled) {
@@ -442,15 +445,13 @@ export function DenSelect({
                     }
                   }}
                   onPointerDown={(event) => {
-                    // Keep active-descendant focus on the control for mouse/pen,
-                    // but let touch gestures scroll before a click commits.
                     if (event.pointerType !== "touch") event.preventDefault();
                   }}
                   onClick={() => commitValue(option.value)}
                   title={fitTrigger ? option.title : undefined}
                   className={[
                     denDropdownRowBaseClass,
-                    "min-h-10 items-center",
+                    size === "sm" ? "min-h-9 items-center" : "min-h-10 items-center",
                     option.disabled
                       ? "cursor-not-allowed opacity-50"
                       : selected
@@ -462,7 +463,7 @@ export function DenSelect({
                     .filter(Boolean)
                     .join(" ")}
                 >
-                  <span className={`min-w-0 flex-1 text-[14px] font-medium text-gray-900 ${fitTrigger ? "truncate" : "line-clamp-2 break-words whitespace-normal"}`}>
+                  <span className={`min-w-0 flex-1 ${size === "sm" ? "text-[13px]" : "text-[14px]"} font-medium text-gray-900 ${fitTrigger ? "truncate" : "line-clamp-2 break-words whitespace-normal"}`}>
                     {option.content}
                   </span>
                   {selected ? <Check className="h-4 w-4 shrink-0 text-gray-900" aria-hidden="true" /> : null}

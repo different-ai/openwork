@@ -52,6 +52,8 @@ export type MessageContentProps = {
   isStreaming?: boolean
   sessionReferences?: boolean
   highlightQuery?: string
+  githubReferences?: boolean
+  onRunCommand?: (command: string) => void
   className?: string
 } & React.ComponentProps<"div">
 
@@ -62,6 +64,8 @@ const MessageContent = ({
   isStreaming,
   sessionReferences,
   highlightQuery,
+  githubReferences,
+  onRunCommand,
   ...props
 }: MessageContentProps) => {
   if (markdown) {
@@ -72,6 +76,8 @@ const MessageContent = ({
         streaming={isStreaming}
         sessionReferences={sessionReferences}
         highlightQuery={highlightQuery}
+        githubReferences={githubReferences}
+        onRunCommand={onRunCommand}
         {...props}
       />
     )

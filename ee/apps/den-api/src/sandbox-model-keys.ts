@@ -1,11 +1,6 @@
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 
-/**
- * One OpenRouter key per sandbox, capped with OpenRouter's own spending limit, minted with the deployment's
- * management key. Den stores only the key's hash; the key itself lives in the sandbox's AI Gateway credential
- * set, so members never see it. Separate from OpenWork Models (inference.ts), which never sees these keys.
- */
 const OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/keys"
 const TIMEOUT_MS = 10_000
 

@@ -4,7 +4,8 @@ import { z } from "zod"
 import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { decideDeviceUserCode, lookupDeviceUserCode } from "../../device-authorization.js"
 import { jsonValidator, paramValidator, userSessionRoute } from "../../middleware/index.js"
-import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, ssoRequiredSchema, unauthorizedSchema } from "../../openapi.js"
+import { findSsoAccessBlock, ssoRequiredErrorBody } from "../../organization-sso-access.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const userCodeParamsSchema = z.object({
@@ -32,11 +33,6 @@ const deviceErrorSchema = z.object({
   message: z.string(),
 })
 
-/**
- * Den web's `/device` page reads and decides RFC 8628 user codes through
- * these routes. The protocol endpoints the CLI calls stay on Better Auth
- * (`POST /api/auth/device/code`, `POST /api/auth/device/token`).
- */
 export function registerDeviceAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   app.get(
     "/v1/auth/device/:userCode",
@@ -80,7 +76,7 @@ export function registerDeviceAuthRoutes<T extends { Variables: AuthContextVaria
         200: jsonResponse("The decision was recorded.", deviceDecisionResponseSchema),
         400: jsonResponse("The request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("The caller is not a member of the chosen organization.", forbiddenSchema),
+        403: jsonResponse("The caller is not a member of the chosen organization, or it requires SSO and this session did not sign in through it (sso_required).", forbiddenSchema.or(ssoRequiredSchema)),
         404: jsonResponse("The code is unknown, expired, or bound to someone else.", deviceErrorSchema),
         409: jsonResponse("The code was already approved or denied.", deviceErrorSchema),
       },
@@ -93,13 +89,18 @@ export function registerDeviceAuthRoutes<T extends { Variables: AuthContextVaria
         return c.json({ error: "unauthorized" }, 401)
       }
       const input = c.req.valid("json")
+      if (input.decision === "approve" && input.organizationId) {
+        const ssoBlock = await findSsoAccessBlock({ sessionId: c.get("signInSessionId"), organizationId: input.organizationId })
+        if (ssoBlock) {
+          return c.json(ssoRequiredErrorBody(ssoBlock), 403)
+        }
+      }
       const result = await decideDeviceUserCode({
         userCode: input.userCode,
         userId: user.id,
+        approvingSessionId: c.get("session")?.id ?? null,
         decision: input.decision,
         organizationId: input.organizationId ?? null,
-        // Approval binds the CLI session to this organization: attribute it to
-        // the verified member before the code is decided (fails closed).
         beforeEffect: async (membership) => {
           const attribution = auditSessionUserAttribution(membership.userId, membership.memberId)
           if (!attribution) return null

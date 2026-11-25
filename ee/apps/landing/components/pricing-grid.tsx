@@ -40,7 +40,6 @@ const CLOUD_SIGNUP_URL = "https://app.openworklabs.com?mode=sign-up";
 function PricingCardView({ card }: { card: PricingCard }) {
   return (
     <div className="flex h-full flex-col relative group">
-      {/* ── Header card ── */}
       <div className="relative p-5 rounded-[20px] overflow-hidden mb-6 flex-shrink-0 bg-[#F4F4F4] text-gray-900 group-hover:bg-gray-950 group-hover:text-white transition-colors duration-300">
         <div className="relative z-10 flex flex-col h-full min-h-[160px] justify-between">
           <div>
@@ -78,7 +77,6 @@ function PricingCardView({ card }: { card: PricingCard }) {
         </div>
       </div>
 
-      {/* ── Features list ── */}
       <div className="flex-1 pr-4">
         <div className="flex flex-col">
           {card.features.map((feature, idx) => {
@@ -96,7 +94,6 @@ function PricingCardView({ card }: { card: PricingCard }) {
         </div>
       </div>
 
-      {/* ── Footer ── */}
       {card.footer ? (
         <div className="mt-auto pt-8">
           <div className="text-[14px] font-medium text-gray-800">{card.footer}</div>

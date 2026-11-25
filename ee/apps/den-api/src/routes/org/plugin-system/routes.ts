@@ -1,13 +1,19 @@
+import { GithubInstallationApprovalError } from "./github-installation-policy.js"
 import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry } from "../declarative.js"
 import { findMarketplaceByExternalKey } from "./store.js"
 import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import { bodyLimit } from "hono/body-limit"
 import { z } from "zod"
 import { credentialPromptResponseFields, pluginConnectionKeyPrompt } from "../../../credential-prompt.js"
-import { SECURE_ENTRY_REQUIRED } from "../../../middleware/refuse-machine-secrets.js"
+import { SECURE_ENTRY_REQUIRED, refuseMachineSecrets } from "../../../middleware/refuse-machine-secrets.js"
+import { ANTHROPIC_SKILLS_MAX, AnthropicSkillsError, downloadAnthropicSkill, listAnthropicCustomSkills } from "../../../anthropic-skills-import.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
-import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
+import { binaryResponse, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
+import { readSkillFileBytes } from "../../../skill-file-blobs.js"
+import { skillFilesFromPayload, type SkillFileBody } from "../../../skill-files.js"
+import { SKILL_ZIP_MAX_BYTES, SkillZipError, readSkillZip, writeSkillZip } from "../../../skill-zip.js"
 import type { PermissionKey } from "@openwork/types/den/permissions"
 import type { OrgRouteVariables } from "../shared.js"
 import {
@@ -113,6 +119,7 @@ import {
   pluginMutationResponseSchema,
   pluginParamsSchema,
   pluginUpdateSchema,
+  configObjectExternalKeySchema,
   resolvedPluginsQuerySchema,
   resolvedPluginsResponseSchema,
   resourceAccessGrantWriteSchema,
@@ -123,6 +130,7 @@ import { pluginArchHasPermission, requirePluginArchCapability, type PluginArchAc
 import { pluginArchRoutePaths } from "./contracts.js"
 import { orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "../shared.js"
 import { ensureFreshPrivilegedSession } from "../../../privileged-session.js"
+import { primaryReadsMiddleware } from "../../../read-routing.js"
 import { isAgentOAuthClientConnection, listMemberUsableConnectionFacts } from "../mcp-connections.js"
 import { listWorkflowLibraryItems } from "../../../workflow-library.js"
 import {
@@ -189,6 +197,7 @@ import {
   removePluginMembership,
   retryConnectorSyncEvent,
   syncConnectorInstanceNow,
+  setConfigObjectExternalKey,
   setConfigObjectLifecycle,
   setConnectorInstanceLifecycle,
   setMarketplaceLifecycle,
@@ -204,6 +213,11 @@ import {
 
 type OrgContext = Context<{ Variables: OrgRouteVariables }>
 type PluginCreateBody = z.infer<typeof pluginCreateSchema>
+
+const externalKeyConflictSchema = z.object({
+  error: z.string(),
+  message: z.string().optional(),
+}).meta({ ref: "PluginArchExternalKeyConflictError" })
 
 const marketplaceConflictSchema = z.object({
   error: z.string(),
@@ -242,10 +256,6 @@ function actorContext(c: OrgContext): PluginArchActorContext {
   }
 }
 
-/**
- * A non-sensitive permission plus today's recent sign-in requirement for this
- * specific action (the key itself does not require one everywhere it is used).
- */
 async function requirePermissionWithFreshSession(c: OrgContext, key: PermissionKey) {
   const permission = await requirePermission(c, key)
   if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
@@ -255,6 +265,9 @@ async function requirePermissionWithFreshSession(c: OrgContext, key: PermissionK
 }
 
 function routeErrorResponse(c: OrgContext, error: unknown) {
+  if (error instanceof GithubInstallationApprovalError) {
+    return c.json({ error: "github_installation_not_approved", message: error.message }, 403)
+  }
   if (error instanceof PluginArchAuthorizationError) {
     const authorizationError = error as PluginArchAuthorizationError
     return c.json({ error: authorizationError.error, reason: authorizationError.reason, message: authorizationError.message }, 403)
@@ -302,11 +315,60 @@ export function isAgentPluginMcpOAuthClientSetup(input: { apiKey?: string | null
   return isAgentPluginMcpSecretSetup(input)
 }
 
+function skillNameFromMarkdown(markdown: string): string | null {
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(markdown)?.[1] ?? ""
+  return /^name:\s*["']?([a-z0-9-]{1,64})["']?\s*$/m.exec(frontmatter)?.[1] ?? null
+}
+
+async function uploadedSkillZip(c: OrgContext): Promise<{ skillMarkdown: string; files: SkillFileBody[]; pluginName: string | null }> {
+  if (!c.req.header("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
+    throw new PluginArchRouteFailure(400, "invalid_skill_zip", "Upload the skill as multipart form data, with the .zip in a field named file.")
+  }
+  const body = await c.req.parseBody()
+  const file = body.file instanceof File ? body.file : null
+  if (!file) throw new PluginArchRouteFailure(400, "invalid_skill_zip", "Choose a .zip file of the skill.")
+  try {
+    const read = readSkillZip(Buffer.from(await file.arrayBuffer()))
+    const pluginName = typeof body.pluginName === "string" ? body.pluginName.trim().slice(0, 255) : ""
+    return { skillMarkdown: read.skillMarkdown, files: read.files, pluginName: pluginName || null }
+  } catch (error) {
+    if (error instanceof SkillZipError) throw new PluginArchRouteFailure(400, "invalid_skill_zip", error.message)
+    throw error
+  }
+}
+
+const anthropicApiKeySchema = z.string().trim().min(1).max(512).describe("An Anthropic API key from the workspace that holds the skills. Used for this request only; never stored.")
+const anthropicSkillsPreviewSchema = z.object({ apiKey: anthropicApiKeySchema }).strict()
+const anthropicSkillsImportSchema = z.object({
+  apiKey: anthropicApiKeySchema,
+  skillIds: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)).min(1).max(ANTHROPIC_SKILLS_MAX).describe("Custom skill ids from the preview."),
+}).strict()
+const anthropicSkillsPreviewResponseSchema = z.object({
+  skills: z.array(z.object({ id: z.string(), displayName: z.string(), latestVersionId: z.string(), updatedAt: z.string().datetime({ offset: true }) })),
+  truncated: z.boolean().describe(`True when the workspace has more than ${ANTHROPIC_SKILLS_MAX} custom skills; only the first are listed.`),
+}).meta({ ref: "AnthropicSkillsPreviewResponse" })
+const anthropicSkillsImportResponseSchema = z.object({
+  results: z.array(z.union([
+    z.object({ skillId: z.string(), name: z.string(), ok: z.literal(true), pluginId: z.string() }),
+    z.object({ skillId: z.string(), name: z.string().nullable(), ok: z.literal(false), error: z.string(), message: z.string() }),
+  ])),
+}).meta({ ref: "AnthropicSkillsImportResponse" })
+
+function anthropicFailure(error: unknown): unknown {
+  return error instanceof AnthropicSkillsError ? new PluginArchRouteFailure(error.status, error.code, error.message) : error
+}
+
+const skillZipBodyLimit = bodyLimit({
+  maxSize: SKILL_ZIP_MAX_BYTES + 64 * 1024,
+  onError: (c) => c.json({ error: "invalid_skill_zip", message: `A skill archive can be at most ${SKILL_ZIP_MAX_BYTES / (1024 * 1024)} MB.` }, 413),
+})
+
 function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "patch" | "post" | "put", path: string, ...handlers: unknown[]) {
   const routeHandler = handlers.pop() as unknown
   const routeMiddlewares = handlers as unknown[]
   const routeApp = app as unknown as Record<string, (...args: unknown[]) => unknown>
-  routeApp[method](path, orgMemberRoute(), ...routeMiddlewares, resolveMemberTeamsMiddleware, routeHandler)
+  const readScope = method === "get" ? [] : [primaryReadsMiddleware]
+  routeApp[method](path, orgMemberRoute(), ...readScope, ...routeMiddlewares, resolveMemberTeamsMiddleware, routeHandler)
 }
 
 export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -481,6 +543,84 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.configObjectSkillZip,
+    paramValidator(configObjectParamsSchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Update a skill from a ZIP archive",
+      description: "Publishes a new immutable version of an existing skill from a .zip in the layout Anthropic's Agent Skills use: SKILL.md at the root, or in one folder named after the skill. Send multipart form data with the archive in `file`. The archive's supporting files replace the skill's current ones. Up to 40 MB per archive, 500 files, 10 MB per file and 30 MB of supporting files.",
+      responses: {
+        201: jsonResponse("Skill version created from the archive.", configObjectMutationResponseSchema),
+        400: jsonResponse("The archive or the skill in it was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update skills.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to edit this skill.", forbiddenSchema),
+        404: jsonResponse("The skill could not be found.", notFoundSchema),
+        413: jsonResponse("The archive is larger than 40 MB.", invalidRequestSchema),
+      },
+    }),
+    skillZipBodyLimit,
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const context = actorContext(c)
+        const existing = await getConfigObjectDetail(context, params.configObjectId)
+        if (existing.objectType !== "skill") throw new PluginArchRouteFailure(400, "not_a_skill", "Only a skill can be updated from a ZIP archive.")
+        const upload = await uploadedSkillZip(c)
+        return c.json({
+          ok: true,
+          item: await createConfigObjectVersion({
+            configObjectId: params.configObjectId,
+            context,
+            reason: "Uploaded as a ZIP archive",
+            value: { rawSourceText: upload.skillMarkdown, normalizedPayloadJson: { files: upload.files } },
+          }),
+        }, 201)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectSkillZip,
+    paramValidator(configObjectParamsSchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Download a skill as a ZIP archive",
+      description: "Returns the skill's latest version as a .zip: one folder named after the skill, holding SKILL.md and every supporting file. The layout uploads to Claude and back to OpenWork as it is.",
+      responses: {
+        200: binaryResponse("The skill as a ZIP archive, served as an attachment named after the skill.", ["application/zip"]),
+        400: jsonResponse("The config object is not a skill.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to download skills.", unauthorizedSchema),
+        403: jsonResponse("The caller cannot view this skill.", forbiddenSchema),
+        404: jsonResponse("The skill could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const detail = await getConfigObjectDetail(actorContext(c), params.configObjectId)
+        const version = detail.latestVersion
+        if (detail.objectType !== "skill" || !version?.rawSourceText) throw new PluginArchRouteFailure(400, "not_a_skill", "Only a skill can be downloaded as a ZIP archive.")
+        const files: SkillFileBody[] = []
+        for (const entry of skillFilesFromPayload(version.normalizedPayloadJson)) {
+          const bytes = await readSkillFileBytes(detail.organizationId, entry)
+          if (!bytes) throw new PluginArchRouteFailure(502, "skill_file_unavailable", `The file ${entry.path} could not be read. Try again.`)
+          files.push({ path: entry.path, bytes })
+        }
+        const folder = skillNameFromMarkdown(version.rawSourceText) ?? "skill"
+        const zip = writeSkillZip({ folder, skillMarkdown: version.rawSourceText, files })
+        return new Response(new Uint8Array(zip), {
+          headers: {
+            "Content-Type": "application/zip",
+            "Content-Disposition": `attachment; filename="${folder}.zip"`,
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+          },
+        })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectVersions,
     paramValidator(configObjectParamsSchema),
     queryValidator(configObjectVersionListQuerySchema),
@@ -505,7 +645,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
-  // Registered before :versionId so "latest" is not validated as a version id.
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectLatestVersion,
     paramValidator(configObjectParamsSchema),
     describeRoute({
@@ -545,6 +684,32 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const params = validParam<any>(c)
         return c.json({ item: await getConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c), versionId: params.versionId }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "put", pluginArchRoutePaths.configObjectKey,
+    paramValidator(configObjectParamsSchema),
+    jsonValidator(configObjectExternalKeySchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Set config object key",
+      description: "Sets or clears the stable key a configuration import finds this config object by. The key is unique per organization and never follows the title.",
+      responses: {
+        200: jsonResponse("Config object key updated successfully.", configObjectMutationResponseSchema),
+        400: jsonResponse("The key was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage config objects.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to manage this config object.", forbiddenSchema),
+        404: jsonResponse("The config object could not be found.", notFoundSchema),
+        409: jsonResponse("Another config object in the organization already has this key (external_key_taken).", externalKeyConflictSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const body = validJson<any>(c)
+        return c.json({ ok: true, item: await setConfigObjectExternalKey({ configObjectId: params.configObjectId, context: actorContext(c), externalKey: body.externalKey }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -785,6 +950,113 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginSkillZip,
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "Import a skill from a ZIP archive",
+      description: "Creates a private plugin holding one skill from a .zip in the layout Anthropic's Agent Skills use (and Claude exports): SKILL.md at the root, or in one folder named after the skill, with any supporting files beside it. Send multipart form data with the archive in `file` and an optional `pluginName` (the skill name by default). Files of any type; up to 40 MB per archive, 500 files, 10 MB per file and 30 MB of supporting files. The skill is available to its creator at once and is not shared.",
+      responses: {
+        201: jsonResponse("Plugin and skill created from the archive.", pluginMutationResponseSchema),
+        400: jsonResponse("The archive or the skill in it was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to import skills.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to create plugins.", forbiddenSchema),
+        413: jsonResponse("The archive is larger than 40 MB.", invalidRequestSchema),
+      },
+    }),
+    skillZipBodyLimit,
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "plugin.create")
+        await requirePluginArchCapability(context, "config_object.create")
+        const upload = await uploadedSkillZip(c)
+        return c.json({
+          ok: true,
+          item: await createPluginBundle({
+            context,
+            name: upload.pluginName ?? skillNameFromMarkdown(upload.skillMarkdown) ?? "Imported skill",
+            components: [{ type: "skill", value: { rawSourceText: upload.skillMarkdown, normalizedPayloadJson: { files: upload.files } } }],
+          }),
+        }, 201)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.anthropicSkillsPreview,
+    refuseMachineSecrets(["apiKey"]),
+    jsonValidator(anthropicSkillsPreviewSchema),
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "List a workspace's custom skills on Anthropic",
+      description: `Lists the custom Agent Skills in the Anthropic workspace of the API key a person enters, so they can choose which to bring to OpenWork. The key is used for this request only and is never stored; the agent and API keys cannot send it. Lists at most ${ANTHROPIC_SKILLS_MAX} skills.`,
+      responses: {
+        200: jsonResponse("The workspace's custom skills.", anthropicSkillsPreviewResponseSchema),
+        400: jsonResponse("The key was missing, not accepted, or sent by the agent.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to create plugins.", forbiddenSchema),
+        502: jsonResponse("Anthropic could not be reached or answered with an error.", invalidRequestSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "plugin.create")
+        await requirePluginArchCapability(context, "config_object.create")
+        const body = validJson<z.infer<typeof anthropicSkillsPreviewSchema>>(c)
+        return c.json(await listAnthropicCustomSkills(body.apiKey))
+      } catch (error) {
+        return routeErrorResponse(c, anthropicFailure(error))
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.anthropicSkillsImport,
+    refuseMachineSecrets(["apiKey"]),
+    jsonValidator(anthropicSkillsImportSchema),
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "Import custom skills from Anthropic",
+      description: "Downloads each chosen custom skill's latest version from Anthropic with the API key a person enters, and creates one private plugin per skill holding it with all its files, like a ZIP import. The key is used for this request only and is never stored; the agent and API keys cannot send it. Each skill succeeds or fails on its own; the results say which and why.",
+      responses: {
+        200: jsonResponse("Each chosen skill's outcome.", anthropicSkillsImportResponseSchema),
+        400: jsonResponse("The request was invalid or the key was sent by the agent.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to create plugins.", forbiddenSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "plugin.create")
+        await requirePluginArchCapability(context, "config_object.create")
+        const body = validJson<z.infer<typeof anthropicSkillsImportSchema>>(c)
+        const results: z.infer<typeof anthropicSkillsImportResponseSchema>["results"] = []
+        for (const skillId of [...new Set(body.skillIds)]) {
+          let name: string | null = null
+          try {
+            const downloaded = await downloadAnthropicSkill(body.apiKey, skillId)
+            name = downloaded.displayName
+            const skill = readSkillZip(downloaded.zip)
+            const plugin = await createPluginBundle({
+              context,
+              name: downloaded.displayName || skillNameFromMarkdown(skill.skillMarkdown) || "Imported skill",
+              components: [{ type: "skill", value: { rawSourceText: skill.skillMarkdown, normalizedPayloadJson: { files: skill.files } } }],
+            })
+            results.push({ skillId, name, ok: true, pluginId: plugin.id })
+          } catch (error) {
+            const failure = error instanceof SkillZipError
+              ? new PluginArchRouteFailure(400, "invalid_skill_zip", error.message)
+              : anthropicFailure(error)
+            if (!(failure instanceof PluginArchRouteFailure)) throw failure
+            results.push({ skillId, name, ok: false, error: failure.error, message: failure.message })
+          }
+        }
+        return c.json({ results })
+      } catch (error) {
+        return routeErrorResponse(c, anthropicFailure(error))
+      }
+    })
+
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.plugin,
     paramValidator(pluginParamsSchema),
     describeRoute({
@@ -820,13 +1092,14 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         401: jsonResponse("The caller must be signed in to update plugins.", unauthorizedSchema),
         403: jsonResponse("The caller lacks permission to edit this plugin.", forbiddenSchema),
         404: jsonResponse("The plugin could not be found.", notFoundSchema),
+        409: jsonResponse("Another plugin in the organization already has this key (external_key_taken).", externalKeyConflictSchema),
       },
     }),
     async (c: OrgContext) => {
       try {
         const params = validParam<any>(c)
         const body = validJson<any>(c)
-        return c.json({ ok: true, item: await updatePlugin({ context: actorContext(c), description: body.description, name: body.name, pluginId: params.pluginId }) })
+        return c.json({ ok: true, item: await updatePlugin({ context: actorContext(c), description: body.description, externalKey: body.externalKey, name: body.name, pluginId: params.pluginId }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -1019,7 +1292,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["GitHub"],
       summary: "Create a plugin from GitHub",
-      description: "Creates one plugin from selected skills and remote MCP servers in a public GitHub plugin URL, applies the requested access grants, and optionally publishes it into an organization marketplace. Declared and known-server authentication requirements take precedence over the request-wide auth fallback.",
+      description: "Creates one plugin from selected skills and remote MCP servers in a public GitHub plugin URL, applies the requested access grants (private to the creator when access is omitted), and optionally publishes it into an organization marketplace. Declared and known-server authentication requirements take precedence over the request-wide auth fallback.",
       responses: {
         200: jsonResponse("GitHub plugin MCPs imported successfully.", githubPluginMcpImportResponseSchema),
         400: jsonResponse("The GitHub plugin MCP import request was invalid.", invalidRequestSchema),
@@ -2297,7 +2570,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         const context = actorContext(c)
         await requirePluginArchCapability(context, "connector_account.create")
         const body = validJson<any>(c)
-        return c.json({ ok: true, item: await createGithubConnectorAccount({ accountLogin: body.accountLogin, accountType: body.accountType, context, displayName: body.displayName, installationId: body.installationId }) }, 201)
+        return c.json({ ok: true, item: await createGithubConnectorAccount({ context, installationId: body.installationId }) }, 201)
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -2361,10 +2634,17 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         200: jsonResponse("GitHub target validated successfully.", githubValidateTargetResponseSchema),
         400: jsonResponse("The GitHub target validation request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to validate GitHub targets.", unauthorizedSchema),
+        403: jsonResponse("The caller or installation is not authorized for this organization.", forbiddenSchema),
       },
     }),
     async (c: OrgContext) => {
-      const body = validJson<any>(c)
-      return c.json({ ok: true, item: await validateGithubTarget({ branch: body.branch, installationId: body.installationId, ref: body.ref, repositoryFullName: body.repositoryFullName, repositoryId: body.repositoryId }) })
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "connector_instance.create")
+        const body = validJson<z.infer<typeof githubValidateTargetSchema>>(c)
+        return c.json({ ok: true, item: await validateGithubTarget({ ...body, organizationId: context.organizationContext.organization.id }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
     })
 }

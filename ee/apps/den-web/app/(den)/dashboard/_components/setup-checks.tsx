@@ -11,7 +11,6 @@ export type SetupCheck = {
   description: string;
   status: SetupCheckStatus;
   action?: ReactNode;
-  /** Inline fields under the check, for the one thing it needs from you. */
   body?: ReactNode;
 };
 
@@ -44,7 +43,6 @@ function CheckIcon({ status }: { status: SetupCheckStatus }) {
   return <span aria-hidden className="h-[18px] w-[18px] shrink-0 rounded-full border-[1.5px] border-gray-200" />;
 }
 
-/** The one checks list: each check fills in as OpenWork confirms it. */
 export function SetupChecks({ checks }: { checks: SetupCheck[] }) {
   return (
     <ol className="flex flex-col divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white" data-testid="setup-checks">

@@ -1,6 +1,5 @@
 import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute } from "../../_lib/den-org";
 
-/** Fixed internal destinations only; never accept an arbitrary return URL. */
 export function fromMyAgent(href: string): string {
   return `${href}${href.includes("?") ? "&" : "?"}from=my-agent`;
 }

@@ -101,7 +101,6 @@ export function AddMcpModal(props: AddMcpModalProps) {
         dispatch({ error: t("mcp.oauth_client_id_required"), submitting: false });
         return;
       }
-      // Read once here; the field empties.
       const oauthClientSecret = (clientSecretField.current?.take() ?? "").trim();
 
       const oauthConfig = oauthClientId
@@ -232,7 +231,6 @@ export function AddMcpModal(props: AddMcpModalProps) {
                   type="button"
                   className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-dls-text"
                   onClick={() => {
-                    // Collapsing unmounts the secret field, which empties it.
                     if (state.oauthExpanded) setHasClientSecret(false);
                     dispatch({ oauthExpanded: !state.oauthExpanded });
                   }}

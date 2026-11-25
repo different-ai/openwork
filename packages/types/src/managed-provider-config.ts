@@ -8,7 +8,6 @@ export type ManagedProviderConfigInput = {
   providerId: string;
   name: string;
   source: string | null;
-  /** Environment names and SDK bindings must already use this target's runtime names. */
   providerConfig: JsonRecord;
   models: readonly ManagedProviderModel[];
 };
@@ -83,6 +82,7 @@ const modelConfigPassthroughKeys = [
   "headers",
   "provider",
   "variants",
+  "compatibility",
 ];
 
 function buildModelConfig(model: ManagedProviderModel, providerNpm: unknown): ManagedProviderModelConfig {

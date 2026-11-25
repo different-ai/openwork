@@ -39,24 +39,23 @@ async function post(endpoint: { url: string; token: string }, body: unknown) {
   return fetch(endpoint.url, { method: "POST", headers: { Authorization: `Bearer ${endpoint.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
 
-test("default-off retains all direct tools without publishing them to Code Mode", async () => {
+test("native affordances are available directly and through Code Mode", async () => {
   const state = groupHost();
   const bridge = await createV2ContextBridge(state.request);
   const native = await register(bridge);
   try {
-    assert.equal(bridge.codeMode, false);
-    for (const name of ["openwork_context", "openwork_query", "openwork_execute"]) assert.equal(native.tools.get(name)?.options.codemode, false);
+    for (const name of ["openwork_context", "openwork_query", "openwork_execute"]) assert.equal(native.tools.get(name)?.options.codemode, true);
     const context = contextSchema.parse(await invoke(native.tools.get("openwork_context"), {}));
     assert.ok(context.context.availableAffordances.some(entry => entry.id === "session.group.move"));
     const moved = envelopeSchema.parse(await invoke(native.tools.get("openwork_execute"), { id: "session.group.move", args: { workspaceId: "ws1", sessionId: "move-a", groupId: "done" } }));
-    assert.equal(moved.ok, true, "existing direct commands still work when the rollout is off");
+    assert.equal(moved.ok, true, "direct commands remain available");
     assert.equal(state.writes.length, 1);
   } finally { await native.stop(); await bridge.close(); }
 });
 
 test("Code Mode queries and commands preserve exceptions, host validation, confirmation and receipts", async () => {
   const state = groupHost();
-  const bridge = await createV2ContextBridge(state.request, undefined, { nativeAffordanceCodeMode: async () => true });
+  const bridge = await createV2ContextBridge(state.request);
   const native = await register(bridge);
   try {
     for (const name of ["openwork_context", "openwork_query", "openwork_execute"]) assert.equal(native.tools.get(name)?.options.codemode, true);
@@ -79,20 +78,37 @@ test("Code Mode queries and commands preserve exceptions, host validation, confi
   } finally { await native.stop(); await bridge.close(); }
 });
 
-test("browser credentials cannot run groups; the kill switch blocks captured Code Mode writes only", async () => {
+test("with several workspaces, groups are listed for the calling chat's workspace and a refusal says why", async () => {
   const state = groupHost();
-  let enabled = true;
-  const bridge = await createV2ContextBridge(state.request, undefined, { nativeAffordanceCodeMode: async () => enabled });
+  const seen: string[] = [];
+  // A second workspace beside the fixture's; the calling chat lives in ws1.
+  const bridge = await createV2ContextBridge(async (path, init) => {
+    seen.push(path);
+    if (path === "/workspaces") return { items: [{ id: "other", name: "Other" }, { id: "ws1", name: "Workspace" }] };
+    if (path === "/workspace/ws1/opencode2/api/session/ses_caller") return { data: { id: "ses_caller", title: "Caller" } };
+    if (path.startsWith("/workspace/other/")) throw new Error("not in this workspace");
+    return state.request(path, init);
+  });
+  const native = await register(bridge);
+  try {
+    const listed = z.object({ ok: z.literal(true), result: z.object({ workspace: z.string() }) }).parse(await invoke(native.tools.get("openwork_query"), { id: "session.group.list" }));
+    assert.equal(listed.result.workspace, "Workspace", `listed without naming a workspace (${seen.join(", ")})`);
+    await assert.rejects(invoke(native.tools.get("openwork_execute"), { id: "session.group.list" }), /OpenWork command failed \(400\): session\.group\.list only reads\. Call it with openwork_query\./);
+    assert.equal(state.writes.length, 0);
+  } finally { await native.stop(); await bridge.close(); }
+});
+
+test("browser credentials cannot run groups; host validation still guards Code Mode writes", async () => {
+  const state = groupHost();
+  const bridge = await createV2ContextBridge(state.request);
   const native = await register(bridge);
   try {
     const input = { id: "session.group.move", args: { workspaceId: "ws1", sessionId: "move-a", groupId: "done" } };
     const command = { name: "openwork_execute", sessionId: "ses_caller", input };
     assert.equal((await post({ ...bridge, token: bridge.browser.token }, command)).status, 401);
     assert.equal((await post(bridge, { ...command, input: { id: "extension.call" } })).status, 400);
-    enabled = false;
-    await assert.rejects(invoke(native.tools.get("openwork_execute"), input), /403/);
-    assert.equal(state.writes.length, 0);
-    assert.equal((await post(bridge, command)).status, 200, "the existing direct command surface is not a new rollout");
+    const moved = envelopeSchema.parse(await invoke(native.tools.get("openwork_execute"), input));
+    assert.equal(moved.ok, true);
     assert.equal(state.writes.length, 1);
   } finally { await native.stop(); await bridge.close(); }
 });

@@ -12,7 +12,6 @@ export const OrganizationFeatureTable = mysqlTable("organization_feature", {
   organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
   feature_key: varchar("feature_key", { length: 64 }).notNull(),
   enabled: boolean("enabled").notNull(),
-  /** "platform" for /admin and the admin MCP tool, "migration" for the backfill. */
   source: varchar("source", { length: 16 }).notNull(),
   set_by_user_id: denTypeIdColumn("user", "set_by_user_id"),
   created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
@@ -25,9 +24,7 @@ export const OrganizationFeatureTable = mysqlTable("organization_feature", {
  */
 export const FeatureRolloutTable = mysqlTable("feature_rollout", {
   feature_key: varchar("feature_key", { length: 64 }).notNull().primaryKey(),
-  /** On or off for everyone on this deployment (organization overrides still apply). */
   enabled: boolean("enabled").notNull(),
-  /** Off everywhere, outranking locks, overrides and the percentage. */
   killed: boolean("killed").notNull().default(false),
   updated_by_user_id: denTypeIdColumn("user", "updated_by_user_id"),
   created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
@@ -43,13 +40,9 @@ export const FeatureRolloutTable = mysqlTable("feature_rollout", {
 export const FeatureChangeTable = mysqlTable("feature_change", {
   id: bigint("id", { mode: "number", unsigned: true }).autoincrement().primaryKey(),
   feature_key: varchar("feature_key", { length: 64 }).notNull(),
-  /** "everyone" (deployment-wide), "organization" or "member". */
   scope: mysqlEnum("scope", ["everyone", "organization", "member"]).notNull(),
-  /** Set for organization and member changes. */
   organization_id: denTypeIdColumn("organization", "organization_id"),
-  /** Set for member changes. */
   member_id: denTypeIdColumn("member", "member_id"),
-  /** on/off: set; reset: override cleared; killed/restored: kill switch. */
   action: mysqlEnum("action", ["on", "off", "reset", "killed", "restored"]).notNull(),
   changed_by_user_id: denTypeIdColumn("user", "changed_by_user_id"),
   created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
@@ -80,14 +73,8 @@ export const FeatureUsageTable = mysqlTable("feature_usage", {
   feature_key: varchar("feature_key", { length: 64 }).notNull(),
   organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
   first_used_at: timestamp("first_used_at", { fsp: 3 }).notNull().defaultNow(),
-  /**
-   * Declared before last_used_day on purpose: drizzle writes ON DUPLICATE KEY
-   * UPDATE assignments in column order and MySQL applies them left to right,
-   * so days_used must be assigned while last_used_day still holds the old day.
-   */
   days_used: int("days_used").notNull().default(1),
   last_used_at: timestamp("last_used_at", { fsp: 3 }).notNull().defaultNow(),
-  /** UTC day of last_used_at; a write on a later day adds one to days_used. */
   last_used_day: date("last_used_day", { mode: "string" }).notNull(),
 }, (table) => [
   primaryKey({ name: "feature_usage_pk", columns: [table.member_id, table.feature_key] }),

@@ -1,11 +1,3 @@
-// Platform-neutral key chords for user-defined shortcuts.
-//
-// A chord is stored as "Mod+Alt+1": `Mod` is Command on macOS and Control
-// everywhere else, so one saved shortcut works on every desktop. `Ctrl` is
-// only used for the literal Control key on macOS and `Meta` for the Windows /
-// Super key elsewhere. The key part is derived from `KeyboardEvent.code` when
-// possible because macOS Option rewrites `event.key` (Option+1 is "¡").
-
 export type ShortcutOs = "macos" | "other";
 
 export type ShortcutKeyEvent = Pick<
@@ -40,11 +32,6 @@ function keyFromEvent(event: ShortcutKeyEvent): string | null {
   return key;
 }
 
-/**
- * The chord an event represents, or null for a bare modifier / AltGr
- * character. AltGr reports Control+Alt on Windows and must keep typing
- * characters such as "{" instead of firing a shortcut.
- */
 export function chordFromEvent(event: ShortcutKeyEvent, os: ShortcutOs): string | null {
   if (event.getModifierState?.("AltGraph")) return null;
   const key = keyFromEvent(event);
@@ -71,7 +58,6 @@ function splitChord(chord: string) {
 const MAC_SYMBOLS: Record<string, string> = { Ctrl: "⌃", Alt: "⌥", Shift: "⇧", Mod: "⌘" };
 const MAC_SYMBOL_ORDER = ["Ctrl", "Alt", "Shift", "Mod"];
 
-/** Human label: "⌥⌘1" on macOS, "Ctrl+Alt+1" elsewhere. */
 export function formatChord(chord: string, os: ShortcutOs): string {
   const { modifiers, key } = splitChord(chord);
   if (os === "macos") {
@@ -81,11 +67,10 @@ export function formatChord(chord: string, os: ShortcutOs): string {
   return [...MODIFIER_ORDER.filter((modifier) => modifiers.has(modifier)).map((modifier) => names[modifier] ?? modifier), key].join("+");
 }
 
-/** Chords the app already uses. A model shortcut may not take them. */
 const BUILT_IN_CHORDS: ReadonlyArray<{ chord: string; label: string; os?: ShortcutOs }> = [
   { chord: "Mod+Shift+F", label: "Search sessions" },
   { chord: "Mod+Shift+T", label: "Previous tab" },
-  { chord: "Mod+Shift+E", label: "Settle session" },
+  { chord: "Mod+Shift+E", label: "Archive session" },
   { chord: "Ctrl+Shift+M", label: "Next saved model", os: "macos" },
   { chord: "Mod+Shift+M", label: "Next saved model", os: "other" },
   { chord: "Ctrl+Shift+T", label: "Cycle reasoning backward", os: "macos" },
@@ -100,10 +85,6 @@ export type ChordProblem =
   | { kind: "needs_modifier" }
   | { kind: "built_in"; label: string };
 
-/**
- * A model shortcut needs Command/Control plus Option/Alt or Shift so it never
- * swallows typing, the Cmd/Ctrl+1–9 conversation jump, or a built-in command.
- */
 export function chordProblem(chord: string, os: ShortcutOs): ChordProblem | null {
   const { modifiers, key } = splitChord(chord);
   if (!key) return { kind: "needs_modifier" };
@@ -114,7 +95,6 @@ export function chordProblem(chord: string, os: ShortcutOs): ChordProblem | null
   return builtIn ? { kind: "built_in", label: builtIn.label } : null;
 }
 
-/** First free "Mod+Alt+n" chord, used to prefill the recorder. */
 export function nextFreeChord(taken: ReadonlySet<string>): string | null {
   for (let digit = 1; digit <= 9; digit += 1) {
     const chord = `Mod+Alt+${digit}`;

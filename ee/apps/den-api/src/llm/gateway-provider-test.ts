@@ -1,14 +1,13 @@
-// Asks AI Gateway to send one test prompt with a provider configuration that
-// has not been saved yet (feature `gatewayProviderTest`). Den checks the
-// catalog, settings and key shape first; the gateway owns the upstream call.
 import type { GatewayProviderTestResult } from "@openwork/types/den/gateway"
-import { PROVIDER_TEST_SIGNATURE_HEADER, signProviderTest } from "@openwork-ee/utils/provider-test-signature"
+import type { GatewayCustomModel } from "@openwork/types/den/gateway-custom-providers"
+import { PROVIDER_TEST_SIGNATURE_HEADER, signProviderTest } from "@openwork-ee/gateway-upstreams"
 
 export type GatewayProviderTestInput = {
   providerId: string
   model: string
   settings: Record<string, string>
   credential: { kind: string; secret: string }
+  customModel?: GatewayCustomModel
 }
 
 const GATEWAY_TEST_TIMEOUT_MS = 40_000
@@ -26,11 +25,6 @@ function readResult(value: unknown, model: string): GatewayProviderTestResult | 
   return { ok: false, model: reported, status, code: value.code, message: value.message }
 }
 
-/**
- * `baseUrl` is Den's route to the gateway and `key` the caller's own gateway key.
- * Called only after Den checked the caller may manage providers: the request is
- * signed for this organization and member with the secret Den shares with the gateway.
- */
 export async function requestGatewayProviderTest(input: GatewayProviderTestInput, gateway: { baseUrl: string; key: string; signingSecret: string; organizationId: string; memberId: string; fetch?: typeof fetch; now?: () => number }): Promise<GatewayProviderTestResult> {
   const unreachable: GatewayProviderTestResult = { ok: false, model: input.model, status: null, code: "gateway_unreachable", message: "AI Gateway couldn't run the test. Try again in a moment." }
   const fetcher = gateway.fetch ?? fetch

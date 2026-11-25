@@ -1,12 +1,22 @@
-import type { DynamicToolUIPart, JSONValue, ProviderMetadata, TextUIPart } from "ai";
+import type { DynamicToolUIPart, JSONValue, ProviderMetadata, TextUIPart, UIMessage } from "ai";
 import type { ToolPart } from "@opencode-ai/sdk/v2/client";
 import {
   connectionActionAppSchemaVersion,
   connectionActionPayloadSchema,
 } from "@openwork/types/connection-action-app";
 
+import { sandboxToolRenderer } from "@/lib/build-in-tools";
 import { safeStringify } from "@/app/utils";
+import { connectRemoteSessionAction } from "@/lib/capability-call";
 import { normalizeErrorText } from "@/lib/error-text";
+import { isComputerToolName } from "@/lib/computer-session-history";
+
+export function withToolAttachmentOwner(parts: UIMessage["parts"], toolCallId: string): UIMessage["parts"] {
+  return parts.map(part => part.type === "file" ? {
+    ...part,
+    providerMetadata: { ...part.providerMetadata, openwork: { ...part.providerMetadata?.openwork, toolCallId } },
+  } : part);
+}
 
 export const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
 
@@ -66,27 +76,38 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
       : null;
   const mcpResult = persistedMcpResult
     ?? (part.state.status === "error" ? connectionActionMcpResultFromError(part.state.error) : null);
-  // The engine's task tool reports the sub-agent's session id in state
-  // metadata. Forward it so the transcript card can open that child session.
   const childSessionId = part.tool === "task" && typeof stateMetadata.sessionId === "string" && stateMetadata.sessionId.trim()
     ? stateMetadata.sessionId.trim()
     : null;
   const appBuilder = /(?:^|_)(?:search_capabilities|prepare_app|create_app|update_app)$/.test(part.tool);
-  // A task started or followed up on another computer keeps its start time after it returns.
-  const remoteSession = /(?:^|_)execute_capability$/.test(part.tool) && isRecord(part.state.input)
-    && typeof part.state.input.name === "string" && part.state.input.name.startsWith("remote-session:");
-  const toolStartedAt = (appBuilder || remoteSession || part.tool === "task" || part.metadata?.openworkV2CodeMode === true) && "time" in part.state && typeof part.state.time?.start === "number"
+  const remoteSession = connectRemoteSessionAction(part.tool) !== null
+    || (/(?:^|_)execute_capability$/.test(part.tool) && isRecord(part.state.input)
+      && typeof part.state.input.name === "string" && part.state.input.name.startsWith("remote-session:"));
+  const computer = isComputerToolName(part.tool);
+  const toolStartedAt = (appBuilder || computer || remoteSession || part.tool === "task" || part.metadata?.openworkV2CodeMode === true) && "time" in part.state && typeof part.state.time?.start === "number"
     && Number.isFinite(part.state.time.start)
     ? part.state.time.start
     : null;
-  const toolCompletedAt = appBuilder && "time" in part.state && "end" in part.state.time && typeof part.state.time.end === "number"
+  const toolCompletedAt = (appBuilder || computer) && "time" in part.state && "end" in part.state.time && typeof part.state.time.end === "number"
     && Number.isFinite(part.state.time.end) ? part.state.time.end : null;
-  const fileDestination = part.tool === "write" && typeof stateMetadata.filepath === "string" ? stateMetadata.filepath
-    : part.tool === "edit" && isRecord(stateMetadata.filediff) && typeof stateMetadata.filediff.file === "string" ? stateMetadata.filediff.file : null;
+  const toolName = sandboxToolRenderer(part.tool);
+  const fileDestination = toolName === "write" && typeof stateMetadata.filepath === "string" ? stateMetadata.filepath
+    : toolName === "edit" && isRecord(stateMetadata.filediff) && typeof stateMetadata.filediff.file === "string" ? stateMetadata.filediff.file : null;
   const workspacePaths = isJsonValue(stateMetadata.openworkWorkspacePaths) ? stateMetadata.openworkWorkspacePaths : null;
+  const filediff = toolName === "edit" && isRecord(stateMetadata.filediff) ? stateMetadata.filediff : null;
+  const diffStats = filediff && typeof filediff.additions === "number" && typeof filediff.deletions === "number"
+    ? { added: filediff.additions, removed: filediff.deletions } : null;
+  const questionAnswers = part.tool === "question" && Array.isArray(stateMetadata.answers)
+    && stateMetadata.answers.every((answer) => Array.isArray(answer) && answer.every((value) => typeof value === "string"))
+    ? stateMetadata.answers as string[][] : null;
   const openwork = {
+    ...(stateMetadata.sandbox === true || part.metadata?.sandbox === true ? { sandbox: true } : {}),
+    ...(toolName !== part.tool ? { sandboxTool: true, sourceToolName: part.tool } : {}),
+    ...(computer && stateMetadata.isError === true ? { computerFailure: true } : {}),
     ...(fileDestination ? { fileDestination } : {}),
     ...(workspacePaths ? { workspacePaths } : {}),
+    ...(diffStats ? { diffStats } : {}),
+    ...(questionAnswers ? { questionAnswers } : {}),
     ...(part.id !== part.callID ? { sourcePartId: part.id } : {}),
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),
@@ -141,7 +162,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
   if (part.state.status === "error") {
     return {
       type: "dynamic-tool",
-      toolName: part.tool,
+      toolName: sandboxToolRenderer(part.tool),
       toolCallId: part.callID,
       state: "output-error",
       input: part.state.input,
@@ -153,7 +174,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
   if (part.state.status === "completed") {
     if (part.metadata?.openworkV2CodeMode === true && part.state.metadata.error === true) {
       return {
-        type: "dynamic-tool", toolName: part.tool, toolCallId: part.callID,
+        type: "dynamic-tool", toolName: sandboxToolRenderer(part.tool), toolCallId: part.callID,
         state: "output-error", input: part.state.input,
         errorText: normalizeErrorText(part.state.output).display,
         callProviderMetadata: toolCallProviderMetadata(part),
@@ -161,7 +182,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     }
     return {
       type: "dynamic-tool",
-      toolName: part.tool,
+      toolName: sandboxToolRenderer(part.tool),
       toolCallId: part.callID,
       state: "output-available",
       input: part.state.input,
@@ -170,20 +191,24 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     };
   }
 
-  // OpenCode emits pending/running tool parts with `{}` input before args
-  // (e.g. filePath) are filled in. Skip UI until the next part.updated.
   if (shouldDeferInProgressTool(part)) {
     return null;
   }
 
   return {
     type: "dynamic-tool",
-    toolName: part.tool,
+    toolName: sandboxToolRenderer(part.tool),
     toolCallId: part.callID,
-    // The engine's running event means the full builder input was submitted;
-    // pending events still represent the model writing its arguments.
     state: part.state.status === "running" && /(?:^|_)(?:search_capabilities|prepare_app|create_app|update_app)$/.test(part.tool) ? "input-available" : "input-streaming",
     input: part.state.input,
     callProviderMetadata: toolCallProviderMetadata(part),
   };
+}
+
+export function reasoningTime(part: { time?: { start?: number; end?: number } }): { time?: { start: number; end: number } } {
+  const start = part.time?.start
+  const end = part.time?.end
+  return typeof start === "number" && typeof end === "number" && Number.isFinite(start) && Number.isFinite(end) && end >= start
+    ? { time: { start, end } }
+    : {}
 }

@@ -9,7 +9,7 @@
 // its macOS permissions granted, and no chat using the computer. It takes over
 // the Mac for about a minute; leave the mouse and keyboard alone meanwhile.
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -17,6 +17,8 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const CALCULATOR = "com.apple.calculator";
+const BLENDER = "org.blenderfoundation.blender";
+const BLENDER_BINARY = "/Applications/Blender.app/Contents/MacOS/Blender";
 const TEXTEDIT = "com.apple.TextEdit";
 
 function option(name) {
@@ -157,6 +159,14 @@ async function openCalculator(call) {
   return seen;
 }
 
+/** Reads a saved .blend with Blender's own command line, outside the agent's session: the check's oracle, not a step. */
+async function readBlend(file) {
+  const expr = "import bpy, json; print('OWCHECK' + json.dumps({o.name: [round(v, 3) for v in o.scale] for o in bpy.data.objects}))";
+  const { stdout } = await run(BLENDER_BINARY, ["-b", file, "--factory-startup", "--python-expr", expr], { timeout: 60_000 });
+  const line = stdout.split("\n").find((text) => text.startsWith("OWCHECK"));
+  return line ? JSON.parse(line.slice("OWCHECK".length)) : {};
+}
+
 const scenarios = {
   /** What the agent can see, without taking the front: a complete accessibility read and a screenshot. */
   async "see-apps"({ call, scratch }) {
@@ -248,6 +258,50 @@ const scenarios = {
     if (close) await call("computer_act", { observation_id: seen.observation_id, action: { type: "press", ref: close.ref } });
   },
 
+  /**
+   * Blender takes only real input and draws its own menus: its own shortcuts and typing,
+   * through the interface as a person works, checked in the file it saves.
+   */
+  async "blender-real-input"({ call, scratch }) {
+    const file = join(scratch, "computer-use-check.blend");
+    await run(BLENDER_BINARY, ["-b", "--factory-startup", "--python-expr", `import bpy; bpy.ops.wm.save_as_mainfile(filepath=${JSON.stringify(file)})`], { timeout: 60_000 });
+    const before = new Set((await run("/usr/bin/pgrep", ["-x", "Blender"]).catch(() => ({ stdout: "" }))).stdout.split("\n").filter(Boolean));
+    await run("/usr/bin/open", ["-n", "-a", "Blender", file]);
+    await delay(6000);
+    const launched = (await run("/usr/bin/pgrep", ["-x", "Blender"]).catch(() => ({ stdout: "" }))).stdout.split("\n").filter((pid) => pid && !before.has(pid));
+    try {
+      const opened = await openApp(call, BLENDER, "control", "Check real input in Blender", "computer-use-check.blend - Blender");
+      expect(opened.ok, `Opening Blender failed: ${opened.first.code}: ${opened.first.message}`);
+      let seen = opened.observation ?? (await call("computer_observe", { include_image: true })).observation;
+      expect(seen?.image?.width, "No screenshot of Blender.");
+      // The 3D viewport fills the window's left side in the default layout; keys go to what is under the pointer.
+      const viewport = { x: Math.round(seen.image.width * 0.4), y: Math.round(seen.image.height * 0.55) };
+      const scaled = await call("computer_act", {
+        observation_id: seen.observation_id, intent: "scaling the cube by 2 with Blender's own keys",
+        actions: [{ type: "move", ...viewport }, { type: "key", key: "s" }, { type: "type", text: "2" }, { type: "key", key: "enter" }],
+      });
+      expect(scaled.ok, `Scaling failed: ${scaled.first.code}: ${scaled.first.message}`);
+      expect(scaled.first.steps?.some((step) => step.path === "real_input"), "Blender's input did not go as real input.");
+      seen = scaled.observation ?? (await call("computer_observe", { include_image: true })).observation;
+      const added = await call("computer_act", {
+        observation_id: seen.observation_id, intent: "adding a monkey from Blender's own Add menu",
+        actions: [{ type: "move", ...viewport }, { type: "key", key: "a", modifiers: ["shift"] }, { type: "wait", ms: 400 },
+          { type: "type", text: "monkey" }, { type: "wait", ms: 400 }, { type: "key", key: "enter" }],
+      });
+      expect(added.ok, `Adding failed: ${added.first.code}: ${added.first.message}`);
+      seen = added.observation ?? (await call("computer_observe", { include_image: true })).observation;
+      const saved = await call("computer_act", { observation_id: seen.observation_id, intent: "saving with Blender's own Command-S", actions: [{ type: "move", ...viewport }, { type: "key", key: "s", modifiers: ["command"] }] });
+      expect(saved.ok, `Saving failed: ${saved.first.code}: ${saved.first.message}`);
+      await delay(1500);
+      const objects = await readBlend(file);
+      expect(objects.Cube?.[0] === 2, `The saved cube's scale is ${JSON.stringify(objects.Cube)}, not 2.`);
+      expect(Object.keys(objects).some((name) => name.startsWith("Suzanne")), `No monkey in the saved file: ${JSON.stringify(Object.keys(objects))}.`);
+    } finally {
+      // Only the Blender this check opened; the person's own Blender stays.
+      for (const pid of launched) await run("/bin/kill", [pid]).catch(() => {});
+    }
+  },
+
   /** Another app comes to the front in the middle of a batch, as when the person switches away. */
   async "focus-switch"({ call, desktop }) {
     const seen = await openCalculator(call);
@@ -272,7 +326,9 @@ if (await screenLocked()) {
 }
 desktop.version = await desktopVersion();
 const only = option("--only")?.split(",").map((name) => name.trim()).filter(Boolean);
-const selected = Object.keys(scenarios).filter((name) => !only || only.includes(name));
+const blender = await access(BLENDER_BINARY).then(() => true, () => false);
+const selected = Object.keys(scenarios).filter((name) => (!only || only.includes(name)) && (name !== "blender-real-input" || blender));
+if (!blender && (!only || only.includes("blender-real-input"))) console.log("Blender is not installed in /Applications, so blender-real-input is skipped.");
 console.log(`OpenWork ${desktop.version?.version ?? "(version unknown)"} · ${selected.length} scenario(s) · keep your hands off the mouse and keyboard\n`);
 
 const results = [];

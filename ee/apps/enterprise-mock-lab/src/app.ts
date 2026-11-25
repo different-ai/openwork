@@ -100,12 +100,10 @@ export function createEnterpriseMockLabApp(options: EnterpriseMockLabAppOptions)
     context.header("Cross-Origin-Opener-Policy", "same-origin")
     context.header("Cross-Origin-Resource-Policy", "same-origin")
     context.header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
-    // `no-referrer` also serializes same-origin form POSTs with `Origin: null`
-    // in Chromium. `same-origin` preserves our strict Origin check while still
-    // suppressing referrers when a user follows an external documentation link.
     context.header("Referrer-Policy", "same-origin")
     context.header("X-Content-Type-Options", "nosniff")
     context.header("X-Frame-Options", "DENY")
+    context.header("X-Robots-Tag", "noindex, nofollow, noarchive")
   })
 
   app.get("/health", (context) => context.json({ ok: true, service: "enterprise-mock-lab", exposure: "loopback-only" }))

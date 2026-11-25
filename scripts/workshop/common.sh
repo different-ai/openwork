@@ -9,6 +9,9 @@ WORKSHOP_HOME="${WORKSHOP_HOME:-$HOME/.openwork/workshops}"
 WORKSHOP_REF="${WORKSHOP_REF:-ef0db73ae009b6904d13bb8b1f5a391db713d86c}"
 WORKSHOP_SNAPSHOT="${WORKSHOP_SNAPSHOT-workshop-desktop-ef0db73-20261021}"
 WORKSHOP_TIMEZONE="${WORKSHOP_TIMEZONE:-America/Los_Angeles}"
+# Model upstream and per-attendee allowance (USD, default the approved $5; at most $100).
+WORKSHOP_PROVIDER="${WORKSHOP_PROVIDER:-openai}"
+WORKSHOP_ALLOWANCE_USD="${WORKSHOP_ALLOWANCE_USD:-5}"
 WORKSHOP_NODE_BIN="${WORKSHOP_NODE_BIN:-}"
 
 workshop_dir() { printf '%s/%s' "$WORKSHOP_HOME" "$1"; }
@@ -32,7 +35,12 @@ workshop_env() {
   export DAYTONA_API_KEY="${DAYTONA_API_KEY:-$(infisical secrets get DAYTONA_API_KEY --env dev --path /openwork-ops --plain --silent 2>/dev/null)}"
   if [ -z "$DAYTONA_API_KEY" ] || [ "$DAYTONA_API_KEY" = "*not found*" ]; then echo "Missing DAYTONA_API_KEY: run 'infisical login' and try again." >&2; return 1; fi
   if [ "$need_model" = 1 ]; then
-    export OPENAI_API_KEY="${OPENAI_API_KEY:-$(infisical secrets get OPENAI_API_KEY --env dev --path / --plain --silent 2>/dev/null)}"
-    if [ -z "$OPENAI_API_KEY" ] || [ "$OPENAI_API_KEY" = "*not found*" ]; then echo "Missing OPENAI_API_KEY: run 'infisical login' and try again." >&2; return 1; fi
+    # WORKSHOP_PROVIDER=openai (default) or anthropic picks the upstream and its key.
+    local key_name=OPENAI_API_KEY
+    if [ "$WORKSHOP_PROVIDER" = anthropic ]; then key_name=ANTHROPIC_API_KEY; elif [ "$WORKSHOP_PROVIDER" != openai ]; then echo "WORKSHOP_PROVIDER must be openai or anthropic." >&2; return 1; fi
+    local current="${!key_name:-}"
+    [ -n "$current" ] || current="$(infisical secrets get "$key_name" --env dev --path / --plain --silent 2>/dev/null)"
+    if [ -z "$current" ] || [ "$current" = "*not found*" ]; then echo "Missing $key_name: run 'infisical login' and try again." >&2; return 1; fi
+    export "$key_name=$current"
   fi
 }

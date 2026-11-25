@@ -49,6 +49,5 @@ export function sandboxErrorCode(error: unknown): SandboxErrorCode | null {
   return isSandboxError(error) ? error.code : null
 }
 
-// Compatibility for existing OpenWork Web consumers.
 export { SandboxError as RuntimeProviderError, isSandboxError as isRuntimeProviderError, sandboxErrorCode as runtimeProviderErrorCode }
 export type RuntimeProviderErrorCode = SandboxErrorCode

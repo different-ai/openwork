@@ -36,8 +36,6 @@ export class RequestSecurityError extends Error {
 }
 
 function secretDigest(value: string) {
-  // TextEncoder produces a standard Uint8Array, avoiding cross-version Buffer
-  // type incompatibilities while retaining a fixed-size value for comparison.
   return new TextEncoder().encode(createHash("sha256").update(value, "utf8").digest("hex"))
 }
 
@@ -51,7 +49,6 @@ function parseCookies(header: string | null): ReadonlyMap<string, string> {
     try {
       cookies.set(name, decodeURIComponent(rawValue))
     } catch {
-      // Malformed cookie values are treated as absent instead of becoming a 500.
     }
   }
   return cookies
@@ -90,8 +87,6 @@ export class SecurityService {
     const attempt = this.#loginAttempts.get(remoteAddress)
     const blocked = Boolean(attempt && attempt.blockedUntil > now)
 
-    // Both values are fixed-size digests so the actual secret length cannot alter
-    // the comparison path. We still perform the comparison for blocked clients.
     const matches = timingSafeEqual(this.#adminSecretDigest, secretDigest(candidate))
     if (blocked) throw new AuthenticationError("rate_limited")
 

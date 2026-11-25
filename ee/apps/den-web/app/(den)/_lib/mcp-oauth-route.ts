@@ -14,11 +14,6 @@ export function getMcpOAuthSelectOrganizationRoute(search: string) {
 export const MCP_OAUTH_RESTART_MESSAGE =
   "This sign-in link expired. Start sign-in again from your agent.";
 
-/**
- * better-auth signs the authorize query with an `exp` (seconds). Once it has
- * passed, consent fails with `invalid_signature`; say so before the person
- * fills anything in.
- */
 export function isMcpOAuthQueryExpired(search: string, nowMs = Date.now()) {
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   const raw = params.get("exp");
@@ -41,13 +36,6 @@ export function describeMcpOAuthError(payload: unknown, fallback: string) {
   return message ?? error ?? fallback;
 }
 
-/**
- * Social sign-in leaves den-web for the provider and comes back to
- * `callbackURL`. While an agent's MCP authorization is in progress, the
- * callback must carry the exact signed authorize query (any extra parameter
- * breaks the signature), so the landing page can resume at workspace
- * selection instead of the dashboard.
- */
 export function getMcpOAuthSocialCallbackUrl(search: string, origin: string) {
   if (!getMcpOAuthSelectOrganizationRoute(search)) return null;
   const normalizedSearch = search.startsWith("?") ? search.slice(1) : search;

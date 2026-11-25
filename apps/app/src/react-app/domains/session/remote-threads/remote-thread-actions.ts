@@ -1,3 +1,5 @@
+import type { RemoteSessionAnswerInput } from "@openwork/types/automations"
+
 import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
 import {
   latestUserMessageId,
@@ -8,12 +10,6 @@ import {
   type RemoteReadOutcome,
 } from "@/lib/remote-session-thread"
 import { useRemoteThreadStore, type RemoteThreadEntry } from "./remote-thread-store"
-
-/**
- * What a person does with a task from its panel: read it, follow up, stop it.
- * Each is one Den call; a desktop that takes longer than about 20 seconds
- * answers with a requestId, which is read every two seconds until it does.
- */
 
 const REQUEST_POLL_MS = 2_000
 const REQUEST_WAIT_MS = 40_000
@@ -30,13 +26,11 @@ function context() {
 
 function failure(error: unknown): Failure {
   if (error instanceof DenApiError) {
-    if (error.code === "feature_disabled") useRemoteThreadStore.getState().setEnabled(false)
     return { code: error.code, message: error.message, retryable: error.status >= 500 }
   }
   return { code: "request_failed", message: "Couldn't reach OpenWork. Check your connection and try again.", retryable: true }
 }
 
-/** Where the task's session lives, once its computer has started it. */
 export function remoteThreadLocation(entry: RemoteThreadEntry): { sessionId: string; workspaceId?: string } | null {
   const sessionId = entry.status?.sessionId ?? entry.start.sessionId
   if (!sessionId) return null
@@ -44,31 +38,16 @@ export function remoteThreadLocation(entry: RemoteThreadEntry): { sessionId: str
   return { sessionId, ...(workspaceId ? { workspaceId } : {}) }
 }
 
-async function call(action: "read" | "send" | "stop", input: Record<string, unknown>): Promise<unknown> {
-  const requireEnabled = () => {
-    if (!useRemoteThreadStore.getState().enabled) {
-      throw new DenApiError(404, "feature_disabled", "Tasks on other computers are turned off.")
-    }
-  }
-  requireEnabled()
+async function call(action: "read" | "send" | "stop" | "answer", input: Record<string, unknown>): Promise<unknown> {
   const den = context()
   if (!den) throw new DenApiError(401, "unauthorized", "Sign in to OpenWork to follow this task.")
-  const controller = new AbortController()
-  const unsubscribe = useRemoteThreadStore.subscribe((state) => {
-    if (!state.enabled) controller.abort()
-  })
-  try {
-    let payload = await den.client.remoteSessionAction(den.organizationId, action, input, controller.signal)
-    const deadline = Date.now() + REQUEST_WAIT_MS
-    for (let requestId = remotePendingRequestId(payload); requestId && Date.now() < deadline; requestId = remotePendingRequestId(payload)) {
-      await new Promise((resolve) => setTimeout(resolve, REQUEST_POLL_MS))
-      requireEnabled()
-      payload = await den.client.remoteSessionAction(den.organizationId, "read", { requestId }, controller.signal)
-    }
-    return payload
-  } finally {
-    unsubscribe()
+  let payload = await den.client.remoteSessionAction(den.organizationId, action, input)
+  const deadline = Date.now() + REQUEST_WAIT_MS
+  for (let requestId = remotePendingRequestId(payload); requestId && Date.now() < deadline; requestId = remotePendingRequestId(payload)) {
+    await new Promise((resolve) => setTimeout(resolve, REQUEST_POLL_MS))
+    payload = await den.client.remoteSessionAction(den.organizationId, "read", { requestId })
   }
+  return payload
 }
 
 export async function readRemoteThread(entry: RemoteThreadEntry, input: { limit: number; cursor?: string | null }): Promise<RemoteReadOutcome> {
@@ -89,7 +68,6 @@ export async function sendRemoteFollowUp(entry: RemoteThreadEntry, prompt: strin
   const location = remoteThreadLocation(entry)
   if (!location) return { code: "not_started", message: "Wait for the computer to start the task, then send your follow-up.", retryable: true }
   try {
-    // One id per follow-up: a retried send is admitted once.
     const payload = await call("send", { ...location, prompt, messageId: remoteFollowUpMessageId() })
     if (remotePendingRequestId(payload)) return { code: "desktop_request_pending", message: "The computer hasn't confirmed your follow-up yet. Check the conversation before sending it again.", retryable: false }
     const error = remoteActionError(payload)
@@ -101,7 +79,21 @@ export async function sendRemoteFollowUp(entry: RemoteThreadEntry, prompt: strin
   }
 }
 
-/** Stops the task's current turn; a desktop stop names it, so a newer turn is never stopped. */
+export async function answerRemoteThread(entry: RemoteThreadEntry, answer: RemoteSessionAnswerInput): Promise<Failure | null> {
+  const location = remoteThreadLocation(entry)
+  if (!location) return { code: "not_started", message: "The task hasn't started yet.", retryable: true }
+  try {
+    const payload = await call("answer", { ...location, ...answer })
+    if (remotePendingRequestId(payload)) return { code: "desktop_request_pending", message: "The computer hasn't confirmed your answer yet. Check the task before answering again.", retryable: false }
+    const error = remoteActionError(payload)
+    if (error) return error
+    useRemoteThreadStore.getState().followedUp(entry.start.key)
+    return null
+  } catch (error) {
+    return failure(error)
+  }
+}
+
 export async function stopRemoteThread(entry: RemoteThreadEntry, latestUserId?: string | null): Promise<Failure | null> {
   const location = remoteThreadLocation(entry)
   if (!location) return { code: "not_started", message: "The task hasn't started yet.", retryable: true }
@@ -111,7 +103,6 @@ export async function stopRemoteThread(entry: RemoteThreadEntry, latestUserId?: 
       const tail = await readRemoteThread(entry, { limit: 4 })
       messageId = tail.kind === "page" ? latestUserMessageId(tail.page.messages) : null
     }
-    // The status the chat already follows shows the task settling; nothing else to ask.
     return remoteActionError(await call("stop", { ...location, ...(messageId ? { messageId } : {}) }))
   } catch (error) {
     return failure(error)

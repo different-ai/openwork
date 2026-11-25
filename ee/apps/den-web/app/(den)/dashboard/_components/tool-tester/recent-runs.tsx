@@ -27,9 +27,7 @@ export function RecentToolRuns({
   runs,
   caption,
   onLoad,
-  revisedSetup = false,
 }: {
-  revisedSetup?: boolean;
   runs: StoredToolRun[];
   caption: string;
   onLoad: (run: StoredToolRun) => void;
@@ -56,7 +54,7 @@ export function RecentToolRuns({
               <span className="w-[140px] shrink-0 truncate font-mono text-[11px] text-gray-700">{run.toolName}</span>
               <span className="min-w-0 flex-1 truncate text-[12px] text-gray-600">{summary}</span>
               <span className="w-16 shrink-0 text-right font-mono text-[10px] text-gray-500">{duration}</span>
-              <span className={`w-[72px] shrink-0 text-right text-[11px] ${revisedSetup ? "text-gray-500" : "text-gray-400"}`}>{runAge(run.createdAt)}</span>
+              <span className="w-[72px] shrink-0 text-right text-[11px] text-gray-500">{runAge(run.createdAt)}</span>
               <button type="button" className="w-12 shrink-0 text-right text-[11px] font-medium text-gray-700 hover:text-gray-950" onClick={() => onLoad(run)}>Load</button>
             </div>
           );

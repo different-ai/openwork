@@ -64,7 +64,6 @@ function BadgeSlot(props: { badge: ComposerBadge }) {
   )
 }
 
-/** A badge drawn outside the editor, identical to its composer chip. */
 export function ComposerBadgeChip(props: { badge: ComposerBadge; className?: string; open?: boolean }) {
   return (
     <span className={cn(COMPOSER_BADGE_CLASS, props.className)} title={props.badge.title} data-composer-badge={props.badge.kind}>
@@ -83,11 +82,6 @@ export function ComposerPillChip(props: { pill: ComposerPill; className?: string
   return <ComposerBadgeChip badge={composerPillBadge(props.pill)} className={props.className} />
 }
 
-/**
- * A task referenced with `#`. It shows the task's current title, so a rename
- * never breaks it, and opens the task when clicked. A task that was deleted or
- * is no longer accessible keeps its saved title, marked unavailable.
- */
 export function SessionReferenceChip(props: { reference: SessionReferenceIdentity & { title: string }; className?: string }) {
   const references = useSessionReferencesMaybe()
   const resolved = references?.resolve(sessionReferenceHref(props.reference))
@@ -123,10 +117,6 @@ export function SessionReferenceChip(props: { reference: SessionReferenceIdentit
 
 const PREVIEW_LINES = 6
 
-/**
- * Pasted text stays one badge in the sent message. Its chevron opens a preview
- * in place: counts, Copy, and the first lines.
- */
 export function PastedTextChip(props: { text: string }) {
   const [open, setOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
@@ -179,13 +169,11 @@ export function PastedTextChip(props: { text: string }) {
   )
 }
 
-/** A non-image attachment: type icon, name, type and size. */
 export function AttachmentFileChip(props: {
   filename: string
   mime: string
   bytes?: number
   onOpen?: () => void
-  /** Extra actions (download, reveal) inside the chip's edge. */
   actions?: React.ReactNode
   className?: string
 }) {

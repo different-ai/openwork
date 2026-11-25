@@ -1,9 +1,11 @@
 # Computer use in the background
 
-- **Feature key:** `computerUseBackground`
+> **Generally available:** `computerUse` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
+- **Feature key:** `computerUse` (includes background delivery)
 - **Deployments:** cloud and self-hosted
 - **Author:** reachjalil
-- **Default:** off. Needs `computerUse`.
+- **Default:** follows `computerUse`; there is no separate background rollout.
 
 ## What people get
 
@@ -11,6 +13,11 @@ On a Mac, an agent with control of an app window works in that window where
 it is. The window is not brought to the front, the person's cursor does not
 move and their Space does not change, so they keep working in their own apps.
 Several chats can each work in their own window at the same time.
+
+While the person watches the chat in OpenWork, the agent works in view
+instead: its app comes forward beside the OpenWork window. Selecting another
+chat, hiding OpenWork or bringing another app in front sends it back to the
+background, and returning to the chat brings it into view again.
 
 Agents also read the window's accessibility tree first. An observation skips
 the screenshot when the tree names at least eight controls to act on, and the
@@ -24,14 +31,16 @@ Some apps and steps still need the front, and get it the way they did before
 - single steps in any app: menu shortcuts (⌘ keys), clicks with modifier
   keys, hover, drags, and typing in Chromium, Electron and Catalyst apps.
   When such a step needs the window brought forward and uses coordinates,
-  nothing is sent and the agent is asked to look again.
+  nothing is sent and the agent is asked to look again. That look and the
+  session's later steps take the front, so the repeated step goes through.
 
 ## How it works
 
-- Desktop reports the feature to the computer broker
-  (`computerSetBackgroundEnabled`). New sessions on This Mac start the helper
-  with background delivery; turning it off hands idle sessions back and the
-  next call reopens them in the foreground.
+- Desktop reports `computerUse` to the computer broker. New sessions on a
+  parallel computer (This Mac) start the helper with background delivery.
+  The old `computerSetBackgroundEnabled` IPC remains a no-op for older
+  renderers; their cached child-flag value cannot disable background delivery.
+  Remove that IPC when those renderers are no longer supported.
 - The helper decides per session (`InputDelivery.decide`): background for
   control sessions, foreground for the apps above or when the private calls
   below are missing on that macOS. Background sessions launch apps without
@@ -64,7 +73,7 @@ Some apps and steps still need the front, and get it the way they did before
 
 ## How to try it
 
-1. Turn on `computerUse` and `computerUseBackground` for your organization.
+1. Turn on `computerUse` for your organization.
 2. Ask an agent to work in TextEdit or Notes while you keep using another app.
 3. Run the real-app check with the desktop open:
    `pnpm --filter @openwork/computer-use prove:mac-apps`. Each action receipt
@@ -74,9 +83,10 @@ Some apps and steps still need the front, and get it the way they did before
 
 ## Turning it off
 
-The kill switch or turning the feature off hands idle sessions back at once;
-a call already running finishes as it started. The next call opens a
-foreground session, the behavior before this feature. Nothing is stored.
+Turning `computerUse` off (including its kill switch) stops computer use and
+hands sessions back, including background sessions. It does not switch them
+to foreground delivery. The helper still chooses the foreground when required
+by an app or step. Nothing is stored.
 
 ## What to watch
 

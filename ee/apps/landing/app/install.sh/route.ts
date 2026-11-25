@@ -1,20 +1,3 @@
-// GET /install.sh
-//
-// A small, inspectable, self-contained installer. It downloads the
-// openwork-bootstrap CLI (a single dependency-free Node file served from this
-// site) and installs it as the `openwork-bootstrap` command on the user's PATH.
-//
-// It is intentionally named `openwork-bootstrap` so setup guides can refer to a
-// specific bootstrap command. It does not use npm or npx.
-//
-// This does NOT install the OpenWork desktop app. The script header and final
-// output say so and print the app install commands, because agents asked to
-// "install OpenWork" otherwise reach for this URL.
-//
-// Usage (the docs tell users to download + inspect before running):
-//   curl -fsSLo /tmp/openwork-install.sh https://openworklabs.com/install.sh
-//   less /tmp/openwork-install.sh
-//   sh /tmp/openwork-install.sh
 export const dynamic = "force-static";
 
 const installScript = `#!/usr/bin/env sh

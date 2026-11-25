@@ -13,17 +13,6 @@ export async function compactLibraryWorld(seed: Seed) {
       notes: seed.mock(),
     },
   });
-  const org = await seed.api(den.admin, "/v1/org");
-  if (!org.response.ok || !isRecord(org.body) || !isRecord(org.body.organization) || typeof org.body.organization.id !== "string") {
-    throw new Error(`Could not resolve the synthetic organization: ${org.text}`);
-  }
-  const organizationId = org.body.organization.id;
-  // Skill previews would replace the skill-page links this proof follows.
-  const previewsOff = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-    method: "PUT", body: JSON.stringify({ capabilities: { libraryConnectorNavigation: false } }),
-  });
-  if (!previewsOff.response.ok) throw new Error(`Could not arrange skill links: ${previewsOff.text}`);
-
   // Listing once initializes starter collections; archive their entries through
   // the supported API so unrelated starter content cannot mask our witnesses.
   const collections = await seed.api(den.admin, "/v1/marketplaces");
@@ -44,7 +33,8 @@ export async function compactLibraryWorld(seed: Seed) {
   const skills = ["Daily brief", "Decision notes", "Hiring loop", "Meeting agenda", "Onboarding plan", "Release checklist", "Research summary", "Sales call prep", "Support triage", "Weekly review"];
   const descriptions = skills.map((name) => `Prepare a clear ${name.toLowerCase()} from supplied notes`);
   for (const [index, name] of skills.entries()) {
-    const rawSourceText = `---\nname: ${name.toLowerCase().replaceAll(" ", "-")}\ndescription: ${descriptions[index]}.\n---\n\n# ${name}\n\nOrganize the supplied notes into a short useful document.\n\n1. Read the **supplied notes**.\n2. Keep \`names\` and dates as written.\n\nDo not invent facts.`;
+    const skillName = index === 0 ? "daily-brief-instructions" : name.toLowerCase().replaceAll(" ", "-");
+    const rawSourceText = `---\nname: ${skillName}\ndescription: ${descriptions[index]}.\n---\n\n# ${name}\n\nOrganize the supplied notes into a short useful document.\n\n1. Read the **supplied notes**.\n2. Keep \`names\` and dates as written.\n\nDo not invent facts.`;
     const created = await seed.api(den.admin, "/v1/plugins", {
       method: "POST", body: JSON.stringify({ name, description: descriptions[index], components: [{ type: "skill", input: { rawSourceText } }] }),
     });

@@ -2,7 +2,6 @@ import type { FeatureChange } from "@openwork-ee/den-db/organization-features"
 import { mapFeatures, type FeatureKey } from "@openwork/features"
 import { z } from "zod"
 
-/** The most recent change to a feature, shown in /admin as "On by Omar · 26 Oct 2026". */
 export const adminFeatureChangeSchema = z.object({
   scope: z.enum(["everyone", "organization", "member"]).meta({ description: "What the change applied to: the whole deployment, this organization, or one member." }),
   action: z.enum(["on", "off", "reset", "killed", "restored"]).meta({ description: "on/off: set; reset: override cleared; killed/restored: kill switch turned on or cleared." }),

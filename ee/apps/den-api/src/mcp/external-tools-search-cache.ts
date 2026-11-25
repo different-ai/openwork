@@ -27,7 +27,6 @@ type CacheEntry = {
 const entries = new Map<string, CacheEntry>()
 const counters: ToolCacheCounters = { hits: 0, misses: 0, evictions: 0, expirations: 0, oversized: 0 }
 
-/** Payload bytes cover successful tool catalogs; failures remain entry-count bounded. */
 export function externalToolsSearchCacheUsage(now = Date.now()) {
   return toolCacheUsage(entries, EXTERNAL_TOOLS_SEARCH_CACHE_MAX_ENTRIES, counters, now)
 }

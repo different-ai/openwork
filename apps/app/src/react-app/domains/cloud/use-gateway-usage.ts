@@ -21,7 +21,6 @@ function subscribeScope(listener: () => void) {
   });
 }
 
-// Outlives the chat view so an explained error stays hidden after leaving and reopening the session.
 const handledGatewayErrorKeys = new Set<string>();
 
 export function useGatewayUsageErrorHandled(input: {
@@ -30,13 +29,11 @@ export function useGatewayUsageErrorHandled(input: {
   errorKey: string | null;
   gatewaySelected: boolean;
   evidence: GatewayUsageErrorEvidence | null;
-  /** A generic 429 whose policy body and headers did not survive the engine. */
   rateLimited?: boolean;
   status?: GatewayUsageStatus;
 }) {
   const bare = !input.evidence && input.rateLimited === true;
   const key = input.evidence || bare ? JSON.stringify([input.scopeKey, input.sessionOwner, input.errorKey, input.evidence ?? "rate-limited"]) : null;
-  // Without evidence only the member's own blocked status can explain the 429.
   const corroborated = input.gatewaySelected && (bare ? input.status?.state === "blocked" : corroboratesGatewayUsageError(input.evidence, input.status));
   const [, setHandled] = useState(0);
   useEffect(() => {

@@ -8,32 +8,57 @@ pnpm 11.4.0, and the OpenCode version in `constants.json` on PATH, matching CI.
 
 ## What blocks a merge
 
-The `openwork-tests-required` check keeps its existing name and fails closed.
-For ordinary code changes it requires two independent Linux jobs:
+PRs run one quick check ("Quick check", `quick-check.yml`); its
+`openwork-tests-required` context is the only required test check. It covers
+the highest risks only, in about a minute:
 
-- **Eval framework:** the headless runner typecheck, spec lint
-  (`pnpm --dir evals lint:specs`) and its rule fixtures
-  (`pnpm --dir evals run test:framework`).
-- **Packaging:** outbound-access declarations, the server's actual Node-target
-  plugin build, Electron's IPC contract typecheck, and the packaged desktop
-  smoke.
+- **Static guards:** CI selection and policy tests, the outbound access
+  manifest, and the feature registry with its Helm chart.
+- **Typecheck of shipped code:** every changed package and every package that
+  depends on it, test files left out (`.github/scripts/typecheck-shipped.mjs`),
+  plus Electron main when the desktop is affected.
+- **Imports Node loads from source:** Den API and the Gateway run in plain Node
+  and load some workspace packages from TypeScript source. Node resolves less
+  than tsx, bundlers and the typecheck do, so an import that works everywhere
+  else can fail the deploy. `pnpm check:node-source-imports` follows each
+  service's runtime imports into that source, on every PR (see "Modules Node
+  loads from source" in `AGENTS.md`).
+- **Den API auth and permission tests** and audit route coverage, when Den API
+  inputs change (`pnpm --filter @openwork-ee/den-api test:api:security`).
 
-Model-snapshot-only and docs-only PRs keep their existing dedicated validation.
-New commits cancel obsolete runs on the same PR. Dev pushes still run the core
-and packaging checks.
+- **Desktop build:** the server bundled the way packaged builds do, and
+  Electron main typechecked against the IPC contract.
+
+These are the critical checks, and the only ones that gate anything. They run
+on every PR, where they gate the merge, and again on every dev push, where the
+alpha build and the release refuse a commit they did not pass
+(`.github/scripts/require-quick-check.mjs`). Keep the set under two minutes:
+a check that cannot block a merge and a release does not belong in CI, and a
+test nothing runs should be deleted. The rest is nightly or on demand:
+
+| Check | Where it runs |
+| --- | --- |
+| Test-framework checks, engine smoke tests, docs and model snapshot validation | Nightly and on demand ("Nightly regression") |
+| Core journeys | Nightly and on demand ("Core journeys"); core-chat nightly in "Freestyle world check" |
+| Changed one-off proofs (`evals/proofs`) | Never automatically; by hand with `gh workflow run pr-proof.yml --ref <branch> -f pr=<n>` |
+| Packaged desktop build and boot | Before every alpha release ("Packaged desktop smoke"); macOS update install nightly |
+| CodeQL analysis | Every dev push and weekly (PRs upload empty results for the merge rule) |
+| EE images, Helm, plugin, Terraform, installers, evidence tooling | Dev pushes that change them; EE health checks nightly |
+
+A red nightly run is a regression in what merged that day: fix or revert it first.
 
 To expand coverage, add a step to a core journey in `evals/core`. A failing journey
 must be diagnosed and fixed, not retried until green or silently ignored.
 
 ## Broader coverage
 
-The test-framework checks (`pnpm evals:check`) also run on every PR in "Unit
-tests". Nightly at 07:37 UTC (or through **Run workflow** on a selected branch)
+The test-framework lint (`pnpm evals:check`) is not run in CI; run it locally
+when changing the framework. Nightly at 07:37 UTC (or through **Run workflow** on a selected branch)
 the same workflow runs all PR specs (`pnpm evals:pr`, Linux, with MySQL and the
 bundled OpenCode binary) and the engine smoke (`pnpm test:e2e`, Linux and macOS).
 Packaging can be reproduced with `pnpm --filter openwork-server build` and
 `pnpm --filter @openwork/desktop typecheck:electron`. Check the macOS nightly
-before releases; it is not a PR prerequisite. The core journey and every
+before releases. The core journey and every
 Freestyle world path also run nightly ("Freestyle world check"); the old
 "Product journeys" and "Test reliability" nightlies were retired in October 2026.
 

@@ -1,27 +1,5 @@
 import type { McpServerEntry, McpStatusMap } from "../../../app/types";
 
-/**
- * Silent re-auth for remote OAuth MCP connectors.
- *
- * The OpenCode engine only refreshes an expired MCP access token reactively,
- * and at most once per transport lifetime. After the token expires (~1h for
- * Google) or after a transient refresh failure at engine startup, the entry
- * lands in `needs_auth` / `failed` and nothing retries it — users had to
- * click "Sign in" manually even though the stored refresh token still works.
- *
- * `mcp.connect` builds a fresh transport in the engine, so the MCP SDK
- * retries the stored refresh-token grant on the 401 — the same thing the
- * manual "Sign in" button does, minus the browser fallback. The engine's
- * connect path never opens a browser (its OAuth redirect handler is a
- * no-op), so a genuinely revoked grant simply stays in "Sign in needed".
- */
-
-/**
- * Retry an unhealthy entry at most once per cooldown window. Short enough
- * that a wake-from-sleep heal lands on the next status refresh even when
- * the first attempt fired while the network was still down; long enough
- * that a genuinely revoked grant doesn't get hammered on every refresh.
- */
 export const SILENT_REAUTH_COOLDOWN_MS = 60 * 1000;
 
 export type SilentReauthClient = {
@@ -34,13 +12,6 @@ export function silentReauthAttemptKey(directory: string, name: string): string 
   return `${directory}\u0000${name}`;
 }
 
-/**
- * An entry qualifies for silent re-auth when it is a remote, enabled,
- * OAuth-capable connector (no static auth headers) that the engine reports
- * as unhealthy. Header-authed entries are written with `oauth: false`, so
- * they never qualify; neither do entries pending client registration, which
- * always need an interactive flow.
- */
 export function isSilentReauthCandidate(entry: McpServerEntry, statuses: McpStatusMap): boolean {
   const status = statuses[entry.name]?.status;
   if (status !== "needs_auth" && status !== "failed") return false;
@@ -65,8 +36,6 @@ export function selectSilentReauthCandidates(input: {
   for (const entry of input.servers) {
     const key = silentReauthAttemptKey(input.directory, entry.name);
     if (input.statuses[entry.name]?.status === "connected") {
-      // Recovered — clear the cooldown so the next unhealthy episode gets
-      // a fresh silent attempt.
       input.attempts.delete(key);
       continue;
     }
@@ -78,16 +47,9 @@ export function selectSilentReauthCandidates(input: {
   return names;
 }
 
-// Module-level so the cooldown survives store/component remounts.
 const defaultAttempts = new Map<string, number>();
 const inFlight = new Set<string>();
 
-/**
- * Fire `mcp.connect` for every eligible unhealthy entry. Returns true when
- * at least one reconnect was attempted — the caller should then re-fetch
- * MCP statuses to pick up the healed state. Best-effort by design: failures
- * leave the entry unhealthy and the manual "Sign in" path untouched.
- */
 export async function attemptSilentMcpReauth(input: {
   client: SilentReauthClient;
   directory: string;
@@ -124,8 +86,6 @@ export async function attemptSilentMcpReauth(input: {
         try {
           await input.client.mcp.connect({ name, directory });
         } catch {
-          // Reconnect is best-effort; the entry stays unhealthy and the
-          // user can still sign in manually.
         }
       }),
     );

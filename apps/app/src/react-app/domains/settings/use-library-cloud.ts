@@ -24,7 +24,6 @@ export type LibraryCloud = {
   audienceFor: (pluginId: string) => LibraryAudience;
   grantsFor: (pluginId: string) => DenLibraryAccessGrant[];
   refresh: () => Promise<void>;
-  /** Makes the audience exactly `targets`: grants what is missing and revokes the rest. */
   setAudience: (pluginId: string, targets: LibraryShareTarget[]) => Promise<void>;
   archive: (pluginId: string) => Promise<void>;
   restore: (pluginId: string) => Promise<void>;
@@ -138,8 +137,6 @@ export function useLibraryCloud(input: {
         ["library-cloud-items", ...scope],
         (current) => current?.filter((item) => item.id !== pluginId),
       );
-      // Archiving can retire the plugin's connections; tell session upkeep to
-      // re-read the org catalog now instead of on its next interval.
       clearCloudInventoryCache();
       await refresh();
     },

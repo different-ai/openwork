@@ -25,12 +25,6 @@ export type PluginArchActorContext = {
   apiKey?: true
   automation?: true
   memberTeams: MemberTeamSummary[]
-  /**
-   * The actor's effective permissions, when already resolved (request
-   * middleware, or a synthetic actor such as a connector automation). When
-   * absent they are resolved from `organizationContext` once per context
-   * object (see pluginArchPermissions).
-   */
   memberPermissions?: MemberPermissions
   organizationContext: OrganizationContext
   session: { createdAt?: Date | string | null } | null | undefined
@@ -107,12 +101,6 @@ function maxRole(current: PluginArchRole | null, candidate: PluginArchRole | nul
   return rolePriority[candidate] > rolePriority[current] ? candidate : current
 }
 
-/**
- * The actor's effective permissions. Uses `context.memberPermissions` when set;
- * otherwise resolves them for `context.organizationContext.currentMember`,
- * cached per organization context object, so one request resolves once no
- * matter how many items it checks.
- */
 export async function pluginArchPermissions(context: PluginArchActorContext): Promise<MemberPermissions> {
   if (context.memberPermissions) return context.memberPermissions
   const memberTeams = context.memberTeams.length > 0 ? context.memberTeams : undefined
@@ -125,7 +113,6 @@ export async function pluginArchHasPermission(context: PluginArchActorContext, k
   return (await pluginArchPermissions(context)).has(key)
 }
 
-/** Holders of `sharing.manage_all` act as manager on every plugin, marketplace, config object and connector instance. */
 export function canManageAllPluginArchResources(context: PluginArchActorContext) {
   return pluginArchHasPermission(context, "sharing.manage_all")
 }
@@ -315,7 +302,6 @@ function groupGrantsBy<TKey, TGrant>(grants: TGrant[], key: (grant: TGrant) => T
   return grouped
 }
 
-/** Resolves the caller's role for many plugins with the same rules as resolvePluginArchResourceRole. */
 export async function resolvePluginArchPluginRoles(context: PluginArchActorContext, pluginIds: PluginId[]) {
   const roles = new Map<PluginId, PluginArchRole>()
   const organizationId = context.organizationContext.organization.id
@@ -396,7 +382,6 @@ export async function resolvePluginArchPluginRoles(context: PluginArchActorConte
   return roles
 }
 
-/** Resolves the caller's role for many config objects with the same rules as resolvePluginArchResourceRole. */
 export async function resolvePluginArchConfigObjectRoles(context: PluginArchActorContext, configObjectIds: ConfigObjectId[]) {
   const roles = new Map<ConfigObjectId, PluginArchRole>()
   const organizationId = context.organizationContext.organization.id
@@ -440,8 +425,6 @@ export async function resolvePluginArchConfigObjectRoles(context: PluginArchActo
     return roles
   }
 
-  // Without a direct grant, any containing plugin the caller owns or is
-  // granted makes the config object viewable. Catalog access does not count.
   const memberships = await db
     .select({ configObjectId: PluginConfigObjectTable.configObjectId, pluginId: PluginConfigObjectTable.pluginId })
     .from(PluginConfigObjectTable)

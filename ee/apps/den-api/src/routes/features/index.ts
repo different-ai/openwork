@@ -14,12 +14,6 @@ const publicFeaturesResponseSchema = z.object({
   features: clientFeaturesSchema,
 }).meta({ ref: "PublicFeatures" })
 
-/**
- * Which features are on for someone without an organization (for example a
- * desktop that is not signed in): the deployment-wide state after the kill
- * switch and operator locks. Signed-in clients read `features` from GET /v1/org,
- * which also applies their organization's overrides.
- */
 export function registerFeatureRoutes<T extends Env>(app: Hono<T>) {
   app.get(
     "/v1/features",

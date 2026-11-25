@@ -13,7 +13,6 @@ export type DiagnosticsCheckResult =
   | { ok: true; rateLimited: boolean; retryAfterSeconds?: number; data: OrgDiagnostics | null }
   | { ok: false; failure: DiagnosticsFailure; status: number };
 
-/** Server messages and bodies never reach rendering state; only the status class does. */
 function failureFor(status: number): DiagnosticsFailure {
   if (status === 401) return "signed_out";
   if (status === 403) return "forbidden";
@@ -21,20 +20,17 @@ function failureFor(status: number): DiagnosticsFailure {
   return "error";
 }
 
-/** Reads the cached report for one organization; never starts live checks. */
 export async function readOrgDiagnostics(orgId: string, signal?: AbortSignal): Promise<DiagnosticsReadResult> {
   signal?.throwIfAborted();
   const { response, payload } = await requestJson(DIAGNOSTICS_PATH, {
     method: "GET", cache: "no-store", signal, headers: { [ORG_SCOPE_HEADER]: orgId },
   }, 15_000);
   signal?.throwIfAborted();
-  // `?strict=1` callers get 503 with the same body; this page never asks for strict mode.
   if (!response.ok) return { ok: false, failure: failureFor(response.status), status: response.status };
   const data = parseOrgDiagnostics(payload);
   return data ? { ok: true, data } : { ok: false, failure: "error", status: response.status };
 }
 
-/** Starts the checks the caller may run. Bodyless: the browser can't choose targets or credentials. */
 export async function startOrgDiagnosticsCheck(orgId: string, signal?: AbortSignal): Promise<DiagnosticsCheckResult> {
   signal?.throwIfAborted();
   const { response, payload } = await requestJson(DIAGNOSTICS_CHECK_PATH, {

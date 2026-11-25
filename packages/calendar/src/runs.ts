@@ -10,23 +10,18 @@ type RunPage = { items: AutomationRun[]; nextCursor: string | null }
  * that forwards to Den (Workbot). Both speak Den's run routes.
  */
 export type AutomationRunsSource = {
-  /** `GET /v1/automation-runs?from&to&cursor&limit`; older Dens answer 404. */
   listRunsInRange(input: { from: number; to: number; cursor?: string; limit?: number }): Promise<RunPage>
-  /** `GET /v1/automations/:id/runs?limit`, newest first. */
   listRuns(automationId: string, input: { limit: number }): Promise<RunPage>
 }
 
 export type RunsInRange = {
   runs: AutomationRun[]
-  /** False when the range had more runs than one read returns. */
   complete: boolean
-  /** `range` is the owner-scoped route; `per_automation` is the bounded fallback for older Dens. */
   source: "range" | "per_automation"
 }
 
 const RANGE_PAGE_LIMIT = 200
 const RANGE_MAX_PAGES = 10
-/** Older Dens without the range route: per-Automation history, bounded. */
 const FALLBACK_MAX_AUTOMATIONS = 30
 const FALLBACK_CONCURRENCY = 4
 
@@ -64,7 +59,6 @@ export async function readRunsInRange(
         const at = runPlacement(run)
         return at >= range.start && at < range.end
       }))
-      // The oldest run on a full page is still inside the range: older ones may be missing.
       const oldest = page.items.at(-1)
       if (page.nextCursor && oldest && runPlacement(oldest) >= range.start) complete = false
     }

@@ -17,7 +17,6 @@ export function OrgLimitDialog({
   onClose,
 }: {
   open: boolean;
-  /** Small label above the title; null leaves it out. */
   eyebrow?: string | null;
   title: string;
   message: string;

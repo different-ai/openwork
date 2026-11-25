@@ -3,7 +3,6 @@
 import { z } from "zod";
 
 const tabSchema = z.object({ id: z.string(), url: z.string(), title: z.string() });
-// Everything but the address and title is absent from computers built before it.
 const pageSchema = z.object({
   type: z.literal("page"), id: z.string().optional(), url: z.string(), title: z.string(),
   loading: z.boolean().optional(), back: z.boolean().optional(), forward: z.boolean().optional(),
@@ -24,18 +23,15 @@ export type ScreencastPage = Omit<z.infer<typeof pageSchema>, "type">;
 export class ScreencastViewer extends EventTarget {
   private readonly socket: WebSocket;
   private readonly canvas = document.createElement("canvas");
-  /** With control, the keyboard: a hidden text field, so typing methods, dead keys and paste work as they do anywhere. */
   private readonly keyboard: HTMLTextAreaElement | null = null;
   private drawing = Promise.resolve();
   private drawn = false;
   private ended = false;
   private copied: ((text: string) => void) | null = null;
-  /** The latest address and title the stream reported. */
   page: ScreencastPage | null = null;
 
   constructor(target: HTMLElement, url: string, { control = false }: { control?: boolean } = {}) {
     super();
-    // The page sits right under the toolbar, as in a browser, with any spare room below or at the sides.
     this.canvas.style.cssText = "display:block;width:100%;height:100%;object-fit:contain;object-position:50% 0;outline:none";
     target.append(this.canvas);
     if (control) this.keyboard = forwardInput(target, this.canvas, (message) => this.send(message), () => this.copy());
@@ -61,38 +57,26 @@ export class ScreencastViewer extends EventTarget {
     this.socket.addEventListener("error", () => this.end());
   }
 
-  /** Whether a frame reached the screen; a stream that ends before one never connected. */
   get connected() { return this.drawn; }
 
-  /** Whether this stream takes the person's input. */
   get control() { return this.keyboard !== null; }
 
   disconnect() { this.socket.close(); this.end(); }
 
-  /** Puts the keyboard on the page, for typing into it with control. */
   focus() { (this.keyboard ?? this.canvas).focus({ preventScroll: true }); }
 
-  /** Whether the keyboard is on the page. */
   get focused() { return this.keyboard !== null && document.activeElement === this.keyboard; }
 
-  /** Brings one of the browser's open tabs to the front, or closes it. */
   tab(action: "activate" | "close", id: string) { this.send({ type: "tab", action, id }); }
 
-  /** With control: opens a blank tab in front. */
   newTab() { this.send({ type: "tab", action: "new" }); }
 
-  /** With control: loads a web address in the front tab. */
   navigate(url: string) { this.send({ type: "navigate", url }); }
 
-  /** With control: goes back, forward, or reloads the front tab. */
   history(action: "back" | "forward" | "reload") { this.send({ type: "history", action }); }
 
   private send(message: object) { if (this.socket.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message)); }
 
-  /**
-   * Copies the page's selected text to the person's clipboard. The clipboard write starts during the key press, which
-   * browsers require, and is filled once the computer answers; with nothing selected the clipboard is left as it was.
-   */
   private copy() {
     this.copied?.("");
     const text = new Promise<string>((resolve) => { this.copied = resolve; setTimeout(() => resolve(""), 3_000); });
@@ -105,7 +89,6 @@ export class ScreencastViewer extends EventTarget {
         return;
       }
     } catch {
-      // Fall through to the plain text write.
     }
     void text.then((value) => (value ? navigator.clipboard?.writeText(value) : undefined)).catch(() => {});
   }
@@ -148,7 +131,6 @@ export function addressFor(typed: string): string | null {
 
 const ALT = 1, CTRL = 2, META = 4, SHIFT = 8;
 const BUTTONS = ["left", "middle", "right", "back", "forward"] as const;
-// Clicks this close in time and place count as one double or triple click, as on a desktop.
 const MULTI_CLICK_MS = 500, MULTI_CLICK_PX = 5;
 
 const mac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -175,8 +157,6 @@ export function translateKey(event: Pick<KeyboardEvent, "key" | "code" | "keyCod
       modifiers = (modifiers & ~ALT) | CTRL;
     }
   }
-  // A character typed without a shortcut modifier is text; ⌥ on a Mac types characters (å, ©) rather than shortcuts,
-  // and so does AltGr elsewhere, which browsers report as Ctrl+Alt.
   const character = [...key].length === 1;
   if (character && event.altGraph) modifiers &= ~(CTRL | ALT);
   const shortcut = (modifiers & CTRL) !== 0 || (!onMac && (modifiers & (ALT | META)) !== 0);
@@ -185,11 +165,6 @@ export function translateKey(event: Pick<KeyboardEvent, "key" | "code" | "keyCod
   return { key, code, keyCode, modifiers, text };
 }
 
-/**
- * Sends the person's pointer, wheel and keyboard on `canvas` to the page and returns the hidden text field that holds
- * the keyboard. Moves and wheel turns are sent at most once a frame; a press or key sends any pending move first so
- * the page sees them in order. A finger drags to scroll and taps to click.
- */
 function forwardInput(layer: HTMLElement, canvas: HTMLCanvasElement, send: (message: object) => void, copy: () => void) {
   const onMac = mac();
   const keyboard = document.createElement("textarea");
@@ -198,7 +173,6 @@ function forwardInput(layer: HTMLElement, canvas: HTMLCanvasElement, send: (mess
   keyboard.setAttribute("autocomplete", "off");
   keyboard.setAttribute("autocorrect", "off");
   keyboard.spellcheck = false;
-  // 16px keeps phones from zooming in on focus.
   keyboard.style.cssText = "position:absolute;left:0;top:0;width:1px;height:1px;padding:0;border:0;opacity:0;resize:none;font-size:16px;pointer-events:none;caret-color:transparent";
   layer.append(keyboard);
   canvas.style.cursor = "default";
@@ -209,10 +183,8 @@ function forwardInput(layer: HTMLElement, canvas: HTMLCanvasElement, send: (mess
     if (!canvas.width || !canvas.height || !box.width || !box.height) return null;
     const scale = Math.min(box.width / canvas.width, box.height / canvas.height);
     const width = canvas.width * scale, height = canvas.height * scale;
-    // Matches the canvas's object-position: centred across, at the top.
     return { left: box.left + (box.width - width) / 2, top: box.top, width, height };
   };
-  /** Where an event lands on the page, as fractions of the frame. Outside the frame it is null, or the nearest edge. */
   const position = (event: MouseEvent, nearest = false) => {
     const area = frame();
     if (!area) return null;
@@ -237,10 +209,8 @@ function forwardInput(layer: HTMLElement, canvas: HTMLCanvasElement, send: (mess
   const later = () => { if (!scheduled) scheduled = requestAnimationFrame(flush); };
   const now = (message: object) => { flush(); send(message); };
 
-  // The press in progress, so its release always reaches the page, and the last one, to count double and triple clicks.
   let pressed: { pointerId: number; button: (typeof BUTTONS)[number]; clicks: number; at: { x: number; y: number } } | null = null;
   let last = { time: 0, clientX: 0, clientY: 0, button: -1, clicks: 0 };
-  // A finger on the page: where it went down and was last, and whether it moved enough to be a scroll.
   let touch: { pointerId: number; clientX: number; clientY: number; startX: number; startY: number; scrolled: boolean } | null = null;
 
   const release = (event: PointerEvent) => {
@@ -274,7 +244,6 @@ function forwardInput(layer: HTMLElement, canvas: HTMLCanvasElement, send: (mess
       const at = position(event, true), area = frame();
       if (!at || !area) return;
       if (Math.hypot(event.clientX - touch.startX, event.clientY - touch.startY) > 8) touch.scrolled = true;
-      // The page moves with the finger, in the frame's own pixels.
       const scale = canvas.width / area.width;
       const deltaX = (touch.clientX - event.clientX) * scale, deltaY = (touch.clientY - event.clientY) * scale;
       touch.clientX = event.clientX; touch.clientY = event.clientY;
@@ -284,7 +253,6 @@ function forwardInput(layer: HTMLElement, canvas: HTMLCanvasElement, send: (mess
       }
       return;
     }
-    // While a button is held, a drag past the frame's edge keeps going at the edge, as in a window.
     const at = position(event, pressed !== null);
     if (!at) return;
     if (pressed) pressed.at = at;
@@ -304,7 +272,6 @@ function forwardInput(layer: HTMLElement, canvas: HTMLCanvasElement, send: (mess
     }
     release(event);
   });
-  // A press the browser takes away (a system gesture, a lost capture) still ends on the page.
   canvas.addEventListener("pointercancel", (event) => { if (touch?.pointerId === event.pointerId) touch = null; else release(event); });
   canvas.addEventListener("lostpointercapture", release);
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -312,7 +279,6 @@ function forwardInput(layer: HTMLElement, canvas: HTMLCanvasElement, send: (mess
     const at = position(event);
     if (!at) return;
     event.preventDefault();
-    // Lines and pages arrive as counts; the page expects pixels.
     const unit = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 800 : 1;
     const deltaX = event.deltaX * unit, deltaY = event.deltaY * unit;
     pendingWheel = pendingWheel ? { ...pendingWheel, ...at, deltaX: pendingWheel.deltaX + deltaX, deltaY: pendingWheel.deltaY + deltaY } : { ...at, deltaX, deltaY, modifiers: pointerModifiers(event) };
@@ -321,20 +287,16 @@ function forwardInput(layer: HTMLElement, canvas: HTMLCanvasElement, send: (mess
 
   const shortcut = (event: KeyboardEvent, letter: string) => (onMac ? event.metaKey : event.ctrlKey) && !event.altKey && event.key.toLowerCase() === letter;
   const key = (kind: "down" | "up") => (event: KeyboardEvent) => {
-    // A typing method (or a dead key's accent) is composing; its text arrives when it finishes.
     if (event.isComposing || event.keyCode === 229 || event.key === "Dead") return;
-    // Pasting goes through the paste event, which carries the person's clipboard; the computer's doesn't have it.
     if (shortcut(event, "v")) return;
     if (event.key.length > 32 || event.code.length > 32) return;
     event.preventDefault();
-    // Copy and cut also bring the selected text to the person's clipboard; the page still gets the key.
     if (kind === "down" && (shortcut(event, "c") || shortcut(event, "x"))) copy();
     const translated = translateKey({ key: event.key, code: event.code, keyCode: event.keyCode, altKey: event.altKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.shiftKey, altGraph: event.getModifierState?.("AltGraph") }, onMac);
     now({ type: "key", event: kind, ...translated, text: kind === "down" ? translated.text : "" });
   };
   keyboard.addEventListener("keydown", key("down"));
   keyboard.addEventListener("keyup", key("up"));
-  /** Sends whatever the text field gathered: a finished composition, or input from a keyboard without key events. */
   const typed = () => {
     if (keyboard.value) now({ type: "text", text: keyboard.value.slice(0, 10_000) });
     keyboard.value = "";
@@ -343,7 +305,6 @@ function forwardInput(layer: HTMLElement, canvas: HTMLCanvasElement, send: (mess
   keyboard.addEventListener("input", (event) => {
     const input = event as InputEvent;
     if (input.isComposing) return;
-    // Phone keyboards delete without a usable key event.
     if (input.inputType === "deleteContentBackward" && !keyboard.value) {
       for (const kind of ["down", "up"] as const) now({ type: "key", event: kind, key: "Backspace", code: "Backspace", keyCode: 8, modifiers: 0, text: "" });
       return;

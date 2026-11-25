@@ -8,8 +8,6 @@ interface TodoWriteToolProps {
 }
 
 function getTodoWriteToolTitle(part: TodoWriteToolPart): string | null {
-  // Streamed/interrupted tool calls can surface with partial input despite
-  // the type contract; an unguarded read here white-screened the whole app.
   const count = part.input?.todos?.length ?? 0
 
   if (part.state === "output-error") {

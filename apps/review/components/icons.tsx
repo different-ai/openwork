@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 
-/** Lucide paths (V5: 16px, 1.5px stroke, round caps). The review app ships no icon package. */
 const PATHS = {
   download: <><path d="M12 15V3" /><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /></>,
   panelRight: <><rect width="18" height="18" x="3" y="3" rx="2" /><path d="M15 3v18" /></>,
@@ -24,7 +23,6 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   );
 }
 
-/** The OpenWork mark (apps/app/public/openwork-sidebar-mark.svg), filled with the current text color. */
 export function OpenWorkMark({ size = 18 }: { size?: number }) {
   return (
     <svg className="openwork-mark" width={size * 0.8} height={size} viewBox="146 7 468 585" fill="currentColor" aria-hidden="true">

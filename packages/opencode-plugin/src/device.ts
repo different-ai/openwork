@@ -1,10 +1,3 @@
-/**
- * OpenWork sign-in: Den's OAuth 2.0 Device Authorization Grant (RFC 8628).
- *
- * The member approves a short code on Den web's /device page and picks the
- * organization there; polling returns a new Den session token valid on /v1.
- * Prior art: packages/openwork-bootstrap/bin/openwork.mjs (deviceLogin).
- */
 import { isRecord, normalizeBaseUrl, postPublic, type Fetch } from "./den.ts"
 
 /** Shown on the approval page as "OpenWork - OpenCode Plugin". */
@@ -19,12 +12,10 @@ const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 export interface DeviceAuthorization {
   readonly clientId: string
   readonly deviceCode: string
-  /** ABCD-EFGH */
   readonly userCode: string
   readonly verificationUri: string
   readonly verificationUriComplete: string
   readonly intervalMs: number
-  /** Milliseconds since the epoch. */
   readonly expiresAt: number
 }
 
@@ -56,7 +47,6 @@ export async function startDeviceAuthorization(input: {
   for (const clientId of clientIds) {
     const started = await postPublic(input.fetcher, input.apiBaseUrl, "/api/auth/device/code", { client_id: clientId })
     last = started
-    // Den rejects an unknown client with 400 invalid_client: try the next id.
     if (started.status === 400 && errorCode(started.body) === "invalid_client") continue
     const body = started.body
     if (started.status !== 200 || !isRecord(body) || typeof body.device_code !== "string" || typeof body.user_code !== "string") {
@@ -117,9 +107,7 @@ function retryAfterMs(value: string | null, now: number): number {
     const milliseconds = Number(trimmed) * 1000
     return Number.isFinite(milliseconds) ? milliseconds : 0
   }
-  // Accept current and legacy HTTP-date formats, not numeric junk such as "-1".
   if (!/^(?:[A-Za-z]{3}, |[A-Za-z]+, \d{2}-|[A-Za-z]{3} [A-Za-z]{3} )/.test(trimmed)) return 0
-  // asctime has no timezone suffix, but HTTP dates are always GMT, not local time.
   const date = Date.parse(/^[A-Za-z]{3} [A-Za-z]{3} /.test(trimmed) ? `${trimmed} GMT` : trimmed)
   return Number.isFinite(date) ? Math.max(0, date - now) : 0
 }
@@ -140,7 +128,6 @@ export async function pollDeviceToken(input: {
   while (now() < input.authorization.expiresAt) {
     await waker.wait(Math.min(Math.max(intervalMs, cooldownUntil - now()), Math.max(0, input.authorization.expiresAt - now())))
     if (input.isCancelled?.()) throw new DeviceFlowError("Sign-in was cancelled.")
-    // A browser callback may wake the wait early, but must not bypass a server cooldown.
     while (now() < cooldownUntil && now() < input.authorization.expiresAt) {
       await waker.wait(Math.min(cooldownUntil, input.authorization.expiresAt) - now())
       if (input.isCancelled?.()) throw new DeviceFlowError("Sign-in was cancelled.")
@@ -159,7 +146,6 @@ export async function pollDeviceToken(input: {
     if (error === "expired_token") break
     if (polled.status === 429 || error === "slow_down") {
       intervalMs += 5_000
-      // Keep this attempt alive; starting a fresh device flow would add more traffic.
       if (polled.status === 429) cooldownUntil = now() + Math.max(intervalMs, retryAfterMs(polled.retryAfter, now()))
       continue
     }

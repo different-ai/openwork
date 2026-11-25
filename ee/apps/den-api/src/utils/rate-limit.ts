@@ -70,7 +70,7 @@ function changedRows(result: unknown): number | null {
 }
 
 async function readRateLimit(key: string): Promise<RateLimitRow | null> {
-  const [row] = await db
+  const [row] = await db.$primary
     .select({ count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
     .where(eq(RateLimitTable.key, key))
@@ -147,15 +147,6 @@ export async function checkRateLimit(key: string, maxRequests: number, windowMs:
   return claimExistingRateLimit(key, maxRequests, windowMs, now, existingRow)
 }
 
-// Fixed windows: a window opens at the first request it accepts, and
-// `lastRequest` stores that start. A window has ended once
-// `now - start >= windowMs`, so a request at exactly `start + windowMs` opens
-// the next one. Each window admits `maxRequests`; a caller can therefore send
-// up to twice that across a boundary. Blocked requests never write, so they
-// cannot extend a wait, and steady traffic below the limit never accumulates
-// across windows. Moving a key over from `checkRateLimit` is safe: its stored
-// last-request time reads as a window start, so an old count lasts at most
-// one more window.
 function fixedWindowRetryAfterSeconds(row: RateLimitRow, maxRequests: number, windowMs: number, now: number) {
   const remaining = row.lastRequest + windowMs - now
   if (remaining > 0 && row.count >= maxRequests) {
@@ -169,8 +160,6 @@ async function claimFixedWindowRateLimit(key: string, maxRequests: number, windo
   const result: unknown = await db
     .update(RateLimitTable)
     .set({
-      // MySQL applies SET assignments left to right and Drizzle emits them in
-      // column order, so `count` still sees the old window start here.
       count: sql<number>`IF(${ended}, 1, ${RateLimitTable.count} + 1)`,
       lastRequest: sql<number>`IF(${ended}, ${now}, ${RateLimitTable.lastRequest})`,
     })
@@ -182,7 +171,6 @@ async function claimFixedWindowRateLimit(key: string, maxRequests: number, windo
 
 const FIXED_WINDOW_CLAIM_ATTEMPTS = 3
 
-/** Same contract as `checkRateLimit`, counted in fixed windows (see above). */
 export async function checkFixedWindowRateLimit(key: string, maxRequests: number, windowMs: number, now: number, consume = true): Promise<number | null> {
   let row = await readRateLimit(key)
   if (!consume) {
@@ -208,12 +196,9 @@ export async function checkFixedWindowRateLimit(key: string, maxRequests: number
         }
       }
     }
-    // Another request changed the row first; decide again from what it wrote.
     row = await readRateLimit(key)
   }
 
-  // Still contended after every attempt: ask the caller to retry shortly
-  // rather than admit a request that was never counted.
   return row ? fixedWindowRetryAfterSeconds(row, maxRequests, windowMs, now) ?? 1 : 1
 }
 

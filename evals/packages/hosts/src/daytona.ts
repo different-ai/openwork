@@ -689,7 +689,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     // Per-spawn log so the integrity check below can never read a previous
     // run's lines.
     const logPath = `/tmp/electron-${safeName}-${spawnStamp}.log`;
-    const binaryPath = opts.devCommand ? undefined : opts.binaryPath?.trim();
+    const binaryPath = opts.devCommand ? undefined : opts.binaryPath?.trim() || process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim();
     if (opts.profile === "blank" && !binaryPath) {
       releasePort(electronPorts, port);
       throw new Error("A blank Daytona Electron profile requires an explicit binaryPath.");

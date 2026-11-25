@@ -9,6 +9,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { devOpenworkProxy } from "./dev-openwork-proxy";
 import { devDenProxy } from "./dev-den-proxy";
+import { MCP_APP_SANDBOX_PROXY_VERSION } from "../server/src/mcp-app-sandbox";
 
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
 const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
@@ -75,17 +76,8 @@ const buildSha = firstNonEmpty([
 ]) ?? readLocalGitSha();
 const shortBuildSha = buildSha ? buildSha.slice(0, 7) : "";
 
-// Electron packaged builds load index.html via `file://`, so asset URLs
-// must be relative. Tauri serves via its own protocol so absolute paths
-// work there. Gate on an env var the electron build script sets.
 const isElectronPackagedBuild = process.env.OPENWORK_ELECTRON_BUILD === "1";
 
-// Headless-web dev (scripts/dev-headless-web.ts): serve /api/den same-origin
-// from the dev server, proxied to the Den control plane, so the browser never
-// issues cross-origin Den API calls (Den does not serve CORS). The app is
-// pointed here via VITE_DEN_API_BASE_URL; sign-in still opens the real Den
-// web app. Inert unless the launcher sets the target env. No gateway marker:
-// that runtime implies a provisioned cloud instance, which local dev lacks.
 export default defineConfig(({ command, isPreview }) => {
   const denProxy = devDenProxy(command === "serve" && !isPreview ? process.env : {});
   const openworkProxy = devOpenworkProxy(command === "serve" && !isPreview ? process.env : {});
@@ -101,9 +93,8 @@ export default defineConfig(({ command, isPreview }) => {
     define: {
       "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
       "import.meta.env.VITE_OPENWORK_BUILD_SHA": JSON.stringify(shortBuildSha),
+      "import.meta.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION": JSON.stringify(MCP_APP_SANDBOX_PROXY_VERSION),
     },
-    // The compiler injects this import after Vite's initial dependency scan.
-    // Prebundle it before the first navigation to avoid a startup-time reload.
     optimizeDeps: { include: ["react/compiler-runtime"] },
     plugins: [
       {

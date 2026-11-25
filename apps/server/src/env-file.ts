@@ -5,20 +5,8 @@ import { openworkEnvStorePath } from "@openwork/paths";
 
 import { ensureDir, exists } from "./utils.js";
 
-// User-level environment variables, persisted so the desktop shell can inject
-// them into every spawned child (OpenCode and OpenWork server).
-// Motivation: Linux GUI launches don't inherit shell env, so users set
-// ANTHROPIC_API_KEY / GCLOUD_* / GCP_* in .bashrc and hit silent auth failures.
-// Scope: user/machine, not workspace. Not synced to the cloud.
-
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-// Keys reserved for internal wiring by the desktop shell and server. This UI
-// is for service credentials, not OpenWork/OpenCode runtime knobs; users who
-// need OPENCODE_* process settings should set them from the launching shell.
-// We refuse writes to these and strip them when reading for injection, so a
-// tampered file cannot shadow auth credentials, token paths, or process
-// identity.
 const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
 const PERSISTABLE_INTERNAL_KEYS = new Set([
   "OPENWORK_API_KEY",
@@ -43,8 +31,6 @@ export function isValidEnvKey(key: string): boolean {
   return ENV_KEY_PATTERN.test(key);
 }
 
-// Windows reads `opencode_config` as OPENCODE_CONFIG, so names compare
-// case-insensitively there: one variable per name, and no reserved bypass.
 function envName(key: string, platform: NodeJS.Platform): string {
   return platform === "win32" ? key.toUpperCase() : key;
 }
@@ -138,7 +124,6 @@ async function writeStore(path: string, variables: EnvRecord[]): Promise<void> {
   try {
     await chmod(tempPath, 0o600);
   } catch (error) {
-    // chmod is a no-op on Windows; values may still contain secrets.
     if (platform() !== "win32") {
       await rm(tempPath, { force: true }).catch(() => {});
       throw error;
@@ -153,7 +138,6 @@ async function writeStore(path: string, variables: EnvRecord[]): Promise<void> {
   try {
     await chmod(path, 0o600);
   } catch (error) {
-    // chmod is a no-op on Windows; values may still contain secrets.
     if (platform() !== "win32") throw error;
   }
 }
@@ -213,7 +197,6 @@ export class EnvService {
     return this.enqueueMutation(async () => {
       await this.ensureLoaded();
       const now = Date.now();
-      // On Windows, saving `Path` replaces a saved `PATH` instead of adding a twin.
       const next = new Map(this.variables.map((entry) => [envName(entry.key, this.platform), entry] as const));
       for (const entry of entries) {
         if (!isValidEnvKey(entry.key)) {
@@ -245,8 +228,6 @@ export class EnvService {
     });
   }
 
-  // Used by the Electron shell at spawn time. Keep desktop runtime injection
-  // in sync on path resolution and reserved-keys policy.
   static async readForInjection(overridePath?: string): Promise<Record<string, string>> {
     const path = overridePath?.trim() ? resolve(overridePath.trim()) : resolveDefaultEnvStorePath();
     const store = await readStore(path, { tolerateInvalid: true });

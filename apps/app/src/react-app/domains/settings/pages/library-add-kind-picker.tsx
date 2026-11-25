@@ -130,7 +130,6 @@ function ConnectorLogoCue({ cue }: { cue: LibraryConnectorCue }) {
   );
 }
 
-/** Add to your Library: pick one kind, then Continue to its page. */
 export function LibraryAddKindPicker(props: {
   open: boolean;
   kinds: LibraryAddKind[];

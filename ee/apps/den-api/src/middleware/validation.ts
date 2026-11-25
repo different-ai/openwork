@@ -9,7 +9,6 @@ function issuePath(issue: StandardSchemaV1.Issue): string {
     .join(".")
 }
 
-/** "requestedScopes: Too big: expected array to have <=512 items", so clients have something to show. */
 export function validationIssuesMessage(issues: readonly StandardSchemaV1.Issue[]): string {
   const first = issues[0]
   if (!first) return "The request was invalid."

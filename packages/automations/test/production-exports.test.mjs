@@ -24,3 +24,16 @@ test("Den's named schedule imports work without development conditions", () => {
   assert.equal(typeof previewAutomationSchedule, "function")
   assert.equal(typeof recoverableAutomationOccurrence, "function")
 })
+
+test("Your agent's brief pipeline loads from the production build, sharing proactive's module", async () => {
+  const brief = await import("@openwork/automations/proactive-brief")
+  assert.equal(typeof brief.decideBriefDelivery, "function")
+  assert.equal(typeof brief.agentCheckInstructions, "function")
+  assert.deepEqual(brief.parseAgentMessages("NO_REPLY"), { kind: "quiet" })
+})
+
+test("the agent's read-tool decisions load from the production build", async () => {
+  const tools = await import("@openwork/automations/agent-read-tools")
+  assert.equal(tools.decideAgentReadTool({ connectionUrl: "https://mcp.acme-tickets.test/mcp", tool: { name: "list_tickets" } }).allowed, true)
+  assert.equal(tools.decideAgentReadTool({ connectionUrl: "https://mcp.acme-tickets.test/mcp", tool: { name: "close_ticket" } }).allowed, false)
+})

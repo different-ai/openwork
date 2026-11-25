@@ -109,14 +109,26 @@ app.kubernetes.io/component: {{ .component }}
 {{ include "openwork-ee.fullname" . }}-inference
 {{- end -}}
 
+{{/* True when a scheduled maintenance caller (audit usage, GitHub reconcile) is enabled. */}}
+{{- define "openwork-ee.denMaintenanceEnabled" -}}
+{{- if or .Values.denApi.auditUsage.enabled .Values.denApi.githubReconcile.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{/* Operator-managed Secret holding DEN_MAINTENANCE_TOKEN, from auditUsage or githubReconcile. */}}
+{{- define "openwork-ee.denMaintenanceTokenSecretOverride" -}}
+{{- default .Values.denApi.githubReconcile.tokenSecret .Values.denApi.auditUsage.tokenSecret -}}
+{{- end -}}
+
 {{/* Secret and key holding DEN_MAINTENANCE_TOKEN for scheduled maintenance callers. */}}
 {{- define "openwork-ee.denMaintenanceTokenSecret" -}}
-{{- default (include "openwork-ee.secretName" .) .Values.denApi.auditUsage.tokenSecret -}}
+{{- default (include "openwork-ee.secretName" .) (include "openwork-ee.denMaintenanceTokenSecretOverride" .) -}}
 {{- end -}}
 
 {{- define "openwork-ee.denMaintenanceTokenKey" -}}
 {{- if .Values.denApi.auditUsage.tokenSecret -}}
 {{- .Values.denApi.auditUsage.tokenKey -}}
+{{- else if .Values.denApi.githubReconcile.tokenSecret -}}
+{{- .Values.denApi.githubReconcile.tokenKey -}}
 {{- else -}}
 {{- .Values.secret.keys.maintenanceToken -}}
 {{- end -}}
@@ -124,15 +136,26 @@ app.kubernetes.io/component: {{ .component }}
 
 {{- define "openwork-ee.denAuditUsage.validate" -}}
 {{- $auditUsage := .Values.denApi.auditUsage -}}
+{{- $githubReconcile := .Values.denApi.githubReconcile -}}
 {{- $token := .Values.secret.values.maintenanceToken | default "" -}}
+{{- $override := include "openwork-ee.denMaintenanceTokenSecretOverride" . -}}
 {{- if and $token (lt (len $token) 24) -}}
 {{- fail "secret.values.maintenanceToken must contain at least 24 characters" -}}
 {{- end -}}
-{{- if and $auditUsage.enabled (not $auditUsage.tokenSecret) .Values.secret.create (not .Values.secret.existingSecret) (not $token) -}}
+{{- if and $auditUsage.enabled (not $override) .Values.secret.create (not .Values.secret.existingSecret) (not $token) -}}
 {{- fail "denApi.auditUsage.enabled=true needs a maintenance token: set secret.values.maintenanceToken, or denApi.auditUsage.tokenSecret and tokenKey" -}}
+{{- end -}}
+{{- if and $githubReconcile.enabled (not $override) .Values.secret.create (not .Values.secret.existingSecret) (not $token) -}}
+{{- fail "denApi.githubReconcile.enabled=true needs a maintenance token: set secret.values.maintenanceToken, or denApi.githubReconcile.tokenSecret and tokenKey" -}}
 {{- end -}}
 {{- if and $auditUsage.enabled $auditUsage.tokenSecret (not $auditUsage.tokenKey) -}}
 {{- fail "denApi.auditUsage.tokenKey is required when denApi.auditUsage.tokenSecret is set" -}}
+{{- end -}}
+{{- if and $githubReconcile.enabled $githubReconcile.tokenSecret (not $githubReconcile.tokenKey) -}}
+{{- fail "denApi.githubReconcile.tokenKey is required when denApi.githubReconcile.tokenSecret is set" -}}
+{{- end -}}
+{{- if and $auditUsage.tokenSecret $githubReconcile.tokenSecret (or (ne $auditUsage.tokenSecret $githubReconcile.tokenSecret) (ne $auditUsage.tokenKey $githubReconcile.tokenKey)) -}}
+{{- fail "denApi.auditUsage and denApi.githubReconcile share one maintenance token: set tokenSecret and tokenKey the same in both, or only in one" -}}
 {{- end -}}
 {{- end -}}
 

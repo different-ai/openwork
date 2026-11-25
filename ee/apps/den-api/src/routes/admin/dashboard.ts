@@ -14,8 +14,6 @@ async function activeUsers(now: Date) {
   const today = Math.floor(now.getTime() / DAY) * DAY
   const from = new Date(today - 29 * DAY)
   const end = new Date(today + DAY)
-  // Count identities in SQL rather than transferring all user/day pairs. As in
-  // existing admin analytics, activity means a sign-in or a telemetry event.
   const activity = db.$with("dashboard_activity").as(db.select({
     userId: sql<string>`${AuthSessionTable.userId}`.as("user_id"), at: sql<Date>`${AuthSessionTable.createdAt}`.as("at"),
   }).from(AuthSessionTable).where(and(gte(AuthSessionTable.createdAt, from), lt(AuthSessionTable.createdAt, end)))

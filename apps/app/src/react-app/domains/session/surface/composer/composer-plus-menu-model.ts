@@ -21,10 +21,8 @@ export type PlusMenuConnector = {
   key: string;
   name: string;
   serviceUrl?: string;
-  /** Present when the member must sign in before the connector works. */
   signIn: { connectionId: string; reconnect: boolean } | null;
   connecting: boolean;
-  /** Short reason shown only when the connector cannot be used as is. */
   note: string | null;
 };
 
@@ -61,7 +59,6 @@ export type PlusMenuGroup = { id: PlusMenuGroupId; items: PlusMenuItem[] };
 
 export type PlusMenuModel = {
   groups: PlusMenuGroup[];
-  /** True when a query matched nothing; the browse list is shown instead. */
   noMatches: boolean;
 };
 
@@ -89,7 +86,6 @@ const TIER_ORDER: Record<ComposerSearchTier, number> = {
   typo: 1,
 };
 
-/** "customer-briefing" reads as "Customer briefing"; names with capitals are kept. */
 export function humanizeCapabilityName(name: string): string {
   const trimmed = name.trim();
   if (!trimmed || /[A-Z\s]/.test(trimmed)) return trimmed;

@@ -15,11 +15,6 @@ const PRUNE_BATCH = 500
 
 export type DesktopStartupWriteResult = "recorded" | "ignored"
 
-/**
- * Stores one launch report for the caller. Idempotent on (organization, attemptId):
- * a resend never changes the first row. Launches outside the accepted time window
- * are ignored rather than rejected so the app never retries them.
- */
 export async function recordDesktopStartup(input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
@@ -46,7 +41,6 @@ export async function recordDesktopStartup(input: {
     orgToolsMs: report.steps.org_tools,
     observedAt,
   }).onDuplicateKeyUpdate({ set: { id: sql`${DesktopStartupReportTable.id}` } })
-  // Opportunistic, bounded retention: never fail an ingest because pruning did.
   await db.delete(DesktopStartupReportTable)
     .where(and(eq(DesktopStartupReportTable.organizationId, input.organizationId), lt(DesktopStartupReportTable.observedAt, new Date(now - DESKTOP_STARTUP_RETENTION_MS))))
     .limit(PRUNE_BATCH)
@@ -54,7 +48,6 @@ export async function recordDesktopStartup(input: {
   return "recorded"
 }
 
-/** Desktop section for the organization's launches in the last 24 hours. */
 export async function desktopStartupDiagnostics(organizationId: DenTypeId<"organization">, now = Date.now()): Promise<DesktopDiagnostics> {
   const rows = await db.select({
     orgMembershipId: DesktopStartupReportTable.orgMembershipId,

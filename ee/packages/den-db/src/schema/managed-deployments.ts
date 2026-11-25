@@ -20,13 +20,12 @@ export const ManagedDeploymentTable = mysqlTable("managed_deployment", {
   ...timestamps,
 }, (table) => [index("managed_deployment_org").on(table.org_id)])
 
-/** One installer execution: initial install, retry, or approved update. */
+/** One installer execution: initial install, retry, approved update, or a configuration change at the installed version. */
 export const ManagedDeploymentRunTable = mysqlTable("managed_deployment_run", {
   id: varchar("id", { length: 36 }).notNull().primaryKey(),
   deployment_id: varchar("deployment_id", { length: 36 }).notNull(),
-  kind: mysqlEnum("kind", ["install", "update", "retry"]).notNull(),
+  kind: mysqlEnum("kind", ["install", "update", "retry", "configure"]).notNull(),
   version: varchar("version", { length: 80 }).notNull(),
-  // The exact release approved for this run, frozen when it was prepared.
   template_url: varchar("template_url", { length: 2048 }).notNull(),
   bundle_url: varchar("bundle_url", { length: 2048 }).notNull(),
   bundle_sha256: varchar("bundle_sha256", { length: 64 }).notNull(),
@@ -37,6 +36,7 @@ export const ManagedDeploymentRunTable = mysqlTable("managed_deployment_run", {
   last_sequence: int("last_sequence").notNull().default(0),
   last_seen_at: timestamp("last_seen_at", { fsp: 3 }),
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+  configuration_change: json("configuration_change").$type<Record<string, unknown>>(),
   ...timestamps,
 }, (table) => [index("managed_deployment_run_deployment").on(table.deployment_id)])
 
@@ -56,6 +56,16 @@ export const ManagedDeploymentHealthTable = mysqlTable("managed_deployment_healt
   version: varchar("version", { length: 80 }),
   checks: json("checks").$type<Record<string, unknown>[]>().notNull(),
   reported_at: timestamp("reported_at", { fsp: 3 }).notNull(),
-  // Signature time of the accepted report; later reports must be newer.
   signed_at: timestamp("signed_at", { fsp: 3 }).notNull(),
+})
+
+/**
+ * How an organization's people sign in to AWS (their access portal and role),
+ * so every AWS link in Deployments opens in the deployment's own account.
+ */
+export const ManagedDeploymentAwsSignInTable = mysqlTable("managed_deployment_aws_sign_in", {
+  org_id: denTypeIdColumn("org", "org_id").notNull().primaryKey(),
+  portal_url: varchar("portal_url", { length: 300 }).notNull(),
+  role_name: varchar("role_name", { length: 64 }).notNull(),
+  ...timestamps,
 })

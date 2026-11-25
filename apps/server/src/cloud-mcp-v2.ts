@@ -2,7 +2,6 @@ import type { CloudMcpNativeEngineResolver, CloudMcpRuntimeRegistrar } from "./c
 import type { EngineV2Preview } from "./engine-v2-preview.js";
 import artifacts from "./opencode-v2-artifacts.json" with { type: "json" };
 
-/** Bind each health request to the selected local engine. */
 export function createNativeCloudMcpResolver(preview: Pick<EngineV2Preview, "status" | "connection">): CloudMcpNativeEngineResolver {
   return (workspace) => {
     if (!preview.status().chatRouting) return undefined;
@@ -31,9 +30,6 @@ export function createRoutedCloudMcpRegistrar(preview: Pick<EngineV2Preview, "st
     if (!nativeEngineForWorkspace(workspace)) return v1(config, workspace, onlyNames, options);
     const names = onlyNames ?? ["openwork-cloud"];
     try {
-      // The folder's reconciler registers changed config and restarts only
-      // connections that are not healthy (including one a repair
-      // disconnected). A healthy connection is never restarted by a refresh.
       await preview.syncWorkspaceMcp(workspace.id, workspace.path, { reconnect: names });
       return { status: "ok", syncedNames: names, failures: [] };
     } catch (error) {

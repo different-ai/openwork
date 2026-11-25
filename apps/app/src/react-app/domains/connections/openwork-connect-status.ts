@@ -67,9 +67,6 @@ export function resolveOpenWorkConnectStatus(
 ): OpenWorkConnectStatus | null {
   if (!signedIn) return null;
 
-  // Den authentication is ready, but maintenance itself is workspace-scoped.
-  // When there is no active workspace, report the verified Cloud connection
-  // without claiming that connected-service delivery was checked.
   if (!maintenance || maintenance.status === "idle") {
     return {
       state: "ready",

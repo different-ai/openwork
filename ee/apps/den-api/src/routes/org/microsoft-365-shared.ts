@@ -2,8 +2,6 @@ import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { MicrosoftGraphMutationOutcomeUnknownError, MicrosoftGraphRequestError, MicrosoftGraphScopeError, type MicrosoftGraphClient } from "../../capability-sources/microsoft-graph.js"
 
-// Shared by the Microsoft 365 capability routes and their file transfer routes.
-
 export const graphItemIdSchema = z.string().trim().min(1).max(512)
   .refine((value) => value !== "." && value !== ".." && !/[\s/\\?#]/.test(value), "Use a Microsoft Graph item id, not a path or URL.")
 
@@ -41,20 +39,14 @@ export const upstreamErrorSchema = z.object({
 export type Microsoft365Identity = {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
-  /**
-   * A connection a host or signed link names: an id selects exactly that one
-   * and null the default. Omitted, capability calls use the signed header.
-   */
   connectionId?: string | null
 }
 
-/** A ready Graph client for the calling member, or the reply explaining why there is none. */
 export type Microsoft365Access = (input: Microsoft365Identity & { features: readonly string[]; label: string }) => Promise<
-  | { ok: true; graph: (options?: { signal?: AbortSignal; timeoutMs?: number }) => MicrosoftGraphClient }
+  | { ok: true; graph: (options?: { signal?: AbortSignal; timeoutMs?: number }) => MicrosoftGraphClient; graphBaseUrl?: string }
   | { ok: false; status: 401 | 403 | 409 | 502; body: { error: string; message: string } }
 >
 
-/** 409 for a drive the connection may not reach (an admin can enable the permission); otherwise Graph failed (502). */
 export function graphErrorStatus(error: unknown): 409 | 502 {
   return error instanceof MicrosoftGraphScopeError ? 409 : 502
 }

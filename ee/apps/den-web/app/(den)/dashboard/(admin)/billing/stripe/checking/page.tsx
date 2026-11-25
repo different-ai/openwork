@@ -33,8 +33,6 @@ type ReturnState =
 type ReturnParams = { kind: BillingCheckoutReturnKind | null; sessionId: string; returnTo: string | null };
 
 function readReturnParams(): ReturnParams {
-  // Read from window.location (after commit) instead of useSearchParams to
-  // avoid the Suspense requirement on this client-only page.
   const params = new URLSearchParams(window.location.search);
   return {
     kind: parseCheckoutReturnKind(params.get("return")),
@@ -50,12 +48,6 @@ function defaultDestination(kind: BillingCheckoutReturnKind | null, orgSlug: str
   return getBillingRoute(orgSlug);
 }
 
-/**
- * Stripe returns here after a checkout. The page syncs the exact checkout
- * session (no webhook-only waiting), waits until billing shows the purchase,
- * then returns the person to `returnTo`, or, for Desktop, says what is now
- * on with a way back to OpenWork Desktop.
- */
 export default function StripeCheckingPage() {
   const router = useRouter();
   const { activeOrg, runReauthableAction } = useOrgDashboard();
@@ -74,7 +66,6 @@ export default function StripeCheckingPage() {
 
   useEffect(() => {
     if (!params) return;
-    // OpenWork Web confirms its own payment on the Web page.
     if (kind === "web" && !destination) {
       router.replace(fallbackRoute);
       return;
@@ -92,7 +83,6 @@ export default function StripeCheckingPage() {
           await requestJson("/v1/billing/stripe/checkout/sync", { method: "POST", body: JSON.stringify({ sessionId }) }, 12000);
         });
       } catch {
-        // Webhooks may still confirm the purchase; keep checking billing.
       }
     }
 
@@ -114,7 +104,6 @@ export default function StripeCheckingPage() {
           return;
         }
       } catch {
-        // Ignore and keep checking until MAX_ATTEMPTS.
       }
       if (attempts >= MAX_ATTEMPTS) {
         setState({ kind: "failed" });
@@ -128,7 +117,6 @@ export default function StripeCheckingPage() {
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-    // The return parameters are read once; the destination follows them.
   }, [params, activeOrg?.slug]);
 
   const organizationName = activeOrg?.name ?? "your organization";

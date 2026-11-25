@@ -108,7 +108,7 @@ type CloudInstanceUpdateResponse =
   | { ok: true; status: "update_requested" }
   | { ok: false; error: "already_current" | "flush_failed" | "busy" | "activity_unknown" }
 type CloudWorkerStore = CloudRuntimeStore & {
-  getCloudWorker: (input: { orgId: OrgId; userId: UserId }) => Promise<CloudWorker | null>
+  getCloudWorker: (input: { orgId: OrgId; userId: UserId; primary?: boolean }) => Promise<CloudWorker | null>
   insertCloudWorkerWithTokens: (input: {
     workerId: WorkerId
     orgId: OrgId
@@ -156,9 +156,6 @@ const cloudInstanceResponseSchema = z.object({
 }).meta({ ref: "CloudInstanceResponse" })
 
 const cloudInstanceUpdateRequestSchema = z.object({
-  // Web shells published before deferrals only understand already_current and
-  // flush_failed and reject anything else as an invalid payload. New shells opt
-  // in here to receive busy / activity_unknown when the sandbox cannot be stopped.
   acceptsDeferral: z.boolean().optional(),
 })
 
@@ -245,12 +242,7 @@ function ensureKey(orgId: OrgId, userId: UserId) {
 
 const databaseCloudWorkerStore: CloudWorkerStore = {
   async getCloudWorker(input) {
-    // Cloud is per-user. Legacy shared rows already have created_by_user_id set
-    // to the first clicker; that member keeps the row while others get fresh
-    // instances. Follow-up: admin user deletion currently nulls
-    // created_by_user_id (src/user-deletion.ts), orphaning instances; cleanup is
-    // tracked separately.
-    const rows = await db
+    const rows = await (input.primary ? db.$primary : db)
       .select()
       .from(WorkerTable)
       .where(and(
@@ -340,9 +332,6 @@ const databaseCloudWorkerStore: CloudWorkerStore = {
   },
 }
 
-// Deployment-level availability only: multi-org, or a single-org install with
-// OpenWork Web turned on, plus a configured runtime provider. Organization
-// entitlement is the separate Web access check on each execution route.
 function cloudAvailable(payload: NonNullable<OrgRouteVariables["organizationContext"]>, options: CloudRouteOptions) {
   return cloudHostingAvailable({
     orgMode: options.orgMode ?? env.orgMode,
@@ -403,8 +392,8 @@ function gatewaySecretMatches(requestSecret: string | undefined, configuredSecre
   return timingSafeStringEqual(candidate, expected)
 }
 
-async function getCloudWorker(orgId: OrgId, userId: UserId, store: CloudWorkerStore) {
-  return store.getCloudWorker({ orgId, userId })
+async function getCloudWorker(orgId: OrgId, userId: UserId, store: CloudWorkerStore, options: { primary?: boolean } = {}) {
+  return store.getCloudWorker({ orgId, userId, ...options })
 }
 
 async function createCloudWorker(input: {
@@ -429,12 +418,8 @@ async function createCloudWorker(input: {
     activityToken,
   })
 
-  const canonical = await getCloudWorker(input.orgId, input.createdByUserId, input.store)
+  const canonical = await getCloudWorker(input.orgId, input.createdByUserId, input.store, { primary: true })
   if (canonical && canonical.id !== workerId) {
-    // No unique index exists for (org_id, created_by_user_id, destination,
-    // sandbox_backend), and a partial unique is not viable across legacy rows.
-    // Converge create races by keeping the oldest canonical row and deleting the
-    // losing worker plus the tokens that were minted for it before provisioning.
     await input.store.deleteCreateRaceLoser(workerId)
     return canonical
   }
@@ -482,7 +467,6 @@ async function ensureCloudWorker(input: {
   return promise
 }
 
-/** Share the browser's member-scoped creation and race handling with MCP. */
 export function ensureMemberCloudWorker(input: { orgId: OrgId; createdByUserId: UserId }) {
   return ensureCloudWorker({
     ...input,
@@ -622,9 +606,6 @@ async function requestCloudInstanceUpdate(input: {
     return { ok: true, status: "update_requested" }
   }
 
-  // The browser only knows about its own tab. Ask the instance itself, and the
-  // Automation ledger, before stopping a sandbox that may be mid-task for
-  // another tab, device, remote session, or scheduled run.
   const interruptibility = await resolveCloudWorkerInterruptibility({
     workerId: worker.id,
     trigger: "update",
@@ -642,11 +623,6 @@ async function requestCloudInstanceUpdate(input: {
   if (interruptibility.verdict !== "interruptible") {
     const deferral = interruptibility.verdict === "busy" ? "busy" : "activity_unknown"
     if (input.acceptsDeferral) return { ok: false, error: deferral }
-    // A shell built before deferrals treats busy / activity_unknown as an invalid
-    // payload and shows a failure. Inside its contract, already_current is the one
-    // answer that leaves the update pending quietly: the pill keeps offering it, the
-    // shell tries again on the next version or when the person clicks Update now,
-    // and the stale sandbox still recycles on its next idle stop.
     logger.info("cloud update deferred for a client without deferral support", {
       worker_id: worker.id,
       deferral,
@@ -824,10 +800,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         return c.json({ error: "unauthorized" }, 401)
       }
 
-      // Published desktops reach this route only from inside the gateway
-      // runtime, after OpenWorkWebAccessGate (v0.18.42+) has already resolved
-      // Web access for the organization; see openwork-web-runtime-access.ts.
-      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id, { userId: user.id })
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
       }
@@ -881,7 +854,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         return c.json({ error: "unauthorized" }, 401)
       }
 
-      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id, { userId: user.id })
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
       }
@@ -936,7 +909,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         return c.json({ error: "unauthorized" }, 401)
       }
 
-      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id, { userId: user.id })
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
       }
@@ -998,7 +971,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         return c.json({ error: "unauthorized" }, 401)
       }
 
-      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id, { userId: user.id })
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
       }

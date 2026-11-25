@@ -1,6 +1,8 @@
 # Slack messages from the OpenWork bot (`slack_send_as_bot`)
 
-Feature `slackSendAsBot` (cloud and self-hosted, off by default). Author: `benjaminshafii`.
+> **GA:** Available without a feature flag. The former rollout key is retired.
+
+Retired rollout key: `slackSendAsBot` · Deployments: cloud and self-hosted · Author: `benjaminshafii`.
 It needs the OpenWork app installed in Slack for the organization (the Slack assistant, see
 `ee/apps/den-api/src/slack-assistant/README.md`) and the member's Slack account linked to OpenWork.
 
@@ -56,13 +58,17 @@ tokens, such as Your agent's background turns, never list or run it. It is not a
 Workflows or Apps in this version: each message is one explicit call. Calls are audited as
 `slack_assistant.bot_message.send`.
 
-## Turning it on and off
+## Availability
 
-Turn `slackSendAsBot` on for an organization in `/admin` (Features, or the organization's row), then for everyone.
-Off, the capability disappears from search, the full tool view and the agent instructions, and executing it answers
-`unknown_capability`. Nothing is stored except the limit counters, so turning it off at any moment is safe; messages
-already sent stay in Slack.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
-Code: `ee/apps/den-api/src/mcp/slack-send-as-bot.ts` (capability, limits),
-`ee/apps/den-api/src/slack-assistant/bot-post.ts` (channel posts), source `slackSendAsBot` in
-`ee/apps/den-api/src/mcp/capability-registry.ts`. Tests: `ee/apps/den-api/test/slack-send-as-bot.test.ts`.
+Code: `ee/apps/den-api/src/mcp/slack-send-as-bot.ts` (capability and limits),
+`ee/apps/den-api/src/slack-assistant/bot-post.ts` (channel posts).
+Tests: `ee/apps/den-api/test/slack-send-as-bot.test.ts`.
+
+Platform administrators can still inspect aggregate operational outcomes at
+`GET /v1/admin/slack-send-as-bot/outcomes?range=7d` (or `30d`). This reports
+counts and failure/refusal reasons, never message text, independently of the
+retired rollout.

@@ -8,7 +8,6 @@ import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../op
 import type { OrgRouteVariables } from "./shared.js"
 
 const featureUsageInputSchema = z.object({
-  // Strings, not the key enum: a client built before a feature was removed keeps working.
   features: z.array(z.string().max(64)).max(100),
 }).strict()
 

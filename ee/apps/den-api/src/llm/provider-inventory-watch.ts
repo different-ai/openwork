@@ -1,4 +1,5 @@
 export const PROVIDER_INVENTORY_POLL_MS = 2_000
+export const PROVIDER_INVENTORY_MAX_AGE_MS = 60_000
 export const PROVIDER_INVENTORY_HEARTBEAT_MS = 15_000
 export const PROVIDER_INVENTORY_TIMEOUT_MS = 5_000
 
@@ -15,12 +16,11 @@ const clock: InventoryWatchClock = {
   },
 }
 
-/** Per-connection DB polling sees other replicas' writes. No process-local invalidation bus. */
 export async function providerInventoryEvents(input: {
   request: Request
   expiresAt: number
-  /** Revalidates session, membership and the rollout from the DB on EVERY read. */
   read: () => Promise<string>
+  marker?: () => Promise<string | null>
   clock?: InventoryWatchClock
   onClose?: () => void
 }): Promise<Response> {
@@ -45,42 +45,53 @@ export async function providerInventoryEvents(input: {
     stop()
     stream?.close()
   }
-  const checked = async () => {
+  const timedOut = new Error("Provider inventory check timed out.")
+  const checked = async <T>(check: () => Promise<T>) => {
     signal.throwIfAborted()
     let cancelTimeout: (() => void) | undefined
     let onAbort: (() => void) | undefined
     const deadline = new Promise<never>((_resolve, reject) => {
-      cancelTimeout = time.schedule(() => reject(new Error("Provider inventory check timed out.")), PROVIDER_INVENTORY_TIMEOUT_MS)
+      cancelTimeout = time.schedule(() => reject(timedOut), PROVIDER_INVENTORY_TIMEOUT_MS)
       onAbort = () => reject(signal.reason)
       signal.addEventListener("abort", onAbort, { once: true })
     })
     try {
-      return await Promise.race([input.read(), deadline])
+      return await Promise.race([check(), deadline])
     } finally {
       cancelTimeout?.()
       if (onAbort) signal.removeEventListener("abort", onAbort)
     }
   }
+  const readMarker = async () => input.marker
+    ? await checked(input.marker).catch((error: unknown) => { if (error === timedOut) return null; throw error })
+    : null
   input.request.signal.addEventListener("abort", close, { once: true })
   if (input.request.signal.aborted) close()
   const expires = () => !Number.isFinite(input.expiresAt) || input.expiresAt <= time.now()
   try {
     if (expires()) throw new Error("Provider inventory session expired.")
-    let revision = await checked()
+    let seenMarker = await readMarker()
+    let readAt = time.now()
+    let revision = await checked(input.read)
     signal.throwIfAborted()
     if (expires()) throw new Error("Provider inventory session expired.")
     let heartbeatAt = time.now()
     const encoder = new TextEncoder()
     const emit = (value: string) => {
       if (!stream || stopped) return
-      // A client that never drains its body must not grow a queue forever.
       if (stream.desiredSize !== null && stream.desiredSize <= 0) return close()
       stream.enqueue(encoder.encode(value))
     }
     const changed = () => emit(`event: inventory.changed\ndata: ${JSON.stringify({ revision })}\n\n`)
     const poll = async () => {
       try {
-        const next = await checked()
+        const marker = await readMarker()
+        const stale = marker === null || marker !== seenMarker || time.now() - readAt >= PROVIDER_INVENTORY_MAX_AGE_MS
+        if (stale) {
+          seenMarker = marker
+          readAt = time.now()
+        }
+        const next = stale ? await checked(input.read) : revision
         if (stopped) return
         if (expires()) return close()
         if (next !== revision) { revision = next; changed() }

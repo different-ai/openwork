@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=OpenWork Cloud
+Exec=/home/daytona/demo/openwork.sh %U
+Terminal=false
+MimeType=x-scheme-handler/openwork;

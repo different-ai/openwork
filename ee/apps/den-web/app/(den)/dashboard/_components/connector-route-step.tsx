@@ -35,7 +35,6 @@ function DetectedBadge({ loading }: { loading: boolean }) {
   return <DenBadge size="sm" tone="neutral">Detected</DenBadge>;
 }
 
-/** One radio row: the choice, whether detection found it, and its fields once picked. */
 function RouteOption({ group, value, checked, onSelect, title, description, detected, detecting, locked, testId, children }: {
   group: string;
   value: string;
@@ -45,7 +44,6 @@ function RouteOption({ group, value, checked, onSelect, title, description, dete
   description: ReactNode;
   detected: boolean;
   detecting: boolean;
-  /** Why the option cannot be used here; shown in place of the description. */
   locked?: string | null;
   testId: string;
   children?: ReactNode;
@@ -99,14 +97,8 @@ function newHeaderRow(): RequestHeaderDraft {
   return { id: `header-${nextHeaderId}`, name: "", value: "" };
 }
 
-/**
- * Before a custom connector's checks run, OpenWork shows what it detected
- * (how people sign in, and how OpenWork registers its OAuth app) and lets the
- * admin take another route: their own OAuth app, an API key, or extra headers.
- */
-export function ConnectorRouteStep({ name, url, back, initial = null, discovery, discovering, unreachable, secretRequired, liveChecks, revisedSetup = false, callbackUrl, oauthDraft, onOAuthDraftChange, onCancel, onContinue }: {
+export function ConnectorRouteStep({ name, url, back, initial = null, discovery, discovering, unreachable, secretRequired, liveChecks, callbackUrl, oauthDraft, onOAuthDraftChange, onCancel, onContinue }: {
   name: string;
-  /** The route picked before Back, so going back keeps the admin's choices. */
   initial?: ConnectorRoute | null;
   url: string;
   back: { href: string; label: string };
@@ -114,7 +106,6 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
   discovering: boolean;
   unreachable: boolean;
   secretRequired: boolean;
-  revisedSetup?: boolean;
   callbackUrl?: string;
   oauthDraft?: OAuthAppDraft;
   onOAuthDraftChange?: (draft: OAuthAppDraft) => void;
@@ -138,9 +129,8 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
   const [accessError, setAccessError] = useState<string | null>(null);
   const metadataInconsistent = discovery?.warnings.some((warning) => warning.code === "oauth_issuer_mismatch") === true;
 
-  // OAuth only rules automatic registration out when the server answered and offers neither method.
   const automaticLocked = detected.auth === "oauth" && detected.automaticRegistration === null
-    ? revisedSetup && metadataInconsistent ? "Automatic setup could not be verified. Review the sign-in addresses for your own app." : `${name} doesn't let apps register themselves.`
+    ? metadataInconsistent ? "Automatic setup could not be verified. Review the sign-in addresses for your own app." : `${name} doesn't let apps register themselves.`
     : null;
   const chosenAuth: ConnectorRouteAuth = auth ?? detected.auth ?? "oauth";
   const chosenClient: ConnectorRouteClient = automaticLocked ? "own" : client ?? detected.client ?? "automatic";
@@ -154,14 +144,14 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
       ? `${name} reads OpenWork's published app details.`
       : `OpenWork registers itself with ${name} when people first sign in.`;
 
-  const route: ConnectorRoute = { auth: chosenAuth, client: chosenClient, requestHeaders, ...(revisedSetup && chosenAuth === "oauth" ? { requestedScopes: selectedScopes } : {}) };
+  const route: ConnectorRoute = { auth: chosenAuth, client: chosenClient, requestHeaders, ...(chosenAuth === "oauth" ? { requestedScopes: selectedScopes } : {}) };
 
   function submit(oauthApp: OAuthAppInput | null) {
     if (hasProblems) {
       setShowProblems(true);
       return;
     }
-    if (revisedSetup && chosenAuth === "oauth") {
+    if (chosenAuth === "oauth") {
       if (access.requiresScopeChoice && selectedScopes.length === 0) { setAccessError("Choose the permissions to request before connecting."); return; }
       if (access.conflictingScopes.length > 0 && !scopeReviewed) { setAccessError("Review the conflicting permission information before connecting."); return; }
     }
@@ -188,7 +178,7 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
           checks={liveChecks.checks}
           discovering={discovering}
           failed={liveChecks.failed}
-          manualCredentials={revisedSetup && discovery?.authentication.kind === "manual_bearer"}
+          manualCredentials={discovery?.authentication.kind === "manual_bearer"}
           onRetry={() => {
             if (hasProblems) { setShowProblems(true); return; }
             liveChecks.onRetry(requestHeaders);
@@ -203,16 +193,16 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
       ) : null}
 
       <section className="flex flex-col gap-2.5">
-        <SectionTitle title={revisedSetup ? "Authentication" : "How people sign in"} />
-        <OptionPanel label={revisedSetup ? "Authentication" : "How people sign in"}>
+        <SectionTitle title="Authentication" />
+        <OptionPanel label="Authentication">
           <RouteOption
             group="connector-route-auth"
             value="oauth"
             testId="connector-route-auth-oauth"
             checked={chosenAuth === "oauth"}
             onSelect={() => setAuth("oauth")}
-            title={revisedSetup ? "Sign in" : "Sign in with OAuth"}
-            description={revisedSetup ? `Connect through ${name}’s sign-in and consent pages.` : `Each person signs in to ${name} before they use it.`}
+            title="Sign in"
+            description={`Connect through ${name}’s sign-in and consent pages.`}
             detected={detected.auth === "oauth"}
             detecting={discovering}
           />
@@ -223,7 +213,7 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
             checked={chosenAuth === "api_key"}
             onSelect={() => setAuth("api_key")}
             title="API key"
-            description={revisedSetup ? "Uses an API key. Choose who supplies it next." : `${name} takes a key instead of a sign-in.`}
+            description="Uses an API key. Choose who supplies it next."
             detected={detected.auth === "api_key"}
             detecting={false}
           />
@@ -233,8 +223,8 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
             testId="connector-route-auth-none"
             checked={chosenAuth === "none"}
             onSelect={() => setAuth("none")}
-            title={revisedSetup ? "No browser sign-in" : "No sign-in"}
-            description={revisedSetup ? "Public access, or credentials sent in request headers." : "Open access, or a key sent as a header."}
+            title="No browser sign-in"
+            description="Public access, or credentials sent in request headers."
             detected={detected.auth === "none"}
             detecting={false}
           />
@@ -251,8 +241,8 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
               testId="connector-route-client-automatic"
               checked={chosenClient === "automatic"}
               onSelect={() => setClient("automatic")}
-              title={revisedSetup ? "Use OpenWork" : "Register OpenWork automatically"}
-              description={revisedSetup ? "No OAuth app credentials to enter." : automaticDescription}
+              title="Use OpenWork"
+              description="No OAuth app credentials to enter."
               detected={detected.client === "automatic"}
               detecting={discovering}
               locked={automaticLocked}
@@ -265,15 +255,15 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
               onSelect={() => setClient("own")}
               title="Use your own OAuth app"
               description={`The client ID from an app you registered with ${name}.`}
-              detected={detected.client === "own" && (!revisedSetup || !metadataInconsistent)}
+              detected={detected.client === "own" && !metadataInconsistent}
               detecting={false}
             >
               <OAuthAppFields
                 url={url}
-                revisedSetup={revisedSetup}
+                setupValidation
                 callbackUrl={callbackUrl}
-                draft={revisedSetup ? oauthDraft ?? localOAuthDraft : undefined}
-                onDraftChange={revisedSetup ? onOAuthDraftChange ?? setLocalOAuthDraft : undefined}
+                draft={oauthDraft ?? localOAuthDraft}
+                onDraftChange={onOAuthDraftChange ?? setLocalOAuthDraft}
                 discovery={discovery}
                 secretRequired={secretRequired}
                 saving={false}
@@ -298,7 +288,7 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
         </section>
       ) : null}
 
-      {revisedSetup && chosenAuth === "oauth" ? (
+      {chosenAuth === "oauth" ? (
         <section className="flex flex-col gap-2.5" data-testid="connector-permissions">
           <details className="group/permissions" open={access.requiresScopeChoice || access.conflictingScopes.length > 0}>
             <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] font-medium text-gray-700 [&::-webkit-details-marker]:hidden" data-testid="connector-permissions-summary"><ChevronRight className="h-3.5 w-3.5 transition-transform group-open/permissions:rotate-90 motion-reduce:transition-none" aria-hidden />Permissions requested{selectedScopes.length ? ` (${selectedScopes.length})` : ""}</summary>
@@ -387,9 +377,9 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
       <StepFooter note={note}>
         <DenButton variant="secondary" onClick={onCancel}>Cancel</DenButton>
         {usesOwnApp ? (
-          <DenButton type="submit" form={OAUTH_APP_FORM_ID} disabled={discovering} data-testid="connector-route-continue">{revisedSetup ? chosenAuth === "oauth" ? "Connect" : chosenAuth === "none" ? "Check connection" : "Continue" : "Continue"}</DenButton>
+          <DenButton type="submit" form={OAUTH_APP_FORM_ID} disabled={discovering} data-testid="connector-route-continue">{chosenAuth === "oauth" ? "Connect" : chosenAuth === "none" ? "Check connection" : "Continue"}</DenButton>
         ) : (
-          <DenButton disabled={discovering} onClick={() => submit(null)} data-testid="connector-route-continue">{revisedSetup ? chosenAuth === "oauth" ? "Connect" : chosenAuth === "none" ? "Check connection" : "Continue" : "Continue"}</DenButton>
+          <DenButton disabled={discovering} onClick={() => submit(null)} data-testid="connector-route-continue">{chosenAuth === "oauth" ? "Connect" : chosenAuth === "none" ? "Check connection" : "Continue"}</DenButton>
         )}
       </StepFooter>
     </ItemPage>

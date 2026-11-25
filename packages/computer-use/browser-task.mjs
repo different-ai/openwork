@@ -1,6 +1,8 @@
 // The browser host owns task identity, observations and dispatch.
 // No model-specific API, arbitrary script execution, cookies or raw CDP surface.
 import { createHash, randomUUID } from "node:crypto";
+import { deferBrowserStop } from "./browser-navigation.mjs";
+import { unlockPlace, validUnlockValue, validValueAsk, validValueCommand, validValueUnlock } from "./value-command.mjs";
 
 const WORLD = 1001;
 const TRUST = "untrusted-site-content";
@@ -19,6 +21,9 @@ export function browserTaskUrl(value) {
 }
 function safeUrl(value) {
   try { const url = new URL(value); return `${url.origin}${url.pathname}`; } catch { return ""; }
+}
+function originOf(value) {
+  try { return new URL(value).origin; } catch { return null; }
 }
 
 // After click, key or scroll: wait for navigation, network idle and a DOM that
@@ -40,10 +45,16 @@ const BLOCKED_CHORDS = [
 ].map((parts) => ({ key: parts.at(-1), modifiers: parts.slice(0, -1) }));
 // Chromium on macOS runs these through the app menu, not page key events.
 const EDIT_COMMANDS = { a: "selectAll", z: "undo", "shift+z": "redo" };
-const ACTION_TYPES = ["click", "fill", "select", "set_checked", "key", "scroll", "reveal", "attach"];
+const ACTION_TYPES = ["click", "fill", "fill_secret", "fill_from", "select", "set_checked", "key", "scroll", "reveal", "attach"];
+/** The whole of a fill_secret action: a handle, never text. */
+const SECRET_ACTION_KEYS = ["type", "ref", "secretRef"];
+/** The whole of a fill_from action: the command that prints the value or the name the person pastes it under, never the value. */
+const VALUE_ACTION_KEYS = ["type", "ref", "command", "ask", "unlock"];
+/** As many fields as one approval card lists. */
+const MAX_VALUE_FILLS = 6;
 /** As many files as the approval card lists; the broker refuses more. */
 const MAX_FILES = 20;
-const PREPARE_CODES = ["stale_observation", "stale_element", "sign_in_required", "unverifiable_focus", "element_disabled", "element_outside_viewport",
+const PREPARE_CODES = ["stale_observation", "stale_element", "use_attach", "unverifiable_focus", "element_disabled", "element_outside_viewport",
   "element_obscured", "not_editable", "not_selectable", "option_unavailable", "not_checkable", "outside_viewport"];
 
 /** @param {{ key?: unknown, modifiers?: unknown }} action */
@@ -80,6 +91,9 @@ function observePage(id, options = {}) {
   const interactive = mode === "interactive";
   const limit = Number.isInteger(options.limit) && options.limit > 0 ? Math.min(options.limit, 500) : interactive ? 200 : 500;
   const includeText = options.includeText ?? !interactive;
+  // The host redacts every text, and only then cuts and trims it: this many characters more are read on each
+  // side, so a saved secret the page echoes is never cut in two. No secret enters the page for that, only this number.
+  const reach = Number.isInteger(options.reach) && options.reach > 0 ? options.reach : 0;
   const registry = globalThis.__openworkBrowserRefs ??= { byElement: new WeakMap(), byRef: new Map(), identities: new WeakMap(), next: 0,
     observations: new Map(), latest: null, last: null, describe: null, identify: null };
   const elements = [];
@@ -99,8 +113,15 @@ function observePage(id, options = {}) {
   // only whether a field is filled, unless the agent entered that exact value itself. In-page
   // staleness and verification checks read the real value (reveal).
   const entered = globalThis.__openworkAgentEntered ??= new WeakMap();
-  const isSensitive = element => element.matches('input[type="password"]') ||
-    (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/).some(token => token === "one-time-code" || token.startsWith("cc-"));
+  const autocomplete = element => (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/);
+  const isPayment = element => autocomplete(element).some(token => token.startsWith("cc-"));
+  const isCredential = element => element.matches('input[type="password"]')
+    || autocomplete(element).some(token => ["current-password", "new-password", "one-time-code"].includes(token));
+  // Passwords, one-time codes and card fields are never read back, even after the agent fills them.
+  const isSensitive = element => isCredential(element) || isPayment(element);
+  // A saved secret goes only into a single-line text field or a text area, named here by its real type.
+  const secretField = element => element instanceof HTMLTextAreaElement ? "textarea"
+    : element instanceof HTMLInputElement && ["password", "text", "email", "tel", "url", "search"].includes(element.type) ? element.type : null;
   const isTextValue = element => element instanceof HTMLTextAreaElement ||
     element instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "hidden", "file", "range", "color"].includes(element.type) ||
     element.isContentEditable || ["textbox", "combobox"].includes(element.getAttribute("role"));
@@ -131,13 +152,18 @@ function observePage(id, options = {}) {
     // Labels, referenced nodes, body text and titles can all echo a field's
     // withheld content. Redact before truncation, throughout the observation.
     const safe = privatePattern ? (value || "").replace(privatePattern, "[withheld]") : value || "";
-    return safe.trim().slice(0, limit);
+    // Not trimmed here: a saved secret may begin or end with a space, and the host looks for it first.
+    const lead = safe.length - safe.trimStart().length;
+    return safe.slice(Math.max(0, lead - reach), lead + limit + reach);
   };
   // browser_extract reads page text, which includes editable content and can echo field values.
   if (mode === "extract") return { title: text(document.title, 300), text: text(document.body?.innerText, 500_000) };
   const describe = (element, reveal = false) => {
-    const referenced = (attribute) => (element.getAttribute(attribute) || "").split(/\s+/)
-      .map(id => document.getElementById(id)?.textContent || "").join(" ").trim();
+    // Not trimmed, like every text here: the host looks for a saved secret first. Blank counts as absent.
+    const referenced = (attribute) => {
+      const joined = (element.getAttribute(attribute) || "").split(/\s+/).map(id => document.getElementById(id)?.textContent || "").join(" ");
+      return joined.trim() ? joined : "";
+    };
     const labelText = (label) => {
       const copy = label.cloneNode(true);
       if (copy instanceof HTMLElement) for (const control of copy.querySelectorAll("input,textarea,select,button")) control.remove();
@@ -172,8 +198,8 @@ function observePage(id, options = {}) {
       readOnly: element.readOnly === true || element.getAttribute("aria-readonly") === "true",
     };
     if (input) state.type = element.type;
-    if (!sensitive && field) {
-      if (reveal || (!select && entered.get(element) === value)) { state.value = value.slice(0, 8000); state.valueTruncated = value.length > 8000; }
+    if (field) {
+      if (reveal || (!sensitive && !select && entered.get(element) === value)) { state.value = value.slice(0, 8000); state.valueTruncated = value.length > 8000; }
       else { state.filled = value.length > 0; state.valueWithheld = true; }
     }
     if (input && ["checkbox", "radio"].includes(element.type)) state.checked = element.indeterminate ? "mixed" : element.checked;
@@ -207,7 +233,7 @@ function observePage(id, options = {}) {
       ? [element.getAttribute("aria-label"), element.getAttribute("aria-labelledby")] : control.name]);
   const compact = (ref, control, visible) => {
     /** @type {Record<string, unknown>} */
-    const item = { ref, role: control.role, name: control.name.slice(0, 120) };
+    const item = { ref, role: control.role, name: control.name };
     if (control.type && !["text", "submit", "button"].includes(control.type)) item.type = control.type;
     if (control.value !== undefined && control.value !== "" && !control.options) item.value = control.value.length > 300 ? `${control.value.slice(0, 300)}…` : control.value;
     if (control.valueWithheld) { item.filled = control.filled === true; item.valueWithheld = true; }
@@ -224,7 +250,7 @@ function observePage(id, options = {}) {
       if (control.multiple) item.multiple = true;
       if (control.optionsTruncated || control.options.length > 50) item.optionsTruncated = true;
     }
-    if (control.description) item.description = control.description.slice(0, 200);
+    if (control.description) item.description = control.description;
     if (!visible) item.offscreen = true;
     return item;
   };
@@ -249,7 +275,7 @@ function observePage(id, options = {}) {
     const control = describe(element);
     if (query) {
       const match = (actual, expected) => !expected || (query.exact === false ? actual.toLowerCase().includes(expected.toLowerCase()) : actual.toLowerCase() === expected.toLowerCase());
-      if (!match(control.role, query.role) || !match(control.name, query.name) || !match(control.name, query.text)) continue;
+      if (!match(control.role, query.role) || !match(control.name.trim(), query.name) || !match(control.name.trim(), query.text)) continue;
     }
     let ref = registry.byElement.get(element);
     if (!ref) { ref = `e${++registry.next}`; registry.byElement.set(element, ref); }
@@ -275,6 +301,24 @@ function observePage(id, options = {}) {
   registry.describe = describe;
   registry.optionRef = optionRef;
   registry.identify = identify;
+  registry.isCredential = isCredential;
+  registry.secretField = secretField;
+  // The field a private value goes into, for a saved secret (fill_secret) or for what a command printed (fill_from).
+  // The second is typed as it is, not as a placeholder of letters, so a number field, where sites often ask for a
+  // one-time code, takes it too.
+  const privateField = (element, type) => type !== "fill_secret" && type !== "fill_from" ? null
+    : secretField(element) ?? (type === "fill_from" && element instanceof HTMLInputElement && element.type === "number" ? "number" : null);
+  registry.privateField = privateField;
+  // The type of the field a private value is about to be typed into, only while that field has the keyboard and is
+  // still the control that was observed.
+  registry.secretTarget = (element, type = "fill_secret") => {
+    if (!element?.isConnected || document.activeElement !== element) throw new Error("stale_element");
+    const control = describe(element);
+    if (registry.identities.get(element) !== identify(element, control)) throw new Error("stale_element");
+    const field = privateField(element, type);
+    if (!field || control.readOnly) throw new Error("not_editable");
+    return field;
+  };
   registry.observations.set(id, { createdAt: performance.now(), width: innerWidth, height: innerHeight, x: scrollX, y: scrollY });
   registry.latest = id;
   for (const old of registry.observations.keys()) { if (registry.observations.size <= 20) break; registry.observations.delete(old); }
@@ -292,24 +336,26 @@ function observePage(id, options = {}) {
     registry.last = { mode, items: current };
   }
   const focused = registry.byElement.get(document.activeElement);
-  const signIn = [...candidates].some((element) => {
-    if (!(element instanceof HTMLElement) || !isSensitive(element)) return false;
-    const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0;
-  });
-  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPasswordField: signIn };
+  // A card field shows its digits in an image. Page script can copy a typed or autofilled
+  // password or code into visible text, then clear, hide or remove the field: no image while
+  // the document has such a field anywhere, or after the agent filled one in it.
+  const onScreen = (element) => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; };
+  const payment = [...candidates].some((element) => element instanceof HTMLElement && isPayment(element) && onScreen(element));
+  const credential = globalThis.__openworkCredentialEntered === true
+    || [...candidates].some((element) => element instanceof HTMLElement && isCredential(element));
+  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPaymentField: payment, hasCredentialField: credential };
   if (!interactive) {
     return { truncated, scrollRegions, title: text(document.title, 300), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}), elements,
       ...page, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
-      webmcp: "modelContext" in document ? "available" : "check_site_tools",
       limitations: ["DOM references cover the top document and open controls; use a fresh image for frames or canvas."] };
   }
   const shown = diff ? items.filter((item) => diff.added.includes(item.ref) || diff.changed.includes(item.ref)) : items;
   const status = [...document.querySelectorAll('[role="alert"],[role="status"],[aria-live]:not([aria-live="off"]),output')]
     .filter((element) => element instanceof HTMLElement && element.getClientRects().length > 0)
-    .map((element) => text(element instanceof HTMLElement ? element.innerText : "", 300)).filter(Boolean).slice(0, 5);
+    .map((element) => text(element instanceof HTMLElement ? element.innerText : "", 300)).filter((line) => line.trim()).slice(0, 5);
   return { mode, title: text(document.title, 300), elements: shown, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
     ...(status.length ? { status } : {}), ...(truncated ? { truncated } : {}), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}),
-    ...page, ...("modelContext" in document ? { webmcp: "available" } : {}) };
+    ...page };
 }
 // Records when the document last changed structure. Text-only changes (live
 // counters, clocks) are ignored; elements appearing, disappearing, showing,
@@ -323,8 +369,59 @@ function readSettle(arm) {
     }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "disabled", "aria-busy", "aria-hidden", "open"] });
   }
   if (arm) state.at = performance.now();
-  return { quietMs: performance.now() - state.at, readyState: document.readyState, busy: !!document.querySelector('[aria-busy="true"]') };
+  return { quietMs: performance.now() - state.at, readyState: document.readyState, busy: !!document.querySelector('[aria-busy="true"]'), textChars: (document.body?.innerText || "").trim().length };
 }
+// What stands between the agent and the page's content: a cookie or consent wall, or a human-verification check.
+// Only kinds and a character count leave the page, never its text.
+function readBlockers() {
+  const shown = (element) => { const rect = element.getBoundingClientRect(); return rect.width > 40 && rect.height > 20 && getComputedStyle(element).visibility !== "hidden"; };
+  const any = (selectors) => selectors.some((selector) => [...document.querySelectorAll(selector)].some(shown));
+  const consent = /^consent\./.test(location.hostname) || any(["#onetrust-banner-sdk", "#onetrust-consent-sdk", "#CybotCookiebotDialog", "#didomi-host",
+    ".fc-consent-root", "[id^='sp_message_container']", "#qc-cmp2-container", "#truste-consent-track", "#usercentrics-root", "#cmpbox",
+    "form[action*='consent.']", "ytd-consent-bump-v2-lightbox", "[aria-modal='true'][aria-label*='cookie' i]", "[role='dialog'][aria-label*='cookie' i]", "[role='dialog'][aria-label*='consent' i]"]);
+  const challenge = /^(just a moment|attention required|are you a robot|prove your humanity|verify you are human|security check|access denied)/i.test(document.title.trim())
+    || any(["iframe[src*='challenges.cloudflare.com']", "iframe[src*='recaptcha']", "iframe[src*='hcaptcha.com']", "#challenge-form", "#px-captcha", "#captcha-container"]);
+  return { blocker: challenge ? "bot_check" : consent ? "consent" : null, textChars: (document.body?.innerText || "").trim().length };
+}
+const BLOCKER_NEXT = {
+  consent: "A cookie or consent dialog covers this page. Observe it (mode interactive) and choose the option the person would want, the most private one such as Reject all unless they said otherwise, then continue.",
+  bot_check: "The site is showing a human-verification check the agent must not solve. Tell the person and let them complete it in the browser view, then observe again.",
+};
+// A saved secret the agent cannot enter by its handle is the person's to enter, never a reason to ask for it in chat.
+const SECRET_HANDOFF = "Call browser_handoff so the person enters it directly in the browser; never ask for it in chat.";
+const SECRET_REFUSALS = {
+  secrets_unavailable: `Saved secrets cannot be entered in this browser right now, so nothing was typed. ${SECRET_HANDOFF}`,
+  unknown_secret: `That secretRef is not one of this conversation's saved secrets, so nothing was typed. Use one the observation lists in availableSecrets. Without one: ${SECRET_HANDOFF}`,
+  secret_not_allowed_here: `That secret is not allowed on this website, so nothing was typed. ${SECRET_HANDOFF}`,
+  sign_in_required: "Take over and sign in directly in the browser, then resume.",
+  credential_declined: "The person did not confirm entering this secret on this site. Nothing was typed.",
+  not_editable: "A saved secret goes only into an editable text, password, email, phone, address or search field. Nothing was typed.",
+  stale_element: "The field changed before the secret could be entered, so nothing was typed. Observe again before choosing an action.",
+  value_mismatch: `The field did not keep what was typed for the secret; it may limit length or characters. ${SECRET_HANDOFF}`,
+};
+// A value for one fill (fill_from): what a command prints, or what the person pastes into the approval card.
+// What a refusal says never repeats anything the command printed or the person pasted.
+const VALUE_ASK = "use fill_from with ask instead of command, naming the value (such as \"GitHub password\"), so the person pastes it into OpenWork's own card. Never ask them to type it in the chat";
+const VALUE_REFUSALS = {
+  values_unavailable: `Filling a field with a private value is not available in this browser, so nothing was run or typed. ${SECRET_HANDOFF}`,
+  credential_declined: "The person did not approve this for this site. Nothing was run or typed.",
+  site_not_secure: `A private value goes only to an https website, so nothing was run or typed. ${SECRET_HANDOFF}`,
+  not_editable: "A private value goes only into an editable text, password, email, phone, address, search or number field. Nothing was run or typed.",
+  stale_element: "The field changed before the value could be entered, so nothing was typed. Observe again before choosing an action.",
+  command_not_found: `That program is not installed on this computer or could not be started, so nothing was typed. Tell the person, and either ask which command prints the value (the command, never the value itself), or ${VALUE_ASK}.`,
+  command_timeout: `The command did not finish in time, so nothing was typed. It may be waiting for the person to unlock their password manager. Tell them, then try once more, or: ${SECRET_HANDOFF}`,
+  command_empty: "The command ran and printed nothing, so nothing was typed. Use a command that prints the value alone.",
+  command_output_unusable: "The command printed something that is not one short text value, so nothing was typed. Use a command that prints the value alone.",
+  value_unusable: "What the command printed cannot be typed into this field: it is shorter than 4 characters, longer than 4096, or has a line break and the field takes one line. Nothing was typed. Use a command that prints the value alone.",
+  unlock_unusable: "The key the person pasted for this command cannot be used: it is shorter than 4 characters, longer than 4096, has a line break, or is no longer kept. Nothing was run or typed. Observe again and use the same fill_from once more.",
+  pasted_unusable: "What the person pasted cannot be typed into this field: it is shorter than 4 characters, longer than 4096, has a line break and the field takes one line, or is no longer kept. Nothing was typed. Observe again and use fill_from with ask once more.",
+  value_mismatch: `The field did not keep what was typed; it may limit length or characters, or split a code across several boxes. ${SECRET_HANDOFF}`,
+};
+/** @param {{ exitCode?: unknown, detail?: unknown }} result */
+const commandFailed = ({ exitCode, detail }) => `The command failed${Number.isInteger(exitCode) ? ` (exit code ${exitCode})` : ""}${typeof detail === "string" && detail ? `: ${detail}${/[.!?]$/.test(detail) ? "" : "."}` : "."} Nothing was typed. Fix the command, or tell the person what it said, or: ${SECRET_HANDOFF}`;
+const SECRET_NOT_SENT = "A saved secret did not reach the site: secrets lists it as not_sent. Do not enter it again or ask for it in chat. Unless the person has already finished this step, call browser_handoff so they do it directly in the browser.";
+// Failures that are the page being busy, not something for a person to fix: the tab stays usable.
+const TRANSIENT_CODES = new Set(["page_changed", "busy", "navigation_timeout"]);
 function prepareAction(id, action) {
   const registry = globalThis.__openworkBrowserRefs;
   const observation = registry?.observations.get(id);
@@ -337,12 +434,11 @@ function prepareAction(id, action) {
   const control = element ? registry.describe(element) : null;
   // The control must still be what the model saw: same kind and name.
   if (element && registry.identities.get(element) !== registry.identify(element, control)) throw new Error("stale_element");
-  if (element?.matches('input[type="password"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
   if (control?.disabled) throw new Error("element_disabled");
   if (action.type === "key") {
     if (element && document.activeElement !== element) element.focus();
     if (element && document.activeElement !== element) throw new Error("unverifiable_focus");
-    if (document.activeElement?.matches('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
+    if (document.activeElement?.matches('input[type="file"]')) throw new Error("use_attach");
     // Only a directly focused, observed control can receive keys. Frames and
     // generic containers can conceal a different focused descendant.
     if (!document.activeElement?.matches('input,textarea,select,button,a,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"],[role="listbox"],[role="option"],[role="checkbox"],[role="radio"],[role="switch"]')
@@ -370,9 +466,13 @@ function prepareAction(id, action) {
   }
   if (action.type === "reveal" && !element) throw new Error("stale_element");
   if (action.type === "fill") {
-    const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "date", "time", "datetime-local", "month", "week"].includes(element.type));
+    const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "password", "date", "time", "datetime-local", "month", "week"].includes(element.type));
     if (!editable || control.readOnly) throw new Error("not_editable");
   }
+  // The field's type as it is at this moment: the person is shown it before a secret is typed there.
+  const hidden = action.type === "fill_secret" || action.type === "fill_from";
+  const field = hidden && element ? registry.privateField(element, action.type) : null;
+  if (hidden && (!field || control.readOnly)) throw new Error("not_editable");
   if (action.type === "select") {
     if (!(element instanceof HTMLSelectElement) || (!element.multiple && action.values.length > 1)) throw new Error("not_selectable");
     for (const value of action.values) {
@@ -390,9 +490,19 @@ function prepareAction(id, action) {
   if ((action.type === "click" || action.type === "scroll") && (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight)) throw new Error("outside_viewport");
   if (!element && action.type === "click") {
     const hit = document.elementFromPoint(x, y);
-    if (hit?.matches('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
+    if (hit?.matches('input[type="file"]')) throw new Error("use_attach");
   }
-  return { x, y, unchanged: action.type === "set_checked" && control.checked === action.checked };
+  return { x, y, unchanged: action.type === "set_checked" && control.checked === action.checked, ...(field ? { field } : {}) };
+}
+/** Whether this step would click, fill or press a key in a password or one-time-code field. */
+function credentialTarget(id, action) {
+  const registry = globalThis.__openworkBrowserRefs;
+  if (!registry?.observations.get(id)) return false;
+  const point = action.type === "click" && Number.isFinite(action.x) && Number.isFinite(action.y);
+  const element = action.ref ? registry.byRef.get(action.ref)?.deref() : point ? document.elementFromPoint(action.x, action.y) : document.activeElement;
+  // Clicking a label, or anything inside one, focuses its field.
+  const control = element?.closest?.("label")?.control ?? element;
+  return control?.isConnected === true && registry.isCredential(control);
 }
 function applyFormAction(action) {
   const registry = globalThis.__openworkBrowserRefs;
@@ -400,7 +510,12 @@ function applyFormAction(action) {
   if (!element?.isConnected) throw new Error("stale_element");
   if (registry.identities.get(element) !== registry.identify(element, registry.describe(element))) throw new Error("stale_element");
   if (registry.snapshots.get(element) !== JSON.stringify(registry.describe(element, true))) throw new Error("stale_observation");
-  // The agent may read back exactly what it entered.
+  const hidden = action.type === "fill_secret" || action.type === "fill_from";
+  const field = hidden ? registry.privateField(element, action.type) : null;
+  if (hidden && (!field || registry.describe(element).readOnly)) throw new Error("not_editable");
+  // Once a password, code, saved secret or value from a command was filled in this document, it takes no more images.
+  if (field || action.type === "fill" && registry.isCredential(element)) globalThis.__openworkCredentialEntered = true;
+  // The agent may read back exactly what it entered. What stands in for a saved secret is not recorded here.
   if (action.type === "fill" || action.type === "select") globalThis.__openworkAgentEntered?.set(element, action.type === "select"
     ? JSON.stringify([...element.options].filter(option => action.values.includes(registry.optionRefs.get(option)?.ref)).map(option => option.value))
     : element instanceof HTMLTextAreaElement ? action.text.replace(/\r\n?/g, "\n") : action.text);
@@ -424,7 +539,30 @@ function applyFormAction(action) {
     else element.select();
     if (document.activeElement !== element || !element.isConnected) throw new Error("stale_element");
   }
+  if (field) {
+    element.select();
+    // Taking focus runs the page's own handlers: the field is named again as it is now.
+    return { inserted: false, field: registry.secretTarget(element, action.type) };
+  }
   return { inserted: false };
+}
+/** The type of the field a fill_from names, read before the person is asked. Nothing on the page is touched. */
+function valueField(id, action) {
+  const registry = globalThis.__openworkBrowserRefs;
+  if (!registry?.observations.get(id)) throw new Error("stale_observation");
+  const element = registry.byRef.get(action.ref)?.deref();
+  if (!element?.isConnected) throw new Error("stale_element");
+  const control = registry.describe(element);
+  if (registry.identities.get(element) !== registry.identify(element, control)) throw new Error("stale_element");
+  const field = registry.privateField(element, "fill_from");
+  if (!field || control.readOnly) throw new Error("not_editable");
+  return { field };
+}
+/** The last look at a private value's field before it is typed into: see `secretTarget` in the observation. */
+function secretTarget(action) {
+  const registry = globalThis.__openworkBrowserRefs;
+  if (!registry?.secretTarget) throw new Error("stale_element");
+  return { field: registry.secretTarget(registry.byRef.get(action.ref)?.deref(), action.type) };
 }
 async function verifyFormAction(action) {
   const registry = globalThis.__openworkBrowserRefs;
@@ -441,14 +579,15 @@ async function verifyFormAction(action) {
     if (matchingSince !== null && performance.now() - matchingSince >= 150) {
       // The agent's own verified entry is what it now knows; later actions in a batch bind to it.
       registry.snapshots.set(element, JSON.stringify(control));
-      return { verified: true, control: registry.describe(element) };
+      // Only whether a private value's field kept what was typed leaves the page.
+      return action.type === "fill_secret" || action.type === "fill_from" ? { verified: true } : { verified: true, control: registry.describe(element) };
     }
     await new Promise(resolve => setTimeout(resolve, 50));
   } while (performance.now() < deadline);
   // A rejected or transformed entry can restore a value filled by the page or
   // person. Only the exact requested value remains eligible for readback.
   if (!element.isConnected) throw new Error("stale_element");
-  return { verified: false, control: registry.describe(element) };
+  return action.type === "fill_secret" || action.type === "fill_from" ? { verified: false } : { verified: false, control: registry.describe(element) };
 }
 async function captureObservation(webContents, viewport, hostCapture = undefined) {
   if (typeof webContents.captureObservation === "function") return webContents.captureObservation(viewport);
@@ -521,23 +660,33 @@ function relevantPassages(text, question, maxChars) {
 }
 
 /**
- * `prepare` runs before each operation on a tab and may settle its viewport.
+ * `prepare` runs before each operation on a tab with that operation's args and
+ * may settle its viewport, including a `pageSize` the agent asked for.
  * A host that draws the page scaled reports that scale in `inputScale`, since
  * CDP input is in view pixels, and may `capture` the page at full resolution.
  */
 /**
  * Clicks an upload control with the page's file chooser intercepted, then gives
  * the input that asked these files. The system file picker never opens.
- * @returns {Promise<"attached" | "no_file_chooser" | "single_file">}
+ * @returns {Promise<"attached" | "no_file_chooser" | "single_file" | "files_permission_changed">}
  */
-async function attachFiles(contents, point, files, signal, waitMs) {
+async function attachFiles(contents, point, files, signal, waitMs, beforeShare = null) {
   const cdp = contents.debugger;
   const attached = !cdp.isAttached();
   if (attached) cdp.attach("1.3");
   let listener = null;
+  let receivingFrame = null;
+  let receiverChanged = false;
   try {
     const opened = new Promise((resolve) => {
-      listener = (_event, method, params) => { if (method === "Page.fileChooserOpened") resolve(params); };
+      listener = (_event, method, params) => {
+        if (method === "Page.fileChooserOpened") { receivingFrame = params.frameId ?? null; resolve(params); }
+        // history.pushState/replaceState keeps the input's backend node alive.
+        // Reject even same-document changes while policy/files are checked.
+        if (receivingFrame && ((method === "Page.navigatedWithinDocument" && params.frameId === receivingFrame)
+          || (method === "Page.frameNavigated" && params.frame?.id === receivingFrame)
+          || (method === "Page.frameDetached" && params.frameId === receivingFrame))) receiverChanged = true;
+      };
       cdp.on("message", listener);
       setTimeout(() => resolve(null), waitMs).unref?.();
     });
@@ -550,6 +699,21 @@ async function attachFiles(contents, point, files, signal, waitMs) {
     signal.throwIfAborted();
     if (!chooser || !Number.isInteger(chooser.backendNodeId)) return "no_file_chooser";
     if (chooser.mode === "selectSingle" && files.length > 1) return "single_file";
+    // A chooser can belong to a cross-origin frame, or opening it can navigate.
+    // A managed/remembered grant is only for the exact top-level origin shown.
+    if (beforeShare) {
+      const tree = await cdp.sendCommand("Page.getFrameTree");
+      const findFrame = (node) => node?.frame?.id === chooser.frameId ? node.frame
+        : (node?.childFrames ?? []).map(findFrame).find(Boolean);
+      const frame = typeof chooser.frameId === "string" ? findFrame(tree?.frameTree) : null;
+      if (!frame || receiverChanged || !await beforeShare(frame.url) || receiverChanged) return "files_permission_changed";
+      // Re-read after asynchronous authorization, not just before it. The
+      // listener remains active through DOM.setFileInputFiles.
+      const finalTree = await cdp.sendCommand("Page.getFrameTree");
+      const finalFrame = findFrame(finalTree?.frameTree);
+      if (!finalFrame || receiverChanged || finalFrame.url !== frame.url) return "files_permission_changed";
+    }
+    signal.throwIfAborted();
     await cdp.sendCommand("DOM.setFileInputFiles", { files, backendNodeId: chooser.backendNodeId });
     return "attached";
   } finally {
@@ -559,12 +723,81 @@ async function attachFiles(contents, point, files, signal, waitMs) {
   }
 }
 
+/** Redaction on a host without saved secrets: nothing to replace, texts are only cut. */
+const NO_SECRETS = { span: 0, redact: /** @template T @param {T} value */ (value) => value, redactText: /** @param {string} text @param {number} [limit] */ (text, limit) => limit === undefined ? text : text.slice(0, limit) };
+/** @typedef {typeof NO_SECRETS} Mask redaction for one operation: see `redactor` in browser-secrets.mjs */
+/**
+ * One text the page read, as the agent is given it: redacted whole, then cut to `limit` characters of what it
+ * says, then trimmed. The page reads past both ends for this and trims nothing, so no part of a secret is left at
+ * a cut or at a space the secret began or ended with.
+ * @param {Mask} mask @param {string} text @param {number} limit
+ */
+const cutText = (mask, text, limit) => mask.redactText(text, text.length - text.trimStart().length + limit).trim();
+/**
+ * One control as the agent is given it, each of its texts through `cutText`.
+ * @param {Mask} mask @param {Record<string, unknown>} control @param {number} name @param {number} description
+ */
+function cutControl(mask, control, name, description) {
+  const cut = (/** @type {unknown} */ value, /** @type {number} */ limit) => typeof value === "string" ? cutText(mask, value, limit) : value;
+  return { ...control, name: cut(control.name, name),
+    ...("invalid" in control ? { invalid: cut(control.invalid, 1000) || true } : {}),
+    ...("validationMessage" in control ? { validationMessage: cut(control.validationMessage, 1000) } : {}),
+    ...("description" in control ? { description: cut(control.description, description) } : {}),
+    ...(Array.isArray(control.options) ? { options: control.options.map((option) => ({ ...option, label: cut(option.label, 200) })) } : {}) };
+}
+/**
+ * What `observePage` read, as the agent is given it.
+ * @template {{ title: string, elements: Record<string, unknown>[], text?: string, status?: string[], scrollRegions?: [string, ...number[]][] }} T
+ * @param {Mask} mask @param {T} page @param {boolean} interactive
+ */
+function cutObservation(mask, page, interactive) {
+  return { ...page, title: cutText(mask, page.title, 300),
+    ...(typeof page.text === "string" ? { text: cutText(mask, page.text, 16000) } : {}),
+    ...(page.status ? { status: page.status.map((line) => cutText(mask, line, 300)) } : {}),
+    ...(page.scrollRegions ? { scrollRegions: page.scrollRegions.map(([label, ...size]) => [cutText(mask, label, 200), ...size]) } : {}),
+    elements: page.elements.map((control) => cutControl(mask, control, interactive ? 120 : 200, interactive ? 200 : 1000)) };
+}
+
 export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isVisible, openTab, navigate,
   allowed, enabled, changed, siteTools, runSiteTool, beforeInput = async (_tab) => {}, inFlight = (_tab, _since) => 0,
-  prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
+  prepare = async (_tab, _args) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
   // A page receives files only after the person approves exactly these, in the chat.
   checkFiles = /** @type {(paths: string[]) => Promise<void>} */ (async () => { throw new Error("files_unavailable"); }),
-  approveFiles = async (_sessionId, _request, _signal) => false, fileChooserMs = 5000 }) {
+  approveFiles = /** @type {(sessionId: string, request: { app: string, url: string, files: string[] }, signal: AbortSignal) => Promise<boolean | { allowed: boolean, code?: string, error?: string, revalidate?: (frameUrl?: string) => Promise<boolean> }>} */ (async (_sessionId, _request, _signal) => false),
+  // A password or code is typed only on a site (exact origin) the person confirmed. Without
+  // this, as on hosts that cannot ask, sign-in fields stay with the person.
+  approveCredential = /** @type {((sessionId: string, request: { site: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
+  // Saved secrets (browser-secrets.mjs): the agent names one by its handle and a placeholder is typed in its place.
+  // Absent on hosts without them. Whatever this host returns is redacted through it, whether or not the flag is on.
+  secrets = /** @type {ReturnType<typeof import("./browser-secrets.mjs").createBrowserSecrets> | undefined} */ (undefined),
+  // The feature flag, read at each use.
+  secretsEnabled = /** @type {() => boolean | Promise<boolean>} */ (() => false),
+  // Asked for every secret, every time: `site` is the page's exact origin and `field` the type of the field it goes into.
+  approveSecret = /** @type {((sessionId: string, request: { site: string, label: string, kind: string, field: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
+  // Resolves true only once every outgoing request of this tab is being intercepted. Nothing is typed before that.
+  armSecretSwap = /** @type {(tab: { tabId: string }) => Promise<boolean>} */ (async (_tab) => false),
+  // Private values from a command (fill_from): the agent names a command, the person approves it for the page's exact
+  // site, this host runs it and types what it printed. The value is added to `secrets` so that nothing this host
+  // returns holds it, and is never given to the agent. All three, `secrets` and the flag are needed.
+  valuesEnabled = /** @type {() => boolean | Promise<boolean>} */ (() => false),
+  // Asked once for every fill_from of a call, before any command runs: `field` is the type of each field.
+  // A command that reads a key from its environment lists that key once, after the fields: `unlock` is the
+  // variable, `program` the command it is for, `ask` the name under which the person pastes it.
+  approveValues = /** @type {((sessionId: string, request: { site?: string, use?: { kind: "run", command: string[] } | { kind: "request", method: string, url: string, origin: string }, fills: Array<{ field: string, command: string[], needs?: string } | { field: string, ask: string, kept?: true } | { unlock: string, program: string, ask: string, kept?: true }> }, signal: AbortSignal) => Promise<{ approved: boolean, values: Array<string | null>, keep: boolean[], refused?: { code: string, error: string } }>) | undefined} */ (undefined),
+  // Told what became of each approved fill, for the person's own list of recent fills: the site, the kind of
+  // field, where the value came from and how it ended. Never the value, and never what a command printed.
+  noteValueFill = /** @type {((sessionId: string, fill: { site: string, field: string, source: "command" | "paste" | "kept", program?: string, result: string }) => void) | undefined} */ (undefined),
+  // `unlock` is the one variable to add to the command's environment for this run, and its value.
+  runValueCommand = /** @type {((command: string[], signal: AbortSignal, unlock?: Record<string, string>) => Promise<import("./value-command.mjs").ValueCommandResult>) | undefined} */ (undefined),
+  fileChooserMs = 5000,
+  // After a takeover or cancellation stops the agent's navigation, page navigation stays guarded this long
+  // (and while any agent operation is still unwinding), so a late task redirect cannot land; then the tab is the person's.
+  navigationReleaseMs = 1000,
+  // With a budget, open and navigate wait up to this long for the page to load and stop changing, and an observation
+  // or extract that a still-loading page invalidated is retried once. 0 keeps the original behavior.
+  loadSettleMs = 0,
+  // Unexpected (uncoded) failures, for the host's own log: operation, code, whether input was sent, and the error.
+  onFailure = /** @type {(failure: { operation?: string, code: string, dispatched: boolean, detail: string }) => void} */ ((_failure) => {}) }) {
   const states = new Map();
   // request_id -> first receipt, per conversation: a retried act never replays input.
   const receipts = new Map();
@@ -572,6 +805,11 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   const pausedSessions = new Set();
   const opening = new Map();
   const navigations = new Map();
+  // Tabs a saved secret was typed into. The site may show it back on any later page of the tab, where no text
+  // redaction reaches the pixels: such a tab gives no more images until it closes.
+  const secretTabs = new Set();
+  // The pictures this host took itself. Only they are returned unredacted, known by identity and never by shape.
+  const captured = new WeakSet();
   function controlFor(sessionId) {
     if (!controls.has(sessionId)) controls.set(sessionId, { controller: new AbortController() });
     return controls.get(sessionId);
@@ -596,8 +834,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (signal?.aborted) lifetime.abort(signal.reason);
     else signal?.addEventListener("abort", () => lifetime.abort(signal.reason), { once: true, signal: lifetime.signal });
     const controller = new AbortController();
-    const scope = { tab, sessionId, controller, lifetime, control, manual: false,
+    const scope = { tab, sessionId, controller, lifetime, control, manual: false, abortedAt: 0,
       signal: AbortSignal.any([lifetime.signal, controller.signal, control.controller.signal]) };
+    if (scope.signal.aborted) scope.abortedAt = Date.now();
+    else scope.signal.addEventListener("abort", () => { scope.abortedAt = Date.now(); }, { once: true });
     previous?.controller.abort();
     navigations.set(tab.tabId, scope);
     return scope;
@@ -620,12 +860,25 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     // Give it a synchronous final ownership/cancellation check.
     return () => checkNavigation(scope);
   }
+  /**
+   * Whether a stopped scope no longer guards its tab. A takeover or cancellation
+   * aborts the scope; once every agent operation in that conversation has
+   * unwound and the release delay has passed, nothing queued by the agent can
+   * still navigate, so links, sign-in forms and their redirects belong to the
+   * person. A new agent operation tracks a fresh scope and is guarded again.
+   */
+  function released(scope) {
+    if (!scope.abortedAt || Date.now() - scope.abortedAt < navigationReleaseMs) return false;
+    return !tabsFor(scope.sessionId).some((item) => states.get(item.tabId)?.controller);
+  }
   function navigationGuard(tabId) {
     const scope = navigations.get(tabId);
-    // Pausing alone must not turn a late task redirect into manual browsing.
-    // Only explicit app-toolbar navigation enables manual mode.
-    // Page input (including trusted events) can come from queued automation.
+    // Pausing alone must not turn a late task redirect into manual browsing:
+    // right after a takeover, page input can still come from queued automation.
+    // Explicit app-toolbar navigation enables manual mode at once; otherwise
+    // the tab is released to the person after the stopped task settles.
     if (!scope || (scope.manual && pausedSessions.has(scope.sessionId) && ownerOf(tabId) === scope.sessionId)) return null;
+    if (released(scope)) return null;
     return (url) => authorizeNavigation(scope, url);
   }
   function manualNavigation(tabId) {
@@ -672,7 +925,9 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     for (const item of tabsFor(owner)) {
       const navigation = navigations.get(item.tabId);
       if (navigation) { navigation.manual = false; navigation.lifetime.abort(); }
-      if (!item.view.webContents.isDestroyed()) item.view.webContents.stop();
+      const revision = item.webMcpRevision;
+      deferBrowserStop(item.view.webContents, () => pausedSessions.has(owner)
+        && getTab(item.tabId) === item && item.webMcpRevision === revision);
       const sibling = states.get(item.tabId); sibling?.controller?.abort(); forget(sibling); publish(item.tabId, "paused", reason);
     }
     const state = stateFor(tabId); forget(state);
@@ -696,43 +951,82 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         pausedSessions.delete(owner);
       }
       navigations.get(tabId)?.lifetime.abort(); navigations.delete(tabId);
+      secretTabs.delete(tabId);
     }
     const state = states.get(tabId); if (!state) return;
     forget(state);
     if (closed) { state.controller?.abort(); states.delete(tabId); }
   }
+  /** Whether saved secrets may be listed and entered right now. A flag that cannot be read is off. */
+  async function secretsOn() {
+    try { return secrets !== undefined && await secretsEnabled() === true; } catch { return false; }
+  }
+  /** Whether a field may be filled from a command right now. A flag that cannot be read is off. */
+  async function valuesOn() {
+    try { return secrets !== undefined && runValueCommand !== undefined && approveValues !== undefined && await valuesEnabled() === true; } catch { return false; }
+  }
+  /** What became of the secrets entered in this tab, never a value or a placeholder. @param {string} sessionId @param {string} tabId */
+  function secretReport(sessionId, tabId) {
+    const status = secrets ? secrets.status(sessionId, tabId) : [];
+    return { status, undelivered: status.some((entry) => entry.state === "not_sent") };
+  }
   /**
-   * @param {{ mode?: string, limit?: number, includeText?: boolean }} [options]
+   * An act receipt with that status; an undelivered secret is the first thing `next` says.
+   * @template {{ next?: unknown }} T @param {string} sessionId @param {string} tabId @param {T} receipt @param {boolean} keepNext
    */
-  async function observe(tab, includeImage, signal, query = null, options = {}) {
+  function withSecrets(sessionId, tabId, receipt, keepNext) {
+    const { status, undelivered } = secretReport(sessionId, tabId);
+    if (!status.length) return receipt;
+    return { ...receipt, secrets: status, ...(undelivered ? { next: keepNext ? `${SECRET_NOT_SENT} ${receipt.next}` : SECRET_NOT_SENT } : {}) };
+  }
+  /**
+   * @param {{ mode?: string, limit?: number, includeText?: boolean, sessionId?: string }} [options] @param {Mask} [mask]
+   */
+  async function observe(tab, includeImage, signal, query = null, options = {}, mask = NO_SECRETS) {
     const state = stateFor(tab.tabId);
     const revision = tab.webMcpRevision;
     const url = tab.view.webContents.getURL();
     const id = randomUUID();
     const mode = options.mode === "interactive" ? "interactive" : "full";
     const limit = Number.isInteger(options.limit) && options.limit >= 1 && options.limit <= 500 ? options.limit : undefined;
-    const page = await isolated(tab.view.webContents, observePage, id, { mode, query: query ?? null, ...(limit ? { limit } : {}),
-      ...(typeof options.includeText === "boolean" ? { includeText: options.includeText } : {}) });
+    const page = cutObservation(mask, await isolated(tab.view.webContents, observePage, id, { mode, query: query ?? null, ...(limit ? { limit } : {}),
+      ...(typeof options.includeText === "boolean" ? { includeText: options.includeText } : {}), reach: mask.span }), mode === "interactive");
     let image, digest;
     if (includeImage) {
-      if (page.hasPasswordField) fail("sign_in_required", "This page contains protected sign-in or payment fields. Take over and complete them directly in the browser, then resume.");
+      if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. Take over and complete them directly in the browser, then resume.");
+      if (page.hasCredentialField) fail("credential_on_screen", "This page has a password or code field, or one was filled on it, so no image was taken. Work from its controls without an image.");
+      if (secretTabs.has(tab.tabId)) fail("credential_on_screen", "A private value was entered in this tab and the site may show it back, so no image was taken. Work from the page's controls without an image.");
       const png = await captureObservation(tab.view.webContents, page.viewport, (viewport) => capture(tab, viewport));
       digest = imageDigest(png);
       image = { mimeType: "image/png", data: png.toString("base64"), width: page.viewport.width, height: page.viewport.height };
+      captured.add(image);
     }
+    const offered = typeof options.sessionId === "string" && await secretsOn();
+    const fromCommand = typeof options.sessionId === "string" && await valuesOn();
     if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
     if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed during observation. Observe again.");
     signal.throwIfAborted();
+    // The agent learns a saved secret by its handle, name and kind, only on a page of a site it is allowed for.
+    const origin = originOf(url);
+    const available = offered && origin ? secrets.availableFor(options.sessionId, origin) : [];
+    const entered = typeof options.sessionId === "string" ? secretReport(options.sessionId, tab.tabId) : { status: [], undelivered: false };
+    const secretState = { ...(available.length ? { availableSecrets: available } : {}), ...(entered.status.length ? { secrets: entered.status } : {}),
+      ...(entered.undelivered ? { secretsNext: SECRET_NOT_SENT } : {}),
+      // Only an https page takes a value from a command, and the agent is told only where it can use one.
+      ...(fromCommand && origin?.startsWith("https://") ? { privateValues: "fill_from" } : {}) };
     // Every observation of this document stays usable while its refs resolve.
     const record = { id, revision, url, viewport: page.viewport, digest, sent: new Set() };
     if (state.latest && (state.latest.revision !== revision || state.latest.url !== url)) state.observations.clear();
     state.observations.set(id, record); state.latest = record;
     for (const old of state.observations.keys()) { if (state.observations.size <= 20) break; state.observations.delete(old); }
+    // This page script is isolated from the site's own tools, so the host's count says whether to look for them.
+    const siteTools = tab.webMcpToolCount > 0 ? { siteTools: tab.webMcpToolCount } : {};
     if (mode === "interactive") {
-      const { hasPasswordField, viewport: _viewport, scroll: _scroll, ...compact } = page;
-      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...(hasPasswordField ? { signIn: "take_over" } : {}), ...(image ? { image } : {}) };
+      const { hasPaymentField, hasCredentialField: _credential, viewport: _viewport, scroll: _scroll, ...compact } = page;
+      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...siteTools, ...secretState, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
     }
-    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...page, ...(image ? { image } : {}) };
+    const { hasCredentialField: _credential, ...full } = page;
+    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...full, ...siteTools, ...secretState, ...(image ? { image } : {}) };
   }
   /** Bounded wait after input: navigation, in-flight requests and DOM structure. */
   async function settle(tab, observed, since, signal) {
@@ -752,36 +1046,95 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       await delay(50);
     }
   }
-  async function extract(tab, args, signal) {
+  /**
+   * Bounded wait for a page that just loaded: its document readable and complete (or interactive and quiet), its
+   * structure unchanged for a moment, and no request it started in the last moment still running. Long polls and
+   * streams that started earlier don't hold it up. Reports what stands in the way of reading it, if anything.
+   */
+  async function settleLoad(tab, signal, budgetMs, recovery = false, requireText = false) {
+    const contents = tab.view.webContents;
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      signal.throwIfAborted();
+      if (contents.isDestroyed()) fail("tab_closed", "The browser tab closed while it loaded.");
+      const loading = typeof contents.isLoading === "function" && contents.isLoading();
+      // Between two documents the page may not answer; that is still loading.
+      const page = loading ? null : await Promise.race([isolated(contents, readSettle, false).catch(() => null), delay(1000).then(() => null)]);
+      const recent = inFlight(tab, Date.now() - 1500);
+      const ready = page && (!requireText || page.textChars > 0) && !page.busy && recent === 0 && (page.readyState === "complete" ? page.quietMs >= 400 : page.readyState === "interactive" && page.quietMs >= 1000);
+      if (ready || Date.now() >= deadline) {
+        const found = recovery ? await Promise.race([isolated(contents, readBlockers).catch(() => null), delay(1000).then(() => null)]) : null;
+        return { outcome: ready ? "settled" : "still_loading", ...(found?.blocker ? { blocker: found.blocker } : {}), textChars: found?.textChars ?? null };
+      }
+      await delay(100);
+    }
+  }
+  /** What a load receipt adds: whether the page settled and what to do about anything in the way. */
+  function loaded(page) {
+    const next = page.blocker ? BLOCKER_NEXT[page.blocker]
+      : page.outcome === "still_loading" ? "The page is still loading. Observe it; if it is not ready, observe again in a moment. Do not open it again."
+      : page.textChars === 0 ? "The page shows no text (it may draw into a canvas or frames). Observe with includeImage to see it." : "observe";
+    return { page: page.outcome, ...(page.blocker ? { blocker: page.blocker } : {}), next };
+  }
+  /** A read-only operation a still-loading page changed under: wait for it to settle, then read once more. */
+  async function readAgain(tab, signal, recovery, read) {
+    try { return await read(); }
+    catch (error) {
+      if (!recovery || !loadSettleMs || !(error instanceof BrowserTaskError) || error.code !== "page_changed") throw error;
+      await settleLoad(tab, signal, Math.min(loadSettleMs, 4000));
+      return read();
+    }
+  }
+  /** @param {Mask} mask */
+  async function extract(tab, args, signal, recovery, mask) {
     const question = typeof args.question === "string" ? args.question.trim() : "";
     if (!question || question.length > 1000) fail("invalid_question", "Ask one question of at most 1000 characters.");
     const maxChars = Number.isInteger(args.maxChars) ? Math.min(8000, Math.max(200, args.maxChars)) : 2000;
     const revision = tab.webMcpRevision;
     const url = tab.view.webContents.getURL();
-    // Withheld field values are redacted exactly as observations redact them.
-    const page = await isolated(tab.view.webContents, observePage, null, { mode: "extract" });
+    // Withheld field values are redacted exactly as observations redact them. Saved secrets go before anything is
+    // chosen, cut or counted: which lines match a question, or how long the page is, says nothing about one.
+    const read = async () => {
+      const raw = await isolated(tab.view.webContents, observePage, null, { mode: "extract", reach: mask.span });
+      return { title: cutText(mask, raw.title, 300), text: cutText(mask, raw.text, 500_000) };
+    };
+    let page = await read();
+    // A page that has not drawn its text yet (an app still starting) gets one bounded wait before it is read again.
+    let found = null;
+    if (loadSettleMs && !page.text.trim()) {
+      found = await settleLoad(tab, signal, Math.min(loadSettleMs, 4000), recovery, true);
+      page = await read();
+    }
     if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
     if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while reading it. Try again.");
     signal.throwIfAborted();
     const passages = relevantPassages(page.text, question, maxChars);
+    if (recovery && !passages.length && !found) found = await Promise.race([isolated(tab.view.webContents, readBlockers).catch(() => null), delay(1000).then(() => null)]);
+    if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while reading it. Try again.");
+    signal.throwIfAborted();
+    const next = found?.blocker ? BLOCKER_NEXT[found.blocker]
+      : !page.text.trim() ? "The page has no readable text yet. Observe with includeImage to see what it shows, or observe again in a moment if it is still loading."
+      : "No passage matched. Try other words, or browser_observe with includeText.";
     return { ok: true, tabId: tab.tabId, url: safeUrl(url), title: page.title, trust: TRUST, question, passages, pageChars: page.text.length,
-      ...(passages.length ? {} : { next: "No passage matched. Try other words, or browser_observe with includeText." }) };
+      ...(found?.blocker ? { blocker: found.blocker } : {}), ...(passages.length ? {} : { next }) };
   }
   /**
-   * @typedef {{ type?: string, ref?: string, text?: string, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number, files?: string[] }} BrowserAction
+   * @typedef {{ type?: string, ref?: string, text?: string, secretRef?: string, command?: string[], ask?: string, unlock?: { env: string, ask: string }, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number, files?: string[] }} BrowserAction
    * @param {{ sessionId?: string, operation?: string, args?: { tabId?: string, url?: string, provider?: string, includeImage?: boolean, mode?: string, limit?: number, includeText?: boolean,
    *   query?: {role?: string, name?: string, text?: string, exact?: boolean}, observationId?: string, toolId?: string, input?: unknown, question?: string, maxChars?: number,
    *   action?: BrowserAction, actions?: BrowserAction[], request_id?: string } }} request
-   * @param {{ signal?: AbortSignal }} options
+   * @param {{ signal?: AbortSignal, recovery?: boolean }} options @param {Mask} mask
    */
-  async function request({ sessionId, operation, args = {} } = {}, { signal } = {}) {
+  async function perform({ sessionId, operation, args = {} } = {}, { signal, recovery = false } = {}, mask = NO_SECRETS) {
     let tab, state, dispatched = false, abort, controller, openingController;
-    /** @type {{ id: string, input: string, receipt: Record<string, unknown> } | null} */
+    // A single action's receipt gains the tab's secret status on its way out; a replayed receipt is returned as stored.
+    let single = false;
+    /** @type {{ id: string, input: string, running: boolean, receipt: Record<string, unknown> } | null} */
     let entry = null;
     try {
       if (typeof sessionId !== "string" || !sessionId.trim()) fail("missing_session", "Browser control requires a requesting conversation.");
       if (!enabled()) fail("browser_disabled", "Enable OpenWork Browser in Library, or ask your organization to allow browser control.");
-      if (operation === "tabs") return { ok: true, provider: "builtin", externalBrowsers: "unsupported", tabs: tabsFor(sessionId).map((item) => ({ tabId: item.tabId, url: safeUrl(item.view.webContents.getURL()), title: item.view.webContents.getTitle().slice(0, 300), visible: isVisible(item.tabId), status: stateFor(item.tabId).status, operation: stateFor(item.tabId).operation })) };
+      if (operation === "tabs") return { ok: true, provider: "builtin", externalBrowsers: "unsupported", tabs: tabsFor(sessionId).map((item) => ({ tabId: item.tabId, url: safeUrl(item.view.webContents.getURL()), title: cutText(mask, item.view.webContents.getTitle(), 300), visible: isVisible(item.tabId), status: stateFor(item.tabId).status, operation: stateFor(item.tabId).operation })) };
       if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
       const control = controlFor(sessionId);
       controller = new AbortController();
@@ -810,9 +1163,15 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         requestSignal.throwIfAborted();
         checkControl(sessionId, control);
         if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
+        const opened = !tab;
         if (!tab) {
           tab = await Promise.race([
             openTab(url.href, sessionId, requestSignal, async (created) => {
+              // Keep the tab's identity even if loading fails: the agent can inspect it, not open another blindly.
+              tab = created;
+              state = stateFor(created.tabId);
+              state.controller = controller;
+              publish(created.tabId, "running", "open");
               const validate = await authorizeNavigation(trackNavigation(sessionId, created, requestSignal), url.href);
               validate();
               dispatched = true;
@@ -827,8 +1186,9 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           const validate = await Promise.race([authorizeNavigation(trackNavigation(sessionId, tab, requestSignal), url.href), canceled]);
           validate();
         }
+        const page = opened && loadSettleMs ? await Promise.race([settleLoad(tab, requestSignal, loadSettleMs, recovery), canceled]) : null;
         publish(tab.tabId, "idle");
-        return { ok: true, provider: "builtin", tabId: tab.tabId, url: safeUrl(tab.view.webContents.getURL()), visible: isVisible(tab.tabId), next: "observe" };
+        return { ok: true, provider: "builtin", tabId: tab.tabId, url: safeUrl(tab.view.webContents.getURL()), visible: isVisible(tab.tabId), next: "observe", ...(page ? loaded(page) : {}) };
       }
       tab = await Promise.race([resolve(sessionId, args.tabId, ["navigate", "pause", "handoff"].includes(operation)), canceled]);
       requestSignal.throwIfAborted();
@@ -848,10 +1208,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           if (url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while checking access. Observe again.");
         }
         requestSignal.throwIfAborted();
-        await prepare(tab);
+        await prepare(tab, args);
         requestSignal.throwIfAborted();
         publish(tab.tabId, "running", operation);
-        if (operation === "observe") return observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText });
+        if (operation === "observe") return readAgain(tab, requestSignal, recovery, () => observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText, sessionId }, mask));
         if (operation === "site_tools") return siteTools({ tabId: tab.tabId, sessionId });
         if (operation === "site_tool") {
           forget(state);
@@ -865,13 +1225,18 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           const validate = await authorizeNavigation(navigationScope, url.href);
           validate();
           forget(state); dispatched = true;
-          const stop = () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };
+          const stop = () => {
+            const revision = tab.webMcpRevision;
+            deferBrowserStop(tab.view.webContents, () => getTab(tab.tabId) === tab
+              && tab.webMcpRevision === revision && navigations.get(tab.tabId) === navigationScope);
+          };
           requestSignal.addEventListener("abort", stop, { once: true });
           try { await navigate(tab, url.href); requestSignal.throwIfAborted(); }
           finally { requestSignal.removeEventListener("abort", stop); }
-          return { ok: true, tabId: tab.tabId, dispatched: true, outcome: "navigation_finished", url: safeUrl(tab.view.webContents.getURL()), next: "observe" };
+          const page = loadSettleMs ? await settleLoad(tab, requestSignal, loadSettleMs, recovery) : null;
+          return { ok: true, tabId: tab.tabId, dispatched: true, outcome: "navigation_finished", url: safeUrl(tab.view.webContents.getURL()), next: "observe", ...(page ? loaded(page) : {}) };
         }
-        if (operation === "extract") return extract(tab, args, requestSignal);
+        if (operation === "extract") return readAgain(tab, requestSignal, recovery, () => extract(tab, args, requestSignal, recovery, mask));
         if (operation !== "act") fail("unknown_operation", "Use a supported browser operation.");
         // One action keeps the original receipt; actions (1-8) run in order
         // against one observation and return one receipt with the new state.
@@ -883,25 +1248,45 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         if (args.request_id !== undefined) {
           if (typeof args.request_id !== "string" || !args.request_id || args.request_id.length > 256) fail("invalid_action", "request_id must be a short string.");
           const input = JSON.stringify([tab.tabId, args.observationId, actions]);
-          const previous = receipts.get(sessionId)?.get(args.request_id);
+          const stored = receipts.get(sessionId) ?? new Map();
+          const previous = stored.get(args.request_id);
           if (previous) {
             if (previous.input !== input) fail("request_conflict", "This request_id already belongs to different input. Nothing was dispatched.");
+            if (previous.running) fail("busy", "This request_id is still running. Wait for its result; nothing was dispatched again.");
             return previous.receipt;
           }
-          entry = { id: args.request_id, input, receipt: { ok: false, code: "dispatch_uncertain", error: "This request was interrupted after it may have sent input. Observe before continuing; it is never replayed.",
+          // Reserved before anything is awaited: the same id arriving meanwhile, in this tab or another, finds it.
+          entry = { id: args.request_id, input, running: true, receipt: { ok: false, code: "dispatch_uncertain", error: "This request was interrupted after it may have sent input. Observe before continuing; it is never replayed.",
             dispatched: true, mayHaveChangedState: true, retrySafe: false, next: "observe", request_id: args.request_id } };
+          receipts.set(sessionId, stored);
+          stored.set(entry.id, entry);
+          for (const [id, old] of stored) { if (stored.size <= 64) break; if (!old.running) stored.delete(id); }
         }
+        single = !batch;
         const observed = state.observations.get(args.observationId);
         if (!observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "Observe the current page before acting.");
         const keys = new Map();
         for (const [index, action] of actions.entries()) {
-          if (!action || typeof action !== "object" || !ACTION_TYPES.includes(action.type)) fail("invalid_action", "Use click, fill, select, set_checked, key, scroll, reveal or attach.");
+          if (!action || typeof action !== "object" || !ACTION_TYPES.includes(action.type)) fail("invalid_action", "Use click, fill, fill_secret, fill_from, select, set_checked, key, scroll, reveal or attach.");
           if (action.ref !== undefined && (typeof action.ref !== "string" || !action.ref || action.ref.length > 64)) fail("invalid_action", "Use a ref from an observation of this page.");
           if (action.type === "click" && !action.ref) {
             if (index > 0) fail("invalid_action", "An image-coordinate click can only be the first action. Use refs for later steps.");
             if (!observed.digest || state.latest !== observed) fail("image_required", "Observe with includeImage before clicking image coordinates.");
           }
           if (action.type === "fill" && (typeof action.text !== "string" || action.text.length > 8000 || !action.ref)) fail("invalid_action", "Fill needs an observed editable reference and text of at most 8000 characters.");
+          // A secret is named by its handle alone: an action that also carries text, or anything else, is refused whole.
+          if (action.type === "fill_secret" && (!action.ref || typeof action.secretRef !== "string" || !action.secretRef || action.secretRef.length > 128
+            || !Object.keys(action).every((key) => SECRET_ACTION_KEYS.includes(key)))) {
+            fail("invalid_action", "Fill_secret needs an observed editable reference and a secretRef from availableSecrets, and nothing else: no text.");
+          }
+          // A private value is named by where it comes from alone: a command, a program and its arguments shown whole
+          // to the person, or the name under which the person pastes it. One of the two, and never the value.
+          if (action.type === "fill_from" && (!action.ref || (action.command === undefined) === (action.ask === undefined)
+            || (action.ask === undefined ? !validValueCommand(action.command) : !validValueAsk(action.ask))
+            || (action.unlock !== undefined && (action.command === undefined || !validValueUnlock(action.unlock)))
+            || !Object.keys(action).every((key) => VALUE_ACTION_KEYS.includes(key)))) {
+            fail("invalid_action", "Fill_from needs an observed editable reference and exactly one of: command, the program and its arguments as an array of strings, such as [\"op\", \"read\", \"op://Private/Example/password\"] (no shell reads it, so no pipes or variables); or ask, a name of at most 80 characters for the value the person pastes, such as \"GitHub password\". A command that reads a key from its environment may add unlock, such as { \"env\": \"BW_SESSION\", \"ask\": \"Bitwarden session key\" }: the variable, and a name for the key the person pastes. Nothing else: no text.");
+          }
           if (action.type === "attach" && (!action.ref || !Array.isArray(action.files) || action.files.length < 1 || action.files.length > 10
             || !action.files.every((file) => typeof file === "string" && file.startsWith("/") && file.length <= 4096))) {
             fail("invalid_action", "Attach needs the observed upload control's ref and one to ten absolute file paths.");
@@ -911,6 +1296,15 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           if (action.type === "reveal" && !action.ref) fail("invalid_action", "Reveal needs an observed reference.");
           if (action.type === "key") keys.set(index, resolveKey(action));
           if (action.type === "scroll" && (!Number.isFinite(action.deltaY) || Math.abs(action.deltaY) > 1200)) fail("invalid_scroll", "Scroll distance must be between -1200 and 1200.");
+        }
+        if (actions.filter((action) => action.type === "fill_from").length > MAX_VALUE_FILLS) fail("invalid_action", `Fill at most ${MAX_VALUE_FILLS} fields with fill_from in one call. Nothing was dispatched.`);
+        // One program reads one variable under one name in a call, so the person is asked for each key once.
+        const unlockNames = new Map();
+        for (const action of actions) {
+          if (action.type !== "fill_from" || !action.unlock) continue;
+          const key = JSON.stringify([action.command[0], action.unlock.env]);
+          if ((unlockNames.get(key) ?? action.unlock.ask) !== action.unlock.ask) fail("invalid_action", "Use the same ask for the same unlock variable of the same program in one call. Nothing was dispatched.");
+          unlockNames.set(key, action.unlock.ask);
         }
         // A click or key already sent from this observation is not sent again
         // from it: the page may have acted on the first one.
@@ -923,38 +1317,346 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         const attaching = actions.filter((action) => action.type === "attach").flatMap((action) => action.files);
         // The person sees every file before any is sent, so a batch never carries more than the card lists.
         if (attaching.length > MAX_FILES) fail("invalid_action", `Attach at most ${MAX_FILES} files in one call. Nothing was dispatched.`);
+        let fileAuthorization = null;
         if (attaching.length) {
           let host = "this page";
           try { host = new URL(observed.url).host || host; } catch { /* Keep the generic name. */ }
           // Nothing about the files is read before the person answers, so a page cannot probe
           // paths; afterwards each must be exactly the regular file approved, not a link to another.
-          if (!await approveFiles(sessionId, { app: host, files: attaching }, requestSignal)) {
+          const approval = await approveFiles(sessionId, { app: host, url: observed.url, files: attaching }, requestSignal);
+          const decision = typeof approval === "object" && approval ? approval : null;
+          if (decision?.allowed === false && decision.code === "organization_policy_denied") fail(decision.code, decision.error);
+          if (approval !== true && !(decision?.allowed === true && typeof decision.revalidate === "function")) {
             fail("files_declined", "The person did not approve giving these files to the page. Nothing was dispatched.");
           }
+          fileAuthorization = decision;
           requestSignal.throwIfAborted();
           try { await checkFiles(attaching); }
           catch { fail("file_unavailable", "Attach readable regular files by their real absolute paths, not links. Nothing was dispatched."); }
         }
+        // A command runs, and a pasted value is typed, only with the person's yes to exactly it, for this site. Every
+        // fill_from of the call is on one card, asked before anything is sent to the page, so a batch is approved
+        // whole or not at all. A value the person pastes into the card comes back with their yes and stays here.
+        const valueFills = new Map();
+        const valueUnlocks = new Map();
+        const valueSite = originOf(observed.url);
+        const fromCommands = actions.filter((action) => action.type === "fill_from");
+        if (fromCommands.length) {
+          /** @param {string} code @returns {never} */
+          const refuse = (code) => fail(code, VALUE_REFUSALS[code] ?? "The observed control is no longer ready. Observe again before choosing an action.");
+          if (!await valuesOn()) refuse("values_unavailable");
+          if (!valueSite?.startsWith("https://")) refuse("site_not_secure");
+          for (const action of fromCommands) {
+            let shown;
+            try { shown = await isolated(tab.view.webContents, valueField, observed.id, { ref: action.ref }); }
+            catch (error) {
+              const code = PREPARE_CODES.find((item) => String(error?.message).includes(item));
+              if (!code) throw error;
+              refuse(code);
+            }
+            let key;
+            if (action.unlock) {
+              const program = action.command[0];
+              const id = JSON.stringify([program, action.unlock.env]);
+              key = valueUnlocks.get(id) ?? { program, env: action.unlock.env, ask: action.unlock.ask, place: unlockPlace(program, action.unlock) };
+              valueUnlocks.set(id, key);
+            }
+            valueFills.set(action, action.ask === undefined ? { field: shown.field, command: [...action.command], ...(key ? { key } : {}) }
+              : { field: shown.field, ask: action.ask, ...(secrets.kept({ sessionId, site: valueSite, label: action.ask }) === null ? {} : { kept: /** @type {const} */ (true) }) });
+          }
+          requestSignal.throwIfAborted();
+          const listed = [...valueFills.values()];
+          const keys = [...valueUnlocks.values()];
+          for (const key of keys) key.kept = secrets.kept({ sessionId, ...key.place }) !== null;
+          const answer = await approveValues(sessionId, { site: valueSite, fills: [
+            ...listed.map((fill) => fill.ask === undefined ? { field: fill.field, command: [...fill.command], ...(fill.key ? { needs: fill.key.env } : {}) }
+              : { field: fill.field, ask: fill.ask, ...(fill.kept ? { kept: /** @type {const} */ (true) } : {}) }),
+            ...keys.map((key) => ({ unlock: key.env, program: key.program, ask: key.ask, ...(key.kept ? { kept: /** @type {const} */ (true) } : {}) })),
+          ] }, requestSignal);
+          requestSignal.throwIfAborted();
+          // The person's own settings or their organization's may refuse before any card is shown; what they say is theirs.
+          if (answer?.approved !== true && typeof answer?.refused?.code === "string" && typeof answer.refused.error === "string") fail(answer.refused.code, answer.refused.error);
+          if (answer?.approved !== true) refuse("credential_declined");
+          for (const [index, fill] of listed.entries()) {
+            const pasted = answer.values?.[index];
+            if (typeof pasted === "string") {
+              // Before anything else can happen to it, the value is one this host never returns. One that cannot be
+              // typed stops the whole call here: no command runs in its place, and no kept value is used instead.
+              if (!secrets.remember(pasted) || (fill.field !== "textarea" && /[\r\n]/.test(pasted))) refuse("pasted_unusable");
+              fill.pasted = pasted;
+              if (fill.ask !== undefined && answer.keep?.[index] === true) secrets.keep({ sessionId, site: valueSite, label: fill.ask, value: pasted });
+            } else if (fill.ask !== undefined && !fill.kept) {
+              // A value kept for this chat is read at the step that types it, so one removed meanwhile is not typed.
+              refuse("credential_declined");
+            }
+          }
+          for (const [index, key] of keys.entries()) {
+            const pasted = answer.values?.[listed.length + index];
+            const needed = listed.some((fill) => fill.key === key && typeof fill.pasted !== "string");
+            if (typeof pasted === "string") {
+              // The same rule as a pasted value: held for redaction first, and one that cannot be used stops the call.
+              if (!secrets.remember(pasted) || !validUnlockValue(pasted)) refuse("unlock_unusable");
+              key.pasted = pasted;
+              if (answer.keep?.[listed.length + index] === true) secrets.keep({ sessionId, ...key.place, value: pasted });
+            } else if (needed && !key.kept) {
+              refuse("credential_declined");
+            }
+          }
+        }
         if (!await allowed(observed.url) || state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed or access was blocked while preparing the action. Observe again.");
         requestSignal.throwIfAborted();
         if (actions[0].type === "click" && !actions[0].ref && imageDigest(await captureObservation(tab.view.webContents, observed.viewport, (viewport) => capture(tab, viewport))) !== observed.digest) fail("stale_observation", "The image changed. Observe again before choosing coordinates.");
-        if (actions.some((action) => ["fill", "select", "reveal"].includes(action.type))) {
+        if (actions.some((action) => ["fill", "fill_secret", "fill_from", "select", "reveal"].includes(action.type))) {
           // DOM-backed form edits must release the same native input lease as
           // keyboard and pointer events on the shared cloud desktop.
           await beforeInput(tab);
           requestSignal.throwIfAborted();
         }
-        if (entry) {
-          const stored = receipts.get(sessionId) ?? new Map();
-          receipts.set(sessionId, stored);
-          stored.set(entry.id, entry);
-          for (const old of stored.keys()) { if (stored.size <= 64) break; stored.delete(old); }
-        }
         const contents = tab.view.webContents;
         const steps = [];
         let failure = null, page = null, interrupted = null;
+        // A password or code goes only to the exact site the person confirmed, asked at the step
+        // that clicks, fills or presses a key in its field: focusing it can autofill a saved
+        // password, Enter can submit one, and a click earlier in a batch can focus the field.
+        let confirmedSite = null;
+        // The site the person confirmed a saved secret for. A click or key in its field is not asked about again;
+        // text the agent types into a password or code field still is.
+        let secretSite = null;
+        // Taking focus gives a page a moment to leave: nothing goes out unless it is still on that site.
+        const leftConfirmedSite = () => [confirmedSite, secretSite].some((site) => site !== null && originOf(contents.getURL()) !== site);
+        const LEFT_SITE = "The page left the site the person confirmed, so nothing was sent to it.";
+        const current = () => state.observations.get(observed.id) === observed && observed.revision === tab.webMcpRevision && observed.url === contents.getURL();
+        // A saved secret is typed as a placeholder that the host swaps for the value on the way to an allowed site.
+        // Every check runs again after each wait, and nothing is typed unless all of them still hold.
+        /** @returns {Promise<{ verified: boolean, site: string } | { code: string, error: string } | { changed: string, error: string }>} */
+        const enterSecret = async (action) => {
+          /** @param {string} code */
+          const refuse = (code) => ({ code, error: SECRET_REFUSALS[code] ?? "The observed control is no longer ready. Observe again before choosing an action." });
+          const changed = { changed: "stale_observation", error: "The page or observation changed while preparing the action. Observe again." };
+          const target = { type: "fill_secret", ref: action.ref };
+          const inPage = async (step, ...args) => {
+            try { return await isolated(contents, step, ...args); }
+            catch (error) {
+              const code = PREPARE_CODES.find((item) => String(error?.message).includes(item));
+              if (!code) throw error;
+              return { code };
+            }
+          };
+          const live = () => { requestSignal.throwIfAborted(); checkNavigation(navigationScope); return current(); };
+          const arm = async () => { try { return await armSecretSwap(tab) === true; } catch { return false; } };
+          if (!secrets || !await secretsOn()) return refuse("secrets_unavailable");
+          if (!live()) return changed;
+          const site = originOf(observed.url);
+          const secret = secrets.describe(sessionId, action.secretRef);
+          if (!secret) return refuse("unknown_secret");
+          // No question is asked about a site the secret is not allowed on.
+          if (!site || !secret.origins.includes(site)) return refuse("secret_not_allowed_here");
+          const shown = await inPage(prepareAction, observed.id, target);
+          if (!live()) return changed;
+          if (shown.code) return refuse(shown.code);
+          if (!approveSecret) return refuse("sign_in_required");
+          const approved = await approveSecret(sessionId, { site, label: secret.label, kind: secret.kind, field: shown.field }, requestSignal) === true;
+          if (!live()) return changed;
+          if (!approved) return refuse("credential_declined");
+          // The answer covers what the person was shown: this page, this secret and this kind of field.
+          const kept = () => {
+            const now = secrets.describe(sessionId, action.secretRef);
+            return !now || now.label !== secret.label || now.kind !== secret.kind ? "unknown_secret" : now.origins.includes(site) ? null : "secret_not_allowed_here";
+          };
+          if (!await secretsOn()) return refuse("secrets_unavailable");
+          const again = await inPage(prepareAction, observed.id, target);
+          if (!live()) return changed;
+          const lost = kept();
+          if (lost) return refuse(lost);
+          if (again.code) return refuse(again.code);
+          if (again.field !== shown.field) return refuse("stale_element");
+          const armed = await arm();
+          if (!live()) return changed;
+          if (!armed) return refuse("secrets_unavailable");
+          publish(tab.tabId, "running", action.type);
+          dispatched = true;
+          const focused = await inPage(applyFormAction, target);
+          // Taking focus gives the page a moment to leave or to change the field: only a placeholder for this
+          // document, secret and field is issued, with its requests still intercepted, and only then typed.
+          if (!live() || originOf(contents.getURL()) !== site) return { changed: "page_changed", error: LEFT_SITE };
+          if (focused.code) return refuse(focused.code);
+          if (focused.field !== shown.field) return refuse("stale_element");
+          const stillArmed = await arm();
+          if (!live() || originOf(contents.getURL()) !== site) return { changed: "page_changed", error: LEFT_SITE };
+          if (!stillArmed) return refuse("secrets_unavailable");
+          // The page had every wait above to move the keyboard elsewhere or change the field. This is the last
+          // look: nothing is awaited between its answer and the typing.
+          const ready = await inPage(secretTarget, target);
+          if (!live() || originOf(contents.getURL()) !== site) return { changed: "page_changed", error: LEFT_SITE };
+          if (ready.code) return refuse(ready.code);
+          if (ready.field !== shown.field) return refuse("stale_element");
+          let placeholder;
+          try { ({ placeholder } = secrets.issue({ sessionId, secretRef: action.secretRef, tabId: tab.tabId, origin: site, ref: action.ref })); }
+          catch (error) { return refuse(["unknown_secret", "secret_not_allowed_here"].includes(error?.code) ? error.code : "secrets_unavailable"); }
+          secretTabs.add(tab.tabId);
+          await contents.insertText(placeholder);
+          requestSignal.throwIfAborted();
+          // The comparison happens in the page's isolated world; only its yes or no comes back.
+          const result = await inPage(verifyFormAction, { ...target, text: placeholder });
+          requestSignal.throwIfAborted();
+          return { verified: result.verified === true, site };
+        };
+        // A value from a command is fetched at the step that types it, so a one-time code is as fresh as it can be.
+        // The person approved this command for this site and this kind of field; every check runs again after each
+        // wait, and what the command printed goes nowhere but into the store's redaction and the field. A value the
+        // person pasted into the card is typed instead of running anything, once, and is then let go.
+        /** @returns {Promise<{ verified: boolean, site: string } | { code: string, error: string } | { changed: string, error: string }>} */
+        const enterValue = async (action) => {
+          /** @param {string} code @param {string} [error] */
+          const refuse = (code, error) => ({ code, error: error ?? VALUE_REFUSALS[code] ?? "The observed control is no longer ready. Observe again before choosing an action." });
+          const changed = { changed: "stale_observation", error: "The page or observation changed while preparing the action. Observe again." };
+          const left = { changed: "page_changed", error: LEFT_SITE };
+          const target = { type: "fill_from", ref: action.ref };
+          const approved = valueFills.get(action);
+          const inPage = async (step, ...args) => {
+            try { return await isolated(contents, step, ...args); }
+            catch (error) {
+              const code = PREPARE_CODES.find((item) => String(error?.message).includes(item));
+              if (!code) throw error;
+              return { code };
+            }
+          };
+          const live = () => { requestSignal.throwIfAborted(); checkNavigation(navigationScope); return current(); };
+          const here = () => originOf(contents.getURL()) === valueSite;
+          if (!approved || !await valuesOn()) return refuse("values_unavailable");
+          if (!live()) return changed;
+          const shown = await inPage(prepareAction, observed.id, target);
+          if (!live()) return changed;
+          if (shown.code) return refuse(shown.code);
+          if (shown.field !== approved.field) return refuse("stale_element");
+          let value;
+          if (typeof approved.pasted === "string" || approved.ask !== undefined) {
+            value = approved.pasted ?? secrets.kept({ sessionId, site: valueSite, label: approved.ask });
+            delete approved.pasted;
+            if (typeof value !== "string" || !secrets.remember(value) || (approved.field !== "textarea" && /[\r\n]/.test(value))) return refuse("pasted_unusable");
+          } else {
+            /** @type {Record<string, string> | undefined} */
+            let unlock;
+            if (approved.key) {
+              // The key the person pasted for this call, or the one they kept for this chat, read only now.
+              const key = approved.key.pasted ?? secrets.kept({ sessionId, ...approved.key.place });
+              if (!validUnlockValue(key) || !secrets.remember(key)) return refuse("unlock_unusable");
+              unlock = { [approved.key.env]: key };
+            }
+            // Whatever ran the command, only a plain yes with a text value is one.
+            /** @type {{ ok?: unknown, value?: unknown, code?: unknown, exitCode?: unknown, detail?: unknown } | null | undefined} */
+            const result = await runValueCommand([...approved.command], requestSignal, unlock);
+            requestSignal.throwIfAborted();
+            value = result?.ok === true ? result.value : undefined;
+            if (typeof value !== "string") {
+              const code = result?.ok === false && typeof result.code === "string" && result.code in VALUE_REFUSALS ? result.code : "command_failed";
+              const said = code === "command_failed" ? commandFailed(result?.ok === false ? result : {}) : undefined;
+              return refuse(code, said && unlock ? `${said} If it says it is locked or not signed in, the key the person pasted may have run out: use the same fill_from once more so they can paste a new one.` : said);
+            }
+            // From here on nothing this host returns can hold the value, whatever becomes of the fill.
+            if (!secrets.remember(value) || (approved.field !== "textarea" && /[\r\n]/.test(value))) return refuse("value_unusable");
+          }
+          // The command had its whole run for the page to change in.
+          if (!await valuesOn()) return refuse("values_unavailable");
+          const again = await inPage(prepareAction, observed.id, target);
+          if (!live()) return changed;
+          if (again.code) return refuse(again.code);
+          if (again.field !== approved.field) return refuse("stale_element");
+          publish(tab.tabId, "running", action.type);
+          dispatched = true;
+          const focused = await inPage(applyFormAction, target);
+          if (!live() || !here()) return left;
+          if (focused.code) return refuse(focused.code);
+          if (focused.field !== approved.field) return refuse("stale_element");
+          // The last look: nothing is awaited between its answer and the typing.
+          const ready = await inPage(secretTarget, target);
+          if (!live() || !here()) return left;
+          if (ready.code) return refuse(ready.code);
+          if (ready.field !== approved.field) return refuse("stale_element");
+          // The site may show the value back, so this tab gives no more images.
+          secretTabs.add(tab.tabId);
+          await contents.insertText(value);
+          requestSignal.throwIfAborted();
+          // The comparison happens in the page's isolated world; only its yes or no comes back.
+          const kept = await inPage(verifyFormAction, { ...target, text: value });
+          requestSignal.throwIfAborted();
+          return { verified: kept.verified === true, site: valueSite };
+        };
         for (const [index, action] of actions.entries()) {
           checkNavigation(navigationScope);
+          if (action.type === "fill_from") {
+            const asked = valueFills.get(action);
+            const source = !asked || (asked.ask === undefined && typeof asked.pasted !== "string") ? "command" : typeof asked.pasted === "string" ? "paste" : "kept";
+            const entered = await enterValue(action);
+            if (asked && valueSite) {
+              try {
+                noteValueFill?.(sessionId, { site: valueSite, field: asked.field, source, ...(source === "command" ? { program: String(asked.command[0]) } : {}),
+                  result: "changed" in entered ? entered.changed : "code" in entered ? entered.code : entered.verified ? "filled" : "value_mismatch" });
+              } catch { /* A list of recent fills never decides what a fill returns. */ }
+            }
+            if ("changed" in entered) {
+              if (!steps.length) fail(entered.changed, entered.error);
+              interrupted = "page_changed";
+              break;
+            }
+            // The receipt names the field, never the command's answer.
+            const step = { type: action.type, ref: action.ref };
+            if ("code" in entered) {
+              if (!batch) fail(entered.code, entered.error);
+              failure = { index, ...step, code: entered.code, error: entered.error };
+              break;
+            }
+            secretSite = entered.site;
+            const outcome = entered.verified ? "verified" : "failed";
+            const mismatch = entered.verified ? {} : { code: "value_mismatch", error: VALUE_REFUSALS.value_mismatch };
+            if (!batch) {
+              return { ok: entered.verified, dispatched, mayHaveChangedState: dispatched, outcome, retrySafe: false, ...mismatch, tabId: tab.tabId, ref: action.ref, next: "observe" };
+            }
+            steps.push({ i: index, ...step, outcome });
+            if (entered.verified) continue;
+            failure = { index, ...step, outcome, ...mismatch };
+            break;
+          }
+          if (action.type === "fill_secret") {
+            const entered = await enterSecret(action);
+            if ("changed" in entered) {
+              if (!steps.length) fail(entered.changed, entered.error);
+              interrupted = "page_changed";
+              break;
+            }
+            const step = { type: action.type, ref: action.ref, secretRef: action.secretRef };
+            if ("code" in entered) {
+              if (!batch) fail(entered.code, entered.error);
+              failure = { index, ...step, code: entered.code, error: entered.error };
+              break;
+            }
+            secretSite = entered.site;
+            const outcome = entered.verified ? "verified" : "failed";
+            const mismatch = entered.verified ? {} : { code: "value_mismatch", error: SECRET_REFUSALS.value_mismatch };
+            if (!batch) {
+              return { ok: entered.verified, dispatched, mayHaveChangedState: dispatched, outcome, retrySafe: false, ...mismatch,
+                tabId: tab.tabId, ref: action.ref, secretRef: action.secretRef, next: "observe" };
+            }
+            // A field that did not keep what was typed is listed with the steps and stops the batch.
+            steps.push({ i: index, ...step, outcome });
+            if (entered.verified) continue;
+            failure = { index, ...step, outcome, ...mismatch };
+            break;
+          }
+          if (!confirmedSite && !(secretSite && action.type !== "fill") && observed.url === contents.getURL() && ["click", "fill", "key"].includes(action.type)
+            && await isolated(contents, credentialTarget, observed.id, action)) {
+            const site = new URL(observed.url).origin;
+            const refused = !approveCredential ? ["sign_in_required", "Take over and sign in directly in the browser, then resume."]
+              : !await approveCredential(sessionId, { site }, requestSignal) ? ["credential_declined", "The person did not confirm entering a password or code on this site."] : null;
+            requestSignal.throwIfAborted();
+            if (refused) {
+              if (!batch) fail(refused[0], refused[1]);
+              failure = { index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), code: refused[0], error: refused[1] };
+              break;
+            }
+            confirmedSite = site;
+          }
+          // Runs after the person's answer too, so a redirect while they decide stops here.
           if (state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== contents.getURL()) {
             if (!steps.length) fail("stale_observation", "The page or observation changed while preparing the action. Observe again.");
             interrupted = "page_changed";
@@ -967,7 +1669,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
             const code = PREPARE_CODES.find((item) => String(error?.message).includes(item));
             if (!code) throw error;
             const message = code === "unverifiable_focus" ? "Keyboard input requires a directly focused observed page control. Pass the control's ref or click it first."
-              : code === "sign_in_required" ? "Take over and sign in directly in the browser, then resume."
+              : code === "use_attach" ? "Upload controls take files through attach with the control's ref."
               : "The observed control is no longer ready. Observe again before choosing an action.";
             if (!batch) fail(code, message);
             failure = { index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), code, error: message };
@@ -981,9 +1683,19 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           if (sent) observed.sent.add(sent);
           const since = Date.now();
           if (["click", "key", "scroll"].includes(action.type)) await isolated(contents, readSettle, true).catch(() => null);
+          if (action.type === "key" && leftConfirmedSite()) {
+            if (!steps.length) fail("page_changed", LEFT_SITE);
+            interrupted = "page_changed";
+            break;
+          }
           if (action.type === "fill" || action.type === "select") {
             const prepared = await isolated(contents, applyFormAction, action);
             if (action.type === "fill" && !prepared.inserted) {
+              if (leftConfirmedSite()) {
+                if (!steps.length) fail("page_changed", LEFT_SITE);
+                interrupted = "page_changed";
+                break;
+              }
               if (action.text) await contents.insertText(action.text);
               else {
                 await contents.sendInputEvent({ type: "keyDown", keyCode: "Backspace" });
@@ -994,9 +1706,17 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           }
           if (action.type === "attach") {
             const scale = inputScale(tab);
-            const outcome = await attachFiles(contents, { x: point.x * scale, y: point.y * scale }, action.files, requestSignal, fileChooserMs);
+            const outcome = await attachFiles(contents, { x: point.x * scale, y: point.y * scale }, action.files, requestSignal, fileChooserMs,
+              fileAuthorization ? async (frameUrl) => {
+                if (originOf(frameUrl) !== originOf(observed.url) || contents.getURL() !== observed.url || !await allowed(observed.url)) return false;
+                if (!await fileAuthorization.revalidate(frameUrl)) return false;
+                // Recheck actual paths immediately before CDP receives them.
+                await checkFiles(action.files);
+                return contents.getURL() === observed.url && originOf(frameUrl) === originOf(contents.getURL());
+              } : null);
             if (outcome !== "attached") {
-              const error = outcome === "single_file" ? "This control takes one file. Attach one." : "No file chooser opened. Use the page's upload button or file input ref.";
+              const error = outcome === "files_permission_changed" ? "The website, receiving frame or file-sharing permission changed. No files were shared. Observe and review permission again."
+                : outcome === "single_file" ? "This control takes one file. Attach one." : "No file chooser opened. Use the page's upload button or file input ref.";
               if (!batch) fail(outcome, error);
               failure = { index, type: action.type, ref: action.ref, code: outcome, error };
               break;
@@ -1018,6 +1738,8 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
               if (action.type === "scroll") {
                 await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY: action.deltaY * scale });
               } else {
+                // What the page sends from here on is the answer to this click: see `left_without_secret`.
+                if (action.type === "click") secrets?.noteAction(tab.tabId);
                 await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
                 requestSignal.throwIfAborted();
                 await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
@@ -1028,6 +1750,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           }
           if (action.type === "key") {
             const key = keys.get(index);
+            secrets?.noteAction(tab.tabId);
             if (key.edit && typeof contents[key.edit] === "function") contents[key.edit]();
             else {
               await contents.sendInputEvent({ type: "keyDown", keyCode: key.keyCode, modifiers: key.modifiers });
@@ -1041,10 +1764,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
             if (!batch) {
               return { ok: result.verified, dispatched, mayHaveChangedState: dispatched, outcome: result.verified ? "verified" : "value_mismatch", retrySafe: false,
                 ...(result.verified ? {} : { code: "value_mismatch", error: "The control did not retain the requested value. Observe its current state before deciding how to continue." }),
-                tabId: tab.tabId, control: result.control, next: "observe" };
+                tabId: tab.tabId, control: cutControl(mask, result.control, 200, 1000), next: "observe" };
             }
             if (!result.verified) {
-              failure = { index, type: action.type, ref: action.ref, code: "value_mismatch", error: "The control did not retain the requested value.", control: result.control };
+              failure = { index, type: action.type, ref: action.ref, code: "value_mismatch", error: "The control did not retain the requested value.", control: cutControl(mask, result.control, 200, 1000) };
               break;
             }
             steps.push({ i: index, type: action.type, ref: action.ref, outcome: point.unchanged ? "unchanged" : "verified" });
@@ -1063,37 +1786,73 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         // The receipt carries the resulting page so the model need not observe again.
         let observation;
         try {
-          const { ok: _ok, tabId: _tabId, trust: _trust, ...post } = await observe(tab, false, requestSignal, null, { mode: "interactive" });
+          // The receipt itself says what became of the secrets, once.
+          const { ok: _ok, tabId: _tabId, trust: _trust, secrets: _secrets, secretsNext: _secretsNext, ...post } = await observe(tab, false, requestSignal, null, { mode: "interactive", sessionId }, mask);
           observation = post;
         } catch (error) {
           if (requestSignal.aborted) throw error;
           observation = { ok: false, code: error instanceof BrowserTaskError ? error.code : "observation_unavailable", error: "The resulting page could not be read. Observe before continuing." };
         }
-        const completed = steps.length, failed = failure ? 1 : 0, skipped = actions.length - completed - failed;
-        const receipt = { ok: !failure, tabId: tab.tabId, trust: TRUST, completed, failed, skipped,
+        const completed = steps.filter((step) => step.outcome !== "failed").length, failed = failure ? 1 : 0, skipped = actions.length - completed - failed;
+        const receipt = withSecrets(sessionId, tab.tabId, { ok: !failure, tabId: tab.tabId, trust: TRUST, completed, failed, skipped,
           ...(failure ? { code: failure.code, error: failure.error, failedStep: failure } : {}),
           ...(skipped && interrupted ? { skippedBecause: interrupted } : {}),
           steps, ...(page ? { page: page.outcome } : {}), dispatched, mayHaveChangedState: dispatched, retrySafe: false,
           ...(entry ? { request_id: entry.id } : {}), observation,
-          next: failure ? "Read observation, then fix or replan the failed step; completed steps are not repeated." : skipped ? "The page changed; plan the skipped steps from observation." : "Verify the result in observation; act on it directly." };
-        if (entry) entry.receipt = receipt;
+          next: failure ? "Read observation, then fix or replan the failed step; completed steps are not repeated." : skipped ? "The page changed; plan the skipped steps from observation." : "Verify the result in observation; act on it directly." },
+          Boolean(failure || skipped));
+        // What is kept for a retry is already free of every secret and placeholder.
+        if (entry) entry.receipt = mask.redact(receipt);
         return receipt;
       };
       const result = await Promise.race([run(), canceled]);
       requestSignal.throwIfAborted();
       if (state.status !== "paused") publish(tab.tabId, result.ok ? "idle" : "needs_attention", result.ok ? null : result.code);
-      return result;
+      return single ? withSecrets(sessionId, tab.tabId, result, false) : result;
     } catch (error) {
       // Refs stay usable after a refused action; after input, the page may differ.
       if (state && state.controller === controller && (dispatched || !(error instanceof BrowserTaskError))) forget(state);
       if (entry && !dispatched && receipts.get(sessionId)?.get(entry.id) === entry) receipts.get(sessionId)?.delete(entry.id);
-      if (tab && state?.status !== "paused" && (!state?.controller || state.controller === controller)) publish(tab.tabId, "needs_attention", error?.code || "Check browser");
-      return { ok: false, code: error instanceof BrowserTaskError ? error.code : "browser_operation_failed", error: error instanceof BrowserTaskError ? error.message : "Browser operation could not finish. Observe the page or take over to continue.", dispatched, mayHaveChangedState: dispatched, retrySafe: false, next: dispatched ? "observe_before_retry" : "review", trust: TRUST };
+      // A host's own coded failures (paused, egress_unavailable) keep their code and words; anything else is
+      // unexpected, so it is logged and the agent hears plainly whether anything reached the page and what to do.
+      const coded = error instanceof BrowserTaskError || (typeof error?.code === "string" && /^[a-z][a-z_]{2,40}$/.test(error.code) && typeof error.message === "string");
+      const timedOut = !coded && (error?.name === "TimeoutError" || error?.timedOut === true);
+      const code = coded ? error.code : timedOut ? "operation_timeout" : "browser_operation_failed";
+      const detail = !coded ? /disconnect|socket/i.test(error?.message ?? "") ? "connection_lost"
+        : /timed out|timeout/i.test(error?.message ?? "") ? "receipt_timeout"
+        : /ENOENT/.test(error?.code ?? "") ? "runtime_dependency_missing" : "unexpected_failure" : "";
+      if (!coded) { try { onFailure({ operation, code, dispatched, detail }); } catch { /* Logging never changes the receipt. */ } }
+      const message = coded ? error.message
+        : timedOut ? "The browser operation was not confirmed before the timeout. It may still be running."
+        : dispatched ? "The browser did not confirm this operation, and it may have changed the page."
+        : "The browser could not run this operation. Nothing reached the page.";
+      const next = dispatched ? "Observe the tab before doing anything else; never repeat input it may have received."
+        : code === "page_changed" ? "The page is still loading or redirecting. Observe again."
+        : coded ? "review" : "Retry this operation once. If it fails again, open the page in a new tab.";
+      if (tab && state?.status !== "paused" && (!state?.controller || state.controller === controller)) {
+        publish(tab.tabId, TRANSIENT_CODES.has(code) ? "idle" : "needs_attention", TRANSIENT_CODES.has(code) ? null : code);
+      }
+      const refusal = { ok: false, code, error: message, ...(tab ? { tabId: tab.tabId } : {}), ...(detail ? { detail } : {}), dispatched, mayHaveChangedState: dispatched, retrySafe: false, next, trust: TRUST };
+      return operation === "act" && tab && typeof sessionId === "string" ? withSecrets(sessionId, tab.tabId, refusal, next !== "review") : refusal;
     } finally {
       if (openingController && opening.get(sessionId) === openingController) opening.delete(sessionId);
       if (signal && abort) signal.removeEventListener("abort", abort);
       if (state && state.controller === controller) state.controller = null;
+      if (entry) entry.running = false;
     }
+  }
+  /**
+   * The only way a result leaves this host. Page text, a site tool's answer or an error can echo a saved secret or
+   * the placeholder typed in its place: every result of every operation is redacted, whether or not the flag is on,
+   * by what was secret when the operation began as well as when it ends.
+   * @param {Parameters<typeof perform>[0]} [input] @param {Parameters<typeof perform>[1]} [options]
+   */
+  async function request(input, options) {
+    const mask = secrets ? secrets.redactor() : NO_SECRETS;
+    const result = await perform(input, options, mask);
+    if (!result || !captured.has(result.image)) return mask.redact(result);
+    const { image, ...rest } = result;
+    return { ...mask.redact(rest), image };
   }
   return { request, pause, resume, invalidate, stateFor, navigationGuard, inheritNavigation, manualNavigation };
 }

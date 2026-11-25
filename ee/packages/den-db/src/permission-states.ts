@@ -1,18 +1,12 @@
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   PERMISSION_KEYS,
+  isPermissionDefaultOn,
   type PermissionDefaultSetKey,
   type PermissionDefinition,
   type PermissionKey,
 } from "@openwork/types/den/permissions"
 import type { PermissionChangeSource, PermissionSetPermissionTable, PermissionSetTable, PermissionStatus } from "./schema/permissions"
-
-/**
- * Pure permission state helpers (no database). Imported by permissions.ts and
- * re-exported from it; also importable on its own as
- * `@openwork-ee/den-db/permission-states` (e.g. from plain Node tests).
- * See docs/permissions/overview.md, sections 5 and 8.
- */
 
 type OrganizationId = typeof PermissionSetTable.$inferSelect.organizationId
 type PermissionSetId = typeof PermissionSetTable.$inferSelect.id
@@ -30,7 +24,6 @@ export type PermissionHistoryRow<TSetId extends string = string> = {
 /** Current status per key for one set, including keys no longer in the catalog. */
 export type PermissionKeyStates = ReadonlyMap<string, PermissionStatus>
 
-/** Later by created_at, then by id (TypeIDs are UUIDv7, so id order is time order). */
 function isLaterPermissionRow(candidate: PermissionHistoryRow, current: PermissionHistoryRow) {
   const difference = candidate.createdAt.getTime() - current.createdAt.getTime()
   if (difference !== 0) return difference > 0
@@ -85,7 +78,8 @@ export type PermissionDecision<TKey extends string = PermissionKey> = {
 
 /**
  * Rows reconciliation should insert into one default set (overview section 8).
- * For each catalog key whose `defaultOn` includes the set's default key and
+ * For each catalog key that starts on in the set (`isPermissionDefaultOn`:
+ * its `defaultOn` includes the set's default key, or the set is Super admin) and
  * that has never had a row in the set: deny when it `follows` a key that is
  * not allowed in the set, otherwise allow. Explicit choices (any existing
  * row, allow or deny) are never touched. Keys added in the same pass are
@@ -100,7 +94,7 @@ export function reconcileDecisions<TKey extends string>(input: {
   const { catalog } = input
   const catalogKeys = Object.keys(catalog).filter((key): key is TKey => Object.prototype.hasOwnProperty.call(catalog, key))
   const candidates = catalogKeys.filter((key) =>
-    catalog[key].defaultOn.includes(input.setDefaultKey) && !input.existingKeysEverSeen.has(key))
+    isPermissionDefaultOn(catalog[key], input.setDefaultKey) && !input.existingKeysEverSeen.has(key))
   const candidateByKey = new Map<string, TKey>(candidates.map((key) => [key, key]))
 
   const working = new Map<string, PermissionStatus>(input.currentStates)
@@ -164,8 +158,8 @@ export function buildPermissionRows(input: {
 }
 
 /**
- * Thrown by ensureDefaultPermissionSets when the Member or Admin default set
- * still does not exist after trying to create it. Resolution treats only this
+ * Thrown by ensureDefaultPermissionSets when a default set (Member, Admin or
+ * Super admin) still does not exist after trying to create it. Resolution treats only this
  * as "fall back to code defaults"; every other error fails closed.
  */
 export class DefaultPermissionSetsMissingError extends Error {

@@ -48,25 +48,23 @@ export type ReadManagedDisabledProvidersOptions = {
   directory?: string;
 };
 
-/**
- * The providers hidden through `disabled_providers` (for example a
- * disconnected OpenCode Zen). OpenCode v1 reports them in its config. OpenCode
- * v2 keeps engine config private, so read the same shared list from the
- * OpenWork server instead of treating it as empty and overwriting it.
- */
 export async function readManagedDisabledProviders(
   options: ReadManagedDisabledProvidersOptions,
 ): Promise<string[]> {
   const client = options.opencodeClient;
   const workspaceId = options.workspaceId?.trim() ?? "";
-  if (client && isOpencodeV2Client(client)) {
-    if (!options.openworkClient || !workspaceId || options.workspaceType !== "local") return [];
-    const result = await options.openworkClient.getRuntimeDisabledProviders(workspaceId);
-    return normalizeDisabledProviders(result.disabledProviders);
-  }
+  const openworkClient = options.openworkClient;
+  const managedRuntime = Boolean(openworkClient && workspaceId && options.workspaceType === "local");
+  const readRuntime = async () => openworkClient && managedRuntime
+    ? normalizeDisabledProviders((await openworkClient.getRuntimeDisabledProviders(workspaceId)).disabledProviders)
+    : [];
+  if (client && isOpencodeV2Client(client)) return readRuntime();
   if (!client) return [];
   const config = unwrap(await client.config.get(options.directory ? { directory: options.directory } : undefined));
-  return disabledProvidersFromConfig(config);
+  const fromConfig = disabledProvidersFromConfig(config);
+  if (!managedRuntime) return fromConfig;
+  const fromRuntime = await readRuntime().catch(() => []);
+  return normalizeDisabledProviders([...fromConfig, ...fromRuntime]);
 }
 
 function configWithDisabledProviders(

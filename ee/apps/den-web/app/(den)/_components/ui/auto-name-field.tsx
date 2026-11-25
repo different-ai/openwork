@@ -5,21 +5,13 @@ import { useState } from "react";
 import { DenInput } from "./input";
 
 export type DenAutoNameFieldProps = {
-  /** The current name value (auto-derived or manually set). */
   value: string;
-  /** Whether the value is still tracking the automatic name. */
   auto: boolean;
   placeholder?: string;
   testId?: string;
-  /** Called with the new name; `null` reverts to the automatic name. */
   onChange: (value: string | null) => void;
 };
 
-/**
- * A name that writes itself: shows the auto-derived value with an AUTO badge
- * and a Rename affordance. Editing switches to an input; clearing it reverts
- * to the automatic name.
- */
 export function DenAutoNameField({ value, auto, placeholder, testId, onChange }: DenAutoNameFieldProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);

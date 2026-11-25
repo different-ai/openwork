@@ -29,7 +29,6 @@ const providerSchema = z.object({
   lastRefusedAt: timestamp,
   lastObservedAt: timestamp,
   lastProbedAt: timestamp,
-  /** Observations in the last 30 days by source and outcome. */
   last30Days: z.array(z.object({ source: z.enum(MCP_REGISTRATION_SOURCES), outcome: z.enum(MCP_REGISTRATION_OUTCOMES), count: z.number().int() })),
 })
 
@@ -39,7 +38,6 @@ const reportSchema = z.object({
 }).meta({ ref: "AdminMcpRegistrationReport" })
 
 const runSchema = z.object({
-  /** Also register OpenWork with providers whose metadata cannot tell (a test client, deleted again when the provider allows). */
   tryRegistration: z.boolean().default(false),
 }).meta({ ref: "AdminMcpRegistrationRunRequest" })
 

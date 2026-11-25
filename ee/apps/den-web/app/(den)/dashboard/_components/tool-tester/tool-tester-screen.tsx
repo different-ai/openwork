@@ -20,8 +20,10 @@ import { DenNotice } from "../../../_components/ui/notice";
 import { DenSelect } from "../../../_components/ui/select";
 import { DenToggleRow } from "../../../_components/ui/toggle-row";
 import { DenRequestTimeoutError } from "../../../_lib/den-flow";
-import { getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../../_lib/den-org";
+import { getMcpConnectionsRoute, getOrgAccessFlags } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
+import { useFeatureIntro, useFeatureIntroRuntime } from "../../_features/feature-intros";
+import { useConnectorsIntroFacts } from "../connectors-intro-facts";
 import { marketplaceConnectionNeedsAdminSetup } from "../mcp-connection-setup";
 import { personalApiKeyStatus, personalApiKeyStatusLabel } from "../member-api-key";
 import {
@@ -102,7 +104,6 @@ export function ToolTesterScreen() {
   const searchParams = useSearchParams();
   const requestedConnectionId = searchParams.get("connectionId");
   const { orgContext, orgSlug } = useOrgDashboard();
-  const revisedSetup = orgFeatureEnabled(orgContext, "customConnectorSetup");
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
@@ -117,6 +118,12 @@ export function ToolTesterScreen() {
       marketplaceConnectionNeedsAdminSetup(connection, presetsQuery.data ?? []),
     ))
   ), [access.canManageConnections, connectionsQuery.data, presetsQuery.data]);
+  const connectorsFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
+  const testableKnown = Boolean(connectionsQuery.data && presetsQuery.data) && !connectionsQuery.error;
+  const intro = useFeatureIntro(
+    "connectors.tool-tester",
+    connectorsFacts && testableKnown ? { ...connectorsFacts, testableConnectors: testableConnections.length } : null,
+  );
   const [selectedConnectionId, setSelectedConnectionId] = useState(requestedConnectionId ?? "");
   const [selectedToolName, setSelectedToolName] = useState("");
   const [toolSearch, setToolSearch] = useState("");
@@ -402,6 +409,8 @@ export function ToolTesterScreen() {
     }
   }
 
+  if (intro.size === "fullscreen") return intro.element;
+
   return (
     <DashboardPageTemplate
       icon={Wrench}
@@ -416,6 +425,8 @@ export function ToolTesterScreen() {
         <div className="flex items-center gap-2 rounded-2xl border border-gray-100 bg-white px-5 py-6 text-[13px] text-gray-500">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading testable connections…
         </div>
+      ) : testableConnections.length === 0 && intro.size === "box" ? (
+        intro.element
       ) : testableConnections.length === 0 ? (
         <DenNotice
           tone="neutral"
@@ -511,7 +522,7 @@ export function ToolTesterScreen() {
                           </div>
                           {selectedTool.description ? <p className="mt-2 text-[12.5px] leading-5 text-gray-500">{selectedTool.description}</p> : null}
                         </div>
-                        <p className={`max-w-full break-all text-right font-mono text-[11px] ${revisedSetup ? "text-gray-500" : "text-gray-400"}`}>{selectedTool.name}</p>
+                        <p className="max-w-full break-all text-right font-mono text-[11px] text-gray-500">{selectedTool.name}</p>
                       </div>
 
                       {currentRun?.status === "policy_blocked" ? <div className="mt-5"><DenNotice message={currentRun.message} /></div> : null}
@@ -574,7 +585,7 @@ export function ToolTesterScreen() {
                       )}
 
                       {currentRun && currentRun.status !== "policy_blocked" ? (
-                        <div className="mt-5"><McpToolCallInspector key={currentRun.id} outcome={currentRun.outcome} revisedSetup={revisedSetup} /></div>
+                        <div className="mt-5"><McpToolCallInspector key={currentRun.id} outcome={currentRun.outcome} /></div>
                       ) : null}
                     </section>
                   ) : null}
@@ -582,7 +593,6 @@ export function ToolTesterScreen() {
               )}
 
               <RecentToolRuns
-                    revisedSetup={revisedSetup}
                 runs={recentRuns}
                 caption="Kept in this browser for this session only — OpenWork never stores run results."
                 onLoad={loadRun}

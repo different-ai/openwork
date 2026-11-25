@@ -180,7 +180,6 @@ export type AutomationEngineCancellationResult = z.infer<
 >
 
 export interface AutomationEngineObserveOptions {
-  /** Exclusive durable cursor. Omit it to observe from sequence one. */
   afterSequence?: number
   signal?: AbortSignal
 }

@@ -3,8 +3,6 @@ import type { FaqEntry } from "./faq";
 export const MIGRATION_GUIDE_URL = "https://openworklabs.com/docs/start-here/migrate-from-claude-cowork";
 export const IMPORT_HISTORY_GUIDE_PATH = "/docs/start-here/import-claude-history";
 
-// The one action on the migration page. The agent guide it points to lives in
-// packages/openwork-bootstrap/migrate.md and is served at /migrate.md.
 export const MIGRATION_PROMPT =
   "Follow https://openworklabs.com/migrate.md to move my Claude plugins and skills to OpenWork.";
 

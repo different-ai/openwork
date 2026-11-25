@@ -72,12 +72,6 @@ function rememberEnvSystemContext(cacheKey: string, context: string | undefined)
   envSystemContextCache.set(cacheKey, context);
 }
 
-/**
- * The per-message `system` context every send carries: the user's time zone,
- * local date, and locale (computed fresh each send so a long-lived session
- * crosses midnight correctly), followed by the cached environment-key names
- * when the workspace has any.
- */
 export async function buildOpenworkSessionSystemContext(
   client: OpenworkServerClient | null,
   options: {

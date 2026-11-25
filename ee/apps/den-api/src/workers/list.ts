@@ -5,7 +5,6 @@ import { keysetAfter, keysetPage, type KeysetCursor } from "../list-pagination.j
 
 type WorkerRow = typeof WorkerTable.$inferSelect
 
-/** One page of an organization's workers ordered by (created_at desc, id desc). */
 export async function listWorkersPage(input: {
   orgId: WorkerRow["org_id"]
   limit: number

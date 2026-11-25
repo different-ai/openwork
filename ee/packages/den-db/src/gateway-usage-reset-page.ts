@@ -61,7 +61,6 @@ function readCursor(
 }
 
 async function pageWinners(tx: Transaction, scope: Scope, memberIds: Scope["memberId"][]) {
-  // memberId -> provider scope -> winners
   const winners = new Map<string, Map<string, ReturnType<typeof gatewayWinningPolicies>>>()
   if (memberIds.length === 0) return winners
   const memberships = await tx

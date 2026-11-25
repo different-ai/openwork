@@ -1,0 +1,5 @@
+[Default Applications]
+x-scheme-handler/openwork=demo-openwork.desktop
+x-scheme-handler/http=demo-chromium.desktop
+x-scheme-handler/https=demo-chromium.desktop
+text/html=demo-chromium.desktop

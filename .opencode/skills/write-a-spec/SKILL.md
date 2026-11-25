@@ -16,10 +16,8 @@ not for the machine that runs it.
 | --- | --- | --- |
 | Decide whether a journey is needed and design it | `write-a-spec` (this) | a spec whose titles, steps, and evidence read as the report |
 | Run it and read your own record | `run-tests` | `evals/results/test-runs/<latest>/` with the captions in order |
-| Let a reviewer click through the change | `preview-my-work` | a sandbox link in the report's **Show sandbox** panel |
+| Let a reviewer click through the change | `pnpm world help` (preview worlds) | a sandbox link in the report's **Show sandbox** panel |
 | Describe it on the PR | `open-a-pr` | an `## Evidence` line naming the spec and its before → after |
-| A proof or check is red | `diagnose-a-red-run` | classification before any code change |
-| Extra screenshots or a video outside the spec | `record-a-demo`, `upload-photo` | PR attachments (these are not proof) |
 
 ### Which lane runs your spec (and when to tag)
 
@@ -28,9 +26,9 @@ it decides the world you can build.
 
 | If the spec… | Name / tag | CI lane |
 | --- | --- | --- |
-| proves your change (default) | `evals/proofs/<name>.proof.test.ts` | PR change proof, unprotected |
-| changes one of the nine core journeys in `evals/journeys.ts` | `evals/core/<journey>.e2e.test.ts` | PR change proof + core journeys |
-| needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle |
+| proves your change (default) | `evals/proofs/<name>.proof.test.ts` | on demand only, with `PR change proof` |
+| changes one of the nine core journeys in `evals/journeys.ts` | `evals/core/<journey>.e2e.test.ts` | core journeys nightly and on demand |
+| needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle (not run by manual proof runs) |
 
 Tag `checkpoints` only when a still image cannot show what the reviewer has to
 check: an open stream, a populated workspace to explore, a state that costs
@@ -251,11 +249,12 @@ placeholder, or test id. Bound every wait; declare external requirements in
 - Your own eye passes what you designed. Run the design review on the same
   record before pushing and fix its `medium` notes, or say in the PR why the
   screen is right (`evals/design-review/README.md`; on a PR, the
-  `fix-design-notes` skill reads the notes from the Evidence preview check):
+  notes are in the Evidence preview check):
 
   ```sh
   pnpm --dir evals design:review -- --test-run latest
   ```
-- In CI the spec runs on `PR change proof`, one job per spec; the trusted
-  publisher aggregates every changed spec's records into one report. Failed,
+- PRs do not run specs automatically. Run yours with `run-tests`, or by hand in
+  CI: `gh workflow run pr-proof.yml --ref <branch> -f pr=<number>` runs each
+  changed spec in its own job and keeps the records as artifacts. Failed,
   skipped, and cancelled runs stay visible as such; nothing substitutes for them.

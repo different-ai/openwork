@@ -7,57 +7,30 @@ import { createContext, useContext, type CSSProperties } from "react";
  * their connected apps, and where app logos come from. Workbot itself knows nothing about the host's sign-in.
  */
 export type WorkbotHost = {
-  /** A JSON request to the Workbot API (`/v1/workbot/...`), signed in as the person; resolves with the parsed body. */
   requestJson(path: string, init?: RequestInit, timeoutMs?: number): Promise<{ response: Response; payload: unknown }>
-  /** Where a path is served and how to sign a raw request to it (the live stream, downloads, uploads with progress). */
   prepare(path: string): Promise<{ url: string; headers: Headers; credentials: RequestCredentials }>
-  /** A person-readable message from a failed response's body; Workbot falls back to its own wording. */
   errorMessage?: (payload: unknown, fallback: string) => string
-  /** The signed-in person. */
   user: { name: string | null } | null
-  /** The apps the person has connected, for the header. A hook: called once on every render of the header. */
   useConnectedApps: () => Array<{ id: string; name: string }>
-  /** Logo URLs to try in order for an app, by its display name. */
-  appIcons: (name: string) => string[]
-  /** Where the avatar in the header leads. */
+  appIcons: (name: string, site?: string) => string[]
   homeHref: string
-  /** Workbot's Calendar tab is on for this person (on while Workbot is on). */
   calendar?: boolean
-  /** Documents browsing is enabled for this organization; omitted means off. */
   documents?: boolean
-  /** The Computer view of Workbot's computer: its native desktop apps (`computerUse`). Omitted means off. */
   computer?: boolean
-  /** The Browser view of Workbot's computer (`browserUse`), rolled out separately from `computer`. Omitted means off. */
   browser?: boolean
-  /** Teach browser tasks and save private Cloud skills; omitted means off. */
   browserDemonstrations?: boolean
-  /** The Browser view streams the page with Chromium's screencast instead of VNC; omitted means off. */
-  browserLiveView?: boolean
-  /** Explicit document editing is enabled; omitted means preview only. */
-  documentEditing?: boolean
-  /** Native dictation entry point; omitted means off. Speech stays with the OS. */
-  nativeDictation?: boolean
-  /** Contextual chat and workspace navigation. Omitted means off. */
   workspaceAssistant?: boolean
-  /** Offers to open documents a reply mentions and keeps the chat open beside them. Needs workspaceAssistant. */
   guidedNavigation?: boolean
-  /** Signed-in model-limit recovery; never offers anonymous access or starts a payment. */
   usageRecovery?: { denUrl: string; organizationId: string }
-  /** The Get set up checklist in the header, and the Den pages its steps open. Omitted means off. */
   activation?: { denUrl: string; organizationId: string }
-  /** The organization runs Automations in the cloud, so the Calendar can create them. Off when unset. */
   canSchedule?: boolean
-  /** Where the person connects their own Google or Microsoft account, for the Calendar's connect links. */
   connectionsHref?: string | null
-  /** Existing sign-in URL, used without replacing a document with retained changes. */
   signInHref?: string | null
-  /** Fresh sign-in identity check before revealing a retained document draft. */
   verifyDocumentIdentity?(): Promise<boolean>
-  /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
-  /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
+  calmChat?: boolean
   sideChats?: boolean
-  /** Authenticated identity for permission-protected model-setting caches; absent on older hosts. */
+  account?: { email: string; organizationName: string; signOut(): Promise<void>; switchWorkspace(): void }
   identity?: { principalId: string; organizationId: string }
 }
 
@@ -82,6 +55,20 @@ export function setWorkbotHost(host: WorkbotHost) {
 /** The views of Workbot's computer this person has, Browser first; the Computer tab shows while there is one. */
 export function computerViews(host: WorkbotHost): Array<"browser" | "computer"> {
   return [...(host.browser === true ? ["browser" as const] : []), ...(host.computer === true ? ["computer" as const] : [])];
+}
+
+/**
+ * What the tab for Workbot's computer is called everywhere it is offered (header, navigation drawer, command palette,
+ * the Open action under a reply): "Browser" when the browser is the only view this person has, "Computer" otherwise.
+ */
+export function computerTabLabel(host: WorkbotHost): "Browser" | "Computer" {
+  const views = computerViews(host);
+  return views.length === 1 && views[0] === "browser" ? "Browser" : "Computer";
+}
+
+/** The calm chat look is on (`calmChat`). False before a host is set, so shared pieces render their usual look. */
+export function calmChat(): boolean {
+  return current?.calmChat === true
 }
 
 export function workbotHost(): WorkbotHost {

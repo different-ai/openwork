@@ -13,17 +13,11 @@ on:
         required: false
         default: ""
         type: string
-  # Recipe/selection changes prove the real images and existing health/migration
-  # assertions before merge. Ordinary source PRs do not fan out into six builds.
-  pull_request:
-    branches:
-      - "dev"
-    paths:
-      - ".github/workflows/publish-ee-images.yml"
-      - ".github/scripts/build-inputs.mjs"
-      - ".github/scripts/ee-image*.mjs"
-      - ".dockerignore"
-      - "packaging/docker/Dockerfile*"
+  # Not on PRs. Nightly (and manual runs with push off) build all six images
+  # from dev without publishing and run the health and migration assertions on
+  # them; dev pushes and v* tags build and publish.
+  schedule:
+    - cron: "41 6 * * *"
   push:
     branches:
       - "dev"
@@ -137,6 +131,20 @@ jobs:
       - name: Check Node security baseline and Helm runtime probe
         if: ${{ steps.inputs.outputs.affected == 'true' }}
         run: node --test scripts/tests/node-runtime-baseline.test.mjs packaging/helm/openwork-ee/tests/node-runtime.mjs
+
+      # The chart in git lists no feature keys, so adding a feature never
+      # conflicts there. The published chart lists and validates every key.
+      - name: Set up pnpm
+        if: ${{ steps.inputs.outputs.affected == 'true' }}
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Write every feature key into the chart
+        if: ${{ steps.inputs.outputs.affected == 'true' }}
+        run: |
+          pnpm install --frozen-lockfile --filter "@openwork/features"
+          node scripts/features-sync.mjs --chart
 
       - name: Lint chart
         if: ${{ steps.inputs.outputs.affected == 'true' }}
@@ -300,8 +308,8 @@ jobs:
         with:
           context: .
           file: ${{ steps.config.outputs.dockerfile }}
-          platforms: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
-          load: ${{ github.event_name == 'pull_request' }}
+          platforms: ${{ (needs.artifact-version.outputs.publish != 'true' || github.ref == 'refs/heads/dev') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          load: ${{ needs.artifact-version.outputs.publish != 'true' }}
           push: ${{ needs.artifact-version.outputs.publish == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -320,7 +328,7 @@ jobs:
         with:
           context: .
           file: ${{ steps.config.outputs.dockerfile }}
-          platforms: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/dev') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          platforms: ${{ (needs.artifact-version.outputs.publish != 'true' || github.ref == 'refs/heads/dev') && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -342,7 +350,7 @@ jobs:
             sentry_dist=${{ secrets.SENTRY_DIST }}
 
       - name: Assert Den DB migration assets
-        if: ${{ steps.inputs.outputs.build == 'true' && github.event_name == 'pull_request' && steps.config.outputs.image == 'openwork-den-api' }}
+        if: ${{ steps.inputs.outputs.build == 'true' && needs.artifact-version.outputs.publish != 'true' && steps.config.outputs.image == 'openwork-den-api' }}
         shell: bash
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
@@ -356,7 +364,7 @@ jobs:
           '
 
       - name: Smoke health endpoint
-        if: ${{ steps.inputs.outputs.build == 'true' && github.event_name == 'pull_request' }}
+        if: ${{ steps.inputs.outputs.build == 'true' && needs.artifact-version.outputs.publish != 'true' }}
         shell: bash
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}

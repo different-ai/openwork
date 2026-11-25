@@ -1,6 +1,5 @@
 import { Buffer } from "node:buffer"
 
-/** Serialized catalog bytes, not a measurement of the V8 heap. Applied per cache. */
 export const TOOL_CACHE_PAYLOAD_BUDGET_BYTES = 64 * 1024 * 1024
 
 type Entry = { expiresAt: number; payloadBytes: number }
@@ -16,12 +15,10 @@ export function toolCatalogPayloadBytes(tools: unknown): number {
   try {
     return Buffer.byteLength(JSON.stringify(tools), "utf8")
   } catch {
-    // A result that cannot be measured can still be served without retaining it.
     return Number.POSITIVE_INFINITY
   }
 }
 
-/** Drop expired entries first, then keep the existing oldest-entry eviction policy. */
 export function toolCacheUsage<T extends Entry>(
   entries: Map<string, T>,
   maxEntries: number,

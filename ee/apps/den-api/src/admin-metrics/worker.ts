@@ -7,13 +7,10 @@ import { dbRows } from "./sql.js"
 
 const logger = appLogger.child({ component: "admin_metrics" })
 const owner = defaultOwner()
-// Let the server finish booting before the first refresh.
 const FIRST_REFRESH_DELAY_MS = 15_000
 
 export const adminMetricIntervals = (): Intervals => ({ fast: env.adminMetrics.fastIntervalMs, heavy: env.adminMetrics.heavyIntervalMs })
 
-// One queue per process: ticks and manual refreshes never run two metric
-// queries side by side. Leases coordinate across instances.
 let queue: Promise<void> = Promise.resolve()
 
 function enqueue(keys: readonly ControlCenterSectionKey[], force: boolean, reason: string) {
@@ -29,7 +26,6 @@ function enqueue(keys: readonly ControlCenterSectionKey[], force: boolean, reaso
   return run
 }
 
-/** Recompute every metric now, even one that refreshed recently. Returns without waiting. */
 export function scheduleAdminMetricsRefresh() {
   void enqueue([...metricsForTier("fast"), ...metricsForTier("heavy")], true, "manual")
 }

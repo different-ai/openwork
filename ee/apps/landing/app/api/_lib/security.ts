@@ -128,8 +128,6 @@ export async function verifyFormBotProtection() {
   return { ok: true as const };
 }
 
-// Agents and API callers cannot run the BotID browser client, so tell them
-// where to go instead of returning a dead-end 403.
 export function formRequiresBrowserBody(message: string, alternatives: FormAlternatives) {
   return { error: "form_requires_browser", message, alternatives };
 }

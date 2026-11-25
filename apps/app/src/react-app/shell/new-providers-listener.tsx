@@ -16,9 +16,7 @@ import { orgOnboardingVisibilityEvent } from "./reload-coordinator";
 const SEEN_KEY = "openwork.seenProviderIds";
 const NEW_PROVIDERS_DEDUPE_KEY = "new-providers";
 
-/** Custom event to request the model picker to open. */
 export const openModelPickerEvent = "openwork-open-model-picker";
-/** Custom event to request the provider auth (connect API keys) modal to open. */
 export const openProviderAuthEvent = "openwork-open-provider-auth";
 
 function readSeenProviderIds(): Set<string> {
@@ -52,12 +50,6 @@ const EMPTY_STATE: ListenerState = {
   newModelCount: 0,
 };
 
-/**
- * Headless listener: converts "new providers available" events (cloud sync,
- * sign-in, local config changes) into a single coalesced notification center
- * entry instead of a popup. Accumulates until the entry is read, so repeated
- * syncs update one entry with the full summary.
- */
 export function NewProvidersListener() {
   const [state, setState] = useState<ListenerState>(EMPTY_STATE);
   const [orgOnboardingVisible, setOrgOnboardingVisible] = useState(false);
@@ -87,9 +79,6 @@ export function NewProvidersListener() {
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<NewProvidersEventDetail>).detail;
-      // The engine catalog describes materialization, not member entitlement.
-      // Signed-in provider changes belong to the scoped inventory observer;
-      // never add a second, profile-wide cloud entry (including on first sync).
       if (readDenSettings().authToken?.trim()) {
         requestMemberActivityRefresh();
         return;
@@ -122,8 +111,6 @@ export function NewProvidersListener() {
     setPendingProviders([]);
   }, [orgOnboardingVisible, pendingProviders, showProviders]);
 
-  // Write the accumulated summary into the notification center. The dedupe
-  // key keeps one unread entry that absorbs repeated provider syncs.
   useEffect(() => {
     if (!state.active || (state.providers.length === 0 && state.newModelCount === 0)) {
       return;
@@ -157,8 +144,6 @@ export function NewProvidersListener() {
     });
   }, [state]);
 
-  // Once the entry is read (or cleared), restart accumulation so the next
-  // sync produces a fresh unread entry.
   useEffect(
     () =>
       useNotificationStore.subscribe((store) => {

@@ -26,11 +26,6 @@ type AppToolConfig<InputArgs extends ZodType | undefined, OutputArgs extends Zod
   }
 }
 
-/**
- * MCP Apps' published helper is still typed against SDK v1. This v2 adapter
- * preserves its metadata normalization while registering directly on the v2
- * server. Remove it once ext-apps publishes a v2-compatible server helper.
- */
 export function registerAppTool<
   InputArgs extends ZodType | undefined = undefined,
   OutputArgs extends ZodType = ZodType,

@@ -5,10 +5,6 @@ export type McpRegistrationFacts = {
   dynamicRegistrationSupported?: boolean | null
 }
 
-/**
- * The status an issuer moves to after one observation. A real result (registered or refused) always wins; metadata
- * alone never claims registration is open, and an unreachable server keeps the last known status.
- */
 export function nextMcpRegistrationStatus(
   current: McpRegistrationStatus | null,
   outcome: McpRegistrationOutcome,
@@ -30,7 +26,6 @@ export function nextMcpRegistrationStatus(
     case "metadata_only": {
       if (facts.clientMetadataSupported) return "client_metadata"
       if (facts.dynamicRegistrationSupported) {
-        // Advertising DCR is not acceptance: keep what a real registration last showed.
         return current === "dynamic_open" || current === "dynamic_refused" ? current : "unknown"
       }
       if (facts.dynamicRegistrationSupported === false && facts.clientMetadataSupported === false) return "requires_client"
@@ -39,14 +34,12 @@ export function nextMcpRegistrationStatus(
   }
 }
 
-/** Registration refused before OpenWork had a client: the provider only accepts apps it approved. */
 export function isRegistrationRefusal(diagnostic: { phase?: string | null; code?: string | null; httpStatus?: number | null }): boolean {
   if (diagnostic.phase !== "AUTH_CLIENT_REGISTRATION") return false
   return diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403
     || diagnostic.code === "MCP_HTTP_401" || diagnostic.code === "MCP_HTTP_403"
 }
 
-/** The issuer as stored: origin plus path, no trailing slash, query or fragment. */
 export function normalizeIssuer(issuer: string): string | null {
   try {
     const url = new URL(issuer)
@@ -58,7 +51,6 @@ export function normalizeIssuer(issuer: string): string | null {
   }
 }
 
-/** Origin and path only, so query strings with tokens are never stored. */
 export function redactEndpoint(endpoint: string | null | undefined): string | null {
   if (!endpoint) return null
   try {

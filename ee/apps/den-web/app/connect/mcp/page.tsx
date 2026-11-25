@@ -58,12 +58,6 @@ function ConnectFrame({ link, workspaceName, linked = false, children }: { link:
   );
 }
 
-/**
- * One-click sign-in for a single connection. Agents that cannot render a
- * connection card (terminal hosts) hand this link to the person; the click
- * here is the user gesture that starts the provider sign-in in this tab.
- * Signed-out people sign in right here and stay on the same link.
- */
 function ConnectMcpContent() {
   const searchParams = useSearchParams();
   const link = readConnectMcpLink(new URLSearchParams(searchParams.toString()));

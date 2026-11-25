@@ -5,11 +5,6 @@ export type RecordedConnectorState = "Set up" | "Change setting" | "Sign in" | "
 
 export type RecordedConnectorView = {
   checking?: boolean;
-  /**
-   * libraryConnectorOrgSetup: a setting in the service's own app that blocks
-   * sign-in is shown, with Den's reason, before any "Sign in".
-   */
-  providerSetup?: boolean;
 };
 
 type Readiness = NonNullable<DenExternalMcpConnection["readiness"]>;
@@ -18,17 +13,11 @@ function signInFailure(readiness: Readiness | null | undefined) {
   return readiness?.status === "could_not_verify" && (readiness.failure === "sign_in_rejected" || readiness.failure === "sign_in_required");
 }
 
-/**
- * Mirrors Den web's connector-readiness: never checked is "Not checked", only
- * a recorded check that did not pass is "Couldn't verify", and only a
- * rejected or missing sign-in asks someone to sign in.
- */
 export function recordedConnectorState(connection: DenExternalMcpConnection, view: RecordedConnectorView = {}): RecordedConnectorState | null {
   const readiness = connection.readiness;
   if (readiness === undefined) return null;
   if (connection.setupRequired || connection.issuerReviewRequired || (connection.credentialMode === "shared" && !connection.connected)) return "Set up";
-  // Signing in again cannot work until the setting changes, so this wins over needsReconnect.
-  if (view.providerSetup && providerSetupProblem(connection)) return "Change setting";
+  if (providerSetupProblem(connection)) return "Change setting";
   if (connection.needsReconnect) return "Sign in";
   if (view.checking) return "Checking…";
   if (readiness?.status === "ready") return "Ready";

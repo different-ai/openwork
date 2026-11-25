@@ -37,8 +37,6 @@ import { localManagedMcpAppIdentity } from "./local-managed-mcp.js";
 import { externalFetch } from "./server-fetch.js";
 
 async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string) {
-  // Account-scoped gateways live in the engine-global runtime layer. Resolve
-  // Apps against the same effective configuration that produced the tool call.
   return listMcpFromRuntimeSnapshot(workspaceRoot, await readEffectiveRuntimeOpencodeConfig(serverConfig, workspaceId));
 }
 
@@ -48,7 +46,6 @@ const MAX_TOOL_PAGES = 32;
 const MAX_TOOLS = 2_048;
 const MAX_RESOURCE_BYTES = MCP_APP_RESOURCE_MAX_BYTES;
 const MAX_RESULT_BYTES = 1024 * 1024;
-/** Same cap Den applies to provider-declared error excerpts before relaying them. */
 const MAX_PROVIDER_ERROR_CHARS = 512;
 
 type McpAppCsp = {
@@ -60,9 +57,7 @@ type McpAppCsp = {
 
 export type McpAppToolResult = CallToolResult & { hostAction?: ConnectionActionIntent };
 
-/** Result _meta key the host trusts to decide whether a result may be kept. */
 export const MCP_APP_READ_ONLY_RESULT_META = "openwork/readOnly";
-/** Result _meta key naming the verified server and credential revision a result came from, so a kept result never crosses either. */
 export const MCP_APP_PROVIDER_IDENTITY_META = "openwork/providerIdentity";
 
 export async function supportsHostConnectionActions(serverName: string, config: Record<string, unknown>, toolName: string, resourceUri: string): Promise<boolean> {
@@ -130,10 +125,9 @@ export function releaseMcpAppLaunch(serverConfig: ServerConfig, workspaceId: str
 }
 
 function staleLaunch(): McpAppHostError {
-  return new McpAppHostError("stale_launch_context", "This App launch has expired, closed, or changed. Reopen the App in its original conversation before trying again.");
+  return new McpAppHostError("stale_launch_context", "This view’s launch has expired, closed, or changed. Reopen the view in its original conversation before trying again.");
 }
 
-/** Values and private credential revisions stay on the host, never in the resource response. */
 async function launchFingerprint(input: { serverConfig: ServerConfig; workspaceId: string }, serverName: string, config: Record<string, unknown>): Promise<string> {
   const managed = await localManagedMcpAppIdentity(input.serverConfig, input.workspaceId, serverName, config.url);
   const runtimeRevisions = readRuntimeMcpConfigRevisions(input.serverConfig, input.workspaceId,
@@ -143,9 +137,6 @@ async function launchFingerprint(input: { serverConfig: ServerConfig; workspaceI
   return createHash("sha256").update(JSON.stringify({ config, managed, runtimeRevisions, privateRevision })).digest("hex");
 }
 
-// The revision URI of an App built in OpenWork, as mcpAppResourceUri in
-// @openwork/types/mcp-app writes it. That subpath ships as TypeScript, which the
-// packaged server cannot load, so the format is matched here.
 const BUILT_APP_REVISION_URI = /^ui:\/\/openwork\/apps\/(cob_[0-7][0-9a-hjkmnp-tv-z]{25})\/revisions\/cov_[0-7][0-9a-hjkmnp-tv-z]{25}\/index\.html$/u;
 
 const resourceCaches = new WeakMap<ServerConfig, ReturnType<typeof createMcpAppResourceCache>>();
@@ -156,7 +147,6 @@ async function readAppResource(input: { serverConfig: ServerConfig; workspaceId:
     return { html: resource.html, ...resourcePresentationMeta(resource.meta) };
   };
   const id = BUILT_APP_REVISION_URI.exec(uri)?.[1];
-  // A provider can imitate a revision URI. Only the trusted private built-App endpoint is immutable.
   if (!id || serverName !== connectMcpAppHostName(id)) return load();
   let cache = resourceCaches.get(input.serverConfig);
   if (!cache) {
@@ -166,11 +156,6 @@ async function readAppResource(input: { serverConfig: ServerConfig; workspaceId:
   return cache.read(JSON.stringify([input.workspaceId, serverName, fingerprint]), uri, load);
 }
 
-/**
- * An App built in OpenWork publishes each update as a new revision of the same
- * App, so a card from an earlier revision opens the one its tool advertises now
- * instead of failing. Anything else must still match exactly.
- */
 export function advertisesLaunchedResource(launchedUri: string, advertisedUri: string, connectionId?: string): boolean {
   if (advertisedUri === launchedUri) return true;
   const launched = BUILT_APP_REVISION_URI.exec(launchedUri)?.[1];
@@ -178,7 +163,6 @@ export function advertisesLaunchedResource(launchedUri: string, advertisedUri: s
 }
 
 function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; workspaceRoot: string; context?: McpAppLaunchContext; launch?: { arguments?: Record<string, unknown> } }, app: McpAppResource, fingerprint: string, tool: Tool): McpAppResource {
-  // Old clients can read HTML, but cannot manufacture an actionable launch from a server name.
   if (!input.context || input.context.readOnly || input.serverConfig.readOnly) return app;
   const launches = liveLaunches(input.serverConfig);
   while (launches.size >= MAX_LIVE_LAUNCHES) {
@@ -226,12 +210,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * A bounded, single-line excerpt of a provider's error text. Providers already
- * return arbitrary tool *results* to the same callers, so relaying their
- * rejection is not a new disclosure, but the text is untrusted: strip control
- * characters and cap its length before it becomes an API error message.
- */
 function providerErrorExcerpt(error: unknown): string | null {
   if (!(error instanceof Error) || !error.message) return null;
   const sanitized = error.message
@@ -350,8 +328,6 @@ function clientOptions() {
   };
 }
 
-/** Transport messages can echo URLs, headers and arbitrary provider bodies. Only
- * expose typed statuses and fixed categories, never their raw messages. */
 function connectionFailure(error: unknown): string {
   if ((error instanceof StreamableHTTPError || error instanceof SseError)
     && typeof error.code === "number" && error.code >= 100 && error.code <= 599) {
@@ -374,11 +350,10 @@ function connectionFailure(error: unknown): string {
   return "connection or protocol negotiation failed";
 }
 
-/** Authentication and access failures need human action, never a retry. Provider text is not relayed. */
 function remoteAccessError(error: unknown): McpAppHostError | null {
   if (error instanceof UnauthorizedError
     || ((error instanceof StreamableHTTPError || error instanceof SseError) && error.code === 401)) {
-    return new McpAppHostError("mcp_auth_required", "This App's connection needs authentication. Check its sign-in in connection settings before reopening the App.");
+    return new McpAppHostError("mcp_auth_required", "Sign in to the connection in settings, then reopen this view.");
   }
   if ((error instanceof StreamableHTTPError || error instanceof SseError) && error.code === 403) {
     return new McpAppHostError("mcp_access_denied", "Access to this App's connection was denied. Ask your connection administrator to review your access before reopening the App.");
@@ -428,9 +403,6 @@ async function connectRemoteClient(config: Record<string, unknown>): Promise<Cli
       const denied = remoteAccessError(error);
       if (denied) throw denied;
       failures.push(`${index === 0 ? "Streamable HTTP POST" : "Legacy SSE fallback"}: ${connectionFailure(error)}`);
-      // MCP 2025-11-25 backwards compatibility applies only to a rejected
-      // InitializeRequest, not auth/network errors or the initialized notification.
-      // The SDK handles optional-stream GET 405 itself; it is not a fallback signal.
       if (index !== 0 || client.getServerVersion() !== undefined
         || !(error instanceof StreamableHTTPError)
         || (error.code !== 400 && error.code !== 404 && error.code !== 405)) break;
@@ -456,9 +428,39 @@ async function withRemoteClient<T>(
   }
 }
 
-// One connected client per live launch, so an open App's follow-up calls skip
-// the connect handshake. Tools are still listed on every call, because their
-// visibility and approval annotations authorize it.
+async function withResolveClient<T>(
+  config: Record<string, unknown>,
+  run: (client: Client) => Promise<T>,
+): Promise<{ value: T; client: Client }> {
+  const client = await connectRemoteClient(config);
+  try {
+    return { value: await run(client), client };
+  } catch (error) {
+    await client.close().catch(() => undefined);
+    throw remoteAccessError(error) ?? error;
+  }
+}
+
+function bindResolvedLaunch(
+  input: Parameters<typeof bindLaunch>[0],
+  match: { app: McpAppResource; fingerprint: string; tool: Tool; client: Client },
+): McpAppResource {
+  let app: McpAppResource;
+  try {
+    app = bindLaunch(input, match.app, match.fingerprint, match.tool);
+  } catch (error) {
+    void match.client.close().catch(() => undefined);
+    throw error;
+  }
+  if (app.launchId) adoptLaunchSession(`${app.launchId}\n${match.fingerprint}`, match.client);
+  else void match.client.close().catch(() => undefined);
+  return app;
+}
+
+function closeResolveClients(matches: Array<{ client: Client }>): void {
+  for (const match of matches) void match.client.close().catch(() => undefined);
+}
+
 const LAUNCH_SESSION_IDLE_MS = 60_000;
 const MAX_LAUNCH_SESSIONS = 32;
 type LaunchSession = {
@@ -484,6 +486,28 @@ function closeLaunchSessions(launchId: string): void {
   for (const key of [...launchSessions.keys()]) if (key.startsWith(`${launchId}\n`)) closeLaunchSession(key);
 }
 
+function addLaunchSession(key: string, session: LaunchSession): void {
+  closeLaunchSession(key);
+  launchSessions.set(key, session);
+  while (launchSessions.size > MAX_LAUNCH_SESSIONS) {
+    const oldest = launchSessions.keys().next().value;
+    if (oldest === undefined) break;
+    closeLaunchSession(oldest);
+  }
+}
+
+function idleCloseLaunchSession(key: string, session: LaunchSession): void {
+  if (session.inFlight !== 0 || launchSessions.get(key) !== session) return;
+  session.idle = setTimeout(() => closeLaunchSession(key), LAUNCH_SESSION_IDLE_MS);
+  session.idle.unref?.();
+}
+
+function adoptLaunchSession(key: string, client: Client): void {
+  const session: LaunchSession = { client: Promise.resolve(client), inFlight: 0 };
+  addLaunchSession(key, session);
+  idleCloseLaunchSession(key, session);
+}
+
 async function withLaunchSession<T>(
   key: string,
   config: Record<string, unknown>,
@@ -493,12 +517,7 @@ async function withLaunchSession<T>(
   if (!session) {
     const created: LaunchSession = { client: connectRemoteClient(config), inFlight: 0 };
     created.client.catch(() => { if (launchSessions.get(key) === created) launchSessions.delete(key); });
-    launchSessions.set(key, created);
-    while (launchSessions.size > MAX_LAUNCH_SESSIONS) {
-      const oldest = launchSessions.keys().next().value;
-      if (oldest === undefined) break;
-      closeLaunchSession(oldest);
-    }
+    addLaunchSession(key, created);
     session = created;
   }
   const current = session;
@@ -508,16 +527,11 @@ async function withLaunchSession<T>(
   try {
     return await run(await current.client);
   } catch (error) {
-    // Only a refusal OpenWork made on purpose keeps the session; any other
-    // failure, including a wrapped call or resource-read failure, reconnects.
     if (!(error instanceof McpAppHostError) || !LAUNCH_SESSION_REFUSALS.has(error.code)) closeLaunchSession(key);
     throw remoteAccessError(error) ?? error;
   } finally {
     current.inFlight -= 1;
-    if (current.inFlight === 0 && launchSessions.get(key) === current) {
-      current.idle = setTimeout(() => closeLaunchSession(key), LAUNCH_SESSION_IDLE_MS);
-      current.idle.unref?.();
-    }
+    idleCloseLaunchSession(key, current);
   }
 }
 
@@ -590,7 +604,6 @@ async function privateConnectMcpConfigUntimed(input: {
   connectionId?: string;
   serverName?: string;
 }): Promise<{ serverName: string; config: Record<string, unknown> } | null> {
-  // Ordinary user-configured servers do not depend on Connect discovery.
   if (input.connectionId === undefined && !input.serverName?.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)) return null;
   let descriptor = await findOpenWorkConnectMcpAppHostServer(
     input.serverConfig,
@@ -600,8 +613,6 @@ async function privateConnectMcpConfigUntimed(input: {
   if (!descriptor) {
     let refreshed = await refreshOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
     if (refreshed.diagnostic === "discovery_unavailable") {
-      // One immediate discovery-only recovery, with one shared deadline for
-      // its handshake and read. Never add backoff or replay a provider tool.
       const deadline = AbortSignal.timeout(CONNECT_CATALOG_RECOVERY_BUDGET_MS);
       refreshed = await refreshOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId, (url, init) => externalFetch(url, {
         ...init,
@@ -666,22 +677,18 @@ function findHtmlResource(
 
 export type McpAppCatalogApp = {
   serverName: string;
-  /** Present for Connect app-host apps: launch them through this connection reference. */
   connectionId?: string;
   toolName: string;
   projectedToolName: string;
   resourceUri: string;
   title: string | null;
   description: string | null;
-  /** True when the launch tool declares required input, so a host cannot start it with empty arguments. */
   requiresInput: boolean;
-  /** True when calling the launch tool needs user approval (not explicitly read-only, or destructive). */
   requiresApproval: boolean;
 };
 
 export type McpAppCatalogServer = {
   serverName: string;
-  /** Human-readable provider name for Connect app-host servers. */
   displayName?: string;
   connectionId?: string;
   reachable: boolean;
@@ -695,12 +702,10 @@ function toolRequiresInput(tool: Tool): boolean {
   return Array.isArray(schema.required) && schema.required.length > 0;
 }
 
-/** The single approval rule: `callMcpAppTool` enforces it, the catalog reports it. */
 function toolRequiresApproval(tool: Tool): boolean {
   return tool.annotations?.readOnlyHint !== true || tool.annotations?.destructiveHint === true;
 }
 
-/** Per-server budget for catalog probes so one slow server cannot starve the rest. */
 const CATALOG_PROBE_TIMEOUT_MS = 10_000;
 
 async function withCatalogProbeTimeout<T>(work: Promise<T>): Promise<T> {
@@ -725,7 +730,6 @@ async function catalogAppsFromClient(client: Client, options: {
   serverName: string;
   workspaceRoot: string;
   connectionId?: string;
-  /** Cold launches resolve by projected tool name, which needs model visibility. */
   requireModelVisibility: boolean;
 }): Promise<McpAppCatalogApp[]> {
   const catalog: McpAppCatalogApp[] = [];
@@ -762,23 +766,12 @@ function toolDisplayTitle(tool: Tool): string | null {
   return typeof annotationTitle === "string" && annotationTitle.trim() ? annotationTitle : null;
 }
 
-/**
- * Enumerates every MCP App a host surface can launch cold: tools on configured
- * remote MCP servers that advertise a standard UI resource binding, stay
- * visible to both the model (resolution) and apps (tool calls), and are not
- * denied by the workspace tool policy. Unreachable servers are reported, not
- * fatal, so the catalog doubles as a live connection probe.
- */
 export async function listMcpAppCatalog(input: {
   serverConfig: ServerConfig;
   workspaceId: string;
   workspaceRoot: string;
 }): Promise<McpAppCatalogServer[]> {
   const configured = await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
-  // Connect app-host providers: org connections surfaced through the Cloud
-  // capability gateway. Their catalog and authorization live in the private
-  // app-host store, not the workspace MCP config, and their launches resolve
-  // through a connection reference (app audience only).
   let connectCatalog = await readOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
   if (connectCatalog.servers.length === 0) {
     const refreshed = await refreshOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
@@ -786,9 +779,6 @@ export async function listMcpAppCatalog(input: {
       connectCatalog = await readOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
     }
   }
-  // A Connect host can also appear in the workspace MCP config under the same
-  // name; the provider section owns it (its entries carry the connection
-  // reference launches need), so the workspace copy is skipped.
   const connectHostNames = new Set(
     connectCatalog.servers.map((descriptor) => connectMcpAppHostName(descriptor.connectionId)),
   );
@@ -798,9 +788,6 @@ export async function listMcpAppCatalog(input: {
     .map(async (item): Promise<McpAppCatalogServer> => {
       try {
         const apps = await withCatalogProbeTimeout(withRemoteClient(item.config, (client) =>
-          // Cold dashboard launches resolve by projected tool name (model
-          // audience) and execute through the app-mediated call path, so a
-          // listed app must stay visible to both.
           catalogAppsFromClient(client, {
             serverName: item.name,
             workspaceRoot: input.workspaceRoot,
@@ -865,8 +852,6 @@ export async function listMcpAppCatalog(input: {
     }
   });
 
-  // Servers are independent probes: run them concurrently so catalog latency
-  // is the slowest single server, not the sum of every connection attempt.
   return Promise.all([...configuredEntries, ...connectEntries]);
 }
 
@@ -885,63 +870,66 @@ export async function resolveMcpAppResource(input: {
     item.config.enabled !== false
     && input.projectedToolName.startsWith(`${item.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_`)
   ));
-  const matches: Array<{ app: McpAppResource; fingerprint: string; tool: Tool }> = [];
+  const matches: Array<{ app: McpAppResource; fingerprint: string; tool: Tool; client: Client }> = [];
   const resolutionErrors: McpAppHostError[] = [];
-  for (const item of candidates) {
-    if (!remoteUrl(item.config)) continue;
-    const fingerprint = await launchFingerprint(input, item.name, item.config);
-    const match = await withRemoteClient(item.config, async (client) => {
-      const tool = (await listTools(client)).find((candidate) => (
-        projectedMcpToolName(item.name, candidate.name) === input.projectedToolName
-      ));
-      if (!tool) return null;
-      if (!toolVisibility(tool, "model")) return null;
-      const resourceUri = toolUiResourceUri(tool);
-      if (!resourceUri) return null;
-      if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [input.projectedToolName])).length > 0) {
-        throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
-      }
-      const read = await timeMcpApp("desktop.resources-read", () => client.readResource({ uri: resourceUri })).catch(() => {
-        throw new McpAppHostError(
-          "resource_read_failed",
-          "The current MCP App tool definition advertises a resource that resources/read could not load.",
-        );
+  try {
+    for (const item of candidates) {
+      if (!remoteUrl(item.config)) continue;
+      const fingerprint = await launchFingerprint(input, item.name, item.config);
+      const match = await withResolveClient(item.config, async (client) => {
+        const tool = (await listTools(client)).find((candidate) => (
+          projectedMcpToolName(item.name, candidate.name) === input.projectedToolName
+        ));
+        if (!tool) return null;
+        if (!toolVisibility(tool, "model")) return null;
+        const resourceUri = toolUiResourceUri(tool);
+        if (!resourceUri) return null;
+        if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [input.projectedToolName])).length > 0) {
+          throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
+        }
+        const read = await timeMcpApp("desktop.resources-read", () => client.readResource({ uri: resourceUri })).catch(() => {
+          throw new McpAppHostError(
+            "resource_read_failed",
+            "The current MCP App tool definition advertises a resource that resources/read could not load.",
+          );
+        });
+        const resource = findHtmlResource(resourceUri, read);
+        const presentation = resourcePresentationMeta(resource.meta);
+        return {
+          app: {
+            serverName: item.name,
+            toolName: tool.name,
+            resourceUri,
+            ...(await supportsHostConnectionActions(item.name, item.config, tool.name, resourceUri) ? { hostConnectionActions: true } : {}),
+            html: resource.html,
+            ...presentation,
+          } satisfies McpAppResource,
+          tool,
+        };
+      }).then(({ value, client }) => {
+        if (value) return { ...value, client };
+        void client.close().catch(() => undefined);
+        return null;
+      }, (error) => {
+        if (error instanceof McpAppHostError && error.code !== "mcp_unreachable") throw error;
+        resolutionErrors.push(error instanceof McpAppHostError
+          ? error
+          : new McpAppHostError("mcp_app_resolution_failed", "The MCP App resource could not be resolved."));
+        return null;
       });
-      const resource = findHtmlResource(resourceUri, read);
-      const presentation = resourcePresentationMeta(resource.meta);
-      return {
-        app: {
-          serverName: item.name,
-          toolName: tool.name,
-          resourceUri,
-          ...(await supportsHostConnectionActions(item.name, item.config, tool.name, resourceUri) ? { hostConnectionActions: true } : {}),
-          html: resource.html,
-          ...presentation,
-        } satisfies McpAppResource,
-        tool,
-      };
-    }).catch((error) => {
-      if (error instanceof McpAppHostError && error.code !== "mcp_unreachable") throw error;
-      resolutionErrors.push(error instanceof McpAppHostError
-        ? error
-        : new McpAppHostError("mcp_app_resolution_failed", "The MCP App resource could not be resolved."));
-      return null;
-    });
-    if (match) matches.push({ ...match, fingerprint });
-  }
-  if (matches.length > 1) {
-    throw new McpAppHostError("ambiguous_tool", "More than one configured MCP App matches this projected tool name.");
+      if (match) matches.push({ ...match, fingerprint });
+    }
+    if (matches.length > 1) {
+      throw new McpAppHostError("ambiguous_tool", "More than one configured MCP App matches this projected tool name.");
+    }
+  } catch (error) {
+    closeResolveClients(matches);
+    throw error;
   }
   if (matches.length === 0 && resolutionErrors[0]) throw resolutionErrors[0];
-  return matches[0] ? bindLaunch(input, matches[0].app, matches[0].fingerprint, matches[0].tool) : null;
+  return matches[0] ? bindResolvedLaunch(input, matches[0]) : null;
 }
 
-/**
- * Resolves a capability-gateway launch back to the exact native Connect MCP
- * tool. The gateway reference is only a routing hint: the local host derives
- * the managed server name, re-lists the provider tool, and requires its live
- * UI binding to match before reading or executing any resource.
- */
 export async function resolveConnectMcpAppResource(input: {
   context?: McpAppLaunchContext;
   serverConfig: ServerConfig;
@@ -970,7 +958,7 @@ export async function resolveConnectMcpAppResource(input: {
   const { serverName } = item;
   const fingerprint = await launchFingerprint(input, serverName, item.config);
 
-  const match = await withRemoteClient(item.config, async (client) => {
+  const { value: match, client } = await withResolveClient(item.config, async (client) => {
     const tool = (await listTools(client)).find((candidate) => candidate.name === input.launch.toolName);
     if (!tool) {
       throw new McpAppHostError("tool_not_found", "The originating MCP App tool is no longer advertised.");
@@ -1004,13 +992,9 @@ export async function resolveConnectMcpAppResource(input: {
       tool,
     };
   });
-  return bindLaunch(input, match.app, fingerprint, match.tool);
+  return bindResolvedLaunch(input, { ...match, fingerprint, client });
 }
 
-/** Resolve an indirect launch against the same MCP server that owns the
- * model-visible capability gateway tool. The target launch tool stays
- * app-visible, but its standard UI binding and resource are revalidated live.
- */
 export async function resolveSameServerMcpAppResource(input: {
   context?: McpAppLaunchContext;
   serverConfig: ServerConfig;
@@ -1035,49 +1019,58 @@ export async function resolveSameServerMcpAppResource(input: {
     && remoteUrl(item.config)
     && input.projectedToolName.startsWith(`${item.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_`)
   ));
-  const matches: Array<{ app: McpAppResource; fingerprint: string; tool: Tool }> = [];
-  for (const item of candidates) {
-    const fingerprint = await launchFingerprint(input, item.name, item.config);
-    const match = await withRemoteClient(item.config, async (client) => {
-      const tools = await listTools(client);
-      const gatewayTool = tools.find((tool) => projectedMcpToolName(item.name, tool.name) === input.projectedToolName);
-      if (!gatewayTool || !toolVisibility(gatewayTool, "model")) return null;
-      const launchTool = tools.find((tool) => tool.name === input.launch.toolName);
-      if (!launchTool) throw new McpAppHostError("tool_not_found", "The same-server MCP App tool is no longer advertised.");
-      if (!toolVisibility(launchTool, "app")) {
-        throw new McpAppHostError("tool_not_visible", "The same-server MCP App tool is not visible to apps.");
-      }
-      const resourceUri = toolUiResourceUri(launchTool);
-      if (!resourceUri || resourceUri !== input.launch.resourceUri) {
-        throw new McpAppHostError("tool_resource_mismatch", "The same-server MCP App tool now advertises a different resource.");
-      }
-      const projectedLaunchName = projectedMcpToolName(item.name, launchTool.name);
-      if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [projectedLaunchName])).length > 0) {
-        throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
-      }
-      const read = await timeMcpApp("desktop.resources-read", () => client.readResource({ uri: resourceUri })).catch(() => {
-        throw new McpAppHostError("resource_read_failed", "The MCP App resource could not be loaded from its same-server provider.");
+  const matches: Array<{ app: McpAppResource; fingerprint: string; tool: Tool; client: Client }> = [];
+  try {
+    for (const item of candidates) {
+      const fingerprint = await launchFingerprint(input, item.name, item.config);
+      const match = await withResolveClient(item.config, async (client) => {
+        const tools = await listTools(client);
+        const gatewayTool = tools.find((tool) => projectedMcpToolName(item.name, tool.name) === input.projectedToolName);
+        if (!gatewayTool || !toolVisibility(gatewayTool, "model")) return null;
+        const launchTool = tools.find((tool) => tool.name === input.launch.toolName);
+        if (!launchTool) throw new McpAppHostError("tool_not_found", "The same-server MCP App tool is no longer advertised.");
+        if (!toolVisibility(launchTool, "app")) {
+          throw new McpAppHostError("tool_not_visible", "The same-server MCP App tool is not visible to apps.");
+        }
+        const resourceUri = toolUiResourceUri(launchTool);
+        if (!resourceUri || resourceUri !== input.launch.resourceUri) {
+          throw new McpAppHostError("tool_resource_mismatch", "The same-server MCP App tool now advertises a different resource.");
+        }
+        const projectedLaunchName = projectedMcpToolName(item.name, launchTool.name);
+        if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [projectedLaunchName])).length > 0) {
+          throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
+        }
+        const read = await timeMcpApp("desktop.resources-read", () => client.readResource({ uri: resourceUri })).catch(() => {
+          throw new McpAppHostError("resource_read_failed", "The MCP App resource could not be loaded from its same-server provider.");
+        });
+        const resource = findHtmlResource(resourceUri, read);
+        return {
+          app: {
+            serverName: item.name,
+            toolName: launchTool.name,
+            resourceUri,
+            ...(await supportsHostConnectionActions(item.name, item.config, launchTool.name, resourceUri) ? { hostConnectionActions: true } : {}),
+            html: resource.html,
+            ...resourcePresentationMeta(resource.meta),
+          } satisfies McpAppResource,
+          tool: launchTool,
+        };
+      }).then(({ value, client }) => {
+        if (value) return { ...value, client };
+        void client.close().catch(() => undefined);
+        return null;
       });
-      const resource = findHtmlResource(resourceUri, read);
-      return {
-        app: {
-          serverName: item.name,
-          toolName: launchTool.name,
-          resourceUri,
-          ...(await supportsHostConnectionActions(item.name, item.config, launchTool.name, resourceUri) ? { hostConnectionActions: true } : {}),
-          html: resource.html,
-          ...resourcePresentationMeta(resource.meta),
-        } satisfies McpAppResource,
-        tool: launchTool,
-      };
-    });
-    if (match) matches.push({ ...match, fingerprint });
-  }
-  if (matches.length > 1) {
-    throw new McpAppHostError("ambiguous_tool", "More than one configured MCP server matches this capability gateway launch.");
+      if (match) matches.push({ ...match, fingerprint });
+    }
+    if (matches.length > 1) {
+      throw new McpAppHostError("ambiguous_tool", "More than one configured MCP server matches this capability gateway launch.");
+    }
+  } catch (error) {
+    closeResolveClients(matches);
+    throw error;
   }
   if (!matches[0]) throw new McpAppHostError("server_unavailable", "The MCP server that produced this App launch is unavailable.");
-  return bindLaunch(input, matches[0].app, matches[0].fingerprint, matches[0].tool);
+  return bindResolvedLaunch(input, matches[0]);
 }
 
 export async function callMcpAppTool(input: {
@@ -1093,12 +1086,10 @@ export async function callMcpAppTool(input: {
   expectedResourceDigest?: string;
   arguments?: Record<string, unknown>;
   approved?: boolean;
-  /** Run every check for a call that needs no approval, then return without calling the tool. */
   checkOnly?: boolean;
-  /** Required for conversation leases; the HTTP host checks current ownership/archive state. */
   assertSessionActive?: () => Promise<void>;
 }): Promise<McpAppToolResult> {
-  if (!input.launchId) throw new McpAppHostError("missing_launch_context", "This App has no live launch context. Update OpenWork and reopen the App before using its actions.");
+  if (!input.launchId) throw new McpAppHostError("missing_launch_context", "This view has no live launch context. Update OpenWork and reopen the view before using its actions.");
   const launchId = input.launchId;
   const launch = liveLaunches(input.serverConfig).get(launchId);
   const assertLive = () => {
@@ -1122,11 +1113,10 @@ export async function callMcpAppTool(input: {
       serverName: input.serverName,
     });
     const configured = privateItem ? [] : await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
-    // A reserved private host must never fall back to a same-name workspace configuration.
     const item = input.serverName.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)
       ? privateItem : configured.find((candidate) => candidate.name === input.serverName);
     if (!item || item.config.enabled === false) {
-      throw new McpAppHostError("server_unavailable", "The originating MCP server is not available to this workspace. Reopen the App after restoring the connection.");
+      throw new McpAppHostError("server_unavailable", "The originating MCP server is not available to this workspace. Reopen the view after restoring the connection.");
     }
     if (await launchFingerprint(input, input.serverName, item.config) !== launch.fingerprint) {
       releaseMcpAppLaunch(input.serverConfig, input.workspaceId, launchId);
@@ -1148,7 +1138,7 @@ export async function callMcpAppTool(input: {
     try {
       const resource = await readAppResource(input, input.serverName, launch.fingerprint, launch.resourceUri, client).catch((cause: unknown) => {
         if (cause instanceof McpAppHostError) throw cause;
-        throw new McpAppHostError("resource_read_failed", "The original App resource is no longer available. Reopen the App before using its actions.");
+        throw new McpAppHostError("resource_read_failed", "The original view resource is no longer available. Reopen the view before using its actions.");
       });
       if (expectedResourceDigest !== undefined) {
         const resourceDigest = mcpAppResourceDigest(resource);
@@ -1193,22 +1183,13 @@ export async function callMcpAppTool(input: {
     }
     await currentConfig();
     assertLive();
-    // The configured server and credential revision this launch verified: the
-    // launch fingerprint already hashes its configuration, auth headers and
-    // private credential revision, so any credential change gives a new identity.
     const providerIdentity = createHash("sha256").update(JSON.stringify([input.serverName, remoteUrl(config)?.href ?? null, launch.fingerprint])).digest("hex");
-    // For a cached read: the call would be allowed now without approval, so
-    // the host may show the result it kept from this same server. Nothing reaches the tool.
     if (input.checkOnly) {
       if (input.approved === true || toolRequiresApproval(tool) || hostConnectionAction) {
         throw new McpAppHostError("tool_requires_approval", "Only a read-only App tool's kept result can be shown.");
       }
       return { content: [], _meta: { [MCP_APP_READ_ONLY_RESULT_META]: true, [MCP_APP_PROVIDER_IDENTITY_META]: providerIdentity } };
     }
-    // A provider that rejects the call (for example JSON-RPC -32602 for a
-    // missing required argument) must reach the member as that rejection,
-    // not as an unhandled 500 "Unexpected server error". The text is
-    // provider-controlled: bound it the same way Den bounds provider excerpts.
     const result = await timeMcpApp("desktop.tools-call", () => client.callTool({ name: input.name, arguments: input.arguments ?? {} })).catch((error: unknown) => {
       throw new McpAppHostError("tool_call_failed", providerErrorExcerpt(error) ?? "The MCP App tool call failed.");
     });
@@ -1216,9 +1197,6 @@ export async function callMcpAppTool(input: {
       throw new McpAppHostError("result_too_large", "The MCP App tool result exceeds the 1 MiB host limit.");
     }
     const parsed = CallToolResultSchema.parse(stripProviderHostActions(result));
-    // Whether the tool ran without needing approval: read-only and not
-    // destructive. The host keeps only such results for instant reopening.
-    // Set here, never taken from the provider.
     const sanitized = { ...parsed, _meta: { ...parsed._meta, [MCP_APP_READ_ONLY_RESULT_META]: !toolRequiresApproval(tool), [MCP_APP_PROVIDER_IDENTITY_META]: providerIdentity } };
     if (!hostConnectionAction || sanitized.isError) return sanitized;
     await currentConfig();
@@ -1236,7 +1214,6 @@ export async function callMcpAppTool(input: {
   });
 }
 
-// Opt-in numeric profiling only; never emit request payloads or identities.
 if (process.env.OPENWORK_MCP_APP_TIMINGS === "1") {
   new PerformanceObserver(list => {
     for (const entry of list.getEntries()) if (entry.name.startsWith("openwork.mcp-app.")) {

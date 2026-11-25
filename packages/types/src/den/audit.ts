@@ -1,7 +1,5 @@
 import { z } from "zod"
 
-// This header is only an interaction hint. The server selects the workflow,
-// authenticates its principal and binds the hint to an organization and scope.
 export const AUDIT_CORRELATION_HEADER = "X-OpenWork-Audit-Correlation"
 export const auditCategorySchema = z.enum(["change", "security", "execution", "access", "read", "request", "lifecycle"])
 export const auditOriginSchema = z.enum(["api", "cloud_ui", "mcp", "scheduler", "webhook", "platform_admin"])
@@ -31,8 +29,6 @@ export const auditPolicySchema = z.object({
 export const auditHttpContextSchema = z.object({
   method: z.string(), route: z.string(), status: z.number().int().min(100).max(599).optional(),
 }).strict()
-// Version 2 dropped the per-organization sequence: events are ordered by their
-// time-ordered TypeID. Stored version 1 envelopes are served as version 2.
 export const auditEventEnvelopeSchema = z.object({
   schemaVersion: z.literal(2), id: z.string(), organizationId: z.string(), operationId: z.string(),
   operation: z.object({
