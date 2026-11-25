@@ -104,3 +104,54 @@ test("Config moves a private skill and its file to a member joining later, witho
     assert.equal(list(field(after, "areas", "plugins", area, "items")).filter((item) => item.name === name).length, 1)
   }
 })
+
+test("same-named creator-only plugins arrive separately and do not replace shared names", async () => {
+  const source = await den.createOrg(await den.signUp("Names Source"), "Names workspace")
+  const first = await den.newMember(source.owner, source.orgId, "First Creator")
+  const second = await den.newMember(source.owner, source.orgId, "Second Creator")
+  const name = `same-name-${den.stamp}`
+  const skill = (witness: string) => ({ type: "skill", input: { rawSourceText: `---\nname: ${name}\ndescription: Synthetic ownership check.\n---\n\n${witness}` } })
+  for (const [owner, witness] of [[first, "First private witness."], [second, "Second private witness."]] as const) {
+    expectStatus(await den.as(owner, source.orgId)("POST", "/v1/plugins", { name, components: [skill(witness)] }), 201)
+  }
+  expectStatus(await den.setFeature(source.orgId, "configPrivateItems", true), 200)
+  const blob = expectStatus(await den.as(source.owner, source.orgId)("GET", "/v1/config-blobs/export?areas=plugins.skills,plugins.plugins"), 200)
+  for (const withShared of [false, true]) {
+    const target = await den.createOrg(await den.signUp(withShared ? "Shared Target" : "Empty Target"), "Names destination")
+    const a = await den.join(target.owner, target.orgId, first)
+    const b = await den.join(target.owner, target.orgId, second)
+    const admin = den.as(target.owner, target.orgId)
+    expectStatus(await den.setFeature(target.orgId, "configPrivateItems", true), 200)
+    let sharedId: string | null = null
+    if (withShared) {
+      const shared = expectStatus(await admin("POST", "/v1/plugins", { name, orgWide: true, components: [skill("Original shared witness.")] }), 201)
+      sharedId = text(field(shared, "item", "id"), "shared plugin id")
+    }
+    const submitted = expectStatus(await admin("POST", "/v1/config-blobs/change-requests", { blob, mode: "merge" }), 202)
+    const id = text(field(submitted, "changeRequest", "id"), "request id")
+    const analyzed = await settle(admin, id)
+    assert.equal(field(analyzed, "changeRequest", "status"), "needs_review", JSON.stringify(analyzed))
+    const plan = expectStatus(await admin("GET", `/v1/config-blobs/change-requests/${id}/plan`), 200)
+    assert.equal(field(plan, "plan", "summary", "blocking"), 0, JSON.stringify(plan))
+    expectStatus(await admin("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash: field(plan, "plan", "planHash") }), 200)
+    const applied = await settle(admin, id)
+    assert.equal(field(applied, "changeRequest", "status"), "applied", JSON.stringify(applied))
+    const [rows] = await mysql.execute("SELECT p.id, p.created_by_org_membership_id AS owner, c.id AS skill_id FROM plugin p JOIN plugin_config_object pc ON pc.plugin_id = p.id AND pc.removed_at IS NULL JOIN config_object c ON c.id = pc.config_object_id WHERE p.organization_id = ? AND p.name = ?", [target.orgId, name])
+    const bindings = list(rows)
+    assert.equal(bindings.length, withShared ? 3 : 2)
+    for (const [owner, stranger, witness] of [[a, b, "First private witness."], [b, a, "Second private witness."]] as const) {
+      const binding = bindings.find((row) => row.owner === owner.memberId)
+      assert.ok(binding)
+      const qualified = `plugin:${binding.id}:${binding.skill_id}`
+      const ownerRead = await den.callMcpTool(await den.mintMcpToken(owner, target.orgId), "get_skill", { name: qualified })
+      assert.ok(ownerRead.text.includes(witness), JSON.stringify(ownerRead))
+      assert.equal((await den.callMcpTool(await den.mintMcpToken(stranger, target.orgId), "get_skill", { name: qualified })).isError, true)
+    }
+    if (sharedId) {
+      const shared = bindings.find((row) => row.id === sharedId)
+      assert.ok(shared)
+      const sharedRead = await den.callMcpTool(await den.mintMcpToken(a, target.orgId), "get_skill", { name: `plugin:${shared.id}:${shared.skill_id}` })
+      assert.ok(sharedRead.text.includes("Original shared witness."), JSON.stringify(sharedRead))
+    }
+  }
+})
