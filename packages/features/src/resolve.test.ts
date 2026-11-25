@@ -7,6 +7,7 @@ import {
   FEATURE_DOCS_BASE_URL,
   featuresByCategory,
   featureDocsUrl,
+  featureAvailableOn,
   featureKeySchema,
   featureLockEnvName,
   mapFeatures,
@@ -21,12 +22,15 @@ import {
 const base: FeatureContext = { deployment: "cloud", locks: {}, rollouts: {}, overrides: {} }
 const featureDocs = (feature: FeatureDefinition) => feature.docs
 
-test("without stored state, every feature follows its registry default", () => {
-  for (const key of FEATURE_KEYS) {
-    const resolved = resolveFeature(key, base)
-    assert.equal(resolved.enabled, FEATURES[key].default)
-    assert.equal(resolved.source, "everyone")
-    assert.equal(resolved.overrideApplies, true)
+test("without stored state, every feature follows its deployment availability and registry default", () => {
+  for (const deployment of ["cloud", "self_hosted"] as const) {
+    for (const key of FEATURE_KEYS) {
+      const resolved = resolveFeature(key, { ...base, deployment })
+      const available = featureAvailableOn(key, deployment)
+      assert.equal(resolved.enabled, available && FEATURES[key].default, `${deployment}: ${key}`)
+      assert.equal(resolved.source, available ? "everyone" : "unavailable", `${deployment}: ${key}`)
+      assert.equal(resolved.overrideApplies, available, `${deployment}: ${key}`)
+    }
   }
 })
 

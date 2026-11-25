@@ -12,13 +12,6 @@ export function isWorkbotEntryHref(href: string): boolean {
   return href === WORKBOT_ENTRY_HREF || href.startsWith(`${WORKBOT_ENTRY_HREF}?`);
 }
 
-export function workbotDestination(base: string, organizationId: string | string[] | undefined): string {
-  if (typeof organizationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(organizationId)) return base;
-  const url = new URL(base);
-  url.searchParams.set("organization", organizationId);
-  return url.toString();
-}
-
 export type WorkbotEntry =
   | { kind: "open" }
   | { kind: "add-provider"; href: string }

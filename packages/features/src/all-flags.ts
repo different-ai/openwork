@@ -39,6 +39,7 @@ export { default as sideQuestions } from "@openwork/features/flags/side-question
 export { default as workbotAgentCheckGate } from "@openwork/features/flags/workbot-agent-check-gate"
 export { default as workbotAgentSendCheck } from "@openwork/features/flags/workbot-agent-send-check"
 export { default as workbotCalmChat } from "@openwork/features/flags/workbot-calm-chat"
+export { default as workbotConfiguredEntry } from "@openwork/features/flags/workbot-configured-entry"
 export { default as workbotDocuments } from "@openwork/features/flags/workbot-documents"
 export { default as workbotMobile } from "@openwork/features/flags/workbot-mobile"
 export { default as workbotWorkspaceAssistant } from "@openwork/features/flags/workbot-workspace-assistant"

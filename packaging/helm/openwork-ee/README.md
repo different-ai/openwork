@@ -5,6 +5,8 @@ Initial Helm chart for the OpenWork EE Den stack:
 - `den-api` control plane on port `8788`
 - `den-web` web app on port `3005`
 - optional OpenWork Gateway service on port `8791` (`gateway.enabled`)
+- optional private headless runner and Workbot, both default-off. See the
+  [staged companion lifecycle, secrets and retention guide](companions.md).
 
 Gateway retains the chart's legacy `inference.*` aliases, secret keys, image
 repository, resource names and selectors for upgrade safety. Only explicit
