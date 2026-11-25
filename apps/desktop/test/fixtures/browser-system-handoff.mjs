@@ -38,7 +38,8 @@ async function run() {
   });
   const { tabId } = await host.webContents.executeJavaScript(`window.tabs.create(${JSON.stringify(url)})`);
   await pageLoaded;
-  const handOff = () => host.webContents.executeJavaScript(`window.tabs.openExternal(${JSON.stringify(tabId)})`);
+  const handOff = (address = url) => host.webContents.executeJavaScript(`window.tabs.openExternal(${JSON.stringify(tabId)}, ${JSON.stringify(address)})`);
+  await assert.rejects(() => handOff(url + "#old"), /address has changed/);
   await handOff();
   denyExternal = true;
   await assert.rejects(handOff, /External browser is restricted/);

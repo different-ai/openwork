@@ -468,7 +468,7 @@ export function BrowserPanelContent({
               <TooltipTrigger render={(
                 <Button variant="ghost" size="icon-sm" aria-label="Open in default browser"
                   disabled={busy || suspended || !/^https?:\/\//i.test(tab.url) || !getElectronBrowser()?.openTabExternal}
-                  onClick={() => { void getElectronBrowser()?.openTabExternal?.(tab.id).catch((error: unknown) => {
+                  onClick={() => { void getElectronBrowser()?.openTabExternal?.(tab.id, tab.url).catch((error: unknown) => {
                     reportFailure("Could not open this page in your default browser.", error);
                   }); }}>
                   <ExternalLink />

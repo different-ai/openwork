@@ -2423,10 +2423,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       }
       return true;
     });
-    ipcMain.handle("openwork:browser:openTabExternal", async (event, tabId) => {
+    ipcMain.handle("openwork:browser:openTabExternal", async (event, tabId, address) => {
       if (!isMainRenderer(event)) throw new Error("Use the browser toolbar to open this page.");
       const tab = getBrowserTab(tabId);
       const url = browserTabUrl(tab);
+      if (url !== address || pageText(url) !== url) throw new Error("The address has changed or contains a private value.");
       const isCurrent = () => !!tab && getBrowserTab() === tab && !tab.view.webContents.isDestroyed()
         && registry.ownerOf(tabId) === registry.visibleSessionId() && browserTabUrl(tab) === url;
       if (!isCurrent()) throw new Error("Select this tab first.");
