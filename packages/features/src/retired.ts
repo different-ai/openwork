@@ -88,4 +88,5 @@ export const RETIRED_FEATURE_KEYS = [
   "sandboxGateway", "workbotDocumentEditing",
   "gatewayOpenCodeSetup", "importOpencodeConnections", "lowStorageWarning",
   "providerFilterSyncFix", "questionMinimize",
+  "remoteComputers",
 ] as const

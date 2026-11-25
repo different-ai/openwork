@@ -3,7 +3,7 @@ import { bootWorkbot, enableWorkbot, signInWorkbot } from "../../worlds/lib/work
 import { ACME_MODEL, gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "../../worlds/lib/acme-gateway.ts";
 import { denFetch } from "../packages/behaviors/src/den.ts";
 
-/** The real signed-in Workbot and Den; no paid VM is created by this rollout/recovery journey. */
+/** The real signed-in Workbot and Den; no paid VM is created by this recovery journey. */
 export async function workbotComputerWorld(seed: Seed) {
   const stack = new AsyncDisposableStack();
   try {
@@ -30,7 +30,7 @@ export async function workbotComputerWorld(seed: Seed) {
     await web.client.send("Page.navigate", { url: `${workbot.workbotUrl}/computer` });
     return {
       web,
-      setEnabled: (value: boolean, workspaceAssistant = false) => enableWorkbot(workbot.den, { remoteComputers: value, workbotDocuments: true, workbotWorkspaceAssistant: workspaceAssistant }),
+      setWorkspaceAssistant: (enabled: boolean) => enableWorkbot(workbot.den, { workbotDocuments: true, workbotWorkspaceAssistant: enabled }),
       call: signed.call,
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
     };

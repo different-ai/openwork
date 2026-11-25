@@ -35,19 +35,18 @@ by the same Apple team.
 
 ## Feature flags
 
-Both are registry features (`packages/features/src/registry.ts`), off by default
-and read by the desktop from Den like every other feature:
-
 - `computerUse`: Settings › Computer use, the tools and the broker. Turning it
   off ends any running session.
-- `remoteComputers`: VMs in the computer list. Off, VMs are hidden, a chat that
-  chose a VM uses this computer, and a VM session ends at once; each chat's
-  saved choice returns when the feature is back on. Requires `computerUse`
-  and sign-in to an organization. Electron verifies both resolved features with
-  Den through the local policy service; renderer booleans cannot grant VM access.
 
-Environment variables below only say *which* VM to use, never whether the
-feature is on.
+VMs in the computer list are not a feature. They are listed when one is
+configured and the person is signed in to an organization. Electron verifies
+the sign-in with Den through the local policy service; a renderer boolean cannot
+grant VM access. While signed out, VMs are hidden, a chat that chose a VM uses
+this computer, and a VM session ends at once; each chat's saved choice returns
+after the next verified sign-in.
+
+Environment variables below only say *which* VM to use, never whether a VM may
+be used.
 
 ## Point computer use at a VM
 
@@ -80,7 +79,7 @@ Readiness reports what is missing. Settings › Computer use shows it, with the 
 
 ## This PC (Windows)
 
-This PC needs no system permissions and no `remoteComputers` rollout. Readiness
+This PC needs no system permissions and no organization sign-in. Readiness
 comes from the helper's `--check`: OpenWork must run in a signed-in, connected
 desktop session, and Windows must not be locked. See the
 [Windows section of the package README](../../packages/computer-use/README.md#windows-this-pc)

@@ -346,8 +346,8 @@ Windows build. It has no model, API key, network listener or clipboard access.
 `computer-windows-driver.mjs` starts it and speaks its line protocol (one JSON
 object per line on stdin/stdout). The shared runtime in `computer-remote.mjs`
 supplies sessions, receipts, Take over, Continue, Stop and watch frames, as for
-Linux VMs. This PC is a local computer: it does not need `remoteComputers`, and
-a Windows chat starts on it.
+Linux VMs. This PC is a local computer: it does not need an organization
+sign-in, and a Windows chat starts on it.
 
 | Command | Purpose |
 | --- | --- |
@@ -482,8 +482,8 @@ it is a focused provider diagnostic, separate from the Web rollout UI proof.
 `computer_run` executes one bounded JavaScript
 program against the conversation's selected computer or built-in browser. It
 uses the same Stop/takeover controls and organization policy as direct tools.
-Programs share the enabled access, target validation and human handoff used by direct tools. The `remoteComputers` rollout is
-also required when the selected computer is a VM.
+Programs share the enabled access, target validation and human handoff used by direct tools. A sign-in to an organization,
+verified by Den, is also required when the selected computer is a VM.
 
 ```js
 // computer_run({ surface: "browser", code: ... })

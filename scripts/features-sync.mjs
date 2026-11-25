@@ -192,7 +192,6 @@ const FEATURES_WITHOUT_DOCS = new Set([
   "administratorRecovery",
   "workbotDocuments",
   "workbotWorkspaceAssistant",
-  "remoteComputers",
 ])
 
 /** The internal doc exists under docs/ (not the published packages/docs) and its images resolve. */
