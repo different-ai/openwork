@@ -1,11 +1,6 @@
 import { automationListSchema, automationRunRangeSchema, type AutomationList, type AutomationRun, type AutomationSchedule } from "@openwork/types/automations"
 import { denGoogleCalendarEventsResponseSchema } from "../../../../packages/calendar/src/den-contract.js"
 
-/**
- * Test-only: a person's week as the Calendar reads it through `/v1/workbot/calendar/...`, built around today so the
- * page always shows past runs, a run that failed, one that won't run until fixed, meetings and what runs next.
- * The shapes are Den's, parsed with Den's own schemas before they are served.
- */
 const HOUR = 60 * 60 * 1_000
 const MINUTE = 60 * 1_000
 const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
@@ -15,7 +10,6 @@ function at(dayOffset: number, hours: number, base = new Date()) {
   return day.getTime() + hours * HOUR
 }
 
-// [day offset from today, start hour, end hour, title]
 const MEETINGS: Array<[number, number, number, string]> = []
 for (let offset = -7; offset <= 7; offset++) {
   const weekday = new Date(at(offset, 0)).getDay()
@@ -38,7 +32,6 @@ export function fixtureMeetings(from: number, to: number) {
       id: `evt_${offset}_${index}`, summary: title, description: "", location: "", start: iso(at(offset, start)), end: iso(at(offset, end)),
       status: "confirmed", htmlLink: "https://calendar.google.com/", attendees: ["sam@example.test", "omar@example.test"], meetLink: "https://meet.google.com/abc-defg-hij",
     })),
-    // Working location: an all-day Office or Home event on weekdays.
     ...Array.from({ length: 15 }, (_, index) => index - 7).filter((offset) => { const day = new Date(at(offset, 0)).getDay(); return day > 0 && day < 6 }).map((offset) => ({
       id: `loc_${offset}`, summary: new Date(at(offset, 0)).getDay() % 2 ? "Office" : "Home", description: "", location: "", start: dateOnly(offset), end: dateOnly(offset + 1),
       status: "confirmed", htmlLink: "https://calendar.google.com/", attendees: [], meetLink: null,

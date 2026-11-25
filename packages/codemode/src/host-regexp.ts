@@ -2,7 +2,6 @@
 export type HostRegExpConstructor = new (pattern: string, flags?: string) => RegExp
 
 declare global {
-  // The standard engine reads the same global: see patches/@opencode__codemode.
   var __openworkCodemodeRegExp: HostRegExpConstructor | undefined
 }
 

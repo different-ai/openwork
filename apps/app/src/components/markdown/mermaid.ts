@@ -329,7 +329,6 @@ function setMermaidView(element: HTMLElement, view: "rendered" | "source") {
   if (!(rendered instanceof HTMLElement) || !(source instanceof HTMLElement)) return;
 
   const showRendered = view === "rendered" && mermaidSvgByElement.has(element);
-  // Zoomable diagrams live in the React-owned slot; the static pane stays empty.
   const useInteractive = element.dataset.openworkMermaidZoom === "true" && interactive instanceof HTMLElement;
   rendered.hidden = !showRendered || useInteractive;
   if (interactive instanceof HTMLElement) interactive.hidden = !showRendered || !useInteractive;
@@ -398,13 +397,8 @@ async function enhanceMermaidElement(
   setMermaidView(element, preserveSource ? "source" : "rendered");
 }
 
-/**
- * Renders the Mermaid blocks inside `rootRef` and wires their view toggles.
- * Returns the rendered diagrams for `MermaidZoomPortals` so each one can be zoomed and panned.
- */
 export function useMermaidEnhancer(
   rootRef: RefObject<HTMLElement | null>,
-  /** Identity of the rendered content; diagrams are re-enhanced when it changes. */
   content: unknown,
   enabled = true,
 ): MermaidZoomDiagram[] {
@@ -413,7 +407,6 @@ export function useMermaidEnhancer(
 
   useEffect(() => {
     const root = rootRef.current;
-    // Drop diagrams whose markup was replaced.
     setDiagrams((current) => {
       const next = root ? current.filter((diagram) => root.contains(diagram.slot)) : [];
       return next.length === current.length ? current : next;

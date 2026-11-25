@@ -40,7 +40,6 @@ const featureOff = jsonResponse("The organization was not found, or Devices is o
 const deviceNotFound = jsonResponse("No such computer for this member, or Devices is off for the organization.", notFoundSchema)
 const sharedForbidden = jsonResponse("Changing a computer shared with the whole organization needs the Manage desktop policies permission.", forbiddenSchema)
 
-/** A desktop reports on launch, on change and every five minutes; this leaves room for several desktops and retries. */
 const DESKTOP_REPORT_RATE_LIMIT = 60
 const DESKTOP_REPORT_RATE_WINDOW_MS = 10 * 60_000
 
@@ -49,10 +48,8 @@ function actorOf(c: PermissionRouteContext): RemoteDeviceActor | null {
   return context ? { organizationId: context.organization.id, memberId: context.currentMember.id } : null
 }
 
-/** Computers shared with the whole organization are an admin's to register, rename and remove. */
 const canManageShared = (c: PermissionRouteContext) => hasPermission(c, "desktop_policies.manage")
 
-/** The response for a refusal from remote-devices.ts; anything else is rethrown. */
 export function remoteDeviceFailure(error: unknown) {
   if (!(error instanceof RemoteDeviceError)) throw error
   const status = error.code === "remote_device_not_found" ? 404 as const : error.code === "remote_device_forbidden" ? 403 as const : 409 as const
@@ -62,10 +59,6 @@ export function remoteDeviceFailure(error: unknown) {
 const describeReportRoute = (options: DescribeRouteOptions & { "x-mcp": false }) => describeRoute(options)
 const describeDeviceReadRoute = (options: DescribeRouteOptions & { "x-mcp": true }) => describeRoute(options)
 
-/**
- * Devices (feature `remoteDevices`): the computers the calling member can reach through OpenWork. Desktop's
- * Settings › Devices reads and reports here; Workbot uses the same registry through /v1/workbot/devices.
- */
 export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/remote-devices",

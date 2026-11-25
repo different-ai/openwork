@@ -39,13 +39,6 @@ import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { NewTaskDestinationMenu } from "./new-task-destination-menu";
 import { clearSessionDraft, saveSessionDraft } from "../sync/draft-store";
 
-/**
- * Workspace-scoped wiring for the new-task composer. Everything here is
- * route-level state (default model prefs, selected agent, workspace client),
- * so choices made before the session exists carry into the session that the
- * hero creates.
- */
-/** Moves the new-task draft whose `draftOwnerKey` matches to `groupId` (empty for no group). */
 export const MOVE_NEW_TASK_DRAFT_EVENT = "openwork:move-new-task-draft";
 
 export type NewTaskComposerContext = {
@@ -55,9 +48,7 @@ export type NewTaskComposerContext = {
   onChangeDestination?: (source: NewSessionDestination, destination: NewSessionDestination, state: ComposerSessionState) => void;
   client: OpenworkServerClient | null;
   workspaceId: string | null;
-  /** Stable identity for draft ownership across workspace, group, pane, and account changes. */
   draftOwnerKey?: string;
-  /** Account/organization scope the persisted new-task draft is stored under; null while unverified. */
   draftScope?: string | null;
   selectedModel: ModelRef;
   modelOptions?: readonly ModelOption[];
@@ -80,6 +71,7 @@ export type NewTaskComposerContext = {
   listAgents: () => Promise<Agent[]>;
   onSelectAgent: (agent: string | null) => void;
   listCommands: () => Promise<SlashCommandOption[]>;
+  inlineSuggestions?: boolean;
   searchFiles: (query: string) => Promise<string[]>;
   onOpenSettingsSection?: (section: ComposerSettingsSection) => void;
 };
@@ -89,13 +81,11 @@ export type NewTaskComposerProps = {
   initialComposer?: ComposerSessionState;
   draft: string;
   onDraftChange: (value: string) => void;
-  /** Called with a non-empty draft and in-memory attachments; the caller creates the session (and workspace if needed). */
   onRunTask: (
     resolvedDraft: string,
     attachments: ComposerAttachment[],
     handoff?: NewTaskComposerHandoff,
   ) => void | Promise<void>;
-  /** Disable submission while a default workspace is being prepared. */
   busy: boolean;
   context: NewTaskComposerContext | null;
   sandboxModeControl?: ReactNode;
@@ -105,7 +95,6 @@ export type NewTaskComposerHandoff = {
   destination?: NewSessionDestination;
   submitted: ComposerSessionState;
   getContinuation: () => ComposerSessionState;
-  /** Transfers ownership synchronously; stale effects/flushes must not restore the source. */
   consume?: () => void;
 };
 
@@ -132,13 +121,6 @@ const emptyCommands = async (): Promise<SlashCommandOption[]> => [];
 const emptyFiles = async (): Promise<string[]> => [];
 const FALLBACK_MODEL: ModelRef = { providerID: "", modelID: "" };
 
-/**
- * The real session composer, reused for the "What do you need done?" empty
- * state. The draft (including skill/mention tokens) is seeded into the
- * created session's composer, so pills typed here survive the handoff.
- * Attachments are collected before the session exists and seeded into the
- * created session, where the normal send path uploads them into the workspace.
- */
 export function NewTaskComposer(props: NewTaskComposerProps) {
   const context = props.context;
   const draftOwnerKey = context?.draftOwnerKey ?? "legacy";
@@ -268,7 +250,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   const listSkills = workspaceClient && workspaceId
     ? async (): Promise<SkillCard[]> => {
         const pushId = ++skillsConnectPushRef.current;
-        // Paint cached Connect inventory instantly; the fresh fan-out lands live.
         const scope = readCloudInventoryScope();
         const cachedConnect = (scope ? readCachedConnectCapabilities(scope) : null) ?? EMPTY_CONNECT_CAPABILITY_INVENTORY;
         const connectPromise = loadSessionConnectCapabilities();
@@ -337,8 +318,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
   };
 
   const handleInsertMention = (kind: ComposerMentionKind, value: string, nextDraft?: string) => {
-    // @agent mentions switch the pending task's agent instead of inserting a
-    // mention token (mirrors the session composer, #2101).
     if (kind === "agent") {
       updateDraft(nextDraft ?? continuationHolderRef.current.state.draft.replace(/@([^\s@]*)$/, ""));
       context?.onSelectAgent(value);
@@ -432,7 +411,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
           if (context?.workspaceId) clearSessionDraft(context.draftScope, context.workspaceId, context.draftSessionId);
         },
       });
-      // onRunTask synchronously establishes the pending owner before the editor clears.
       props.onDraftChange("");
       draftRef.current = "";
       submissionHolder.state = emptyNewTaskComposerState();
@@ -446,8 +424,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     } catch (error) {
       if (submissionHolder.consumed) return;
       if (continuationHolderRef.current !== submissionHolder || submissionHolder.frozen) {
-        // A route change must not erase a failed first turn. Never overwrite
-        // a newer draft typed after returning to the same destination.
         const existing = useComposerStateStore.getState().sessions[submissionHolder.ownerKey];
         if (context?.draftOwnerKey && !existing?.draft && !existing?.attachments.length) {
           useComposerStateStore.setState((state) => ({ sessions: { ...state.sessions, [submissionHolder.ownerKey]: submitted } }));
@@ -490,8 +466,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     }
   };
 
-  // Cmd+K > Move to Group on an empty composer: move this draft, text and
-  // attachments included, exactly as its own destination menu would.
   const changeDestinationRef = useRef(changeDestination);
   changeDestinationRef.current = changeDestination;
   const moveTargetKey = context?.draftOwnerKey;
@@ -522,6 +496,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       setFailedSubmission(null);
     }}>Clear the current draft to restore the unsent message</button> : null}
     <ReactSessionComposer
+      inlineSuggestions={context?.inlineSuggestions}
       contextControl={context?.destination?.workspaceId && context.workspaceOptions ? <NewTaskDestinationMenu
         destination={context.destination}
         workspaces={context.workspaceOptions}
@@ -601,7 +576,6 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       pastedText={pastedText}
       onExpandPastedText={handleExpandPastedText}
       onRemovePastedText={handleRemovePastedText}
-      // The hero owns its own page padding, so the composer must fill the hero column and line up with the suggestion cards.
       flush={props.flush ?? true}
       draftScopeKey={context?.draftOwnerKey || `new-task:${workspaceId ?? "chat-first"}`}
     />

@@ -8,7 +8,6 @@ import { toast } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
 
 type FileChipProps = {
-  /** Full (possibly absolute) file path; only the basename is shown. */
   path: string
   className?: string
 }
@@ -18,13 +17,6 @@ function baseName(path: string): string {
   return segments[segments.length - 1] || path
 }
 
-/**
- * Paper "File paths → chips": never render raw absolute paths. A file
- * reference is a quiet inline chip — basename in mono on the same soft
- * background as inline code in chat prose (no border, no icon), full
- * path in the tooltip. Click opens the artifact preview; the ↗ that
- * appears on hover opens the file in the default app.
- */
 export function FileChip({ path, className }: FileChipProps) {
   const openArtifactPath = useOpenArtifactPath()
   const name = baseName(path)

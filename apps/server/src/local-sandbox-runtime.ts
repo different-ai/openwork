@@ -24,7 +24,6 @@ export type LocalSandboxRuntimeDeps = {
   provider?: (mounts: readonly MicrosandboxMount[]) => Promise<SandboxProvider>;
 };
 
-/** Guest tools and mandatory-mode authority share the same server-owned preference and verified policy. */
 export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandboxRuntimeDeps = {}) {
   const entries = new Map<string, Entry>();
   const mountEpochs = new Map<string, { generation: number; fingerprint?: string }>();
@@ -194,7 +193,6 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
         await bounded("destroy", destroy(entry));
         entries.delete(directory);
         entry = undefined;
-        // A replacement may still need to prepare the image. Start its ordered steps below.
         step = undefined;
       }
       if (entry) {
@@ -217,7 +215,6 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
       current.folders = mounts.map(mount => ({ path: mount.guestPath, kind: mount.guestPath === directory ? "workspace" : "folder", access: mount.access }));
       readDurations ??= sandboxPreparationDurations.get(config, durationsKey).catch(() => undefined);
       durations = await bounded("durationsRead", readDurations) ?? durations;
-      // Read once, then use the updated in-memory durations after later successes.
       readDurations = Promise.resolve(undefined);
       const estimate = (cached: boolean) => { warm = cached; current.estimatedRemainingMs = cached ? durations.warm : durations.cold; };
       if (!entry) {
@@ -229,7 +226,6 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
           const resources = packagedSandboxResources();
           const pin = sandboxImagePin();
           if (!resources) {
-            // A cache hit still has to boot; the progress stream supplies the real download counts on misses.
             const cached = await bounded("imageLookup", sdk.Image.get(pin.reference).then(image => image.manifestDigest === pin.manifestDigest, () => false));
             estimate(cached);
             if (cached) begin("start");
@@ -252,7 +248,6 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
         }
         const existing = await bounded("find", provider.find({ idempotencyKey: key }));
         if (existing) {
-          // Never adopt a replacement or a VM whose previous grants cannot be proven.
           const tombstone = { provider, handle: existing, scope: authority.scope, fingerprint, generation, invalidated: true };
           entries.set(directory, tombstone);
           await bounded("destroyExisting", destroy(tombstone));
@@ -276,7 +271,6 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
             current.steps[0].completedBytes = [...layers.values()].reduce((sum, n) => sum + n, 0);
           }
         };
-        // Direct create is intentionally strict: a racing creator must not be adopted.
         const creation = provider.create({
           idempotencyKey: key, image: provider.currentImage(),
           labels: { "openwork.sandbox.scope": authority.scope, "openwork.sandbox.mounts": fingerprint },
@@ -286,8 +280,6 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
         try { handle = await bounded("create", creation); }
         catch (error) {
           if (timedOut || sandboxErrorCode(error) === "timeout") {
-            // A create can finish after its deadline. Retire the name and
-            // destroy a late result by handle, not the replacement's name.
             createNames.set(nameKey, sandboxName(authority.scope, "tools", randomUUID()));
             void creation.then(handle => destroy({ provider, handle })).catch(() => undefined);
           }
@@ -330,7 +322,6 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
       fail(error);
       if (cleanup) {
         cleanup.invalidated = true;
-        // Keep the tombstone even on a failed destroy. A later Retry must destroy before dispatch.
         if (!timedOut) await bounded("cleanup", destroy(cleanup)).catch(() => undefined);
       }
       throw error instanceof Error && /Nothing ran on this computer\.$/.test(error.message) ? error : sandboxFailure(error, step);
@@ -367,7 +358,7 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
     for (const [directory, epoch] of mountEpochs) {
       let fingerprint: string | undefined;
       try { fingerprint = sandboxMountFingerprintForWrite(directory, runtimeExternalDirectory(snapshot), config.readOnly, protectedMountPaths()); }
-      catch { /* An unresolvable write invalidates the current mounts too. */ }
+      catch {}
       if (fingerprint !== undefined && fingerprint === epoch.fingerprint) continue;
       epoch.generation++;
       epoch.fingerprint = fingerprint;
@@ -442,8 +433,6 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
       const command = serial(directory, async () => {
         let entry = await pending;
         if (expired) throw sandboxPreparationTimeout();
-        // A second command that joined the same preparation may have waited
-        // behind hours of work. It cannot trust the first command's inspection.
         if (consumed.has(pending)) entry = await prepareNow(directory, project.id, "tool");
         consumed.add(pending);
         const epoch = mountEpoch(directory);
@@ -465,7 +454,6 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
       try { return await Promise.race([command, budget]); }
       catch (error) {
         if (dispatched && sandboxErrorCode(error)) throw sandboxFailure(error, "start");
-        // The settings page shows why setup failed. A command also needs to say that it did not run anywhere.
         if (!dispatched && error instanceof Error && !/Nothing ran/.test(error.message)) throw new Error(`${error.message} Nothing ran.`, { cause: error });
         throw error;
       } finally { clearTimeout(timer); }

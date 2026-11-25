@@ -34,8 +34,6 @@ export function sandboxImagePin(arch: string = process.arch) {
   return { manifestDigest, reference: `${imageLock.repository}@${manifestDigest}` };
 }
 
-// SDK caches are per backend/home. Concurrent requests share only the current
-// import, not a process-wide success bit that could outlive that cache.
 const imports = new Map<string, Promise<void>>();
 
 export async function prepareSandboxGuestImage(sdk: SandboxImageSdk, resourcesPath = packagedSandboxResources(), arch: string = process.arch, progress?: (bytes: number, cached?: boolean) => void): Promise<string> {
@@ -45,8 +43,6 @@ export async function prepareSandboxGuestImage(sdk: SandboxImageSdk, resourcesPa
   const archive = join(directory, "alpine.oci.tar");
   const { size } = await stat(archive);
   progress?.(size);
-  // Check the bundle before looking at the mutable cache. A broken package
-  // never passes just because this computer happens to have a warm image.
   const metadata: unknown = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
   if (!metadata || typeof metadata !== "object" || !("arch" in metadata) || metadata.arch !== arch
     || !("reference" in metadata) || metadata.reference !== pin.reference

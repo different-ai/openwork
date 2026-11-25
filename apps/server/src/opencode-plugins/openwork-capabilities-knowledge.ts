@@ -7,23 +7,6 @@ import { correctWorkspaceRoot, workspaceFileGuidance, workspaceFileHooks } from 
 import { questionToolDefinition } from "./openwork-agent-questions.js";
 import { automationRuntimeKnowledge } from "../automation-runtime-knowledge.js";
 
-/**
- * OpenWork Capabilities Knowledge Plugin
- *
- * Injects knowledge about OpenWork's capabilities into the agent's system
- * prompt so it can proactively help users with:
- * - Adding AI providers (including local models via Ollama)
- * - Fixing authorized folders
- * - Connect, Library, and custom MCP servers
- * - Using OpenWork Cloud
- * - Finding OpenWork docs before falling back to code
- * - Other sessions, skills, automations, plugins
- *
- * Each rule lives in exactly one place: Connect tool mechanics are in the base
- * agent prompt, readiness in the runtime steering, app control and browser
- * mechanics in the extensions plugin, and live catalogs in their own sections.
- */
-
 const OPENWORK_CAPABILITIES_KNOWLEDGE = `You are running inside OpenWork.
 
 For OpenWork product questions, use openwork_docs_search and openwork_docs_read as the first source of truth. OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill. Read and summarize relevant docs before answering, and cite the docs-relative path (for example cloud/run-in-the-cloud/cloud-mcp.mdx) when it helps the user verify or continue. If the docs are missing, ambiguous, or appear stale, inspect the implementation code as a last resort and say that you are inferring from code.
@@ -109,7 +92,6 @@ async function existingDocsDir(): Promise<string | null> {
       const info = await stat(candidate);
       if (info.isDirectory()) return candidate;
     } catch {
-      // Try the next layout.
     }
   }
   return null;

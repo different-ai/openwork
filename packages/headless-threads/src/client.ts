@@ -1,14 +1,3 @@
-/**
- * A function-driven client for native OpenWork threads.
- *
- * Every call goes through OpenWork's workspace-scoped engine mounts, on the
- * engine the server routes chats to, so a headless thread is an ordinary chat:
- *
- * - v1: the OpenCode SDK against `/workspace/:id/opencode`
- * - v2: native routes under `/workspace/:id/opencode2/api`
- *
- * `GET /experimental/engine-v2-preview/status` picks the engine once per client.
- */
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { z } from "zod";
 
@@ -88,7 +77,6 @@ const effectiveProvidersSchema = z.object({
   })),
 });
 
-/** v1 lists every session's pending requests; v2 lists one session's, sometimes wrapped in `data`. */
 const pendingRequestRowSchema = z.object({ sessionID: z.string().optional() }).passthrough();
 const pendingRequestListSchema = z.union([
   z.array(pendingRequestRowSchema),
@@ -96,10 +84,8 @@ const pendingRequestListSchema = z.union([
 ]).transform((value) => Array.isArray(value) ? value : value.data);
 type PendingRequestRow = z.infer<typeof pendingRequestRowSchema>;
 
-/** A helper is a session a thread's agent started; its requests hold the thread too. */
 const helperSessionSchema = z.object({ id: z.string(), parentID: z.string().nullish() }).passthrough();
 const helperSessionListSchema = z.object({ data: z.array(helperSessionSchema) }).passthrough();
-/** How far below a thread a helper is looked for, and how many are read at once. */
 const HELPER_DEPTH_MAX = 3;
 const HELPERS_MAX = 8;
 
@@ -113,10 +99,6 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Scanned rather than matched with `/\/+$/`: the anchored form backtracks
- * quadratically on a long run of slashes, which CodeQL flags.
- */
 function stripTrailingSlashes(value: string): string {
   let end = value.length;
   while (end > 0 && value[end - 1] === "/") end -= 1;
@@ -244,7 +226,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
 
   type RawResult = { response: Response; payload: unknown };
 
-  /** Plain JSON calls for routes the OpenCode SDK does not model: engine status, default model, and v2. */
   async function send(method: string, path: string, input?: { body?: unknown; signal?: AbortSignal }): Promise<RawResult> {
     const body = input?.body;
     try {
@@ -320,10 +301,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
   async function detectEngine(signal?: AbortSignal): Promise<HeadlessThreadEngine> {
     const path = "/experimental/engine-v2-preview/status";
     const result = await send("GET", path, { signal });
-    // Only a server that predates the v2 preview answers 404, and it can only run v1.
     if (result.response.status === 404) return "v1";
-    // Anything else is unknown, not v1: guessing v1 would start the thread
-    // where the app does not look and on a model it does not show.
     if (!result.response.ok) throw failure("GET", path, result, { code: "engine_unresolved", retryable: true });
     const status = parsed(engineStatusSchema, "GET", path, result, true);
     return status.enabled && status.chatRouting ? "v2" : "v1";
@@ -332,7 +310,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
   let enginePromise: Promise<HeadlessThreadEngine> | null =
     options.engine === "v1" || options.engine === "v2" ? Promise.resolve(options.engine) : null;
 
-  /** Resolved once per client; a failed lookup is forgotten so the next call retries it. */
   function resolveEngine(signal?: AbortSignal): Promise<HeadlessThreadEngine> {
     if (enginePromise) return enginePromise;
     const pending = detectEngine(signal);
@@ -343,7 +320,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return pending;
   }
 
-  /** The workspace's chosen model. Servers without the route answer 404, which means none. */
   async function workspaceDefaultModel(signal?: AbortSignal): Promise<HeadlessThreadModel | null> {
     const path = `${workspacePath}/default-model`;
     const result = await send("GET", path, { signal });
@@ -365,41 +341,30 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     });
   }
 
-  /** One engine's session routes, in the v1 wire shapes `wire.ts` parses. */
   interface Transport {
     engine: HeadlessThreadEngine;
     createPath: string;
     createSession(title: string, model: HeadlessThreadModel | null, signal?: AbortSignal,
       identity?: Pick<CreateThreadInput, "id" | "metadata">): Promise<SessionWire>;
-    /** `model` null keeps the session's current model. */
     submit(threadId: string, prompt: string, model: HeadlessThreadModel | null, messageId: string | undefined, signal?: AbortSignal): Promise<void>;
     messages(threadId: string, signal?: AbortSignal): Promise<MessageWire[]>;
     snapshot(threadId: string, input?: { signal?: AbortSignal; limit?: number }): Promise<HeadlessThreadSnapshot>;
     abort(threadId: string, signal?: AbortSignal): Promise<boolean>;
     sessionModel(threadId: string, signal?: AbortSignal): Promise<HeadlessThreadModel | null>;
-    /**
-     * Pending permission and question requests of this thread and of the helpers
-     * it started, the thread's own first, as two lists of raw rows.
-     */
     requests(threadId: string, signal?: AbortSignal): Promise<{ permissions: PendingRequestRow[]; questions: PendingRequestRow[] }>;
-    /** The first pending question, mapped, with what a v2 form needs for its reply. */
     question(rows: unknown[]): PendingForm & { pending: HeadlessThreadPending } | null;
     replyQuestion(threadId: string, requestId: string, answer: Extract<HeadlessThreadAnswer, { kind: "question" }>, form: PendingForm, signal?: AbortSignal): Promise<void>;
-    /** Closes a question without answering it, as dismissing it in the app does. */
     rejectQuestion(threadId: string, requestId: string, signal?: AbortSignal): Promise<void>;
     replyPermission(threadId: string, requestId: string, decision: "once" | "reject", signal?: AbortSignal): Promise<void>;
   }
 
-  // A session's parent never changes, so each is read once per client.
   const v1Parents = new Map<string, string | null>();
 
-  /** Whether a v1 session was started, directly or through another helper, by this thread. */
   async function v1StartedBy(threadId: string, sessionId: string, signal?: AbortSignal): Promise<boolean> {
     let current = sessionId;
     for (let depth = 0; depth < HELPER_DEPTH_MAX; depth += 1) {
       let parent = v1Parents.get(current);
       if (parent === undefined) {
-        // An unreadable session is not known to be a helper; its request stays where it was asked.
         const result = await send("GET", `${opencodePath}/session/${encodeURIComponent(current)}`, { signal }).catch(() => null);
         const session = result?.response.ok ? helperSessionSchema.safeParse(result.payload) : null;
         if (!session?.success) return false;
@@ -476,12 +441,9 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
         path,
       );
     },
-    // v1 falls back to the engine's own default; there is nothing to read.
     async sessionModel() {
       return null;
     },
-    // v1 lists pending requests for every session in the workspace: keep the
-    // thread's own and those of the helpers it started.
     async requests(threadId, signal) {
       const [permissions, questions] = await Promise.all([
         json(pendingRequestListSchema, "GET", `${opencodePath}/permission`, { signal }),
@@ -530,7 +492,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return (await json(v2SessionSchema, "GET", v2SessionPath(threadId), { signal })).data;
   }
 
-  /** Pages v2 history (newest first) and returns it oldest first, like v1. */
   async function v2Messages(threadId: string, input?: { signal?: AbortSignal; limit?: number }): Promise<MessageWire[]> {
     const limit = input?.limit === undefined ? undefined : Math.min(input.limit, V2_MESSAGE_PAGE_LIMIT);
     const path = `${v2SessionPath(threadId)}/message`;
@@ -558,15 +519,10 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       json(pendingRequestListSchema, "GET", `${v2SessionPath(sessionId)}/permission`, { signal }),
       json(pendingRequestListSchema, "GET", `${v2SessionPath(sessionId)}/form`, { signal }),
     ]);
-    // A reply goes to the session that asked.
     const owned = (rows: PendingRequestRow[]) => rows.map((row) => ({ ...row, sessionID: row.sessionID ?? sessionId }));
     return { permissions: owned(permissions), questions: owned(forms) };
   }
 
-  /**
-   * The helpers a thread started that still run, nearest first. One small read
-   * for a thread without helpers; an unreadable list means none are known.
-   */
   async function v2RunningHelpers(threadId: string, signal?: AbortSignal): Promise<string[]> {
     const helpers: string[] = [];
     let active: z.infer<typeof v2ActiveSchema>["data"] | null = null;
@@ -577,7 +533,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
         for (const parent of parents) {
           const query = new URLSearchParams({ parentID: parent, limit: "100" });
           const listed = await json(helperSessionListSchema, "GET", `${v2Path}/session?${query.toString()}`, { signal });
-          // Filter here too: an engine that ignores `parentID` returns every session.
           started.push(...listed.data.flatMap((session) => session.parentID === parent ? [session.id] : []));
         }
         if (started.length === 0) break;
@@ -596,8 +551,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     engine: "v2",
     createPath: `${v2Path}/session`,
     async createSession(title, model, signal, identity) {
-      // The server binds the session to this workspace's folder while forwarding
-      // native id/metadata intact. V2 deduplicates a repeated creation id.
       const created = await json(v2SessionSchema, "POST", `${v2Path}/session`, {
         body: {
           title,
@@ -612,15 +565,11 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
         JSON.stringify(canonicalJson(created.data.metadata?.[key])) === JSON.stringify(canonicalJson(value))
       ));
       if ((identity?.id !== undefined && created.data.id !== identity.id) || !matchesMetadata) {
-        // An existing id is not authority to adopt its session. Fail before a
-        // prompt when its ownership metadata or native identity differs.
         throw new HeadlessThreadError({ code: "creation_identity_mismatch", message: "The native session creation receipt did not match its requested identity and metadata.",
           method: "POST", path: `${v2Path}/session` });
       }
       return fromV2Session(created.data);
     },
-    // v2 takes a client-chosen prompt `id`, keeps it as the user message id,
-    // and admits a repeated id once, so a retried turn never runs twice.
     async submit(threadId, prompt, model, messageId, signal) {
       if (model !== null) {
         const modelPath = `${v2SessionPath(threadId)}/model`;
@@ -647,7 +596,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       return toSnapshot(threadSnapshotSchema.parse({
         session: fromV2Session(session),
         messages,
-        // v2 has no todo list.
         todos: [],
         status: active.data[threadId]?.type === "running" ? { type: "busy" } : { type: "idle" },
       }));
@@ -659,13 +607,10 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     async sessionModel(threadId, signal) {
       return v2SessionModel(await v2Session(threadId, signal));
     },
-    // v2 scopes both lists to the session; questions are forms. A thread with
-    // nothing pending of its own may be held by a helper it started.
     async requests(threadId, signal) {
       const own = await v2Requests(threadId, signal);
       if (own.permissions.length > 0 || own.questions.length > 0) return own;
       for (const helper of await v2RunningHelpers(threadId, signal)) {
-        // A helper that just ended has no lists to read; a cancelled read still fails.
         const rows = await v2Requests(helper, signal).catch((error: unknown) => {
           if (signal?.aborted) throw error;
           return null;
@@ -695,7 +640,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     },
     async replyPermission(threadId, requestId, decision, signal) {
       const path = `${v2SessionPath(threadId)}/permission/${encodeURIComponent(requestId)}/reply`;
-      // OpenCode v2 2.0.26 reads `decision`; earlier v2 builds read `reply`.
       const result = await send("POST", path, { body: { decision, reply: decision }, signal });
       if (!result.response.ok) throw failure("POST", path, result);
     },
@@ -709,7 +653,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return (await transport(input?.signal)).snapshot(threadId, input);
   }
 
-  /** Whether the engine's effective catalog for this workspace lists the model. */
   async function catalogHasModel(engine: HeadlessThreadEngine, model: HeadlessThreadModel, signal?: AbortSignal): Promise<{ path: string; available: boolean }> {
     if (engine === "v2") {
       const path = `${v2Path}/model`;
@@ -728,7 +671,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return { path, available: provider !== undefined && Object.hasOwn(provider.models, model.modelId) };
   }
 
-  /** Opt-in preflight: refuse before creating or prompting anything when the model is not runnable here. */
   async function requireAvailableModel(engine: Transport, model: HeadlessThreadModel | null, signal?: AbortSignal): Promise<void> {
     if (!options.requireModelAvailability) return;
     if (!model) {
@@ -759,11 +701,9 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       return invalidCreatePayload("metadata must be a JSON object");
     }
     let model = input.model ?? options.defaultModel ?? null;
-    // v1 only needs a model to run a prompt; v2 binds one to the session.
     if (model === null && (engine.engine === "v2" || prompt !== undefined)) {
       model = await workspaceDefaultModel(input.signal);
     }
-    // Refuse before creating anything, so no empty session is left behind.
     if (model === null && engine.engine === "v2") modelRequired("POST", engine.createPath);
     await requireAvailableModel(engine, model, input.signal);
     const session = await engine.createSession(title, model, input.signal, { id: input.id, metadata: input.metadata });
@@ -771,7 +711,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       try {
         await engine.submit(session.id, prompt, model, undefined, input.signal);
       } catch (error) {
-        // Keep the created thread's identity so a caller can link to and recover it.
         const contextualError = error instanceof Error ? error : new Error(String(error));
         Object.defineProperties(contextualError, {
           sessionId: { value: session.id },
@@ -787,6 +726,23 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     };
   }
 
+  async function unspecifiedTurnModel(
+    engine: Transport,
+    threadId: string,
+    messages: MessageWire[],
+    signal?: AbortSignal,
+  ): Promise<{ send: HeadlessThreadModel | null; check: HeadlessThreadModel | null }> {
+    if (engine.engine === "v2") {
+      const bound = await engine.sessionModel(threadId, signal);
+      if (bound !== null) return { send: null, check: bound };
+    } else if (messages.some((message) => message.info.role === "user")) {
+      return { send: null, check: null };
+    }
+    const model = await workspaceDefaultModel(signal);
+    if (model === null && engine.engine === "v2") modelRequired("POST", `${v2SessionPath(threadId)}/prompt`);
+    return { send: model, check: model };
+  }
+
   async function sendTurn(threadId: string, input: HeadlessThreadTurnInput): Promise<HeadlessTurnAcceptance> {
     const engine = await transport(input.signal);
     const messages = await engine.messages(threadId, input.signal);
@@ -794,14 +750,12 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     if (input.messageId && messages.some((message) => message.info.id === input.messageId && message.info.role === "user")) {
       return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId, alreadyPresent: true };
     }
-    const model = input.model ?? options.defaultModel ?? await workspaceDefaultModel(input.signal);
-    // A v2 session keeps the model it was given; reuse it rather than refuse.
-    const sessionModel = model === null && engine.engine === "v2" ? await engine.sessionModel(threadId, input.signal) : null;
-    if (model === null && engine.engine === "v2" && sessionModel === null) {
-      modelRequired("POST", `${v2SessionPath(threadId)}/prompt`);
-    }
-    await requireAvailableModel(engine, model ?? sessionModel, input.signal);
-    await engine.submit(threadId, input.prompt, model, input.messageId, input.signal);
+    const named = input.model ?? options.defaultModel ?? null;
+    const model = named === null
+      ? await unspecifiedTurnModel(engine, threadId, messages, input.signal)
+      : { send: named, check: named };
+    await requireAvailableModel(engine, model.check, input.signal);
+    await engine.submit(threadId, input.prompt, model.send, input.messageId, input.signal);
     return {
       threadId,
       acceptedAt: now(),
@@ -880,19 +834,13 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
 
   async function getThreadWaitingFor(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadWaitingFor> {
     const pending = await (await transport(input?.signal)).requests(threadId, input?.signal);
-    // A permission blocks the run outright, so it is the one to surface.
     return pending.permissions.length > 0 ? "permission" : pending.questions.length > 0 ? "question" : null;
   }
 
-  /**
-   * Every open request of a thread: permissions first, since one blocks the
-   * run outright, then questions, each list in the engine's order.
-   */
   async function readOpenRequests(threadId: string, signal?: AbortSignal) {
     const engine = await transport(signal);
     const rows = await engine.requests(threadId, signal);
     const items: Array<{ pending: HeadlessThreadPending; form: PendingForm; sessionId: string }> = [];
-    // The session that asked, the thread or one of its helpers, takes the reply.
     for (const row of rows.permissions) {
       const pending = permissionPending(row);
       if (pending) items.push({ pending, form: PLAIN_FORM, sessionId: row.sessionID ?? threadId });
@@ -919,7 +867,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
 
   async function answerThread(threadId: string, answer: HeadlessThreadAnswer, input?: { signal?: AbortSignal }): Promise<void> {
     const { engine, items } = await readOpenRequests(threadId, input?.signal);
-    // Reply only to a request the person saw that is still open, whichever of them it is: anything else is stale.
     const named = items.filter((item) => item.pending.requestId === answer.requestId);
     const kind = answer.kind === "permission" ? "permission" : "question";
     const open = named.find((item) => item.pending.kind === kind);
@@ -932,7 +879,6 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       return;
     }
     if (answer.kind === "dismiss") {
-      // Also the only way from here to clear a step that takes no answer, such as one that opens a link.
       await engine.rejectQuestion(open.sessionId, answer.requestId, input?.signal);
       return;
     }

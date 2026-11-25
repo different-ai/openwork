@@ -1,13 +1,13 @@
-# Find on a settings page (`settingsFind`)
+# Find on a settings page
 
-- **Feature key:** `settingsFind`
-- **Deployments:** cloud and self-hosted (`everywhere`), off by default
+- **Status:** generally available; `settingsFind` was retired in November 2026.
+- **Deployments:** cloud and self-hosted
 - **Author:** @reachjalil
 
 ## What people get
 
 Long settings pages such as **Settings → Advanced** are hard to scan for one
-option. With the feature on, the open settings page can be searched:
+option. The open settings page can be searched:
 
 - **Cmd+F** (Ctrl+F on Windows and Linux), the find button in the settings
   header, or **Find on this page** in the command palette opens a small find
@@ -51,14 +51,13 @@ Code: `apps/app/src/react-app/domains/settings/find/`, mounted by
 `domains/settings/shell/settings-shell.tsx`. The field itself is
 `apps/app/src/components/find-field.tsx`, shared with the chat.
 
-## Turning it off
+## Older desktop builds
 
-With the feature off there is no find button in the settings header, no
-palette entry, and Cmd/Ctrl+F does nothing in Settings, as before. Nothing is stored, so turning
-it off or using the kill switch needs no cleanup; an open find field closes
-the next time the app reads its features.
+Desktop builds that still read `settingsFind` get a fixed `true` from
+`/v1/features`, so they keep find too. Stored overrides and operator locks for
+the key are ignored.
 
 ## How to try it
 
-Turn `settingsFind` on for an organization in `/admin` › Features, open
-**Settings → Advanced** in the desktop app and press Cmd+F.
+Open **Settings → Advanced** in the desktop app and press Cmd+F (Ctrl+F on
+Windows and Linux).

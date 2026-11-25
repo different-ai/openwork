@@ -46,13 +46,6 @@ export function createWorkspaceServerClientCacheKey(
   ]);
 }
 
-/**
- * Workspace-scoped OpenWork server client resolver.
- *
- * The returned endpoint includes the correctly mounted workspace URLs and a
- * memoized OpenWork server client. The cache is intentionally per resolver so
- * React routes/stores do not share mutable clients across workspace contexts.
- */
 export function createWorkspaceServerClientResolver(
   localServer: LocalServerHandle,
 ): WorkspaceServerClientResolver {
@@ -72,7 +65,6 @@ export function createWorkspaceServerClientResolver(
   };
 }
 
-/** Keep a route's client identities stable across equivalent connection refreshes. */
 export function createWorkspaceServerClientResolverState(localServer: LocalServerHandle) {
   let current = normalizeLocalServer(localServer);
   let resolver = createWorkspaceServerClientResolver(current);
@@ -102,8 +94,6 @@ export function useWorkspaceServerClient(
     token: localToken,
   });
 
-  // `workspaceKey` intentionally includes only fields that change endpoint
-  // behavior.
   return useMemo(
     () => createWorkspaceServerClientResolver({ baseUrl: localBaseUrl, token: localToken })(workspace),
     [workspaceKey],

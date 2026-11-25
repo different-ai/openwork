@@ -1,16 +1,3 @@
-/**
- * Config-blob area `members.teams`: the organization's teams.
- *
- * - Spec: whether the team is an Admin team, and who manages it (`scim` when
- *   the identity provider owns its membership). Team membership is NOT here:
- *   it is carried per person by `members.people`.
- * - Identity: `externalKey` as the item key, then the team name (unique per
- *   organization).
- * - Apply goes through the team routes' own functions (routes/org/teams.ts
- *   createTeam / updateTeam / deleteTeam) with an in-process route context, so
- *   the Admin-team rules, the "can't grant more than you hold" rule and the
- *   SCIM guard are exactly the dashboard's.
- */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { TeamTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -25,7 +12,6 @@ const AREA = "members.teams"
 
 const teamSpecSchema = z.object({
   grantsOrganizationAdmin: z.boolean(),
-  /** `scim`: the identity provider owns the team's name and membership on the source. Hand-written blobs may leave it out. */
   managedBy: z.enum(["manual", "scim"]).default("manual"),
 }).strict()
 
@@ -59,7 +45,6 @@ export const membersTeamsArea = defineConfigArea({
   naturalKeys: [{ label: "name", get: (item) => normalizedName(item.name) || null }],
   uniqueFields: [{ label: "name", get: (item) => normalizedName(item.name) || null }],
   secretFields: [],
-  // createTeam / updateTeam / deleteTeam open their own organization-locked transactions on the global db.
   transactional: false,
   protectedFromDelete: (item) => item.spec.managedBy === "scim"
     ? "This team is managed by your identity provider (SCIM). Turn off SCIM team mapping before deleting it."
@@ -105,7 +90,6 @@ export const membersTeamsArea = defineConfigArea({
           const response = await createTeam(c, payload, {
             name,
             memberIds: [],
-            // Only sent when on: sending false still needs Manage Admin teams.
             ...(spec.grantsOrganizationAdmin ? { grantsOrganizationAdmin: true } : {}),
           }, key?.data ?? undefined, { teamId: preferredTeamId(op.preferredId) })
           return stringField(await expectRouteOk(response, `Create team "${name}"`), "team", "id")
@@ -113,7 +97,6 @@ export const membersTeamsArea = defineConfigArea({
         return { localId, warnings }
       }
 
-      // update: only the name and the Admin flag are written, and only when the plan changes them.
       const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
       const [current] = await ctx.db
         .select({ id: TeamTable.id, name: TeamTable.name, externalKey: TeamTable.externalKey, grantsOrganizationAdmin: TeamTable.grantsOrganizationAdmin })
@@ -138,7 +121,6 @@ export const membersTeamsArea = defineConfigArea({
         : changesAdmin && !renames
           ? { action: "set" as const, target: "grantsOrganizationAdmin", detail: String(spec.grantsOrganizationAdmin) }
           : { action: "update" as const, target: "team", detail: "name and Admin team" }
-      // One updateTeam call: it writes both fields in one locked transaction.
       await log.run(step, async () => {
         await expectRouteOk(await updateTeam(c, payload, current.id, {
           ...(renames ? { name } : {}),

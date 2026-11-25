@@ -85,7 +85,6 @@ export function registerAdminOrganizationDetailRoutes<T extends { Variables: Aut
         if (!isDenTypeId("organization", id)) return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
         const request = normalizeAdminPageRequest(c.req.valid("query"))
         if (insights) {
-          // Insights do not depend on the member page, so read both at once.
           const [detail, report] = await Promise.all([organizationDetail(id, request), readAdminOrganizationInsights(id)])
           if (!detail) return c.json({ error: "not_found", message: "Organization not found." }, 404)
           return c.json({ ...detail, insights: report })

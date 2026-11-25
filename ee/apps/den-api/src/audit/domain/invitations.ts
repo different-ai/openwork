@@ -2,11 +2,6 @@ import type { InvitationTable } from "@openwork-ee/den-db/schema"
 import type { AuditChangeEventInput } from "../request-capture.js"
 import { auditChangeEvent, auditText, auditTime, organizationParent, relatedResource, targetResource, type AuditSnapshot } from "./snapshot.js"
 
-// invitation.created / invitation.refreshed / invitation.canceled (legacy
-// organization.invitation.*). The invitee email is kept because the legacy
-// payload already stored it (targetEmail); `inviteToken` is a bearer join
-// token and is never snapshotted (refresh rotation is not recorded either).
-
 export type InvitationAuditRow = Pick<typeof InvitationTable.$inferSelect, "id" | "email" | "role" | "status" | "teamId" | "inviterId" | "orgMemberId" | "expiresAt">
 
 export function serializeInvitation(row: InvitationAuditRow): AuditSnapshot {
@@ -34,10 +29,6 @@ export function invitationCanceledEvent(input: { organizationId: string; before:
   })
 }
 
-/**
- * Invitee rejection (better-auth organization/reject-invitation): status only,
- * actor the invitee user (not a member). Never the email or the join token.
- */
 export function invitationRejectedEvent(input: { organizationId: string; invitationId: string; beforeStatus: string }): AuditChangeEventInput | null {
   return auditChangeEvent({
     action: "invitation.rejected", resources: [targetResource("invitation", input.invitationId), organizationParent(input.organizationId)],

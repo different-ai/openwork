@@ -1,18 +1,3 @@
-/**
- * How much output a request may ask a model for.
- *
- * Clients send a cap (`max_tokens` and its relatives) that they work out from
- * the model's known output limit, or from a default when they know none. A
- * provider rejects the whole request when the cap is above what the model
- * allows. Two rules keep that from reaching people:
- *
- *   1. A cap above the model's known limit is lowered to it before sending.
- *   2. When the provider still rejects the cap, the request is sent once more
- *      with the limit the provider named, or with no cap where the protocol
- *      allows that, and the named limit is remembered for the model.
- *
- * A cap is only ever lowered or removed, never raised or added.
- */
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 
 type JsonObject = Record<string, unknown>
@@ -27,7 +12,6 @@ function positiveInt(value: unknown): number | null {
 
 type CapField = { holder: JsonObject; key: string; value: number }
 
-/** Where each protocol carries its output cap. */
 function capFields(json: JsonObject, protocol: GatewayRequestProtocol): CapField[] {
   const read = (holder: unknown, keys: readonly string[]): CapField[] => isJsonObject(holder)
     ? keys.flatMap((key) => { const value = positiveInt(holder[key]); return value === null ? [] : [{ holder, key, value }] })
@@ -67,7 +51,6 @@ export function fitOutputCap(json: JsonObject, protocol: GatewayRequestProtocol,
 
 const CAP_NAME = /max(?:imum)?[_ ]?(?:completion[_ ]|output[_ ])?tokens|maxOutputTokens|maxTokens|output tokens|completion tokens/i
 const CAP_REFUSED = /too large|too high|exceed|at most|maximum|must be (?:less|<=|at most|between)|greater than|out of range|>\s*\d/i
-/** How providers name the limit they enforce, most specific first. */
 const NAMED_LIMIT = [/at most (\d+)/i, /limit of (\d+)/i, /(?:<=|less than or equal to|maximum (?:value )?(?:is|of)) (\d+)/i, /\d+\s*>\s*(\d+)/]
 
 function errorText(body: string): string {

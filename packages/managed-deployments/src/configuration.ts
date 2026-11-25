@@ -1,17 +1,8 @@
-// Self-reference, not "./schema.js": den-api loads this package's TypeScript
-// source at runtime, where only package exports resolve to the .ts files.
-// Nothing but the schema is imported: the dashboard bundles this module.
 import {
   assistantsEnabled, awsNetworkSchema, awsTargetSchema, deploymentConfigurationFieldSchema,
   type AwsAssistants, type AwsManagedDeploymentInput, type AwsNetwork, type AwsTarget,
   type DeploymentConfigurationChange, type DeploymentConfigurationField,
 } from "@openwork/managed-deployments/schema"
-
-/**
- * What an installed AWS deployment may change at its installed version, and
- * what each change does. The API and the dashboard decide with this one
- * function, so the dashboard offers exactly what the API accepts.
- */
 
 /** The recorded configuration, with its target normalized as views show it. */
 export type DeploymentConfiguration = { name: string; domainName: string; ownerEmail: string; size: "small"; target: AwsTarget }
@@ -23,12 +14,9 @@ export type DeploymentConfigurationPlan =
     ok: true
     changes: DeploymentConfigurationChange[]
     next: DeploymentConfiguration
-    /** Any change other than the name: the customer approves it in AWS. */
     requiresApproval: boolean
-    /** The runtime profile or computers changed. */
     targetChanged: boolean
     enablesGateway: boolean
-    /** The recorded or resulting runtime is gateway or runs assistants. */
     needsAssistantsFeature: boolean
   }
   | { ok: false; rejection: DeploymentConfigurationRejection }
@@ -57,7 +45,6 @@ function rejected(code: DeploymentConfigurationRejectionCode, field: DeploymentC
   return { ok: false, rejection: { code, field, message } }
 }
 
-/** Key order and absent optional values never count as a difference. */
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null"
@@ -65,7 +52,6 @@ function canonical(value: unknown): string {
     .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry)}`).join(",")}}`
 }
 
-/** An empty cluster ARN and none both mean "create a cluster". */
 function networkIdentity(network: AwsNetwork) {
   const parsed = awsNetworkSchema.safeParse(network)
   if (!parsed.success) return null
@@ -80,7 +66,6 @@ function differingKey<Key extends keyof AwsAssistants>(keys: Key[], before: AwsA
   return keys.find((key) => text(before[key]) !== text(after[key]))
 }
 
-/** The most specific editable field an issue path names, or null. */
 function issueField(path: PropertyKey[]): DeploymentConfigurationField | null {
   for (let length = path.length; length > 0; length -= 1) {
     const field = deploymentConfigurationFieldSchema.safeParse(["target", ...path.slice(0, length)].join("."))
@@ -106,8 +91,6 @@ export function planDeploymentConfigurationChange(current: DeploymentConfigurati
   const enablesGateway = current.target.runtimeProfile === "legacy" && profile === "gateway"
   if (current.target.runtimeProfile === "gateway" && profile === "legacy") return rejected("gateway_cannot_be_removed", "target.runtimeProfile")
   if (profile === "legacy") {
-    // Before the target schema, which answers a computer on a deployment without
-    // its own runner with "Legacy assistant services require their managed runner".
     const computer = differingKey(COMPUTER_KEYS, before, requested.target.assistants)
     if (computer) return rejected("computers_need_gateway", `target.assistants.${computer}`)
     const runner = differingKey(OWN_RUNNER_KEYS, before, requested.target.assistants)
@@ -127,11 +110,9 @@ export function planDeploymentConfigurationChange(current: DeploymentConfigurati
   const changes: DeploymentConfigurationChange[] = []
   const name = requested.name.trim()
   if (name !== current.name) changes.push({ field: "name", before: current.name, after: name, effect: "saved_immediately" })
-  // The installed Den compares administrator addresses in lowercase.
   const requestedEmail = requested.ownerEmail.trim()
   const ownerEmail = requestedEmail.toLowerCase() === current.ownerEmail.toLowerCase() ? current.ownerEmail : requestedEmail
   if (ownerEmail !== current.ownerEmail) changes.push({ field: "ownerEmail", before: current.ownerEmail, after: ownerEmail, effect: "restarts_den" })
-  // The services the gateway profile forces on, and the model fields it drops, are part of this one entry.
   if (enablesGateway) changes.push({ field: "target.runtimeProfile", before: "legacy", after: "gateway", effect: "adds_gateway_runtime" })
   const computers = COMPUTER_KEYS.filter((key) => text(before[key]) !== text(target.assistants[key]))
   for (const key of computers) changes.push({ field: `target.assistants.${key}`, before: text(before[key]), after: text(target.assistants[key]), effect: "restarts_runner" })

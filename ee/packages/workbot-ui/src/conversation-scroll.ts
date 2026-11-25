@@ -9,7 +9,6 @@ export type ConversationScrollState = {
   sent: Set<string>;
 };
 
-/** How long after a touch, wheel or key a scroll still counts as the person's. */
 const GESTURE_MS = 600;
 
 export function createConversationScrollState(turnWindow: number): ConversationScrollState {
@@ -30,8 +29,6 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
   let smooth = false;
   let settleTimer: ReturnType<typeof setTimeout> | undefined;
   let touchY: number | undefined;
-  // When the person last touched, wheeled, pressed or keyed in the conversation, and whether a press is held (a
-  // scrollbar drag): scrolls outside those are the page's own layout, never the person leaving the newest message.
   let gestureAt = 0;
   let pressed = false;
   const gesture = () => { gestureAt = Date.now(); };
@@ -55,7 +52,6 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
   };
   const layoutChanged = () => height !== node.scrollHeight || viewport !== node.clientHeight || width !== node.clientWidth;
   const layout = () => {
-    // Hidden copies of the conversation (Home / dock / popover) must never overwrite the visible copy's place.
     if (!shown()) { visible = false; return; }
     const revealing = !visible;
     visible = true;
@@ -64,7 +60,6 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
     } else if (state.anchor) {
       const row = [...rows()].find(row => row.dataset.workbotRow === state.anchor?.key);
       if (row) node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - state.anchor.offset;
-      // Keep the anchor while an older page is still being fetched; do not replace it with a cached newest row.
       else if (revealing) node.scrollTop = state.top;
     } else if (revealing) node.scrollTop = state.top;
     measure();
@@ -85,8 +80,6 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
       if (distance() <= 1) settle();
       else settling();
     } else if (Math.abs(node.scrollTop - expectedTop) > 1) {
-      // A box beside the conversation that briefly grew it (the message box resizing as the person types) leaves the
-      // browser's clamped scrollTop behind: still at the newest message, so stay exactly at the bottom.
       if (state.following && !byPerson() && distance() < 80) node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
       else {
         state.following = distance() < 80;
@@ -96,7 +89,6 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
     measure();
   };
   const interrupt = (force = false) => {
-    // An upward gesture at scrollTop=0 cannot leave the bottom of a short conversation.
     if (!force && !smooth && node.scrollTop <= 0) return;
     if (smooth) node.scrollTo({ top: node.scrollTop, behavior: "instant" });
     clearTimeout(settleTimer);
@@ -126,16 +118,11 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
   node.addEventListener("touchstart", touchStart, { passive: true });
   node.addEventListener("touchmove", touchMove, { passive: true });
   node.addEventListener("keydown", key);
-  // The press can end outside the conversation (a scrollbar drag released over the composer).
   const view: Pick<Window, "addEventListener" | "removeEventListener"> | undefined = typeof window.addEventListener === "function" ? window : undefined;
   view?.addEventListener("pointerup", released, { passive: true });
   view?.addEventListener("pointercancel", released, { passive: true });
   const observer = new ResizeObserver(layout);
-  // Border box: the floating message box reaches over the conversation through the content's padding (--wb-chrome-
-  // bottom, floating-chrome.ts). A content-box observer never sees that padding grow, so a message box gaining a line
-  // left the newest message under it until something else re-measured (the next keystroke), then jumped.
   observer.observe(content, { box: "border-box" });
-  // Content alone does not resize when the keyboard opens or the composer grows.
   observer.observe(node);
   layout();
   return {

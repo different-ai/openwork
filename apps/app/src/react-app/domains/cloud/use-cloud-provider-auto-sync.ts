@@ -8,7 +8,6 @@ import { createInventoryRevisionGate } from "./inventory-revision";
 type CloudProviderSyncReason = "sign_in" | "app_resume";
 type SyncFn = (reason: CloudProviderSyncReason) => Promise<unknown>;
 const CLOUD_PROVIDER_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
-/** Focus, visibility and online often fire together, and people switch windows often. */
 const MIN_RESUME_INTERVAL_MS = 15_000;
 
 export function subscribeCloudProviderSyncTriggers(input: {
@@ -36,7 +35,6 @@ export function subscribeCloudProviderSyncTriggers(input: {
       handleAppResume();
     }
   };
-  // A hidden window has nobody waiting on it; becoming visible catches up.
   const handleInterval = () => {
     if (input.isDocumentVisible()) handleAppResume();
   };
@@ -56,23 +54,10 @@ export function subscribeCloudProviderSyncTriggers(input: {
   };
 }
 
-/**
- * Event-driven cloud-provider reconciliation. Runs immediately after sign-in,
- * whenever Den settings change (for example active-org selection), and when
- * the user returns to the app or reconnects to the network. A return to the
- * app only syncs when Den's inventory revision moved since the last sync.
- * Workspace gate transitions and explicit product actions are handled by the
- * provider store.
- *
- * Mount once — the provider store coalesces overlapping triggers.
- */
 export function useCloudProviderAutoSync(sync: SyncFn) {
   const denAuth = useDenAuth();
   const syncRef = useRef(sync);
 
-  // Keep the ref current so we always call the latest closure (store
-  // identity can change between mounts and we don't want to restart event
-  // subscriptions just because the parent re-rendered).
   useEffect(() => {
     syncRef.current = sync;
   }, [sync]);
@@ -91,13 +76,9 @@ export function useCloudProviderAutoSync(sync: SyncFn) {
         await syncRef.current(reason);
         gate.synced(revision);
       } catch {
-        // Network errors, org misconfig, etc. are non-fatal — the next user
-        // or lifecycle trigger retries. The refresh function owns surfacing
-        // user-visible error state.
       }
     };
 
-    // Immediate pass so users see server state quickly after sign-in.
     void tick("sign_in");
 
     const unsubscribe = subscribeCloudProviderSyncTriggers({

@@ -22,7 +22,6 @@ export type ConnectionStateFacts = ConnectionRepairFacts & {
   authPolicyConfirmed?: boolean;
   oauthClientRequired?: boolean;
   oauthClientConfigured?: boolean;
-  /** Undefined means the server predates readiness checks; null means unchecked. */
   readiness?: { status: "ready" | "could_not_verify"; failure?: string | null } | null;
 };
 
@@ -92,7 +91,6 @@ export function deriveConnectionState(connection: ConnectionStateFacts): {
   } else if (readinessSignInFailed(connection.readiness) || (perMember && !connection.connectedForMe)) {
     readiness = "needs_signin";
   } else {
-    // Never checked is not a failure; only a recorded check that did not pass is.
     readiness = connection.readiness ? "could_not_verify" : "not_checked";
   }
   return { member, readiness };

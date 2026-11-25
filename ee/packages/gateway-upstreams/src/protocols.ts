@@ -1,7 +1,3 @@
-// Protocol classification for the org provider gateway (plan §5.3). The
-// family comes from the models.dev `npm` package (GATEWAY_SDK_FAMILIES in
-// @openwork-ee/gateway-catalog); the per-request protocol
-// (which usage parser to run) comes from the forwarded path.
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import { BEDROCK_MANTLE_DEFAULT_API_PATH, GATEWAY_FAMILY_DEFAULT_BASE_URLS, gatewaySdkFamily, microsoftFoundryBaseUrl, type ProtocolFamily } from "@openwork-ee/gateway-catalog"
 import { bedrockMantleHost, bedrockRuntimeHost, isAwsRegion } from "@openwork-ee/gateway-upstreams/egress"
@@ -21,7 +17,6 @@ const familyHeaderAllowlist: Record<ProtocolFamily, string[]> = {
   openai_compatible: ["openai-beta"],
   google: [],
   google_vertex: [],
-  // `anthropic-version` moves into the body (`anthropic_version`) on Vertex.
   google_vertex_anthropic: ["anthropic-beta"],
   bedrock: [],
   bedrock_mantle: [],
@@ -33,7 +28,6 @@ export function classifyProtocolFamily(catalog: CatalogProvider | null): Protoco
   if (catalog.family) return catalog.family
   const family = gatewaySdkFamily(catalog.npm)
   if (family) return family
-  // Unknown SDK package but a known API base: best-effort OpenAI-compatible.
   return catalog.api ? "openai_compatible" : null
 }
 
@@ -64,7 +58,6 @@ export function classifyRequestProtocol(family: ProtocolFamily, restPath: string
   }
 }
 
-// @ai-sdk/amazon-bedrock: `/model/{encodeURIComponent(modelId)}/converse[-stream]`.
 export function parseBedrockModelPath(pathname: string): { model: string; stream: boolean } | null {
   const match = /\/model\/([^/]+)\/(converse|converse-stream)$/.exec(pathname)
   if (!match) return null
@@ -72,7 +65,6 @@ export function parseBedrockModelPath(pathname: string): { model: string; stream
   try {
     model = decodeURIComponent(model)
   } catch {
-    // keep the raw segment
   }
   return { model, stream: match[2] === "converse-stream" }
 }
@@ -130,16 +122,11 @@ export function defaultBaseUrl(family: ProtocolFamily, settings: Record<string, 
       : null
   }
   if (family === "bedrock") {
-    // The gateway re-derives the host once the credential is known (its region
-    // wins over settings.region, plan §5.3), so a missing region here must not
-    // fail URL resolution: the region-less host is replaced before use.
     const region = settings.region
     if (region === undefined || region === "") return "https://bedrock-runtime.amazonaws.com"
     return isAwsRegion(region) ? `https://${bedrockRuntimeHost(region)}` : null
   }
   if (family === "bedrock_mantle") {
-    // As for Bedrock; the model's API path (/v1 or /openai/v1) is applied once
-    // the grant has chosen the upstream model.
     const region = settings.region
     if (region === undefined || region === "") return `https://bedrock-mantle.api.aws${BEDROCK_MANTLE_DEFAULT_API_PATH}`
     return isAwsRegion(region) ? `https://${bedrockMantleHost(region)}${BEDROCK_MANTLE_DEFAULT_API_PATH}` : null
@@ -149,8 +136,6 @@ export function defaultBaseUrl(family: ProtocolFamily, settings: Record<string, 
 
 export { vertexHost, vertexPublisherBase } from "@openwork-ee/gateway-upstreams/egress"
 
-// The desktop speaks the public Google/Anthropic API shape; drop its version
-// segment so the rest of the path can hang off the Vertex publisher base.
 export function stripApiVersionPrefix(restPath: string) {
   return restPath.replace(/^v1(beta|alpha)?\//, "")
 }

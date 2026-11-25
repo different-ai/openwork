@@ -15,11 +15,9 @@ import { requestAdmin, withStoredBearer, type AdminResult } from "../admin-reque
 import { useAdminSessionCookie } from "../admin-shell";
 
 export const COMPUTER_FLEET_PATH = "/v1/admin/computer-fleet";
-/** Den shares one read of the providers for 15 seconds, so asking more often shows nothing new. */
 const FLEET_REFRESH_MS = 15_000;
 const HISTORY_REFRESH_MS = 60_000;
 
-/** Asked fresh each time: the tab can be hidden or shown while a request is in flight. */
 const tabHidden = () => document.visibilityState === "hidden";
 
 const parseFleet = (payload: unknown): AdminComputerFleet | null => adminComputerFleetSchema.safeParse(payload).data ?? null;
@@ -32,11 +30,6 @@ export type FleetState =
   | { status: "ready"; fleet: AdminComputerFleet; message: "" }
   | { status: Access; fleet: AdminComputerFleet | null; message: string };
 
-/**
- * The fleet, read again every 15 seconds while the page is open and showing. A reading that fails keeps the last
- * one on the page and says so; a signed-out or removed admin sees that instead of a stale fleet. `organization`
- * (an id, or `unknown`) lists only that organization's computers; the totals stay the whole fleet's.
- */
 export function useComputerFleet(organization = "") {
   const hasSessionCookie = useAdminSessionCookie();
   const [state, setState] = useState<FleetState>(() => hasSessionCookie ? { status: "loading", fleet: null, message: "" } : { status: "signed-out", fleet: null, message: "" });
@@ -61,7 +54,6 @@ export function useComputerFleet(organization = "") {
           setReceivedAt(Date.now());
           setState({ status: "ready", fleet: result.data, message: "" });
         } else {
-          // Signed out or not an admin: the last fleet is not theirs to keep looking at.
           const keep = result.access === "error" ? last.current : null;
           setState({ status: result.access, fleet: keep, message: result.message });
         }
@@ -71,7 +63,6 @@ export function useComputerFleet(organization = "") {
     };
     load();
     const timer = setInterval(load, FLEET_REFRESH_MS);
-    // Coming back to the tab reads at once instead of waiting out the interval.
     const shown = () => { if (!tabHidden()) load(); };
     document.addEventListener("visibilitychange", shown);
     return () => { controller.abort(); clearInterval(timer); document.removeEventListener("visibilitychange", shown); };
@@ -84,11 +75,9 @@ export function useComputerFleet(organization = "") {
 export type ComputerState =
   | { status: "loading"; computer: null; message: ""; code?: undefined }
   | { status: "ready"; computer: AdminComputerDetail; message: ""; code?: undefined }
-  /** `missing`: the provider has no such computer, or it is not one of this deployment's. */
   | { status: "missing"; computer: null; message: string; code?: undefined }
   | { status: Access; computer: AdminComputerDetail | null; message: string; code?: string };
 
-/** One computer, read again every 15 seconds while its page is open and showing. */
 export function useComputer(source: ComputerFleetSourceKind, id: string) {
   const hasSessionCookie = useAdminSessionCookie();
   const [state, setState] = useState<ComputerState>(() => hasSessionCookie ? { status: "loading", computer: null, message: "" } : { status: "signed-out", computer: null, message: "" });
@@ -114,7 +103,6 @@ export function useComputer(source: ComputerFleetSourceKind, id: string) {
           setReceivedAt(Date.now());
           setState({ status: "ready", computer: result.data, message: "" });
         } else if (result.access === "error" && (result.status === 404 || result.status === 400)) {
-          // Deleted, or never this deployment's: asking again would only say so again.
           gone = true;
           setState({ status: "missing", computer: null, message: result.message });
         } else {
@@ -138,7 +126,6 @@ export function useComputer(source: ComputerFleetSourceKind, id: string) {
 
 export type HistoryState = { status: "loading" | "ready" | "error"; history: AdminComputerFleetHistory | null; message: string };
 
-/** The recorded history for a range, read again each minute while the page is open. */
 export function useComputerFleetHistory(range: ComputerFleetHistoryRange, enabled: boolean) {
   const [state, setState] = useState<HistoryState>({ status: "loading", history: null, message: "" });
   const last = useRef<{ range: ComputerFleetHistoryRange; history: AdminComputerFleetHistory } | null>(null);
@@ -162,7 +149,6 @@ export function useComputerFleetHistory(range: ComputerFleetHistoryRange, enable
     setState({ status: "loading", history: last.current?.range === range ? last.current.history : null, message: "" });
     load();
     const timer = setInterval(load, HISTORY_REFRESH_MS);
-    // A page opened in a background tab reads its history when it is first shown, not a minute later.
     const shown = () => { if (!tabHidden()) load(); };
     document.addEventListener("visibilitychange", shown);
     return () => { controller.abort(); clearInterval(timer); document.removeEventListener("visibilitychange", shown); };

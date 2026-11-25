@@ -1,18 +1,7 @@
-// Prompt caching for Claude. Anthropic caches a prompt only up to the cache
-// breakpoints the request marks; providers that serve Claude behind another
-// API (OpenRouter, LiteLLM, Bedrock) pass those markers through. Clients pick
-// breakpoints from the model id, but Gateway model aliases (`gwm_…`) hide that
-// the model is Claude, so they send none and every turn pays for the whole
-// context. Once the grant has resolved the real upstream model, the Gateway
-// places the breakpoints the way OpenCode does for Claude: the last tool, the
-// first and last system parts and the end of the conversation, at most four.
-// A request that already marks any breakpoint is left exactly as the client
-// sent it.
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import { isJsonObject, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 
 const MAX_BREAKPOINTS = 4
-/** Conversation messages marked at the tail: the newest turn and the one before it, so a retried or forked turn still reads the cache. */
 const TAIL_MESSAGES = 2
 const EPHEMERAL = { type: "ephemeral" }
 
@@ -40,7 +29,6 @@ function hasCacheMarker(value: unknown, key: "cache_control" | "cachePoint"): bo
   return false
 }
 
-/** A tool's own marker only: its parameter schema may name a property `cache_control`. */
 function toolsMarked(tools: unknown): boolean {
   return Array.isArray(tools) && tools.some((tool) => isJsonObject(tool) && Object.hasOwn(tool, "cache_control"))
 }
@@ -51,11 +39,9 @@ function isNonEmptyText(value: unknown): value is string {
 
 type Marker = {
   canMark: (part: JsonObject) => boolean
-  /** Mark the last text part rather than a later image or file: OpenAI-compatible proxies document `cache_control` on text. */
   preferText: boolean
 }
 
-/** Marks the last part that can carry `cache_control`; a string becomes one text part. Returns whether it marked. */
 function markContent(holder: JsonObject, budget: Budget, { canMark, preferText }: Marker): boolean {
   if (budget.remaining <= 0) return false
   const content = holder.content
@@ -83,7 +69,6 @@ function markTail(messages: JsonObject[], budget: Budget, marker: Marker) {
   }
 }
 
-// Chat Completions: OpenRouter and LiteLLM read Anthropic `cache_control` on content parts.
 const chatMarker: Marker = {
   canMark: (part) => part.type === "text" ? isNonEmptyText(part.text) : typeof part.type === "string",
   preferText: true,
@@ -102,7 +87,6 @@ function markChatCompletions(json: JsonObject): boolean {
   return budget.remaining < MAX_BREAKPOINTS
 }
 
-// Anthropic Messages: thinking blocks cannot carry `cache_control`.
 const messagesMarker: Marker = {
   canMark: (part) => {
     if (part.type === "thinking" || part.type === "redacted_thinking") return false
@@ -114,7 +98,6 @@ const messagesMarker: Marker = {
 function markAnthropicMessages(json: JsonObject): boolean {
   if (!Array.isArray(json.messages) || [json.messages, json.system].some((value) => hasCacheMarker(value, "cache_control")) || toolsMarked(json.tools)) return false
   const budget: Budget = { remaining: MAX_BREAKPOINTS }
-  // Tools come first in the cached prefix, so their breakpoint survives system prompt changes.
   if (Array.isArray(json.tools)) {
     const index = lastIndexWhere(json.tools, isJsonObject)
     const tool = json.tools[index]
@@ -140,7 +123,6 @@ function markAnthropicMessages(json: JsonObject): boolean {
   return budget.remaining < MAX_BREAKPOINTS
 }
 
-// Bedrock Converse: a `cachePoint` block caches everything before it.
 const CACHE_POINT = { cachePoint: { type: "default" } }
 
 function appendCachePoint(holder: JsonObject, key: string, budget: Budget): boolean {
@@ -172,7 +154,6 @@ function markBedrockConverse(json: JsonObject): boolean {
  */
 export function applyClaudePromptCache(json: JsonObject, protocol: GatewayRequestProtocol, upstreamModel: string | null): boolean {
   if (!isAnthropicModelId(upstreamModel)) return false
-  // Request-level automatic caching (Anthropic, OpenRouter) is already the client's choice.
   if (Object.hasOwn(json, "cache_control")) return false
   switch (protocol) {
     case "openai_chat": return markChatCompletions(json)

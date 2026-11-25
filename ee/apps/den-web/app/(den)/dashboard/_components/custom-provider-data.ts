@@ -1,9 +1,3 @@
-/**
- * den-api requests for AI Gateway custom OpenAI-compatible providers
- * (`/v1/inference-providers/custom/*`). Bodies and answers use the shared
- * schemas in @openwork/types/den/gateway-custom-providers. Keys are write-only.
- */
-
 import { auditOperationHeaders, type AuditOperationContext } from "@openwork/types/den/audit";
 import {
   gatewayCustomDiscoverResponseSchema,
@@ -20,7 +14,6 @@ import { deleteGatewayResource, saveGatewayResource } from "./inference-provider
 import { accessGrantChanges } from "./custom-provider-models";
 import { readInferenceProviderFromPayload, type DenInferenceProvider, type DenInferenceProviderDetails } from "./inference-provider-request";
 
-/** Asks den-api to read `GET {baseUrl}/models` with the key (or a saved provider's key). */
 export async function discoverCustomProviderModels(body: GatewayCustomDiscoverRequest): Promise<GatewayCustomDiscoverResponse> {
   const { response, payload } = await requestJson("/v1/inference-providers/custom/discover-models", { method: "POST", body: JSON.stringify(body) }, 30000);
   if (!response.ok) throw getRequestError(payload, response, `Could not fetch models (${response.status}).`);
@@ -29,7 +22,6 @@ export async function discoverCustomProviderModels(body: GatewayCustomDiscoverRe
   return parsed.data;
 }
 
-/** One short prompt through AI Gateway with these unsaved settings. Nothing is stored. */
 export async function testCustomProvider(body: GatewayCustomTestRequest): Promise<GatewayCustomTestResponse> {
   const { response, payload } = await requestJson("/v1/inference-providers/custom/test-connection", { method: "POST", body: JSON.stringify(body) }, 45000);
   if (!response.ok) throw getRequestError(payload, response, `Could not test the provider (${response.status}).`);
@@ -58,12 +50,10 @@ export async function updateCustomProvider(inferenceProviderId: string, body: Ga
   return provider;
 }
 
-/** A failed test from a request that never got a result (network, rate limit at Den, reauth cancelled). */
 export function testRequestFailure(model: string, cause: unknown): GatewayCustomTestResponse {
   return { ok: false, model, status: null, code: "test_failed", message: cause instanceof Error ? cause.message : "Could not test the provider. Try again.", step: null };
 }
 
-/** Applies "Who can use it" through the existing access-grant routes. */
 export async function syncCustomProviderAccess(
   provider: Pick<DenInferenceProviderDetails, "id" | "accessGrants" | "modelGroups" | "credentialSets">,
   access: { orgWide: boolean; memberIds: readonly string[]; teamIds: readonly string[] },

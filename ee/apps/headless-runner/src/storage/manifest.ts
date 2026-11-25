@@ -4,7 +4,6 @@ import type { SqlDriver } from "../sql.js"
 import { ByteCache } from "./cache.js"
 import { decodeSegment, SegmentError, type SegmentData } from "./segments.js"
 
-/** One sealed segment as the hot `segments` table (the manifest) records it. */
 export type ManifestEntry = {
   sessionId: string
   n: number
@@ -53,7 +52,6 @@ function toEntry(row: unknown): ManifestEntry {
   }
 }
 
-/** A session's segments, oldest first (segment order is turn order). */
 export function manifestOf(db: SqlDriver, sessionId: string): ManifestEntry[] {
   return db.prepare("SELECT * FROM segments WHERE session_id = ? ORDER BY n").all(sessionId).map(toEntry)
 }
@@ -65,7 +63,6 @@ export function insertManifest(db: SqlDriver, entry: ManifestEntry) {
   ).run(entry.sessionId, entry.n, entry.seqFrom, entry.seqTo, entry.timeFrom, entry.timeTo, entry.turns, entry.bytes, entry.sha256, entry.storageKey, entry.formatVersion, entry.createdAt)
 }
 
-/** Swaps one entry for its rewrite, only if it is still the version read (`expectedSha256`). */
 export function replaceManifest(db: SqlDriver, expectedSha256: string, entry: ManifestEntry): boolean {
   return (
     db
@@ -81,7 +78,6 @@ export function removeManifest(db: SqlDriver, sessionId: string, n: number, expe
   return db.prepare("DELETE FROM segments WHERE session_id = ? AND n = ? AND sha256 = ?").run(sessionId, n, expectedSha256).changes === 1
 }
 
-/** Decoded segments, fetched from the files bucket and kept briefly, bounded by bytes. */
 export class SegmentReader {
   private readonly cache = new ByteCache<SegmentData>(64 * 1024 * 1024, 5 * 60_000)
 
@@ -99,7 +95,6 @@ export class SegmentReader {
     return data
   }
 
-  /** Keeps a segment this process just wrote, so the next read needn't fetch it. */
   remember(entry: ManifestEntry, data: SegmentData, size: number) {
     this.cache.set(`${entry.storageKey}#${entry.sha256}`, data, size)
   }

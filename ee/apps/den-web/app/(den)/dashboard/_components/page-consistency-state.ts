@@ -21,7 +21,6 @@ export function auditLocalDate(value?: string): string {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
-/** Dates stay in the draft until both endpoints are valid. Never serialize an invalid date. */
 export function auditFiltersFromDraft(draft: AuditFilters): AuditFilters | null {
   const { from, to } = draft;
   if ((from && !Number.isFinite(Date.parse(from))) || (to && !Number.isFinite(Date.parse(to)))
@@ -47,7 +46,6 @@ export function normalizeAllowedEmailDomainsInput(value: string): string[] | nul
   return domains.length > 0 ? domains : null;
 }
 
-/** A refresh replaces untouched values, never an unsaved edit. Organization switches always reset. */
 export function refreshedDraft<T>(current: T, previous: T | undefined, next: T, sameOrganization: boolean,
   equal: (left: T, right: T) => boolean = Object.is): T {
   return !sameOrganization || previous === undefined || equal(current, previous) ? next : current;

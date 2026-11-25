@@ -78,7 +78,6 @@ export function readWorkbotTeamAgent(value: unknown): WorkbotTeamAgent | undefin
   return { settings: readStoredWorkbotProactiveSettings(value.settings), template: { ...content, version: version ?? 1, versionId: versionId ?? null } }
 }
 
-/** Keys in order; a group with nothing in it reads the same as one that was never saved. Lists keep their order. */
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`
   if (!isRecord(value)) return JSON.stringify(value) ?? "null"
@@ -182,7 +181,6 @@ export const workbotTeamSettingsWriteSchema = z
     model: workbotTeamModelSettingSchema.optional(),
     name: workbotTeamNameSettingSchema.optional(),
     enabled: workbotTeamEnabledSettingSchema.optional(),
-    /** Restore the organization's policy for this team's agents. */
     agent: workbotTeamAgentInheritSchema.optional(),
   })
   .meta({ ref: "WorkbotTeamSettingsWrite" })
@@ -191,7 +189,6 @@ export type WorkbotTeamSettingsWrite = z.infer<typeof workbotTeamSettingsWriteSc
 /** A change for everyone in the organization. A setting left out is kept as it is. */
 export const workbotEveryoneSettingsWriteSchema = z
   .strictObject({
-    /** Whether Workbot is on for members whose teams do not say otherwise. */
     enabled: z.boolean().optional(),
   })
   .meta({ ref: "WorkbotEveryoneSettingsWrite" })
@@ -205,17 +202,7 @@ export const workbotTeamSettingsTeamSchema = z
     model: workbotTeamModelSettingSchema,
     name: workbotTeamNameSettingSchema,
     enabled: workbotTeamEnabledSettingSchema,
-    /**
-     * Whether the team follows the organization's policy for members' agents,
-     * and, under the policy the
-     * team has now (its own, or the organization's), whether agents are on
-     * and whether they read the calendar.
-     */
     agent: z.object({ inherit: z.boolean(), enabled: z.boolean(), calendar: agentSourcePolicySchema.optional() }).optional(),
-    /**
-     * Members of this team who are also on another team that overrides a
-     * setting differently; they get the organization's value for it.
-     */
     conflictingMemberCount: z.number().int().nonnegative(),
   })
   .meta({ ref: "WorkbotTeamSettingsTeam" })
@@ -223,11 +210,6 @@ export type WorkbotTeamSettingsTeam = z.infer<typeof workbotTeamSettingsTeamSche
 
 export const workbotTeamSettingsViewSchema = z
   .object({
-    /**
-     * The organization's values, which teams without their own use: null is the deployment's default model, or no
-     * name set; `enabled` is whether Workbot is on for everyone; `agentEnabled` is whether members' agents are on
-     * for everyone and `agentCalendar` whether they read the calendar. Older servers may omit the agent fields.
-     */
     organization: z.object({
       model: z.string().nullable(),
       name: z.string().nullable(),
@@ -236,7 +218,6 @@ export const workbotTeamSettingsViewSchema = z
       agentCalendar: agentSourcePolicySchema.optional(),
     }),
     teams: z.array(workbotTeamSettingsTeamSchema),
-    /** Whether the caller can change them (inference.manage). */
     canEdit: z.boolean(),
   })
   .meta({ ref: "WorkbotTeamSettings" })
@@ -254,11 +235,9 @@ export type WorkbotTeamAgentView = z.infer<typeof workbotTeamAgentViewSchema>
 export function applyWorkbotTeamSettingsWrite(stored: Record<string, unknown>, write: WorkbotTeamSettingsWrite): Record<string, unknown> {
   const readable = readWorkbotTeamSettings(stored)
   const next: Record<string, unknown> = { ...stored }
-  // A value that could not be read was never an override; do not keep it.
   if (readable.model === undefined) delete next.model
   if (readable.name === undefined) delete next.name
   if (readable.enabled === undefined) delete next.enabled
-  // Teams no longer have a step limit: a value saved before is dropped.
   delete next.maxSteps
   if (readable.agent === undefined || write.agent) delete next.agent
   if (write.model) {
@@ -285,7 +264,6 @@ export type ResolvedWorkbotTeamSettings = {
   model: { value: string | null; from: WorkbotSettingSource }
   name: { value: string | null; from: WorkbotSettingSource }
   enabled: { value: boolean; from: WorkbotSettingSource }
-  /** The teams' own policy for members' agents; null is the organization's. */
   agent: { value: WorkbotTeamAgent | null; from: WorkbotSettingSource }
 }
 
@@ -305,7 +283,6 @@ export function resolveWorkbotTeamAgent(teams: ReadonlyArray<{ name: string; set
   const own = teams.flatMap((team) => team.settings.agent ? [{ name: team.name, agent: team.settings.agent, value: workbotTeamAgentKey(team.settings.agent) }] : [])
   const resolved = resolveSetting<string | null>(null, own)
   if (resolved.from.kind !== "team") return { value: null, from: resolved.from }
-  // The same content in every team; the template version recorded is the first team's by name.
   const [first] = [...own].sort((left, right) => left.name.localeCompare(right.name))
   return { value: first?.agent ?? null, from: resolved.from }
 }
@@ -343,7 +320,6 @@ export function countWorkbotTeamConflicts(input: {
   teams: ReadonlyArray<{ teamId: string; settings: WorkbotTeamStoredSettings }>
   memberships: ReadonlyArray<{ teamId: string; memberId: string }>
 }): Map<string, number> {
-  // Compared as text, built once per team rather than once per membership.
   const settingsByTeam = new Map(input.teams.map((team) => [team.teamId, { ...team.settings, agentKey: team.settings.agent ? workbotTeamAgentKey(team.settings.agent) : undefined }]))
   const overridesByMember = new Map<string, (WorkbotTeamStoredSettings & { agentKey: string | undefined })[]>()
   for (const membership of input.memberships) {

@@ -11,16 +11,10 @@ import { SsoConnectionsManager } from "./sso-connections-manager";
 import { SsoRequirementSection } from "./sso-requirement-section";
 
 export type SsoScreenProps = {
-  /** `?setup=1` from an intro's action: open the setup form instead of the intro (DESIGN.md I5). */
   setupMode?: boolean;
-  /** Latest setup facts, so the Auth & Security section intro follows changes made here. */
   onIntroFacts?: (facts: AuthSecurityFacts) => void;
 };
 
-/**
- * The Single sign-on tab of Settings › Auth & Security: Require SSO and
- * every SSO connection. The tab names it, so no second title (P2).
- */
 export function SsoScreen({ setupMode = false, onIntroFacts }: SsoScreenProps = {}) {
   const { orgContext } = useOrgDashboard();
   const [introState, setIntroState] = useState<AuthSecuritySsoState | null>(null);
@@ -29,13 +23,11 @@ export function SsoScreen({ setupMode = false, onIntroFacts }: SsoScreenProps = 
     [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.currentMember.permissions],
   );
 
-  // Feature intro facts (DESIGN.md I2) once the connections have loaded.
   const ssoIncluded = orgContext?.entitlements.sso;
   useEffect(() => {
     if (!introState || ssoIncluded === undefined) return;
     onIntroFacts?.({ sso: introState, ssoIncluded });
   }, [introState, ssoIncluded, onIntroFacts]);
-  // `?setup=1` skips the intro that stands in for an empty form; a saved connection still gets its banner.
   const introFacts = introState && ssoIncluded !== undefined && !(setupMode && introState === "none")
     ? { sso: introState, ssoIncluded }
     : null;

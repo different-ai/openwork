@@ -27,7 +27,6 @@ export function upstreamError(status: number) {
   return inferenceError("upstream_unavailable", "The selected model's provider is unavailable. Your work is preserved; retry when it recovers.")
 }
 
-/** Bound JSON buffering; abort at the call site also bounds time to receive it. */
 export async function readResponseJson(body: ReadableStream<Uint8Array> | null, signal: AbortSignal, maxBytes = 16 * 1024 * 1024): Promise<unknown> {
   if (!body) throw new Error("Missing response body")
   const reader = body.getReader()
@@ -59,7 +58,6 @@ export function completeChatResponse(value: unknown, choiceCount = 1): boolean {
   return value.choices.every((choice) => {
     if (!record(choice) || typeof choice.index !== "number" || !Number.isSafeInteger(choice.index) || choice.index < 0 || choice.index >= choiceCount || indices.has(choice.index)) return false
     indices.add(choice.index)
-    // Tool execution validity is the client's responsibility, including truncated arguments.
     return record(choice.message) && ["stop", "length", "tool_calls", "content_filter"].includes(String(choice.finish_reason))
   })
 }
@@ -68,7 +66,6 @@ class InvalidStream extends Error {
   constructor(readonly code: string, message: string) { super(message) }
 }
 
-/** Inspect protocol completion without assembling or replaying assistant text. */
 class ChatStream {
   private pending = ""
   private data: string[] = []
@@ -98,7 +95,6 @@ class ChatStream {
         this.eventBytes += line.length
         if (this.eventBytes > 2_000_000) throw new InvalidStream("upstream_malformed_stream", "The model returned an oversized response frame.")
       } else if (line.startsWith(":")) {
-        // Heartbeats are transport progress, never assistant output or completion.
         frames.push(": processing\n\n")
       }
       if (this.done || this.failed) break
@@ -132,7 +128,6 @@ class ChatStream {
       const hasOutput = Boolean(delta.content || delta.reasoning || delta.reasoning_content ||
         (Array.isArray(delta.reasoning_details) && delta.reasoning_details.length) ||
         (Array.isArray(delta.tool_calls) && delta.tool_calls.length))
-      // OpenRouter's final usage frame may repeat the terminal choice without output.
       if (hasOutput && this.finished.has(choice.index)) throw new InvalidStream("upstream_malformed_stream", "The model sent output after completing the response.")
       if (hasOutput) this.output = true
       if (choice.finish_reason != null) {
@@ -167,7 +162,7 @@ export function relayChatStream(input: {
     settled = true
     input.abort.signal.removeEventListener("abort", onAbort)
     try { input.onFinish({ outcome, code, durationMs: Date.now() - input.startedAt, firstOutputMs, responseBytes: bytes }) }
-    catch { /* Diagnostics must not prevent stream cleanup. */ }
+    catch {}
     input.abort.abort()
     void reader.cancel().catch(() => {})
   }
@@ -181,10 +176,6 @@ export function relayChatStream(input: {
       if (input.abort.signal.aborted) onAbort()
     },
     async pull(controller) {
-      // A transport chunk may contain no complete SSE frame (or only part of
-      // a UTF-8 code point). With zero buffering, returning without enqueueing
-      // would strand the pending read. Keep reading under a deadline until we
-      // deliver a frame or reach a terminal outcome.
       while (!settled) {
         let timer: ReturnType<typeof setTimeout> | undefined
         try {
@@ -195,16 +186,14 @@ export function relayChatStream(input: {
           if (settled) return
           if (chunk.done) throw new InvalidStream("upstream_incomplete", "The connection closed before the model completed its response. Partial output is preserved; review it before retrying.")
           bytes += chunk.value.byteLength
-          try { input.onRawChunk?.(chunk.value) } catch { /* Accounting must not bypass protocol validation. */ }
+          try { input.onRawChunk?.(chunk.value) } catch {}
           parser.output = false
-          // Forward one validated frame at a time so a malformed later frame does
-          // not discard valid partial output from the same transport chunk.
           const text = decoder.decode(chunk.value, { stream: true })
           let emitted = false
           for (const line of text.split(/(?<=\n)/)) {
             for (const frame of parser.feed(line)) {
               const encoded = encoder.encode(frame)
-              try { input.onChunk?.(encoded) } catch { /* Observation is best effort. */ }
+              try { input.onChunk?.(encoded) } catch {}
               controller.enqueue(encoded)
               if (parser.output) firstOutputMs ??= Date.now() - input.startedAt
               emitted = true

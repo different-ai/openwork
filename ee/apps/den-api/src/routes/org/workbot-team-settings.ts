@@ -15,7 +15,7 @@ import { findOrganizationTeamForDefaultModel } from "../../default-model.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
-import { agentBriefAllowed, agentCheckGateAllowed, agentSendCheckAllowed, readProactiveSettings } from "../../workbot-proactive/access.js"
+import { agentCheckGateAllowed, agentSendCheckAllowed, readProactiveSettings } from "../../workbot-proactive/access.js"
 import { workbotOrigin } from "../../workbot/config.js"
 import { checkWorkbotModelChoice, workbotModelCatalog } from "../../workbot/model.js"
 import { listWorkbotTeamSettings, readEveryoneAgentPolicy, readTeamAgentPolicy, saveTeamAgentPolicy, saveWorkbotTeamSettings } from "../../workbot/team-settings.js"
@@ -48,26 +48,16 @@ const teamParamsSchema = idParamSchema("teamId", "team")
 const teamConnectionParamsSchema = teamParamsSchema.extend(connectionToolsParamsSchema.shape)
 const AGENTS_OFF_MESSAGE = "Members' agents aren't on for this organization."
 
-/**
- * The group that exists only with a second feature: a team's members'-agents policy with members' agents
- * (`workbotProactive`, on a deployment with Workbot). One cached feature read.
- */
 async function shownGroups(organizationId: string, userId: string): Promise<{ agents: boolean }> {
   return { agents: workbotOrigin() !== null }
 }
 
-/**
- * The route's model check for a team's own model: the caller's supported, credential-ready models only, and the
- * managed starter saved as Default (null), as for the organization. Shared with the config-blob area.
- */
 export async function checkWorkbotTeamModel(input: { organizationId: DenTypeId<"organization">; userId: string; model: string }) {
   const catalog = await workbotModelCatalog({ organizationId: input.organizationId, userId: input.userId }).catch(() => null)
-  // Selecting the managed starter means Default, as for the organization.
   const model = isWorkbotManagedLuna(input.model) && input.model === catalog?.defaultModel ? null : input.model
   return { choice: checkWorkbotModelChoice(model, catalog), model }
 }
 
-/** Saves one team's change; a concurrent first save of the same team created the row, so the change is applied to it. */
 export async function saveWorkbotTeamSettingsChange(input: Parameters<typeof saveWorkbotTeamSettings>[0]): Promise<void> {
   try {
     await saveWorkbotTeamSettings(input)
@@ -77,7 +67,6 @@ export async function saveWorkbotTeamSettingsChange(input: Parameters<typeof sav
   }
 }
 
-/** Turns Workbot on or off for everyone whose teams do not say otherwise (organization metadata `workbot.enabled`). */
 export async function saveWorkbotEnabledForEveryone(organizationId: DenTypeId<"organization">, enabled: boolean): Promise<void> {
   await updateOrganizationMetadata(organizationId, (current) => withWorkbotEnabled(current, enabled))
 }
@@ -86,13 +75,6 @@ async function settingsView(c: PermissionRouteContext, organizationId: DenTypeId
   return { ...await listWorkbotTeamSettings(organizationId, groups), canEdit: await hasPermission(c, "inference.manage") }
 }
 
-/**
- * Members › Teams › a team › Workbot (the `workbotTeamSettings` feature): a team's own default model, Workbot
- * name, on/off switch and (with `workbotProactive`) policy for its members'
- * agents on top of the organization's, and the organization's switch for everyone. Members never
- * read these routes; Den resolves each member's values for them. No route here depends on the caller's own
- * switch, so an admin whose Workbot is off can still turn it back on.
- */
 export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/workbot-settings/teams",
@@ -147,7 +129,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       const groups = await shownGroups(organizationId, context.currentMember.userId)
       if (change.agent && !groups.agents) return c.json({ error: "invalid_request" as const, message: AGENTS_OFF_MESSAGE, details: [] }, 400)
       if (change.model && !change.model.inherit && change.model.value !== null) {
-        // The same check as the organization's default model, against the caller's own models.
         const { choice, model } = await checkWorkbotTeamModel({ organizationId, userId: context.currentMember.userId, model: change.model.value })
         if (choice === "runner_unavailable") return c.json({ error: "workbot_runner_unavailable" as const, message: RUNNER_UNAVAILABLE_MESSAGE }, 503)
         if (choice === "unknown_model") return c.json({ error: "unknown_model" as const, message: UNKNOWN_MODEL_MESSAGE }, 400)
@@ -164,7 +145,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Get the settings for a team's members' agents",
       description:
-        "Returns how members' agents work for one team's members, in the same shape as `GET /v1/org/workbot-settings/proactive` plus `inherit`. A team either follows the organization's policy (`inherit: true`: the organization's settings, sources, brief and template are returned, so they can be shown as the team's current values) or has its own complete one (`inherit: false`): on/off, working hours, the daily limit, members' starting choice, the destination, what agents may read (`settings.sources`, with `sourceConnections` grouped under the team's policy), the brief (with workbotAgentBrief) and the \"Your agent\" template, whose `version` counts the team's own template saves. The team's members follow its policy from their next check; a member on several teams whose own policies differ follows the organization's. Requires Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+        "Returns how members' agents work for one team's members, in the same shape as `GET /v1/org/workbot-settings/proactive` plus `inherit`. A team either follows the organization's policy (`inherit: true`: the organization's settings, sources, brief and template are returned, so they can be shown as the team's current values) or has its own complete one (`inherit: false`): on/off, working hours, the daily limit, members' starting choice, the destination, what agents may read (`settings.sources`, with `sourceConnections` grouped under the team's policy), the brief and the \"Your agent\" template, whose `version` counts the team's own template saves. The team's members follow its policy from their next check; a member on several teams whose own policies differ follows the organization's. Requires Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("The team's agent settings returned.", workbotTeamAgentViewSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -182,12 +163,11 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       const teamId = normalizeDenTypeId("team", c.req.valid("param").teamId)
       if (!await findOrganizationTeamForDefaultModel(organization.id, teamId)) return c.json({ error: "team_not_found" }, 404)
       const canViewConnections = (await memberPermissionsForRequest(c))?.has("connections.view") ?? false
-      const briefOn = await agentBriefAllowed(organization.id, currentMember.userId)
       const checkGateOn = await agentCheckGateAllowed(organization.id, currentMember.userId)
       const sendCheckOn = await agentSendCheckAllowed(organization.id, currentMember.userId)
       const own = await readTeamAgentPolicy(organization.id, teamId)
       const policy = own ?? await readEveryoneAgentPolicy(organization.id)
-      return c.json({ ...await proactiveView(organization.id, policy.settings, policy.template, canViewConnections, briefOn, checkGateOn, sendCheckOn), inherit: !own })
+      return c.json({ ...await proactiveView(organization.id, policy.settings, policy.template, canViewConnections, checkGateOn, sendCheckOn), inherit: !own })
     },
   )
 
@@ -197,7 +177,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Get the tools a team's members' agents may use on a connection",
       description:
-        "With Your agent's brief on (workbotAgentBrief): every tool one of the organization's connections lists and whether the team's members' agents may call it, in the same shape as `GET /v1/org/workbot-settings/proactive/sources/{connectionId}/tools`, decided with the admin's per-tool choices (`sources.toolOverrides`) of the team's own policy, or the organization's while the team follows it. An MCP connection's tools are listed with the caller's own account. Agents only ever read. Requires the workbotAgentBrief feature, Workbot on this deployment, View OpenWork Models settings or Manage OpenWork Models, and View connections.",
+        "Every tool one of the organization's connections lists and whether the team's members' agents may call it, in the same shape as `GET /v1/org/workbot-settings/proactive/sources/{connectionId}/tools`, decided with the admin's per-tool choices (`sources.toolOverrides`) of the team's own policy, or the organization's while the team follows it. An MCP connection's tools are listed with the caller's own account. Agents only ever read. Requires Workbot on this deployment, View OpenWork Models settings or Manage OpenWork Models, and View connections.",
       responses: {
         200: jsonResponse("The connection's tools returned.", agentConnectionToolsDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -213,7 +193,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
     async (c) => {
       c.header("Cache-Control", "no-store")
       const { organization, currentMember } = c.get("organizationContext")
-      if (!(await agentBriefAllowed(organization.id, currentMember.userId))) return c.json({ error: "feature_disabled" as const, feature: "workbotAgentBrief" }, 404)
       const { connectionId, teamId: requestedTeamId } = c.req.valid("param")
       const teamId = normalizeDenTypeId("team", requestedTeamId)
       if (!await findOrganizationTeamForDefaultModel(organization.id, teamId)) return c.json({ error: "team_not_found" }, 404)
@@ -234,7 +213,7 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       tags: ["Organizations"],
       summary: "Change the settings for a team's members' agents",
       description:
-        "Changes any subset of how members' agents work for one team's members, with the same body and the same checks as `PUT /v1/org/workbot-settings/proactive`: policy fields, `sources` (only the organization's own connections, each where it can serve; an MCP only with reviewed read tools unless workbotAgentBrief is on; a core source's default must stay allowed), `brief` (400 without workbotAgentBrief), `responsibilities` and `instructions`. The change is merged onto the team's own policy. A team that followed the organization starts from the organization's policy, sources, brief and template as they are now, and this first save makes that copy the team's own: from then on it no longer follows the organization's changes. A change to responsibilities or instructions adds one to the team's template `version`. The team's members follow it from their next check, including when agents are off for everyone and on for this team; a member on several teams whose own policies differ follows the organization's. Members' own choices are kept. To follow the organization again, send `agent: { inherit: true }` to `PUT /v1/org/workbot-settings/teams/{teamId}`. Returns the team's policy with `inherit: false`. Requires Workbot on this deployment and Manage OpenWork Models.",
+        "Changes any subset of how members' agents work for one team's members, with the same body and the same checks as `PUT /v1/org/workbot-settings/proactive`: policy fields, `sources` (only the organization's own connections, each where it can serve; a core source's default must stay allowed), `brief`, `responsibilities` and `instructions`. The change is merged onto the team's own policy. A team that followed the organization starts from the organization's policy, sources, brief and template as they are now, and this first save makes that copy the team's own: from then on it no longer follows the organization's changes. A change to responsibilities or instructions adds one to the team's template `version`. The team's members follow it from their next check, including when agents are off for everyone and on for this team; a member on several teams whose own policies differ follows the organization's. Members' own choices are kept. To follow the organization again, send `agent: { inherit: true }` to `PUT /v1/org/workbot-settings/teams/{teamId}`. Returns the team's policy with `inherit: false`. Requires Workbot on this deployment and Manage OpenWork Models.",
       responses: {
         200: jsonResponse("The team's agent settings saved.", workbotTeamAgentViewSchema),
         400: jsonResponse("The request was invalid, or the workday would end before it starts.", z.union([invalidHoursSchema, invalidRequestSchema])),
@@ -254,28 +233,24 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       const teamId = normalizeDenTypeId("team", c.req.valid("param").teamId)
       if (!await findOrganizationTeamForDefaultModel(organization.id, teamId)) return c.json({ error: "team_not_found" }, 404)
       const requested = c.req.valid("json")
-      const briefOn = await agentBriefAllowed(organization.id, currentMember.userId)
       const checkGateOn = await agentCheckGateAllowed(organization.id, currentMember.userId)
       const sendCheckOn = await agentSendCheckAllowed(organization.id, currentMember.userId)
-      // What the change applies to: the team's own policy, or the organization's for a team that had none.
       const everyone = await readEveryoneAgentPolicy(organization.id)
       const refused = await refusedProactiveChange({
         organizationId: organization.id,
         requested,
-        briefOn,
         checkGateOn,
         sendCheckOn,
       })
       if (refused) return c.json(refused, 400)
       const write = () => saveTeamAgentPolicy({ organizationId: organization.id, teamId, change: requested, everyone, updatedByOrgMemberId: currentMember.id })
-      // A concurrent first save of the same team created the row; apply the change to it.
       const saved = await write().catch((error: unknown) => {
         if (!isDuplicateEntry(error)) throw error
         return write()
       })
       if (!saved) return c.json({ error: "invalid_working_hours" as const, message: INVALID_WORKING_HOURS_MESSAGE }, 400)
       const canViewConnections = (await memberPermissionsForRequest(c))?.has("connections.view") ?? false
-      return c.json({ ...await proactiveView(organization.id, saved.settings, saved.template, canViewConnections, briefOn, checkGateOn, sendCheckOn), inherit: false })
+      return c.json({ ...await proactiveView(organization.id, saved.settings, saved.template, canViewConnections, checkGateOn, sendCheckOn), inherit: false })
     },
   )
 

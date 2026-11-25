@@ -22,21 +22,12 @@ import type { AutomationList } from "@openwork/types/automations";
 import { ChevronDown, ChevronRight, Lock, RotateCcw, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-/**
- * The quiet calendar. Meetings own the time grid at full width; Workbot's automation runs are
- * small dots at their time on the left edge of each day, never chips that fight meetings for width. Each day says how
- * many runs it had in plain text; the Workbot panel (Needs you, Up next, a 7-day track per automation) opens on demand
- * from the toolbar. Routine success is grey: only a failure is red, and it is a dot, not a banner. Narrow widths and
- * phones get an agenda list instead of a 7-column grid. Surfaces are separated by fill, never by outlines (DESIGN V3).
- */
-
 type ListItem = AutomationList["items"][number];
 export type QuietSelection = { kind: "automation"; automationId: string; itemKey: string | null } | { kind: "meeting"; key: string } | null;
 
 export const QUIET_HOUR_PX = 64;
 const DAY_START_HOUR = 8;
 const DAY_END_HOUR = 18;
-/** Runs closer together than this, with the same status, share one dot. */
 const MERGE_MINUTES = 10;
 
 const DONE = new Set<AutomationCalendarItem["status"]>(["succeeded", "skipped", "cancelled"]);
@@ -89,7 +80,6 @@ function DaySummaryLine({ items, day, zone }: { items: readonly AutomationCalend
   );
 }
 
-/** Merges runs within MERGE_MINUTES of each other that share a status, so a busy hour stays one quiet dot. */
 function mergeNearby(items: readonly AutomationCalendarItem[]) {
   const out: Array<{ item: AutomationCalendarItem; count: number }> = [];
   for (const item of [...items].sort((left, right) => left.at - right.at)) {
@@ -104,7 +94,6 @@ const STATUS_WORD: Record<AutomationCalendarItem["status"], string> = {
   succeeded: "done", failed: "failed", cancelled: "cancelled", skipped: "skipped", running: "running now", upcoming: "next", blocked: "won’t run until fixed",
 };
 
-/** One run (or a few close together) as a dot. Done is filled grey, still to come is a ring, failed is a red dot. */
 function RunDot({ status, selected }: { status: AutomationCalendarItem["status"]; selected: boolean }) {
   const base = "block size-[7px] rounded-full transition-transform duration-150";
   const ring = selected ? " scale-150" : "";
@@ -145,7 +134,6 @@ export function QuietTimeGrid(props: {
     const dayStart = startOfDay(day, props.zone);
     const dayEnd = startOfDay(addDays(day, 1), props.zone);
     const meetings = props.meetings.filter((event) => event.timing.kind === "timed" && event.timing.end > dayStart && event.timing.start < dayEnd);
-    // Meetings alone share the width; at least 30 minutes tall so a short one stays readable.
     const blocks = meetings.map((event) => {
       const timing = event.timing.kind === "timed" ? event.timing : null;
       const start = Math.max(timing?.start ?? dayStart, dayStart);
@@ -154,7 +142,6 @@ export function QuietTimeGrid(props: {
     });
     return { day, blocks, placements: layoutOverlappingBlocks(blocks), runs: props.automations.filter((item) => item.at >= dayStart && item.at < dayEnd) };
   });
-  // Working hours, widened only by meetings: a run at 7 AM or 11 PM is counted in the header, not a reason to scroll.
   let firstHour = DAY_START_HOUR;
   let lastHour = DAY_END_HOUR;
   for (const { day, blocks } of perDay) for (const block of blocks) {
@@ -212,7 +199,6 @@ export function QuietTimeGrid(props: {
                     const start = block.event.timing.kind === "timed" ? block.event.timing.start : block.start;
                     const selected = props.selection?.kind === "meeting" && props.selection.key === block.event.key;
                     return (
-                      // Inset 16px on the left: the run dots' lane.
                       <div key={block.key} className="absolute" style={{ top: y + 2, height: blockHeight, left: `calc(16px + ${placement.column} * (100% - 22px) / ${placement.columns})`, width: `calc((100% - 22px) / ${placement.columns} - ${placement.columns > 1 ? 3 : 0}px)`, zIndex: selected ? 3 : 1 }}>
                         <QuietMeeting event={block.event} past={end <= props.now} live={start <= props.now && end > props.now} selected={selected} height={blockHeight} onSelect={() => props.onSelect({ kind: "meeting", key: block.event.key })} />
                       </div>
@@ -234,7 +220,6 @@ export function QuietTimeGrid(props: {
                         aria-pressed={selected}
                         data-calendar-run={item.automationId}
                         data-calendar-status={item.status}
-                        // What needs the person draws over a routine run at the same moment.
                         className={`absolute left-0.5 grid size-3.5 -translate-y-1/2 place-items-center rounded-full focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${item.status === "failed" || item.status === "blocked" ? "z-[3]" : "z-[2]"}`}
                         style={{ top: top(item.at, day) }}
                       >
@@ -450,7 +435,6 @@ export function CalendarAgenda(props: {
         const dayRuns = props.automations.filter((item) => inDay(item.at, day, props.zone));
         const dayMeetings = props.meetings.filter((event) => event.timing.kind === "timed" && inDay(event.timing.start, day, props.zone)).sort((left, right) => (left.timing.kind === "timed" ? left.timing.start : 0) - (right.timing.kind === "timed" ? right.timing.start : 0));
         const location = props.meetings.find((event) => allDayOn(event, day));
-        // Runs that were about one of these meetings sit inside its card.
         const attached = new Map<string, AutomationCalendarItem[]>();
         for (const item of dayRuns) {
           const eventId = item.run?.triggerContext?.eventId;

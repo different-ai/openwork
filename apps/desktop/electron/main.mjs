@@ -1,6 +1,7 @@
 import { processBlankSlateProfile, resolveBlankSlateLaunch } from "./blank-slate-profile.mjs";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
 import { execFile, execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import {
@@ -26,9 +27,10 @@ import { registerMigrationIpc } from "./migration.mjs";
 import { createSystemProxyRelay, systemProxyRelayEnv } from "./system-proxy-relay.mjs";
 import { pickRemoteDebugPort, remoteDebugMenuItems, remoteDebugRelaunchArgs, resolveRemoteDebugPort } from "./remote-debug-port.mjs";
 import { registerSessionPins } from "./session-pins.mjs";
-import { createRuntimeManager, createSystemCaCertificateVerifyProc, sandboxFeatureDenOrigin } from "./runtime.mjs";
+import { createRuntimeManager, createSystemCaCertificateVerifyProc, enrichedPath, sandboxFeatureDenOrigin } from "./runtime.mjs";
 import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
+import { createPrivateTextFilter } from "./private-text-filter.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createNativeContextMenus } from "./context-menu.mjs";
 import { createNativeDictation, createSpeechDictation } from "./native-dictation.mjs";
@@ -37,8 +39,11 @@ import { createBrowserPanel } from "./browser-panel.mjs";
 import { deferBrowserStop } from "@openwork/computer-use/browser-navigation";
 import { BrowserSecretError, createBrowserSecrets } from "@openwork/computer-use/browser-secrets";
 import { createComputerControl } from "@openwork/computer-use/computer-control";
+import { runValueCommand } from "@openwork/computer-use/value-command";
+import { createPrivateValueUse } from "@openwork/computer-use/private-value-use";
 import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
 import { createBrowserUploadGrantStore, createBrowserUploadPermissions } from "./browser-upload-permissions.mjs";
+import { createPrivateValues, createPrivateValueSourceStore, createPrivateValueSwitchStore, privateValueReport } from "./private-values.mjs";
 import { installComputerHelper } from "./computer-helper-install.mjs";
 import { createLocalComputerAdapter } from "./computer-local.mjs";
 import { createComputerScripting } from "./computer-scripting.mjs";
@@ -94,7 +99,8 @@ import { createWindowsShortcutScheduler, readWindowsShortcutMarker } from "./win
 import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
 import { desktopFreeBootstrapEligible } from "./desktop-free-eligibility.mjs";
-import { applyDesktopFreeBuildSettings } from "./desktop-free-release.mjs";
+import { createDesktopFreeSigner } from "./desktop-free-signer.mjs";
+import { applyDesktopFreeBuildSettings, loadDesktopFreeReleaseKey } from "./desktop-free-release.mjs";
 import {
   captureStartupException,
   clearOpenworkSentrySession,
@@ -382,6 +388,10 @@ const uiControlServer = createUiControlServer({
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
   browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
+  redactPrivate: (texts) => redactPrivateTexts(texts),
+  terminalBlock: () => privateValues.terminal(),
+  privateValueUse: (request, options) => privateValueUse.request(request, options),
+  privateValuesOn: () => privateValues.enabled(),
   computerTask: async (args, options) => {
     if (!["computer_status", "computer_close"].includes(args?.name)) {
       const denied = await checkComputerPermission(computerChatOf(args));
@@ -1347,6 +1357,66 @@ async function setBrowserSecretsEnabled(requested) {
   }
   return report === browserSecretsReport && confirmed && browserSecretsEnabled;
 }
+// Fields filled with a value the agent never sees (`privateValues`): from a command the person approves
+// or from what they paste into the card. The local server verifies the signed-in member's rollout and their
+// organization's rules with Den; this process asks it directly and trusts nothing the app window reports.
+const privateValues = createPrivateValues({
+  readPolicy: async () => {
+    const server = await runtimeManager.openworkServerInfo();
+    if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork server unavailable");
+    // loopback-fetch: the local policy service verifies the signed-in Den identity.
+    const response = await fetch(`${server.baseUrl}/managed-policy/private-values`, {
+      headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error("Private value policy unavailable");
+    return response.json();
+  },
+  onRecord: (record) => {
+    void (async () => {
+      const report = privateValueReport(record, randomUUID());
+      if (!report) return;
+      const server = await runtimeManager.openworkServerInfo();
+      const token = server.clientToken ?? server.ownerToken;
+      if (!server.baseUrl || !token) return;
+      // loopback-fetch: the local policy service sends only the fill metadata to Den.
+      const response = await fetch(`${server.baseUrl}/managed-policy/private-values/record`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(report),
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      await response.body?.cancel();
+    })().catch(() => undefined);
+  },
+  switches: createPrivateValueSwitchStore({ file: path.join(app.getPath("userData"), "private-values.json") }),
+  sources: createPrivateValueSourceStore({ file: path.join(app.getPath("userData"), "private-value-sources.json") }),
+  // A command runs, and a value the person pastes into the card is typed, only after they confirmed exactly it,
+  // its field and this site in the chat.
+  approveValues: (sessionId, request, signal) => computerControl.approveValues({ sessionId, site: request.site, use: request.use, fills: request.fills, limits: request.limits }, { signal }),
+  grants: { list: () => computerControl.listValueGrants(), remove: (id) => computerControl.removeValueGrant(id) },
+  secrets: browserSecrets,
+});
+const redactPrivateTexts = createPrivateTextFilter({ secrets: browserSecrets, enabled: privateValues.enabled });
+/** This app's environment with the PATH the person's own tools are on; an app started from the Finder has a bare one. */
+function valueCommandEnv() {
+  const env = { ...process.env };
+  const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
+  const found = enrichedPath([], env[key]);
+  if (found) env[key] = found;
+  return env;
+}
+// Private values given to a program or one https request (`use_private_values`). It needs no browser: the same
+// store keeps and replaces the values, the same rules and card decide, and each command that prints a value runs
+// here, as the person, from their home folder.
+const privateValueUse = createPrivateValueUse({
+  secrets: browserSecrets,
+  enabled: privateValues.enabled,
+  approveValues: (sessionId, request, signal) => privateValues.approve(sessionId, request, signal),
+  noteValueFill: (sessionId, fill) => privateValues.note(sessionId, fill),
+  runValueCommand: (command, signal, unlock) => runValueCommand(command, { env: { ...valueCommandEnv(), ...unlock }, cwd: app.getPath("home"), signal }),
+  onFailure: ({ code, detail }) => console.error(`[private-values] use failed code=${code} detail=${detail}`),
+});
 /** @param {unknown} kind @returns {kind is "password" | "code" | "token"} */
 const isBrowserSecretKind = (kind) => kind === "password" || kind === "code" || kind === "token";
 /** A secret is entered, listed and removed only from the main OpenWork window, never from a page or another window. */
@@ -1366,6 +1436,13 @@ browserPanel = createBrowserPanel({
   // A secret is entered only after the person confirmed this secret for this exact site, each time.
   approveSecret: async (sessionId, request, signal) => isBrowserSecretKind(request.kind)
     && computerControl.approveCredential({ sessionId, site: request.site, secret: { label: request.label, kind: request.kind, field: request.field } }, { signal }),
+  valuesEnabled: privateValues.enabled,
+  // The organization's rules and the person's own switches decide before the card; the card decides the rest.
+  approveValues: (sessionId, request, signal) => privateValues.approve(sessionId, request, signal),
+  noteValueFill: (sessionId, fill) => privateValues.note(sessionId, fill),
+  // The approved command runs here, as the person, from their home folder: never in the agent's shell, so what
+  // it prints reaches only the secret store and the page. Its PATH is the one the person's terminal tools are on.
+  runValueCommand: (command, signal, unlock) => runValueCommand(command, { env: { ...valueCommandEnv(), ...unlock }, cwd: app.getPath("home"), signal }),
   showNativeContextMenu: nativeContextMenus.show,
   closeNativeContextMenu: nativeContextMenus.close,
   remoteDebugPort,
@@ -1605,12 +1682,15 @@ const runtimeManager = createRuntimeManager({
     return response === 1;
   },
   anonymousInference: {
-    // Signed-out Auto has no device identity: like OpenCode Zen, the gateway limits it by IP.
-    desktop: {
-      // app.getVersion() is Electron's own version in development builds.
-      currentVersion: resolveAppVersion(app),
-      eligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
-    },
+    desktop: createDesktopFreeSigner({
+      filePath: path.join(app.getPath("userData"), "desktop-free-identity.bin"),
+      loadSafeStorage: () => require("electron").safeStorage,
+      platform: process.platform,
+      arch: process.arch,
+      appVersion: resolveAppVersion(app),
+      isEligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
+      releaseSecret: () => loadDesktopFreeReleaseKey(resolveAppVersion(app)),
+    }),
   },
   // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.
   localManagedMcpVaultKey: process.env.OPENWORK_ENCRYPTION_KEY?.trim()
@@ -2291,7 +2371,12 @@ const desktopCommandHandlers = {
   },
   "computerAnswerRequest": async (event, input) => {
       assertComputerSender(event);
-      return computerControl.answerRequest({ sessionId: String(input?.sessionId ?? ""), answer: input?.answer, ...(typeof input?.id === "string" ? { id: input.id } : {}) });
+      // A value the person pasted into the card: from this line on it is replaced in everything bound for the
+      // agent, before anything else is done with it. One that cannot be told apart from ordinary text is refused.
+      const values = Array.isArray(input?.values) ? input.values.map((value) => typeof value === "string" ? value : null) : undefined;
+      if (values?.some((value) => value !== null && !browserSecrets.remember(value))) throw new Error("A pasted value must be 4 to 4096 characters long.");
+      return computerControl.answerRequest({ sessionId: String(input?.sessionId ?? ""), answer: input?.answer, ...(typeof input?.id === "string" ? { id: input.id } : {}),
+        ...(values ? { values } : {}), ...(Array.isArray(input?.keep) ? { keep: input.keep.map((kept) => kept === true) } : {}) });
   },
   "computerOpenSavedFile": async (event, input) => {
       assertComputerSender(event);
@@ -2323,6 +2408,18 @@ const desktopCommandHandlers = {
   "computerListFileGrants": async (event) => {
       assertComputerSender(event);
       return browserUploadPermissions.list();
+  },
+  "computerListPrivateValues": async (event) => {
+      assertComputerSender(event);
+      return privateValues.list();
+  },
+  "computerSetPrivateValueSwitch": async (event, name, enabled) => {
+      assertComputerSender(event);
+      return privateValues.setSwitch(name, enabled);
+  },
+  "computerRemovePrivateValue": async (event, kind, id) => {
+      assertComputerSender(event);
+      return privateValues.remove(kind, id);
   },
   "computerRemoveFileGrant": async (event, id) => {
       assertComputerSender(event);

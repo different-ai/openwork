@@ -30,10 +30,10 @@
     {
       "host": "api.openai.com",
       "kind": "fetched",
-      "components": ["renderer", "server"],
-      "purpose": "Direct OpenAI Realtime voice, image generation, and native model requests when an OpenAI provider is configured.",
+      "components": ["renderer", "server", "den"],
+      "purpose": "Direct OpenAI Realtime voice, image generation, and native model requests when an OpenAI provider is configured. Den retrieves safety case metadata when safety notice handling is configured.",
       "requirement": "opt-in",
-      "blockedEffect": "Direct OpenAI voice, image, or native model requests fail for users who configured OpenAI.",
+      "blockedEffect": "Direct OpenAI voice, image, or native model requests fail for users who configured OpenAI. Den cannot verify or import safety cases.",
       "override": null
     },
     {

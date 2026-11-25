@@ -10,15 +10,8 @@ import { DenButton } from "../../_components/ui/button";
 import { expiryFromDays, formatExpiry, useCreateGatewayApiKey } from "./gateway-api-keys-data";
 import { CopyField, GATEWAY_TOOLS, GatewayToolSteps, useGatewayTools, type GatewayToolId } from "./gateway-tool-setup";
 
-/**
- * Library › Models › "Use OpenWork AI Gateway with other tools": one small
- * logo button per tool. Each opens that tool's steps in a dialog, with a way
- * to create a key there so every step shows the real key, ready to copy.
- */
-
 type Tool = (typeof GATEWAY_TOOLS)[number];
 
-/** Shorter names for the button row, where the logo already says whose tool it is. */
 const BUTTON_LABELS: Partial<Record<GatewayToolId, string>> = {
   codex: "Codex CLI",
   "codex-app": "Codex app",
@@ -38,7 +31,6 @@ function ToolMark({ tool, size }: { tool: Tool; size: "sm" | "md" }) {
   return <DenBrandMark name={tool.name} simpleIconSlug={tool.slug} serviceUrl={tool.serviceUrl} className={box} imageClassName={image} />;
 }
 
-/** The "Set up" row: a logo button per tool. */
 export function GatewayToolSetupRow({ enabled, baseUrl }: { enabled: boolean; baseUrl: string }) {
   const [open, setOpen] = useState<GatewayToolId | null>(null);
   const tools = useGatewayTools();
@@ -82,7 +74,6 @@ function GatewayToolSetupDialog({ tool, enabled, baseUrl, onClose }: { tool: Too
           data-ph-no-capture
           className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[600px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-gray-100 bg-white p-5 outline-none"
         >
-          {/* Keyed by tool and mounted only while open: closing forgets a key it showed. */}
           {tool ? <ToolSetup key={tool.id} tool={tool} enabled={enabled} baseUrl={baseUrl} onClose={onClose} /> : null}
         </Dialog.Popup>
       </Dialog.Portal>
@@ -115,10 +106,6 @@ function ToolSetup({ tool, enabled, baseUrl, onClose }: { tool: Tool; enabled: b
   );
 }
 
-/**
- * The key the steps use: one created right here (shown once, then filled into
- * every step), or a note to use one made before.
- */
 function ApiKeyStep({ tool, enabled, created, onCreated }: {
   tool: Tool;
   enabled: boolean;
@@ -131,7 +118,6 @@ function ApiKeyStep({ tool, enabled, created, onCreated }: {
     try {
       onCreated(await create.mutateAsync({ name: tool.id === "other" ? "My tool" : tool.name, expiresAt: expiryFromDays(DEFAULT_GATEWAY_API_KEY_EXPIRY) }));
     } catch {
-      // Shown below from the mutation's error.
     }
   }
 

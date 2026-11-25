@@ -1,6 +1,5 @@
 import type { ExampleService } from "../example-parts";
 
-/** Sample data only: no API calls (DESIGN.md I7). */
 export const toolTesterExample: {
   service: ExampleService;
   connection: string;

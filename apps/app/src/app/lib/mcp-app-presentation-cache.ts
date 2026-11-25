@@ -13,15 +13,11 @@ async function digest(value: string) {
 const resourceDigest = (app: OpenworkMcpAppResource) => digest(JSON.stringify([app.html, app.csp, app.prefersBorder]));
 type Scope = { key: string; current: () => boolean };
 
-// Every account and workspace shares one storage key with a smaller budget than
-// Dashboard tiles. Per-scope keys would add up to several full budgets (and orphan
-// one per token rotation), exhausting localStorage for settings and Dashboard.
 const CHAT_PRESENTATION_STORAGE_KEY = `${DASHBOARD_TILE_CACHE_STORAGE_PREFIX}.chat`;
 const CHAT_PRESENTATION_MAX_BYTES = 1_500_000;
 const chatPresentationStore = createPresentationCacheStore(CHAT_PRESENTATION_MAX_BYTES);
 const entryId = (scope: Scope, resourceUri: string) => `${scope.key}\n${resourceUri}`;
 
-/** The account credential is hashed in memory; neither its value nor a lease goes into storage. */
 export async function mcpAppPresentationScope(origin: McpAppOrigin): Promise<Scope | null> {
   const identity = () => {
     const settings = readDenSettings();
@@ -33,7 +29,6 @@ export async function mcpAppPresentationScope(origin: McpAppOrigin): Promise<Sco
   return { key: await digest(snapshot), current: () => identity() === snapshot };
 }
 
-/** Reuse the bounded, 24-hour presentation store format and its authority-stripping parser. */
 export function createMcpAppPresentationCache(scope: Scope, workspaceId: string) {
   return {
     async read(launch: OpenworkMcpAppLaunchReference): Promise<OpenworkMcpAppResource | null> {
@@ -63,7 +58,6 @@ export function createMcpAppPresentationCache(scope: Scope, workspaceId: string)
   };
 }
 
-/** Preview content immediately; discovery still owns a new live lease for every subscriber. */
 export function scheduleCachedMcpAppDiscovery(
   origin: McpAppOrigin, toolName: string, launch: OpenworkMcpAppLaunchReference | null, manual: boolean,
   receive: (app: OpenworkMcpAppResource | null) => void, fail: (cause: unknown) => void,

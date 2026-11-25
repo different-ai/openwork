@@ -10,7 +10,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
-import { getImportPluginRoute, getMcpConnectionsRoute, getPluginRoute, getPluginsRoute } from "../../_lib/den-org";
+import { getImportClaudeSkillsRoute, getImportPluginRoute, getMcpConnectionsRoute, getPluginRoute, getPluginsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { SkillZipUploadButton } from "./skill-zip-actions";
 import { IntegrationIcon } from "./integration-icon";
@@ -32,9 +32,7 @@ type DraftComponent = {
   kind: ComponentKind;
   name: string;
   description: string;
-  /** Markdown body for skills/commands. */
   content: string;
-  /** Existing organization connector selected for MCP; unused for skills and commands. */
   connectionId: string;
 };
 
@@ -237,8 +235,6 @@ export function PluginEditorScreen() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Publishing is the happy path for non-technical creators: pre-select the
-  // requested marketplace, or the first marketplace when opened elsewhere.
   useEffect(() => {
     if (marketplaceTouched || marketplaceId || marketplaces.length === 0) return;
     const requestedMarketplaceId = searchParams.get("marketplaceId");
@@ -250,8 +246,6 @@ export function PluginEditorScreen() {
     const draft = loadPluginImportDraft();
     if (!draft) return;
     setImportDraft(draft);
-    // A GitHub import starts private and unpublished: what it brings in comes
-    // from outside the organization, so the creator chooses who sees it.
     setShareOrgWide(false);
     setMarketplaceTouched(true);
     setMarketplaceId("");
@@ -414,6 +408,14 @@ export function PluginEditorScreen() {
           </p>
         </div>
         <div className="flex shrink-0 items-start gap-2">
+          {importDraft ? null : (
+            <Link
+              href={getImportClaudeSkillsRoute(orgSlug)}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-[13px] font-medium text-gray-700 transition hover:bg-gray-50"
+            >
+              Import from Claude
+            </Link>
+          )}
           {importDraft ? null : <SkillZipUploadButton />}
           <Link
             href={getImportPluginRoute(orgSlug)}

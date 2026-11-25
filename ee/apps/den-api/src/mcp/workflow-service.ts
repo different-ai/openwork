@@ -22,7 +22,6 @@ import { normalizeToolBody } from "./invoke.js"
 
 type CodemodeDb = ReturnType<typeof createDenDb>["db"]
 
-/** The language new Workflow code is tested and saved in; old revisions retain their interpreter. */
 export async function newWorkflowLanguage(): Promise<CodemodeLanguage> {
   return "ecmascript"
 }
@@ -125,10 +124,6 @@ export async function executeWorkflow(input: {
 
   const runtime = codemodeRuntimeFor(parsed.payload.language)
 
-  // Like any workflow engine, a Workflow may call every capability its runner
-  // can currently use (Den actions and connection tools, reads and writes),
-  // whether it runs on demand, live in an App, or from an Automation. Each call
-  // is still authorized as the runner at dispatch time.
   const built = await input.buildTools(parsed.payload.requiredCapabilities).catch(() => ({ tools: {}, manifest: [] }))
   const restricted = restrictCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities })
   const firstMissing = restricted.missing[0]

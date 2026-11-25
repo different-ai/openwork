@@ -6,7 +6,6 @@ import { z } from "zod"
 import { db } from "../db.js"
 import { canonicalArguments, MAX_SUBSCRIPTION_TTL_MS } from "../mcp-events/protocol.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
-import { markFeaturesUsed } from "../feature-usage.js"
 import { fingerprint, NativeEventError } from "./protocol.js"
 import { nativeAccess, readNativeSource, type NativeActor } from "./sources.js"
 import { verifyCallback } from "./webhook.js"
@@ -59,7 +58,6 @@ export async function createNativeSubscription(actor: NativeActor, input: Subscr
     }
     if (existing) {
       if (!active) await tx.update(Delivery).set({ status: "skipped", payload: null }).where(and(eq(Delivery.subscriptionId, existing.id), eq(Delivery.status, "pending")))
-      // Keep a live watch and its old credentials usable while a replacement proves itself.
       await tx.update(Subscription).set({ ...(active ? {} : values), verificationToken, verificationUntil }).where(eq(Subscription.id, existing.id))
       return { row: existing, previous: active ? existing : null, values }
     }
@@ -68,7 +66,6 @@ export async function createNativeSubscription(actor: NativeActor, input: Subscr
     return { row: value, previous: null, values }
   })
   try {
-    // Cache verification for unchanged credentials for five minutes. A replacement key proves itself first.
     const verify = delivery.mode === "webhook" && (!previous || previous.secret !== delivery.secret || !previous.verifiedAt || previous.verifiedAt.getTime() < Date.now() - 300_000)
     if (verify && delivery.mode === "webhook") {
       await verifyCallback(delivery.url, delivery.secret, row.id)
@@ -77,10 +74,8 @@ export async function createNativeSubscription(actor: NativeActor, input: Subscr
     await db.update(Subscription).set({ ...values, ...(previous ? { observation: sql`${Subscription.observation}`, sequence: sql`${Subscription.sequence}` } : {}), status: "active", availableAt: new Date(), verifiedAt: verify ? new Date() : previous?.verifiedAt ?? null, verificationToken: null, verificationUntil: null }).where(and(eq(Subscription.id, row.id), eq(Subscription.verificationToken, verificationToken), inArray(Subscription.status, ["active", "verifying"])))
     const [live] = await db.$primary.select().from(Subscription).where(eq(Subscription.id, row.id)).limit(1)
     if (live?.status !== "active" || live.secret !== values.secret || live.expiresAt.getTime() !== expiresAt.getTime()) throw new NativeEventError(-32000, "Subscription cancelled")
-    markFeaturesUsed({ organizationId: actor.organizationId, memberId: actor.memberId, keys: ["nativeMcpEvents"] })
     return summary(live)
   } catch (error) {
-    // A failed rotation must not destroy a healthy watch; cancellation during verification still wins.
     await db.update(Subscription).set({ ...(previous ? {} : { status: "stopped" }), verificationToken: null, verificationUntil: null }).where(and(eq(Subscription.id, row.id), eq(Subscription.verificationToken, verificationToken), inArray(Subscription.status, ["active", "verifying"])))
     if (error instanceof NativeEventError) throw error
     throw new NativeEventError(-32027, "Callback verification failed", { reason: "challenge_failed" })

@@ -3,7 +3,6 @@ import { use, type ReactNode } from "react";
 import { isOpenworkGatewayRuntime } from "@/app/lib/gateway-runtime";
 import { WebStartupScreen } from "./workspace-startup-status";
 
-// Startup gates cannot depend on the providers they are still waiting to mount.
 export function StartupScreen({ message = "Starting OpenWork" }: { message?: string }) {
   if (isOpenworkGatewayRuntime()) return <WebStartupScreen message={message} />;
   return (

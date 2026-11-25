@@ -1,7 +1,3 @@
-// Local copies of organization plugins. Desktops no longer create them: org
-// plugins reach the agent through OpenWork Connect (#2857). Workspaces may
-// still hold copies made by older builds; this module lists and removes them.
-
 import { rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { ServerConfig } from "./types.js";
@@ -172,8 +168,6 @@ export async function removeCloudPlugin(input: {
   const imported = cloudImports.plugins[input.pluginId];
   if (!imported) throw new ApiError(404, "cloud_plugin_not_installed", "This workspace has no local copy of that plugin.");
 
-  // One at a time: the MCP config is a single document. A server another
-  // local copy still lists stays.
   const sharedMcpNames = new Set(Object.values(cloudImports.plugins).flatMap((plugin) => (
     plugin.pluginId === input.pluginId ? [] : plugin.files.flatMap((file) => {
       const name = file.objectType === "mcp" ? cloudPluginMcpNameFromPath(file.path) : null;

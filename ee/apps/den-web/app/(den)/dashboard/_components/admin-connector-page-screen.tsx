@@ -99,13 +99,11 @@ function UseInAnotherApp({ connection, lockedReason }: { connection: ExternalMcp
   );
 }
 
-/** Google Workspace or Microsoft 365, by the provider key its connection belongs to. */
 function nativeKeyFor(connection: ExternalMcpConnection) {
   const key = connection.nativeProviderKey ?? connection.id;
   return isNativeProviderCatalogId(key) ? key : null;
 }
 
-/** C6: a connector in Manage. `confirmRemove` (an agent's removal link) opens its Remove confirmation. */
 export function AdminConnectorPageScreen({ connection, confirmRemove = false }: { connection: ExternalMcpConnection; confirmRemove?: boolean }) {
   const router = useRouter();
   const toast = useDenToast();
@@ -118,10 +116,7 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
     : null;
   const canShareWithEveryone = memberAccess?.canShareWithEveryone === true;
-  // People can always edit and remove connections they added.
   const editLockedReason = memberAccess?.canEditAnyConnection || connection.createdByYou ? null : permissionLockReason("connections.update");
-  // Prefer the server's answer: it comes with the connection, so it stays current
-  // when permissions change while Den is open. The org context is loaded once.
   const canRemove = connection.canRemove ?? (memberAccess?.canRemoveAnyConnection === true || connection.createdByYou === true);
   const saveAccess = useSaveConnectionAccess();
   const deleteConnection = useDeleteMcpConnection();
@@ -146,11 +141,9 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
     ? { orgWide: connection.access.orgWide, memberIds: connection.access.memberIds, teamIds: connection.access.teamIds }
     : { orgWide: false, memberIds: [], teamIds: [] };
   const addedBy = connection.createdByName?.trim();
-  // Feature intros: a banner while nobody besides whoever added it can use this connector.
   const connectorsFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
   const accessIntro = useFeatureIntro("connectors.access", connectorsFacts ? {
     ...connectorsFacts,
-    // This connector exists, so the section is set up even when it isn't in the manageable list.
     connectors: Math.max(1, connectorsFacts.connectors ?? 0),
     sharedBeyondCreator: connectorSharedBeyondCreator(connection, viewerId),
     canEditAccess: memberAccess?.canManageConnections === true || connection.createdByYou === true,
@@ -185,7 +178,6 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
 
   function closeRemoveRequest() {
     setRemoveRequested(false);
-    // Drop ?remove=1 so going back or reloading does not ask again.
     if (confirmRemove && !removed.current) router.replace(getMcpConnectionRoute(orgSlug, connectionId));
   }
 
@@ -298,7 +290,6 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
 
       {native ? null : <SlackAssistantSetup connection={connection} />}
 
-      {/* The page's collapsed parts sit together, one list of two rows. */}
       <DisclosureGroup>
       <DisclosureSection label="Settings" open={settingsOpen} onToggle={() => setSettingsOpen((value) => !value)} testId="connector-settings-toggle">
         {nativeKey ? (

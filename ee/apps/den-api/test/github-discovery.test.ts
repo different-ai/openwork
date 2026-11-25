@@ -115,3 +115,41 @@ test("a declared path inside a default folder is not planned twice", () => {
   })
   assert.deepEqual(discovery.discoveredPlugins[0]?.componentPaths.skills, ["extra", "skills"])
 })
+
+test("without a manifest, skill folders are offered only when the URL import asks, and nothing is selected", () => {
+  const entries = [
+    "README.md",
+    "LICENSE",
+    "angular-developer/SKILL.md",
+    "angular-developer/references/routing.md",
+    "skills/new-app/SKILL.md",
+    "docs/deep/nested/SKILL.md",
+    ".github/SKILL.md",
+  ].map(blob)
+
+  // Connected repositories and other callers keep requiring a manifest.
+  assert.equal(buildGithubRepoDiscovery({ entries, fileTextByPath: {} }).classification, "unsupported")
+
+  const discovery = buildGithubRepoDiscovery({ entries, fileTextByPath: {}, skillFoldersPluginName: "skills" })
+  assert.equal(discovery.classification, "skill_folders_repo")
+  const [plugin] = discovery.discoveredPlugins
+  assert.equal(plugin?.selectedByDefault, false)
+  assert.equal(plugin?.displayName, "skills")
+  // Fixed places only: one level down or under skills/, no deep search, no hidden folders.
+  assert.deepEqual(plugin?.componentPaths.skills, ["angular-developer/SKILL.md", "skills/new-app/SKILL.md"])
+})
+
+test("a link straight to a skill folder offers only that skill", () => {
+  const entries = ["SKILL.md", "references/a.md", "examples/inner/SKILL.md"].map(blob)
+  const discovery = buildGithubRepoDiscovery({ entries, fileTextByPath: {}, skillFoldersPluginName: "docx" })
+  assert.deepEqual(discovery.discoveredPlugins[0]?.componentPaths.skills, ["SKILL.md"])
+})
+
+test("a manifest still wins over skill folders", () => {
+  const discovery = buildGithubRepoDiscovery({
+    entries: [".claude-plugin/plugin.json", "skills/one/SKILL.md", "loose/SKILL.md"].map(blob),
+    fileTextByPath: { ".claude-plugin/plugin.json": JSON.stringify({ name: "solo" }) },
+    skillFoldersPluginName: "repo",
+  })
+  assert.equal(discovery.classification, "claude_single_plugin_repo")
+})

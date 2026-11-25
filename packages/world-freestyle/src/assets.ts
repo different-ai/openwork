@@ -1,15 +1,5 @@
 import { readFile } from "node:fs/promises";
 
-/**
- * Files the controller hashes into cache keys or copies into guest VMs.
- *
- * Every entry must stay a literal `new URL("./file", import.meta.url)`. The review
- * app bundles this package with Turbopack, which resolves each literal to its own
- * asset but compiled a computed path (a template string built from a file name) to
- * one fixed file: every script written into preview VMs became browser-health.mjs,
- * so builds started from the review app booted nothing. Never use computed
- * paths anywhere in src/.
- */
 const assets = {
   "acme-runtime.mjs": new URL("./acme-runtime.mjs", import.meta.url),
   "browser-health.mjs": new URL("./browser-health.mjs", import.meta.url),

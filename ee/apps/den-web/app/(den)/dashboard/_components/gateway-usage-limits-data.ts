@@ -185,7 +185,6 @@ export const timeframePeriods = { day: "a day", week: "a week", month: "a month"
 
 const periodOrder = { day: 0, week: 1, month: 2 };
 
-/** "$4,000.00 a month" style amounts, shortest period first. */
 export function describeLimitAmounts(policy: Pick<GatewayUsageLimitPolicy, "limits">): string {
   return [...policy.limits].sort((a, b) => periodOrder[a.timeframe] - periodOrder[b.timeframe])
     .map((limit) => `${formatLimitMoney(limit.costLimitMicroUsd)} ${timeframePeriods[limit.timeframe]}`).join(", ");

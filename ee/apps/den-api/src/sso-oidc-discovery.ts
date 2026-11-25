@@ -1,20 +1,6 @@
 import { z } from "zod"
 import { PrivateUrlError } from "./capability-sources/url-guard.js"
 
-/**
- * ssoOidcSetupCheck: reads an identity provider's OIDC discovery document
- * from what the administrator typed, which is either the issuer or the
- * discovery URL itself (the address most provider docs hand out).
- *
- * - An address ending in /.well-known/openid-configuration is fetched as it
- *   is, and the issuer is the one the document names.
- * - Anything else is an issuer: the well-known path is appended and the
- *   document must name that same issuer.
- *
- * Nothing here is stored; a failed check is reported with the exact address
- * that was tried so the administrator can correct it.
- */
-
 const DISCOVERY_SUFFIX = "/.well-known/openid-configuration"
 const DISCOVERY_TIMEOUT_MS = 10_000
 
@@ -30,11 +16,8 @@ export type OidcDiscoveryFetch = (url: string | URL, init?: RequestInit) => Prom
 
 export type OidcDiscoveryFound = {
   ok: true
-  /** The issuer to save: what the discovery document names. */
   issuer: string
-  /** The address the document was read from. */
   discoveryUrl: string
-  /** True when the administrator gave the discovery URL rather than the issuer. */
   fromDiscoveryUrl: boolean
   authorizationEndpoint: string
   tokenEndpoint: string
@@ -47,9 +30,7 @@ export type OidcDiscoveryFailure = {
   code: "invalid_url" | "not_found" | "http_error" | "unreachable" | "blocked" | "invalid_document" | "issuer_mismatch"
   message: string
   discoveryUrl: string | null
-  /** HTTP status the provider answered with, for not_found and http_error. */
   status: number | null
-  /** issuer_mismatch: the issuer the document names, offered as the correction. */
   reportedIssuer: string | null
 }
 
@@ -59,7 +40,6 @@ function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "")
 }
 
-/** True when the address is a discovery document URL, not an issuer. */
 export function isOidcDiscoveryUrl(value: string) {
   try {
     return trimTrailingSlash(new URL(value.trim()).pathname).endsWith(DISCOVERY_SUFFIX)
@@ -68,11 +48,6 @@ export function isOidcDiscoveryUrl(value: string) {
   }
 }
 
-/**
- * The issuer an address names: a discovery URL loses its well-known suffix,
- * anything else is returned trimmed. Administrators often paste the
- * discovery URL where the issuer belongs; appending the suffix again 404s.
- */
 export function oidcIssuerFromInput(value: string) {
   const typed = value.trim()
   if (!isOidcDiscoveryUrl(typed)) return typed
@@ -87,10 +62,6 @@ function failure(code: OidcDiscoveryFailure["code"], message: string, extra: Par
   return { ok: false, code, message, discoveryUrl: extra.discoveryUrl ?? null, status: extra.status ?? null, reportedIssuer: extra.reportedIssuer ?? null }
 }
 
-/**
- * fetchImpl is the caller's guarded fetch: a hosted deployment must not be
- * made to read private addresses, and this check reports what it read.
- */
 export async function checkOidcDiscovery(input: string, fetchImpl: OidcDiscoveryFetch): Promise<OidcDiscoveryResult> {
   const typed = input.trim()
   let url: URL

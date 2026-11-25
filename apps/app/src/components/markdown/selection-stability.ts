@@ -16,20 +16,12 @@ export function selectionIntersectsElement(
         return true;
       }
     } catch {
-      // A range can become detached between selectionchange and this read.
-      // Ignore that stale range and inspect any remaining live ranges.
     }
   }
 
   return false;
 }
 
-/**
- * Keep DOM-backed rich text unchanged while the user has a real selection in
- * it. Replacing innerHTML remaps the browser Range to new text nodes, which can
- * clear the highlight or make Cmd/Ctrl+C copy a different slice. The newest
- * value is committed as soon as that selection moves away or collapses.
- */
 export function useSelectionStableValue<T>(
   rootRef: RefObject<Element | null>,
   candidate: T,

@@ -1,13 +1,14 @@
 import { randomBytes } from "node:crypto"
-import { isValidTimeZone, nextWorkingStart, parseAgentState, zonedDayStart } from "@openwork/automations/proactive"
+import { isValidTimeZone, parseAgentState, zonedDayStart } from "@openwork/automations/proactive"
 import {
-  AGENT_RESPONSIBILITIES,
-  AGENT_RESPONSIBILITY_COPY,
   resolveAgentBrief,
   memberAgentChecksSchema,
   memberAgentInputSchema,
   memberAgentSavedSchema,
   memberAgentViewSchema,
+  memberConnectorTogglesSchema,
+  memberConnectorSavedSchema,
+  type MemberConnectorSaved,
   type MemberAgentCheck,
   type MemberAgentInput,
   type MemberAgentSaved,
@@ -20,22 +21,19 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { libraryCatalogLink, libraryConnectorLink, myAgentLink } from "../../agent-links.js"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, queryValidator, type OrganizationContextVariables } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { cameThroughConnect, type AuthContextVariables } from "../../session.js"
-import { agentBriefAllowed } from "../../workbot-proactive/access.js"
 import { carriedMemberLines, memberBriefLines, memberNextChecks, memberRhythm } from "../../workbot-proactive/brief.js"
 import { memberAgentCheck } from "../../workbot-proactive/checks.js"
 import { destinationBlock } from "../../workbot-proactive/deliver.js"
-import { memberAgentOn, memberChoiceChange, mutedOf, type MemberChoices } from "../../workbot-proactive/policy.js"
+import { memberAgentOn, memberChoiceChange, type MemberChoices } from "../../workbot-proactive/policy.js"
 import {
   applyMemberAgentChange,
   choiceLines,
   memberAgentChanges,
   type MemberAgentChangeResult,
   memberLimits,
-  memberPolicy,
   parseStoredPreferences,
   savedReply,
   sourceConnectionNames,
@@ -48,28 +46,17 @@ import {
   readMemberChecks,
   type AgentInstanceRow,
 } from "../../workbot-proactive/repository.js"
-import { resolveMemberSources, type MemberConnection, type ResolvedSource, type SourceMode } from "../../workbot-proactive/sources.js"
-import { countConnectedMembers, listConnectionToolsForMember, listMemberConnections } from "../../workbot-proactive/sources-repository.js"
+import { resolveMemberSources, sourceOn, type MemberConnection, type ResolvedSource } from "../../workbot-proactive/sources.js"
+import { countConnectedMembers, listMemberConnections, loadMemberConnectorInventory } from "../../workbot-proactive/sources-repository.js"
 import { sourceReadToolCounts } from "../../workbot-proactive/agent-tools.js"
 import { getCatalog } from "../../mcp/index.js"
 import type { McpToolOperation } from "../../mcp/catalog.js"
 import { nativeOperations } from "../../mcp/native-capabilities.js"
-import type { AgentTemplateVersion } from "../../workbot-proactive/template.js"
 import { workbotOrigin } from "../../workbot/config.js"
-import { resolveMemberAgentPolicy, resolveMemberWorkbotSettings, type AgentPolicy, type MemberTeamAgent } from "../../workbot/team-settings.js"
+import { memberAgentSettings, resolveMemberAgentPolicy, resolveMemberWorkbotSettings, type MemberTeamAgent } from "../../workbot/team-settings.js"
 
-/** How long the page waits for a connection's tools before saying nothing about them (the tool cache answers most). */
+const pageOnly = { "x-mcp": false }
 const PAGE_TOOLS_DEADLINE_MS = 4_000
-
-/**
- * A member's own agent, as settings: what it will tell them about, and their controls in plain words ("stop telling
- * me about calendar changes", "snooze until tomorrow", "turn it off"). Exposed through Connect, so the member can
- * say it to Workbot; a background agent's read-scoped token can read it but never change it.
- *
- * It also answers "what did it do and why was it quiet?" (the last check,
- * today's checks, the next one) and takes the member's own words, narrower limits and Undo. A change made through
- * Connect is saved as from chat; one from Den's Library page as from the page.
- */
 
 const memberAgentDocumentSchema = memberAgentViewSchema.meta({ ref: "MemberAgent" })
 const memberAgentSavedDocumentSchema = memberAgentSavedSchema.meta({ ref: "MemberAgentSaved" })
@@ -77,6 +64,7 @@ const memberAgentInputDocumentSchema = memberAgentInputSchema.meta({ ref: "Membe
 const memberAgentChecksDocumentSchema = memberAgentChecksSchema.meta({ ref: "MemberAgentChecks" })
 const featureDisabledSchema = z.object({ error: z.literal("feature_disabled"), feature: z.string() }).meta({ ref: "MemberAgentDisabled" })
 const changeRefusedSchema = z.object({ error: z.string(), message: z.string() }).meta({ ref: "MemberAgentChangeRefused" })
+const agentQuerySchema = z.object({ toolCounts: z.enum(["cached", "discover"]).optional() })
 const checksQuerySchema = z.object({ days: z.coerce.number().int().min(1).max(14).optional() })
 
 type ViewRow = (MemberChoices & Pick<AgentInstanceRow, "nextWakeAt" | "state" | "timeZone" | "preferences">) | null
@@ -89,53 +77,23 @@ function newChangeId() {
   return `chg_${randomBytes(9).toString("base64url")}`
 }
 
-/** When the agent next looks on its schedule: never inside a snooze, never outside the member's hours. */
-function nextScheduledCheck(row: NonNullable<ViewRow>, settings: WorkbotProactiveSettings, now: number): string {
-  const limits = memberLimits(settings, row.overrides)
-  const timeZone = rowTimeZone(row)
-  let at = parseAgentState(row.state).nextPassAt ?? row.nextWakeAt.getTime()
-  if (row.snoozedUntil && row.snoozedUntil.getTime() > at) at = row.snoozedUntil.getTime()
-  return new Date(nextWorkingStart(memberPolicy(limits), Math.max(at, now), timeZone)).toISOString()
-}
-
-/**
- * The brief settings of the member's policy (their team's own, else the organization's) when `workbotAgentBrief` is
- * on for this member (null keeps today's agent), and the template they are carried over from.
- */
-async function agentSetup(member: MemberContext, policy: AgentPolicy): Promise<{ template: AgentTemplateVersion; brief: AgentBriefPolicy | null }> {
-  const briefOn = await agentBriefAllowed(member.organizationId, member.userId)
-  return { template: policy.template, brief: briefOn ? resolveAgentBrief(policy.settings, policy.template) : null }
-}
-
 async function memberAgentView(input: {
   organizationId: DenTypeId<"organization">
   memberId: DenTypeId<"member">
   userId: DenTypeId<"user">
   settings: WorkbotProactiveSettings
   row: ViewRow
-  template: AgentTemplateVersion
-  /** `workbotAgentBrief`: the organization's brief settings; null keeps today's view. */
-  brief: AgentBriefPolicy | null
-  /** Den's operations, for counting what its own providers read outside the calendar. */
+  brief: AgentBriefPolicy
+  toolCounts: "cached" | "discover"
+  inventory?: Awaited<ReturnType<typeof loadSourceInventory>>
   catalog: () => Promise<readonly McpToolOperation[]>
 }): Promise<MemberAgentView> {
-  const { settings, row, template, brief } = input
+  const { settings, row, brief } = input
   const now = Date.now()
-  const muted = mutedOf(row)
   const on = memberAgentOn(row, settings)
   const destination: MemberAgentView["destination"] = settings.destination === "workbot_dm"
     ? { kind: "workbot_dm", name: "Workbot DM", blocked: await destinationBlock({ organizationId: input.organizationId, userId: input.userId }) }
     : null
-  const view: MemberAgentView = {
-    available: settings.enabled,
-    on,
-    snoozedUntil: row?.snoozedUntil && row.snoozedUntil.getTime() > now ? row.snoozedUntil.toISOString() : null,
-    // With the brief, what it tells them about is text (`brief`), not four switches.
-    responsibilities: brief ? [] : AGENT_RESPONSIBILITIES.map((id) => ({ id, ...AGENT_RESPONSIBILITY_COPY[id], enabled: template.responsibilities[id], muted: muted.has(id) })),
-    destination,
-    workingHours: { workingDays: settings.workingDays, startHour: settings.startHour, endHour: settings.endHour, dailyCap: settings.dailyCap },
-    nextCheckAt: settings.enabled && on && row?.nextWakeAt ? row.nextWakeAt.toISOString() : null,
-  }
   const timeZone = rowTimeZone(row)
   const dayStart = new Date(zonedDayStart(now, timeZone))
   const stored = parseStoredPreferences(row?.preferences)
@@ -145,25 +103,27 @@ async function memberAgentView(input: {
     agentSentSince(input.memberId, dayStart),
   ])
   const checks = today.flatMap((entry) => memberAgentCheck(entry) ?? [])
-  const sources = await memberSources({ organizationId: input.organizationId, memberId: input.memberId, settings, row, mode: brief ? "any" : "reviewed" })
-  // With the brief, any connector can be a source: say how many of its tools the agent may call (0 still shows).
-  const readTools = brief
-    ? await sourceReadToolCounts({
-      sources,
-      overrides: settings.sources.toolOverrides ?? {},
-      listTools: (connection) => listConnectionToolsForMember({ organizationId: input.organizationId, memberId: input.memberId, connectionId: connection.id, deadlineMs: PAGE_TOOLS_DEADLINE_MS }),
-      nativeOperations: async (providerKey) => nativeOperations(await input.catalog(), providerKey).map((operation) => ({ name: operation.name, method: operation.method, path: operation.path, summary: operation.operation.summary ?? null })),
-    })
-    : null
+  const inventory = input.inventory ?? await loadSourceInventory(input)
+  const sources = memberSources(inventory, settings, row)
+  const readTools = await sourceReadToolCounts({
+    sources,
+    overrides: settings.sources.toolOverrides ?? {},
+    listTools: (connection) => inventory.listTools(connection.id, PAGE_TOOLS_DEADLINE_MS, input.toolCounts === "cached"),
+    nativeOperations: async (providerKey) => nativeOperations(await input.catalog(), providerKey).map((operation) => ({ name: operation.name, method: operation.method, path: operation.path, summary: operation.operation.summary ?? null })),
+  })
   const limits = memberLimits(settings, row?.overrides, brief)
   const state = parseAgentState(row?.state)
-  // An agent that hasn't checked yet checks as soon as the member's hours open.
-  const nextChecks = brief && settings.enabled && on
+  const nextChecks = settings.enabled && on
     ? memberNextChecks({ rhythm: memberRhythm(limits, brief), lastCheckAt: state.lastPassAt, requests: state.requests, now, timeZone, snoozedUntil: row?.snoozedUntil?.getTime() ?? null })
-    : null
+    : []
   return {
-    ...view,
-    nextCheckAt: nextChecks ? nextChecks[0]?.at ?? null : settings.enabled && on && row ? nextScheduledCheck(row, settings, now) : null,
+    available: settings.enabled,
+    on,
+    snoozedUntil: row?.snoozedUntil && row.snoozedUntil.getTime() > now ? row.snoozedUntil.toISOString() : null,
+    responsibilities: [],
+    destination,
+    workingHours: { workingDays: settings.workingDays, startHour: settings.startHour, endHour: settings.endHour, dailyCap: settings.dailyCap },
+    nextCheckAt: nextChecks[0]?.at ?? null,
     timeZone,
     lastCheck: last ? memberAgentCheck(last) : null,
     todayChecks: checks,
@@ -182,10 +142,11 @@ async function memberAgentView(input: {
       on: source.on,
       instruction: source.instruction,
       lastReadAt: source.lastReadAt === null ? null : new Date(source.lastReadAt).toISOString(),
-      ...(readTools && source.kind === "other" ? { readTools: readTools.get(source.id) ?? null } : {}),
+      ...(source.kind === "other" ? { readTools: readTools.get(source.id) ?? null } : {}),
     })),
     link: myAgentLink(),
-    ...(brief ? { brief: { ...memberBriefLines(stored, row?.overrides), organization: brief.text }, nextChecks: nextChecks ?? [] } : {}),
+    brief: { ...memberBriefLines(stored, row?.overrides), organization: brief.text },
+    nextChecks,
   }
 }
 
@@ -193,42 +154,37 @@ function memberConnectionView(connection: MemberConnection) {
   return { id: connection.id, name: connection.name, url: connection.url, state: connection.state }
 }
 
-/**
- * The member's sources as their agent sees them: the admin's policy, their choices, their connections, and how many
- * members connected each (for a core source's automatic default).
- */
-async function memberSources(input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; settings: WorkbotProactiveSettings; row: ViewRow; mode: SourceMode }): Promise<ResolvedSource[]> {
-  const [connections, connectedMembers] = await Promise.all([
-    listMemberConnections({ organizationId: input.organizationId, memberId: input.memberId }),
-    countConnectedMembers(input.organizationId),
+async function loadSourceInventory(member: Pick<MemberContext, "organizationId" | "memberId">) {
+  const [inventory, connectedMembers] = await Promise.all([
+    loadMemberConnectorInventory(member),
+    countConnectedMembers(member.organizationId),
   ])
+  return { ...inventory, connectedMembers }
+}
+
+function memberSources(inventory: Awaited<ReturnType<typeof loadSourceInventory>>, settings: WorkbotProactiveSettings, row: ViewRow): ResolvedSource[] {
   return resolveMemberSources({
-    connections,
-    policy: input.settings.sources,
-    choices: parseStoredPreferences(input.row?.preferences).sources,
-    lastLook: parseAgentState(input.row?.state).lastLook,
-    connectedMembers,
-    mode: input.mode,
+    connections: inventory.connections,
+    connectedMembers: inventory.connectedMembers,
+    policy: settings.sources,
+    choices: parseStoredPreferences(row?.preferences).sources,
+    lastLook: parseAgentState(row?.state).lastLook,
   })
 }
 
-/** The answer when agents are off for this member. */
 function disabled(feature: string): { error: "feature_disabled"; feature: string } {
   return { error: "feature_disabled", feature }
 }
 
 type MemberContext = { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }
-/** The member with what their own teams say about their agent, so their policy is resolved without reading teams again. */
 type AgentMember = MemberContext & { workbot: MemberTeamAgent }
 
 export function registerMeAgentRoutes<T extends { Variables: AuthContextVariables & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
-  /** The signed-in member, or why the route is off for them. */
   const memberOf = async (context: OrganizationContextVariables["organizationContext"] | undefined): Promise<AgentMember | { error: "workbot" | "workbotProactive" }> => {
     if (!context || workbotOrigin() === null) return { error: "workbot" }
     const userId = context.currentMember.userId
     if (!userId) return { error: "workbotProactive" }
     const member = { organizationId: context.organization.id, memberId: context.currentMember.id, userId }
-    // Workbot turned off for this member (workbotTeamSettings) is Workbot not being there for them: no agent either.
     const workbot = await resolveMemberWorkbotSettings({ ...member, organization: context.organization })
     return workbot.enabled ? { ...member, workbot: { agent: workbot.agent, agentFrom: workbot.agentFrom } } : { error: "workbot" }
   }
@@ -239,7 +195,7 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       tags: ["Users"],
       summary: "Get my agent",
       description:
-        "The signed-in member's own agent in the active organization: whether it is on for them, what it will tell them about (each responsibility, whether the organization turned it on and whether they muted it), where its messages go (a DM from the Workbot Slack app) and whether they can arrive yet (the Slack app installed, their Slack account linked), the working hours and daily limit it follows, and when it looks next. It also says what it did: `lastCheck` and `todayChecks` (each with an outcome sent, quiet, waited or failed, and a `summary` sentence that says why, for example \"Stayed quiet: nothing new.\" or \"Couldn't read Gmail: reconnect Google.\"), `sentToday` against `limits.dailyCap`, the member's own words (`preferences`: always, never, when, how), their narrower `limits` inside the admin's, their recent `changes`, and `sources`: what the agent reads (the calendar and each connection, such as Google Workspace or Slack for mail and chat), each with the admin's `policy` (`everyone` = on for everyone, `members` = the member chooses, `off` = not allowed), whether it is `on`, the member's `instruction` for it, when it was last read, and whether the member's account on each connection is ready (`connected`, `needs_connection`, `reconnect`). The calendar reads exactly one connection: `connections` holds that one (none when no calendar app is usable), `options` lists the calendar apps the member can pick from, and `chosenBy` says who picked it (`member`, or `auto` = the one most members use or the first one the member already connected); other sources have empty `options` and null `chosenBy`. With Your agent's brief on (workbotAgentBrief), what it tells them about is text, not four switches: `brief.lines` are the member's own lines, `brief.organization` the organization's brief (read only), `brief.carriedOver` says the lines came from their earlier settings; `nextChecks` lists the next check on its rhythm and any extra checks the agent asked for, soonest first, each with why (\"before your 2 PM with Northwind\"); `limits.checkEveryHours` is how often it checks (`limits.admin.checkEveryHours` the most often allowed), `limits.quietWindow` is quiet hours (nothing sent), `responsibilities` is empty, and `sources` lists every connection the member can use (MCP and Den's own, which there reads what isn't the calendar: mail, chat, files), each other source with `readTools`: how many of its tools the agent may call (0: none read only, so an admin should review its tools; null while unknown). Answer \"why was it quiet?\" from these records, never by guessing. Requires Workbot on this deployment.",
+        "The signed-in member's own agent in the active organization: whether it is on for them, what it will tell them about (each responsibility, whether the organization turned it on and whether they muted it), where its messages go (a DM from the Workbot Slack app) and whether they can arrive yet (the Slack app installed, their Slack account linked), the working hours and daily limit it follows, and when it looks next. It also says what it did: `lastCheck` and `todayChecks` (each with an outcome sent, quiet, waited or failed, and a `summary` sentence that says why, for example \"Stayed quiet: nothing new.\" or \"Couldn't read Gmail: reconnect Google.\"), `sentToday` against `limits.dailyCap`, the member's own words (`preferences`: always, never, when, how), their narrower `limits` inside the admin's, their recent `changes`, and `sources`: what the agent reads (the calendar and each connection, such as Google Workspace or Slack for mail and chat), each with the admin's `policy` (`everyone` = on for everyone, `members` = the member chooses, `off` = not allowed), whether it is `on`, the member's `instruction` for it, when it was last read, and whether the member's account on each connection is ready (`connected`, `needs_connection`, `reconnect`). The calendar reads exactly one connection: `connections` holds that one (none when no calendar app is usable), `options` lists the calendar apps the member can pick from, and `chosenBy` says who picked it (`member`, or `auto` = the one most members use or the first one the member already connected); other sources have empty `options` and null `chosenBy`. What it tells them about is text, not four switches: `brief.lines` are the member's own lines, `brief.organization` the organization's brief (read only), `brief.carriedOver` says the lines came from their earlier settings; `nextChecks` lists the next check on its rhythm and any extra checks the agent asked for, soonest first, each with why (\"before your 2 PM with Northwind\"); `limits.checkEveryHours` is how often it checks (`limits.admin.checkEveryHours` the most often allowed), `limits.quietWindow` is quiet hours (nothing sent), `responsibilities` is empty, and `sources` lists every connection the member can use (MCP and Den's own, which reads what isn't the calendar: mail, chat, files), each other source with `readTools`: how many of its tools the agent may call (0: none read only, so an admin should review its tools; null while unknown). Set `toolCounts=cached` to return available counts without waiting for external tool discovery. Answer \"why was it quiet?\" from these records, never by guessing. Requires Workbot on this deployment.",
       responses: {
         200: jsonResponse("The member's agent.", memberAgentDocumentSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -247,13 +203,13 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       },
     }),
     orgMemberRoute(),
+    queryValidator(agentQuerySchema),
     async (c) => {
       const member = await memberOf(c.get("organizationContext"))
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
-      // Only ever the caller's own teams' policy, or the organization's.
       const policy = await resolveMemberAgentPolicy(member)
-      return c.json(await memberAgentView({ ...member, settings: policy.settings, row: await readAgentInstance(member.memberId), ...(await agentSetup(member, policy)), catalog: () => getCatalog(app as unknown as Hono, c.env) }))
+      return c.json(await memberAgentView({ ...member, toolCounts: c.req.valid("query").toolCounts ?? "discover", settings: policy.settings, row: await readAgentInstance(member.memberId), brief: resolveAgentBrief(policy.settings, policy.template), catalog: () => getCatalog(app, c.env ?? undefined) }))
     },
   )
 
@@ -284,13 +240,66 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
     },
   )
 
+  app.patch(
+    "/v1/me/agent/connectors",
+    describeRoute({
+      ...pageOnly,
+      operationId: "saveMyAgentConnectorSwitches",
+      tags: ["Users"],
+      summary: "Save my connector switches",
+      description: "Sets the signed-in member's connector choices by exact source ID. Returns the confirmed switches and new undo entries. A batch is saved together under the member's current access and agent policy.",
+      responses: {
+        200: jsonResponse("Confirmed connector settings.", memberConnectorSavedSchema),
+        400: jsonResponse("Invalid or unavailable connector choices.", changeRefusedSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        404: jsonResponse("Workbot is unavailable.", featureDisabledSchema),
+      },
+    }),
+    orgMemberRoute(),
+    jsonValidator(memberConnectorTogglesSchema),
+    async (c) => {
+      const context = c.get("organizationContext")
+      const member = await memberOf(context)
+      if ("error" in member) return c.json(disabled(member.error), 404)
+      c.header("Cache-Control", "no-store")
+      const request = c.req.valid("json")
+      const ids = new Set(request.sources.map((entry) => entry.source))
+      const settings = memberAgentSettings(member.workbot, context?.organization.metadata)
+      const connections = await listMemberConnections(member, ids)
+      const sources = resolveMemberSources({ connections, policy: settings.sources, choices: {}, lastLook: {} })
+        .filter((entry) => entry.kind === "other" && ids.has(entry.id))
+      if (sources.length !== ids.size) return c.json({ error: "source_not_allowed", message: "A selected connector is no longer available." }, 400)
+      const now = Date.now()
+      const result = await changeMemberAgent<MemberConnectorSaved | Extract<MemberAgentChangeResult, { ok: false }>>(member.organizationId, member.memberId, (row) => {
+        const stored = parseStoredPreferences(row?.preferences)
+        const applied = applyMemberAgentChange({ request, settings, sources, stored, overrides: row?.overrides, source: "page", now, newId: newChangeId })
+        if (!applied.ok) return { result: applied, change: null, wake: false }
+        const previousIds = new Set(stored.log.map((entry) => entry.id))
+        const added = applied.stored.log.filter((entry) => !previousIds.has(entry.id))
+        return {
+          change: added.length ? { preferences: JSON.stringify(applied.stored) } : null,
+          wake: applied.wake,
+          result: {
+            sources: sources.map((entry) => ({
+              id: entry.id, policy: entry.policy, connections: entry.connections.map(memberConnectionView),
+              on: sourceOn(entry.policy, applied.stored.sources[entry.id], false),
+            })),
+            changes: memberAgentChanges({ ...applied.stored, log: added }, settings, new Map(sources.map((entry) => [entry.id, entry.name]))),
+          },
+        }
+      }, new Date(now))
+      if ("error" in result) return c.json({ error: result.error, message: result.message }, result.status)
+      return c.json(result)
+    },
+  )
+
   app.put(
     "/v1/me/agent",
     describeRoute({
       tags: ["Users"],
       summary: "Change my agent",
       description:
-        "Changes the signed-in member's own agent, as they would say it: turn it on or off (`on`), snooze it until the next working morning or resume (`snooze: \"tomorrow\"` or null), stop or restart one kind of message (`mute` / `unmute`: morning_brief, meeting_prep, calendar_changes, waiting_on_you). Also: what they want in their own words (`preferences.always`, `.never`, `.when`, `.how`; plain text, an empty string clears one), narrower working hours (`hours: {startHour, endHour}`, null for the admin's), a lower daily limit (`dailyCap`, null for the admin's), hours inside the day when only urgent messages go out (`quietWindow: {startHour, endHour}`, null removes it), `sources`: what the agent reads, by source id or name, each with `on` and/or an `instruction` in the member's words (for \"also look at my Granola for context, especially action items after meetings, and skip Linear\" send [{source: \"Granola\", on: true, instruction: \"Use for meeting context and action items after meetings.\"}, {source: \"Linear\", on: false}]; for the calendar also `connectionId`, one of its `options` ids from GET, for \"read my calendar from my Microsoft 365\" send [{source: \"calendar\", connectionId: \"<id>\"}]); and `undo`: \"last\" reverts the member's last save, a change id reverts one change (send undo on its own). A source the admin didn't allow answers 400 source_not_allowed, one that is on for everyone can't be turned off (400 source_locked), a `connectionId` that isn't one of the calendar's options (or on a source other than the calendar) answers 400 connection_not_allowed, each with a message that says who can change it; a source the member hasn't connected is saved and `saved.connect` names where to connect it. For \"between 12 and 2 only urgent stuff, stop telling me about calendar changes\" send preferences.when, quietWindow 12–14 and mute calendar_changes in one call. A member can only narrow the admin's limits: wider hours or a higher limit answer 400 limit_wider_than_admin with a message to relay. The response's `saved.reply` says exactly what was saved, \"Reply \\\"undo\\\" to revert.\" and the link to My agent: reply with it as is, in plain text. With Your agent's brief on (workbotAgentBrief), change what it tells them with `brief` in their words: for \"also watch our Render bill\" send brief: {add: [\"Also watch our Render bill.\"]}, for \"never tell me about newsletters\" brief: {add: [\"Never tell me about newsletters.\"]}, for \"stop watching Render\" brief: {remove: [\"Render bill\"]} (matched without case; 400 brief_line_not_found lists their lines), and `set` for the whole text; and how often it checks with `checkEveryHours` (1, 2, 3 or 4; \"check every 3 hours\" is 3; never more often than the admin's, else 400 limit_wider_than_admin; null for the admin's). With the brief, any connector the member can use is a source, MCP or Den's own (for \"also use Linear\" send [{source: \"Linear\", on: true}], for \"use my Granola for meeting context\" [{source: \"Granola\", on: true, instruction: \"Use for meeting context.\"}]); its agent only calls the tools that read. `mute`/`unmute` and `preferences` are for the agent before the brief. Without the brief these answer 400 brief_unavailable. Organization settings and limits still apply. Requires Workbot on this deployment.",
+        "Changes the signed-in member's own agent, as they would say it: turn it on or off (`on`), snooze it until the next working morning or resume (`snooze: \"tomorrow\"` or null), stop or restart one kind of message (`mute` / `unmute`: morning_brief, meeting_prep, calendar_changes, waiting_on_you). Also: what they want in their own words (`preferences.always`, `.never`, `.when`, `.how`; plain text, an empty string clears one), narrower working hours (`hours: {startHour, endHour}`, null for the admin's), a lower daily limit (`dailyCap`, null for the admin's), hours inside the day when only urgent messages go out (`quietWindow: {startHour, endHour}`, null removes it), `sources`: what the agent reads, by source id or name, each with `on` and/or an `instruction` in the member's words (for \"also look at my Granola for context, especially action items after meetings, and skip Linear\" send [{source: \"Granola\", on: true, instruction: \"Use for meeting context and action items after meetings.\"}, {source: \"Linear\", on: false}]; for the calendar also `connectionId`, one of its `options` ids from GET, for \"read my calendar from my Microsoft 365\" send [{source: \"calendar\", connectionId: \"<id>\"}]); and `undo`: \"last\" reverts the member's last save, a change id reverts one change (send undo on its own). A source the admin didn't allow answers 400 source_not_allowed, one that is on for everyone can't be turned off (400 source_locked), a `connectionId` that isn't one of the calendar's options (or on a source other than the calendar) answers 400 connection_not_allowed, each with a message that says who can change it; a source the member hasn't connected is saved and `saved.connect` names where to connect it. For \"between 12 and 2 only urgent stuff, stop telling me about calendar changes\" send preferences.when, quietWindow 12–14 and mute calendar_changes in one call. A member can only narrow the admin's limits: wider hours or a higher limit answer 400 limit_wider_than_admin with a message to relay. The response's `saved.reply` says exactly what was saved, \"Reply \\\"undo\\\" to revert.\" and the link to My agent: reply with it as is, in plain text. Change what it tells them with `brief` in their words: for \"also watch our Render bill\" send brief: {add: [\"Also watch our Render bill.\"]}, for \"never tell me about newsletters\" brief: {add: [\"Never tell me about newsletters.\"]}, for \"stop watching Render\" brief: {remove: [\"Render bill\"]} (matched without case; 400 brief_line_not_found lists their lines), and `set` for the whole text; and how often it checks with `checkEveryHours` (1, 2, 3 or 4; \"check every 3 hours\" is 3; never more often than the admin's, else 400 limit_wider_than_admin; null for the admin's). Any connector the member can use is a source, MCP or Den's own (for \"also use Linear\" send [{source: \"Linear\", on: true}], for \"use my Granola for meeting context\" [{source: \"Granola\", on: true, instruction: \"Use for meeting context.\"}]); its agent only calls the tools that read. Organization settings and limits still apply. Requires Workbot on this deployment.",
       responses: {
         200: jsonResponse("The member's agent after the change.", memberAgentSavedDocumentSchema),
         400: jsonResponse("The request was invalid, or asked for more than the admin allows.", changeRefusedSchema),
@@ -308,17 +317,16 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       const input = c.req.valid("json")
       const policy = await resolveMemberAgentPolicy(member)
       const settings = policy.settings
-      const setup = await agentSetup(member, policy)
+      const organizationBrief = resolveAgentBrief(policy.settings, policy.template)
       const now = Date.now()
 
-      // On, snooze stay as before; everything else (mutes too) is logged with where it came from, so it can be undone.
       const plain: MemberAgentInput = { ...(input.on !== undefined ? { on: input.on } : {}), ...(input.snooze !== undefined ? { snooze: input.snooze } : {}) }
       const source = cameThroughConnect(c.req.raw.headers) ? "chat" : "page"
-      // Sources are looked up before the save (they read connections, outside the row's lock).
-      const sources = input.sources ? await memberSources({ ...member, settings, row: await readAgentInstance(member.memberId), mode: setup.brief ? "any" : "reviewed" }) : undefined
+      const inventory = await loadSourceInventory(member)
       const outcome = await changeMemberAgent<MemberAgentChangeResult>(member.organizationId, member.memberId, (row) => {
+        const sources = input.sources ? memberSources(inventory, settings, row) : undefined
         const stored = parseStoredPreferences(row?.preferences)
-        const brief = setup.brief ? { policy: setup.brief, carried: carriedMemberLines(stored, row?.overrides) } : null
+        const brief = { policy: organizationBrief, carried: carriedMemberLines(stored, row?.overrides) }
         const applied = applyMemberAgentChange({ request: input, overrides: row?.overrides, stored, settings, source, now, newId: newChangeId, sources, brief })
         if (!applied.ok) return { change: null, wake: false, result: applied }
         const choice = memberChoiceChange(plain, row, settings, now, rowTimeZone(row))
@@ -330,7 +338,7 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
         }
       }, new Date(now))
       if (!outcome.ok) return c.json({ error: outcome.error, message: outcome.message }, outcome.status)
-      const view = await memberAgentView({ ...member, settings, row: await readAgentInstance(member.memberId), ...setup, catalog: () => getCatalog(app as unknown as Hono, c.env) })
+      const view = await memberAgentView({ ...member, settings, inventory, toolCounts: "cached", row: await readAgentInstance(member.memberId), brief: organizationBrief, catalog: () => getCatalog(app, c.env ?? undefined) })
       const link = myAgentLink()
       const lines = [...choiceLines(plain), ...outcome.lines]
       const connect = outcome.connect.map((entry) => ({ name: entry.name, href: entry.connectionId ? libraryConnectorLink(entry.connectionId) : libraryCatalogLink() }))

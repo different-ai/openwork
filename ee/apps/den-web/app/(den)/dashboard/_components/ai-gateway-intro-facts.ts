@@ -11,7 +11,6 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useOrgInferenceProviders } from "./inference-provider-data";
 import type { DenInferenceProvider } from "./inference-provider-request";
 
-/** Who created the organization's first provider credentials, when that was someone else. */
 export function firstProviderCreator(providers: readonly DenInferenceProvider[], currentMemberId: string | null): string | null {
   const creators = providers
     .flatMap((provider) => provider.credentialSets ?? [])
@@ -22,12 +21,6 @@ export function firstProviderCreator(providers: readonly DenInferenceProvider[],
   return first.name?.trim() || first.email || null;
 }
 
-/**
- * Section facts for the AI Gateway intro (DESIGN.md I2): providers and whether
- * OpenWork Models is on. Loads only while `enabled` (intros are running for a
- * loaded organization). Null until both are
- * known, or when this person can't read one of them: the page then renders as before.
- */
 export function useAiGatewayIntroFacts(enabled: boolean): AiGatewayFacts | null {
   const dashboard = useOrgDashboard();
   const { orgId, orgContext } = dashboard;

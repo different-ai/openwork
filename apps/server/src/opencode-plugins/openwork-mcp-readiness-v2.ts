@@ -6,12 +6,6 @@ type NativeMcpCatalog = {
   readonly tools: () => Effect.Effect<readonly { readonly server: string; readonly name: string }[]>;
   readonly servers: () => Effect.Effect<readonly { readonly name: string; readonly status: { readonly status: string } }[]>;
 };
-// Compatibility bridge for the officially pinned 2.0.26. Its public MCP domain
-// omits the discovered catalog and McpTool.flush only fences startup. A scoped
-// RPC has the native location graph: read its existing client, never open a
-// second transport, resolve OAuth credentials, or spawn a stdio probe. Keep
-// these exact core service identities version-guarded. Remove this bridge when
-// upstream exposes a public executable-registry mutation fence.
 class NativeMcp extends Context.Service<NativeMcp, NativeMcpCatalog>()("@opencode/MCP") {}
 class NativeMcpTool extends Context.Service<NativeMcpTool, { readonly flush: Effect.Effect<void> }>()("@opencode/McpTool") {}
 
@@ -87,8 +81,6 @@ export default {
         supported();
         const server = inputServer(input);
         const mcp = yield* nativeCatalog;
-        // Publish the currently captured source before observing its successor;
-        // a reload alone is not readiness, because MCP discovery is deferred.
         yield* ctx.tool.reload();
         const previous = (yield* ctx.tool.list()).filter(tool => tool.options?.namespace === mcpNamespace(server)).map(tool => tool.id);
         const target = (yield* mcp.servers()).find(item => item.name === server);

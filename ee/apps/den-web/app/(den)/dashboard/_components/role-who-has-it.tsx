@@ -27,12 +27,6 @@ type ReadyAccess = Extract<PermissionsAccess, { state: "ready" }>;
 const GRANT_LOCK_REASON = "This role grants permissions you don't have. Ask the organization owner.";
 const OWN_ROLE_LOCK_REASON = "You can't change your own role.";
 
-/**
- * A role's own page: the people and teams that have it, with Add person and
- * Add team. Giving it here is the same change as picking it on a person's row
- * or a team's page (useGiveRole), so it replaces the role they had; Remove
- * takes them back to Member. Every change offers Undo.
- */
 export function RoleWhoHasIt({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetail }) {
   const toast = useDenToast();
   const { orgContext } = useOrgDashboard();
@@ -55,7 +49,6 @@ export function RoleWhoHasIt({ ready, set }: { ready: ReadyAccess; set: Permissi
   const holdsAll = set.permissions.every((entry) => entry.status !== "allow" || ready.held.has(entry.key));
   const isSuperAdmin = role.kind === "built_in" && role.id === "super-admin";
   const hasOwnerAuthority = ready.access.isOwner || ready.access.isSuperAdmin;
-  // Giving a role is a role change, and grants what the role allows: the same rules as everywhere else.
   const peopleLockReason = !ready.access.canManageRoles
     ? permissionLockReason("members.update")
     : isSuperAdmin && !hasOwnerAuthority ? SUPER_ADMIN_ROLE_LOCK_REASON : holdsAll ? null : GRANT_LOCK_REASON;
@@ -72,7 +65,6 @@ export function RoleWhoHasIt({ ready, set }: { ready: ReadyAccess; set: Permissi
     }
   }
 
-  /** Give several people or teams `next`, and plan the way back for Undo. */
   async function givePeople(ids: readonly string[], next: RoleListEntry) {
     const moves = people.filter((person) => ids.includes(person.id)).map((person) => {
       const state: MemberRoleState = memberRoleState(person);
@@ -119,7 +111,6 @@ export function RoleWhoHasIt({ ready, set }: { ready: ReadyAccess; set: Permissi
           detail: `Team, ${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}`,
           lockReason: teamRoleLockReason(teamRoleState(team), member, roles, abilities),
         }))}
-        // Nobody gives themselves a role, the owner needs none, and an invitation keeps the role it was sent with.
         addablePeople={people
           .filter((person) => !person.isOwner && person.joinedAt && person.id !== orgContext.currentMember.id && !holdingPeople.includes(person))
           .map((person) => ({ id: person.id, name: person.user.name || person.user.email, detail: `${person.user.email}, now ${memberRoleEntry(memberRoleState(person), roles).label}` }))}

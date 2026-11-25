@@ -12,23 +12,15 @@ export type ActivationStepId = z.infer<typeof activationStepIdSchema>
 
 export const activationStepSchema = z.object({
   id: activationStepIdSchema,
-  /** Checked off only once the step really worked (an answer arrived, a provider was saved, a connection is ready). */
   done: z.boolean(),
-  /** Current state in a person's words, e.g. "Answered in 2.1 s" or "Google Workspace connected". */
   detail: z.string().max(200).optional(),
-  /** The caller cannot do this step: who can, e.g. "Avery manages AI Gateway". */
   lockedReason: z.string().max(200).optional(),
-  /**
-   * The step does not apply to this person right now (inviting a teammate while they are the only person in the
-   * organization). It stays listed with its action, but is not counted until it is done, so it never blocks finishing.
-   */
   optional: z.boolean().optional(),
 })
 export type ActivationStep = z.infer<typeof activationStepSchema>
 
 export const activationStateSchema = z.object({
   steps: z.array(activationStepSchema),
-  /** The person hid the checklist; surfaces collapse it to one quiet "Next" line. */
   dismissed: z.boolean(),
 })
 export type ActivationState = z.infer<typeof activationStateSchema>
@@ -37,7 +29,6 @@ export type ActivationState = z.infer<typeof activationStateSchema>
 export const ACTIVATION_CLIENT_EVENTS = ["first_response", "use_skill", "own_provider", "connector", "dismiss"] as const
 export const activationEventRequestSchema = z.object({
   step: z.enum(ACTIVATION_CLIENT_EVENTS),
-  /** first_response only: how long the first answer took. */
   durationMs: z.number().int().min(0).max(24 * 60 * 60 * 1000).optional(),
 }).strict()
 export type ActivationEventRequest = z.infer<typeof activationEventRequestSchema>

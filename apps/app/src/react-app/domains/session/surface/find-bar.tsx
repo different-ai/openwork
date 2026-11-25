@@ -142,8 +142,6 @@ export function SessionFindBar({
       setActiveHighlight(activeElementRef, null);
       return;
     }
-    // Query edits supersede the previous request immediately, before debounce
-    // changes the rendered highlights. Never jump to those stale marks.
     if (current.query.trim() !== activeQuery || current.appliedQuery.trim() !== activeQuery) return;
 
     const nextMatches = collectHighlightMarks(container);
@@ -205,8 +203,6 @@ export function SessionFindBar({
       pendingQueryRef.current = current.open && current.sessionId === sessionId && rawQuery.length >= MIN_QUERY_LENGTH ? rawQuery : null;
     };
     armQuery();
-    // Own the request from its raw edit, not its delayed highlight commit.
-    // Synchronous subscription also covers input before React renders the edit.
     const unsubscribe = useSessionFindStore.subscribe((current, previous) => {
       if (current.open !== previous.open || current.sessionId !== previous.sessionId
         || current.query.trim() !== previous.query.trim() || current.focusNonce !== previous.focusNonce) armQuery();

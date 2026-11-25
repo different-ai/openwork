@@ -1,9 +1,3 @@
-/**
- * A real turn against a deployed runner: owner cell, model answer, the conversation moved into a Node runner (so the
- * way off celld is proven on every deploy), delete. Prints no credentials.
- *
- *   SMOKE_BASE=http://127.0.0.1:8080 HEADLESS_API_TOKEN=... tsx scripts/celld-smoke.ts
- */
 import { randomUUID } from "node:crypto"
 import { z } from "zod"
 import { createApp } from "../src/app.js"

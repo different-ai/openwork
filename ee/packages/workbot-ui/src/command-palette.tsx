@@ -53,20 +53,13 @@ type Page = "root" | "chats" | "tasks";
 
 type Entry = Rankable & {
   icon: ReactNode;
-  /** Quiet trailing text: when a chat was last used, how long a task has run. */
   meta?: string;
-  /** Why this can't run right now, shown on the row (DESIGN P4). The row stays visible but disabled. */
   locked?: string;
-  /** Opens a nested page (Tab or Enter) instead of running. */
   page?: Exclude<Page, "root">;
-  /** What Enter does, as the highlighted row says it. */
   verb: string;
   run?: () => void;
-  /** Keeps the palette open after running (Try again). */
   stayOpen?: boolean;
-  /** Runs once the palette has closed, for actions that move focus (Write a message, Show a task). */
   thenFocus?: () => void;
-  /** Cmd/Ctrl+Enter. */
   alt?: { verb: string; run: () => void };
 };
 
@@ -74,10 +67,8 @@ export type WorkbotCommandPaletteProps = {
   name: string;
   tab: WorkbotPaletteTab;
   tabs: readonly WorkbotPaletteTab[];
-  /** What the computer page is called for this person: "Browser" when that is its only view. */
   computerLabel?: "Browser" | "Computer";
   onTab: (tab: WorkbotPaletteTab) => void;
-  /** Side chats, where they are on. */
   chats: {
     current: string | null;
     list: WorkbotChats | undefined;
@@ -85,7 +76,6 @@ export type WorkbotCommandPaletteProps = {
     failed: boolean;
     retry: () => void;
     open: (chat: string | null) => void;
-    /** Unsaved document drafts keep the person in this chat. */
     locked: boolean;
   } | null;
   busy: boolean;
@@ -113,7 +103,6 @@ const TAB_KEYWORDS: Record<WorkbotPaletteTab, string> = {
   computer: "browser desktop screen web page",
   devices: "computers laptop mac pc virtual machine sandbox online",
 };
-/** The computer page's icon where it goes by "Browser" (the browser is its only view); "computer" stays a keyword. */
 const BROWSER_ICON = <Globe size={16} strokeWidth={1.5} aria-hidden />;
 
 function isMac() {
@@ -157,7 +146,6 @@ function Highlighted({ text, query }: { text: string; query: string }) {
     : <span key={index}>{run.text}</span>)}</>;
 }
 
-/** Where the Chats group will be, while it loads: the label and three rows of the same height. */
 function ChatsSkeleton() {
   return (
     <div className="pt-1" aria-hidden data-workbot-palette-loading>
@@ -176,7 +164,6 @@ const NO_CHATS: WorkbotChats["side"] = [];
 
 const ICON_BUTTON =
   "grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
-/** The trigger sits in the rail and the phone header, beside the navigation's 40px controls: same size and shape. */
 const TRIGGER_BUTTON =
   "grid size-10 shrink-0 place-items-center rounded-lg text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 
@@ -191,9 +178,7 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  /** Where focus goes back to when the palette was opened from the keyboard (the composer, a document). */
   const returnTo = useRef<HTMLElement | null>(null);
-  /** An action's own focus move, run once the palette has closed. */
   const pendingFocus = useRef<(() => void) | null>(null);
   const stopTask = useStopWorkbotTask();
   const blocked = surface.blocked;
@@ -207,7 +192,6 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
     pendingFocus.current = null;
     next?.();
   };
-  // A page change can unmount the header mid-close; the focus move still happens.
   useEffect(() => () => {
     const next = pendingFocus.current;
     pendingFocus.current = null;
@@ -219,14 +203,12 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
     else setRecents(loadPaletteRecents());
   }, [open]);
 
-  // A new search or page starts at the top, where the best match is, after the list's own scroll-into-view settles.
   useEffect(() => {
     if (!open) return;
     let frame = window.requestAnimationFrame(() => { frame = window.requestAnimationFrame(() => { if (scroller.current) scroller.current.scrollTop = 0; }); });
     return () => window.cancelAnimationFrame(frame);
   }, [open, page, query]);
 
-  // Cmd+K on macOS, Ctrl+K elsewhere, from anywhere on the page, including the composer. Pressed again, it closes.
   useEffect(() => {
     if (blocked) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -247,7 +229,6 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
   const runningTasks = tasks.filter(running);
 
   const chatEntries = useMemo<Entry[]>(() => {
-    // Until the list arrives the Chats group is a skeleton, so rows never jump in under the pointer.
     if (!chats || !chats.list) return [];
     const lock = chats.locked ? "Save or close document drafts first" : undefined;
     const entry = (id: string | null, title: string, updatedAt: number | undefined, preview: boolean): Entry => ({
@@ -313,7 +294,6 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
     ...chatEntries.map((entry) => ({ ...entry, preview: true })),
   ] : page === "tasks" ? taskEntries.map((entry) => ({ ...entry, preview: true })) : rootEntries, [page, rootEntries, chatEntries, taskEntries]);
   const groups: RankedGroup<Entry>[] = useMemo(
-    // The page or chat already open is not offered as a recent: it would lead nowhere.
     () => rankPaletteItems(query, pageEntries, page === "root" ? recents.filter((id) => pageEntries.find((entry) => entry.id === id)?.locked === undefined) : []),
     [query, pageEntries, page, recents],
   );
@@ -343,7 +323,6 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
       else close();
       return;
     }
-    // Emacs-style Ctrl+N / Ctrl+P move like the arrow keys (macOS habit, also on other systems).
     if (event.ctrlKey && !event.metaKey && !event.altKey && (event.key === "n" || event.key === "p") && target) {
       event.preventDefault();
       event.stopPropagation();

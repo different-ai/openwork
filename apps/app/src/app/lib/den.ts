@@ -61,10 +61,6 @@ import {
   type RemoteDeviceRegisterRequest,
 } from "@openwork/types/den/remote-devices";
 
-// Re-export the shared schema under the local alias so React consumers
-// (e.g. the cloud domain's desktop-config provider) can import it alongside
-// the helpers they need. Solid references it internally only; the React
-// port wants it as part of the public surface of this module.
 export type { SharedDesktopConfig };
 export { normalizeDesktopConfig };
 
@@ -111,12 +107,6 @@ declare global {
 export const STORAGE_BASE_URL = "openwork.den.baseUrl";
 const LEGACY_STORAGE_API_BASE_URL = "openwork.den.apiBaseUrl";
 const STORAGE_AUTH_TOKEN = "openwork.den.authToken";
-/**
- * Origin comparison key (see denOriginComparisonKey) of the Den control plane
- * that issued the retained auth token. Written together with the token so a
- * later boot can prove the retained session belongs to the resolved bootstrap
- * origin before any credential-bearing request is made.
- */
 export const STORAGE_SESSION_ORIGIN = "openwork.den.sessionOrigin";
 const STORAGE_ACTIVE_ORG_ID = "openwork.den.activeOrgId";
 const STORAGE_ACTIVE_ORG_SLUG = "openwork.den.activeOrgSlug";
@@ -137,12 +127,6 @@ const BUILD_DEN_REQUIRE_SIGNIN =
     ? /^(1|true|yes|on)$/i.test(import.meta.env.VITE_DEN_REQUIRE_SIGNIN.trim())
     : false);
 
-/**
- * Pins Den API calls (not the sign-in pages) to a specific base. Headless/dev
- * web runs use it to route the Den API through a same-origin proxy so a remote
- * control plane never needs CORS, while sign-in still opens the real web app.
- * Read dynamically so tests can vary it; Vite inlines the env in real builds.
- */
 function readBuildDenApiBaseUrl(): string {
   const apiBaseUrl = (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_API_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_API_BASE_URL
@@ -162,8 +146,6 @@ export const HOSTED_DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
 export const DEN_INFERENCE_PATH = "/dashboard/inference";
 
-// Den wire types moved to den-types.ts (leaf module); re-exported here so
-// the many existing den.ts importers keep working.
 export type * from "./den-types";
 import type {
   DenAssignedMarketplaceCapability,
@@ -208,7 +190,6 @@ type DenBaseUrls = {
 
 export type DenBootstrapSource = "file" | "default";
 
-/** Org + first-skill identity shared by the handoff and prepared records. */
 export type DenBootstrapOrgSkill = {
   orgId: string;
   orgName: string;
@@ -268,7 +249,6 @@ export type DenOrgSummary = {
 function normalizeDenCanonicalOrgRole(role: string): DenCanonicalOrgRole | null {
   const normalized = role.trim().toLowerCase().replace(/[\s_]+/g, "-");
   if (normalized === "owner") return "owner";
-  // A super-admin is also an admin for every admin check; formatDenOrgRoleLabel names it.
   if (normalized === "admin" || normalized === "super-admin") return "admin";
   if (normalized === "member") return "member";
   return null;
@@ -312,7 +292,6 @@ export function formatDenOrgRoleLabel(roleValue: string) {
         .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
         .join(" ");
     });
-  // Repeated names, e.g. "admin,Admin", must not read "Admin, Admin".
   return [...new Set(labels)].join(", ");
 }
 
@@ -350,7 +329,6 @@ export type DenMcpToken = {
 
 export type DenOrgGatewayProvider = Pick<GatewayProviderSummary, "id" | "providerId" | "name" | "source">;
 
-/** A Gateway provider as this member can use it: ready models plus sets still awaiting their sign-in. */
 export type DenOrgUsableGatewayProvider = Pick<
   GatewayProviderSummary,
   "id" | "providerId" | "name" | "source" | "credentialStatus" | "updatedAt" | "models" | "authorizationRequests"
@@ -376,21 +354,9 @@ export type DenOrgLlmProvider = {
   name: string;
   providerConfig: Record<string, unknown>;
   hasApiKey: boolean;
-  /**
-   * The env names this provider actually reads on a member's machine. Catalog
-   * providers get provider-scoped names here (their stored `providerConfig.env`
-   * keeps the catalog's names); absent from Den servers that predate it.
-   */
   runtimeEnvKeys?: string[];
-  /**
-   * For `credentialMode: "per_member"` providers: whether the CALLING member
-   * currently has an active credential binding. Den returns it on the usable
-   * provider list; `hasApiKey` is always false for per-member providers.
-   */
   hasMyCredential?: boolean;
-  /** "per_member": each member signs in with their own account; absent on older Den servers. */
   credentialMode?: "shared" | "per_member";
-  /** Who Den grants this provider to; absent on older Den servers. */
   access?: DenOrgLlmProviderAccess;
   models: DenOrgLlmProviderModel[];
   pinnedModelIds?: string[];
@@ -405,9 +371,7 @@ export type DenExternalMcpConnection = {
     lastSuccessfulAt: string | null;
     reason: string | null;
     failure?: DenConnectionReadinessFailure | null;
-    /** Support reference for a failed sign-in; newer Den only. */
     referenceId?: string;
-    /** Den-validated link to the service's settings page, only with provider_setup_required; newer Den only. */
     providerSettingsUrl?: string;
   } | null;
   setupRequired?: boolean;
@@ -417,11 +381,9 @@ export type DenExternalMcpConnection = {
   url: string;
   authType: "oauth" | "apikey" | "none";
   credentialMode: "shared" | "per_member";
-  /** True when an administrator exposed this connection to the agent as a standard MCP server with its own tools. */
   exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
-  /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
   connectedForMe: boolean;
   needsReconnect?: boolean;
   issuerReviewRequired?: boolean;
@@ -430,7 +392,6 @@ export type DenExternalMcpConnection = {
   externalAccountId?: string | null;
   grantedScopes?: string[];
   tenantId?: string | null;
-  /** Which service a native connector fronts (e.g. "google-workspace"); null/absent for external MCP connections. */
   nativeProviderKey?: string | null;
 };
 
@@ -440,9 +401,7 @@ export type DenExternalMcpPreset = {
   description: string;
   url: string;
   authType: "oauth" | "apikey" | "none";
-  /** The provider needs its own OAuth app (two codes from its settings) before anyone can sign in. */
   requiresOAuthClient?: boolean;
-  /** OpenWork's own registered app for this provider; when set, people sign in without an organization app. */
   defaultOAuthClientId?: string;
 };
 
@@ -453,11 +412,6 @@ export type DenMcpConnectionConnectStart = {
 
 export type DenOrgLlmProviderConnection = DenOrgLlmProvider & {
   apiKey: string | null;
-  /**
-   * Per-env-var credential values for providers whose config declares several
-   * env keys (e.g. AWS Bedrock). Servers send either `apiKey` or `apiKeys`,
-   * never both.
-   */
   apiKeys: Record<string, string> | null;
 };
 
@@ -471,11 +425,6 @@ export type DenOpenWorkWebAccessSource = "subscription" | "complimentary" | null
 export type DenOpenWorkWebAccess = {
   hasAccess: boolean;
   accessSource: DenOpenWorkWebAccessSource;
-  /**
-   * Whether the signed-in member may use the organization's Web. False when
-   * an admin chose who gets Web and left this member out. Older Den
-   * deployments omit it, which means the same as hasAccess.
-   */
   memberHasAccess: boolean;
 };
 
@@ -511,21 +460,8 @@ let gatewayBootstrapConfig: DenBootstrapConfig | null = null;
 let gatewayBootstrapConfigOrigin: string | null = null;
 let gatewayBootstrapConfigSource: DenBootstrapConfig | null = null;
 
-/**
- * Whether the in-memory bootstrap snapshot came from an authoritative source
- * (preload snapshot, shell IPC read, or an explicit persist) or is only the
- * in-memory fallback used while the shell bridge is unavailable. An
- * `unresolved` bootstrap must never be treated as a real hosted selection:
- * retained credentials stay quarantined until the origin that owns them is
- * proven.
- */
 export type DenBootstrapResolution = "unresolved" | "resolved";
 let desktopBootstrapResolution: DenBootstrapResolution = "unresolved";
-/**
- * Monotonic startup/refresh generation. Every asynchronous bootstrap
- * resolution belongs to the generation that started it; a late result from an
- * obsolete generation must never replace the current snapshot.
- */
 let desktopBootstrapGeneration = 0;
 let lastCredentialGateLog: string | null = null;
 
@@ -537,10 +473,6 @@ export type DenAppVersionMetadata = {
   minAppVersion: string;
   latestAppVersion: string;
   publishedDesktopVersions: string[];
-  /**
-   * This deployment's web app base URL, as advertised by `GET /v1/app-version`.
-   * Null when talking to a den-api that predates the field.
-   */
   webUrl: string | null;
 };
 
@@ -548,18 +480,15 @@ type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
   json: T | null;
-  /** The response's `Retry-After`, when it names whole seconds. */
   retryAfterSeconds?: number;
 };
 
-/** Den serves GET /v1/resolved-plugins for at most this many plugins per request. */
 const RESOLVED_PLUGINS_BATCH_SIZE = 100;
 
 export class DenApiError extends Error {
   status: number;
   code: string;
   details?: unknown;
-  /** How long the server asked the caller to wait (`Retry-After`), on a 429. */
   retryAfterSeconds?: number;
 
   constructor(status: number, code: string, message: string, details?: unknown) {
@@ -571,11 +500,6 @@ export class DenApiError extends Error {
   }
 }
 
-/**
- * Codes the Den API uses when the session itself is invalid, expired, or
- * revoked. Only these may destroy the stored token; every other 401 code is
- * treated as the control plane being temporarily unreachable.
- */
 const DEN_SESSION_TERMINATION_CODES = new Set([
   "unauthorized",
   "invalid_session",
@@ -587,15 +511,6 @@ const DEN_SESSION_TERMINATION_CODES = new Set([
   "token_revoked",
 ]);
 
-/**
- * True only for 401s whose Den error code explicitly names an invalid,
- * expired, or revoked session. A bare/foreign 401 from a corporate proxy or
- * captive portal — and structured 401s minted by deployment infrastructure in
- * front of the control plane (`base_url_not_present`, misrouted proxies,
- * platform placeholders) — must be treated as "unavailable", not as a revoked
- * session. Otherwise a VPN blip or a mid-deploy edge response signs the user
- * out and destroys the stored token.
- */
 export function isDenSessionRevokedError(error: unknown): boolean {
   return (
     error instanceof DenApiError &&
@@ -728,11 +643,6 @@ export function normalizeDenBaseUrl(input: string | null | undefined): string | 
   }
 }
 
-/**
- * Origin-level comparison key for Den URLs. Ignores paths (deep links may
- * carry an `/api/den` proxy path) and treats loopback aliases (127.0.0.1,
- * [::1]) as `localhost`, matching den-api's own dev-mode resource aliasing.
- */
 export function denOriginComparisonKey(input: string | null | undefined): string | null {
   const normalized = normalizeDenBaseUrl(input);
   if (!normalized) return null;
@@ -748,12 +658,6 @@ export function denOriginComparisonKey(input: string | null | undefined): string
   }
 }
 
-/**
- * True when the effective Den control plane is not the hosted OpenWork Cloud
- * (app.openworklabs.com). Self-hosted deployments point the app at their own
- * control plane via VITE_DEN_BASE_URL or the desktop bootstrap config, so
- * hosted-only surfaces (e.g. OpenWork Models upsells) should stay hidden.
- */
 export function isSelfHostedControlPlane(): boolean {
   return (
     denOriginComparisonKey(readDenSettings().baseUrl) !==
@@ -830,21 +734,6 @@ function isHostedDenHost(hostname: string): boolean {
   return normalized === HOSTED_DEN_APEX_HOST || normalized.endsWith(`.${HOSTED_DEN_APEX_HOST}`);
 }
 
-/**
- * The deterministic API origin for a Den base URL, without runtime config.
- *
- * Only two shapes are known ahead of time:
- * - An explicit API host (`api.*`) is already the API origin.
- * - Hosted OpenWork Cloud (`*.openworklabs.com`) serves its API at the
- *   `api.`-prefixed host.
- *
- * Every other deployment (self-hosted single host, localhost, tunnel or
- * sandbox preview hosts with single-label wildcard certificates) keeps the
- * same-origin `/api/den` proxy. Inventing `api.<host>` there produced
- * unreachable origins and TLS names the deployment's certificate cannot
- * cover, which broke desktop sign-in. Runtime config (`denApiUrl`) remains
- * the source of truth when present.
- */
 function denApiOriginForDenBaseUrl(input: string | null | undefined): string | null {
   const normalized = normalizeDenBaseUrl(input);
   if (!normalized) return null;
@@ -891,8 +780,6 @@ export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?
   const seedUrl = stripDenApiBasePath(normalizedBaseUrl ?? normalizedApiBaseUrl) ?? DEFAULT_DEN_BASE_URL;
   const baseUrl = stripDenApiBasePath(seedUrl) ?? DEFAULT_DEN_BASE_URL;
 
-  // Build-time API pin (headless/dev web): use the configured API base exactly,
-  // whether it names a direct API origin or a same-origin /api/den proxy.
   const buildDenApiBaseUrl = normalizedApiBaseUrl ? null : normalizeDenBaseUrl(readBuildDenApiBaseUrl());
   const deterministicApiBaseUrl = denApiOriginForDenBaseUrl(baseUrl);
 
@@ -924,17 +811,11 @@ function resolveDenClientBaseUrls(options: { baseUrl: string; apiBaseUrl?: strin
   return resolveDenBaseUrls(options);
 }
 
-/** The MCP endpoint served from the resolved Den API base URL. */
 export function getDenMcpUrl(): string {
   const { apiBaseUrl } = resolveDenBaseUrls(readDenBootstrapConfig());
   return `${apiBaseUrl.replace(/\/+$/, "")}/mcp`;
 }
 
-/**
- * Detects MCP URLs written by older builds that pointed `/mcp` at the bare
- * web-app origin (e.g. `https://app.openworklabs.com/mcp`). Nothing serves
- * MCP there — those entries fail with a 404 and must be reconfigured.
- */
 export function isLegacyWebAppMcpUrl(input: string | null | undefined): boolean {
   if (!input) return false;
   try {
@@ -945,14 +826,6 @@ export function isLegacyWebAppMcpUrl(input: string | null | undefined): boolean 
   }
 }
 
-/**
- * Resolve the URL the cloud MCP entry should connect to from a minted
- * token's `resource`. Older den-api builds mint the bare web-app origin
- * (`https://app.openworklabs.com/mcp`) where nothing serves MCP — heal
- * those to the `/api/den` proxy on the same origin instead of trusting
- * them verbatim. Returns null when the resource is unusable so callers
- * can keep their bootstrap-derived URL.
- */
 export function resolveCloudMcpResourceUrl(resource: string | null | undefined): string | null {
   const trimmed = resource?.trim() ?? "";
   if (!trimmed) return null;
@@ -1070,14 +943,6 @@ async function resolveDenBootstrapConfigWithRuntimeApi(
   };
 }
 
-/**
- * Boot-time resolution of the bootstrap the shell already holds. An
- * unactivated activation-required install has no organization server yet —
- * its bootstrap is only the build default — so the runtime-config probe would
- * be the install's first request to a host nobody chose. Skip it: the address
- * the person submits is resolved by `setDenBootstrapConfig`, and a completed
- * activation resolves here on the next boot.
- */
 async function resolveBootBootstrapConfig(
   input: Parameters<typeof resolveDenBootstrapConfig>[0],
 ): Promise<DenBootstrapConfig> {
@@ -1088,13 +953,6 @@ async function resolveBootBootstrapConfig(
   return resolveDenBootstrapConfigWithRuntimeApi(input);
 }
 
-/**
- * Resolve a handoff destination's base URLs. On desktop, when the caller does
- * not already know the destination's API base, prefer the API base the
- * destination publishes in its runtime config — the same source the durable
- * bootstrap commit uses — so the exchange and the persisted bootstrap can
- * never disagree about where the destination's API lives.
- */
 export async function resolveDenBaseUrlsForDestination(
   input: { baseUrl: string; apiBaseUrl?: string | null },
 ): Promise<DenBaseUrls> {
@@ -1117,17 +975,6 @@ export async function resolveDenBaseUrlsForDestination(
   };
 }
 
-/**
- * A destination-published API origin receives the one-time handoff grant and
- * the bearer credential minted from it, so a syntactically valid URL is not
- * enough: the published origin must have a relationship to the destination
- * web origin this client can verify on its own. That is either the same
- * origin (the destination's own `/api/den` proxy) or the deterministic API
- * sibling derived for hosted deployments. Every other published value is
- * ignored and the exchange stays on the destination's same-origin proxy,
- * which reaches the same control plane without trusting the runtime config
- * to route credentials.
- */
 function destinationApiOriginVerified(webBaseUrl: string, candidate: string): boolean {
   try {
     const webOrigin = new URL(webBaseUrl).origin;
@@ -1177,12 +1024,6 @@ function readStoredDenAuthToken(): string | null {
   return (window.localStorage.getItem(STORAGE_AUTH_TOKEN) ?? "").trim() || null;
 }
 
-/**
- * Adopts a retained session written by builds that predate the session-origin
- * tag. Runs only at authoritative boot-time resolution: an untagged token is
- * bound to the origin the bootstrap actually resolved to, which matches the
- * origin those builds would have used it against.
- */
 function adoptUntaggedDenSessionOrigin() {
   if (!isDesktopRuntime() || desktopBootstrapResolution !== "resolved") return;
   if (!readStoredDenAuthToken() || readStoredDenSessionOrigin()) return;
@@ -1191,17 +1032,9 @@ function adoptUntaggedDenSessionOrigin() {
   try {
     window.localStorage.setItem(STORAGE_SESSION_ORIGIN, origin);
   } catch {
-    // Storage unavailable: the session stays quarantined instead of adopted.
   }
 }
 
-/**
- * The single origin-coherence gate. True when the retained token must be
- * withheld because the enrollment that owns it has not been proven to match
- * the effective Den origin: either the bootstrap is still unresolved (the
- * in-memory fallback is not a real selection) or the resolved origin differs
- * from the origin recorded next to the token.
- */
 function shouldWithholdDenCredentials(bootstrapBaseUrl: string): boolean {
   if (!isDesktopRuntime()) return false;
   if (!readStoredDenAuthToken()) return false;
@@ -1261,13 +1094,10 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
 
   if (!isDesktopRuntime()) {
     const gatewayOrigin = getOpenworkGatewayOrigin();
-    // Forced env settings (headless/dev runs): stale stored base URLs from
-    // earlier sessions must not override the launcher-provided control plane.
     if (readForceEnvDenSettings() && typeof window !== "undefined") {
       try {
         window.localStorage.removeItem(STORAGE_BASE_URL);
       } catch {
-        // Storage unavailable: nothing stale to clear.
       }
     }
     desktopBootstrapConfig = resolveDenBootstrapConfig({
@@ -1288,9 +1118,6 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
     return desktopBootstrapConfig;
   }
 
-  // The shell IPC bridge can be momentarily unavailable at first paint;
-  // retry briefly before giving up so a boot race does not poison the
-  // session with build defaults.
   const SHELL_BOOTSTRAP_ATTEMPTS = 3;
   const SHELL_BOOTSTRAP_RETRY_DELAY_MS = 350;
   for (let attempt = 1; attempt <= SHELL_BOOTSTRAP_ATTEMPTS; attempt += 1) {
@@ -1312,13 +1139,6 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
 
   if (generation !== desktopBootstrapGeneration) return readDenBootstrapConfig();
 
-  // All quick attempts failed. Keep build defaults in memory only — do NOT
-  // sync them to localStorage: previously synced values from a successful
-  // boot are more trustworthy than build defaults, and clobbering them
-  // silently reverted custom/self-hosted control planes to the production
-  // URL until a manual reload. The snapshot stays `unresolved`: it is a
-  // recovery placeholder, not a real hosted selection, so retained
-  // credentials remain quarantined until an authoritative read succeeds.
   desktopBootstrapConfig = resolveDenBootstrapConfig({
     baseUrl: HOSTED_DEFAULT_DEN_BASE_URL,
     requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
@@ -1328,9 +1148,6 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
     "[den-bootstrap] Shell bootstrap is unavailable; using an in-memory placeholder and withholding Den credentials until the real config is read.",
   );
 
-  // Heal in the background without blocking boot: once the bridge comes up,
-  // apply the real shell config and notify listeners. Results from an
-  // obsolete startup generation are discarded.
   void (async () => {
     for (let attempt = 0; attempt < 15; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 2_000));
@@ -1344,7 +1161,6 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
         dispatchDenSettingsChanged({ settings: readDenSettings() });
         return;
       } catch {
-        // Bridge still unavailable — keep trying.
       }
     }
   })();
@@ -1352,12 +1168,6 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   return desktopBootstrapConfig;
 }
 
-/**
- * Re-reads desktop-bootstrap.json from the shell and applies it to the cached
- * snapshot, notifying listeners. Used after the shell itself persisted a new
- * config (e.g. an accepted connect link) so the renderer converges without a
- * reload.
- */
 export async function refreshDenBootstrapConfigFromShell(): Promise<DenBootstrapConfig> {
   if (isDesktopRuntime()) {
     const generation = ++desktopBootstrapGeneration;
@@ -1370,7 +1180,6 @@ export async function refreshDenBootstrapConfigFromShell(): Promise<DenBootstrap
         dispatchDenSettingsChanged({ settings: readDenSettings() });
       }
     } catch {
-      // Bridge hiccup — keep the current cached snapshot.
     }
   }
   return readDenBootstrapConfig();
@@ -1383,9 +1192,6 @@ export async function setDenBootstrapConfig(
   const previous = readDenBootstrapConfig();
   const normalized = await resolveDenBootstrapConfigWithRuntimeApi({
     ...next,
-    // An omitted stamp retains the previous one; an explicit null clears it.
-    // Cross-origin handoffs rely on the explicit clear: the old control
-    // plane's activation must never mark a new control plane as activated.
     enterpriseActivation:
       next.enterpriseActivation !== undefined
         ? next.enterpriseActivation
@@ -1393,8 +1199,6 @@ export async function setDenBootstrapConfig(
   });
 
   if (isDesktopRuntime()) {
-    // An explicit persist is a new authoritative bootstrap: retire any
-    // in-flight startup resolution so a late read cannot replace it.
     desktopBootstrapGeneration += 1;
     const persisted = await setDesktopBootstrapConfigInShell({
       baseUrl: normalized.baseUrl,
@@ -1425,12 +1229,6 @@ export async function setDenBootstrapConfig(
   return readDenBootstrapConfig();
 }
 
-/**
- * Hosted Den only approves Cloud web handoff return URLs that are HTTPS
- * gateway / signed-preview origins. Loopback and plain HTTP (local headless
- * web) can never be approved, so those clients must use the desktop handoff
- * (copy link / paste grant) instead of webAuth auto-return.
- */
 function canUseCloudWebAuthReturn(origin: string): boolean {
   try {
     const url = new URL(origin);
@@ -1461,8 +1259,6 @@ export function buildDenAuthUrl(baseUrl: string, mode: "sign-in" | "sign-up"): s
     || import.meta.env?.VITE_OPENWORK_FORCE_MANUAL_AUTH === "1"
     || (webReturnOrigin !== null && !canUseCloudWebAuthReturn(webReturnOrigin))
   ) {
-    // Desktop app, or local/dev web that cannot receive an approved webAuth
-    // redirect: Den shows the copyable openwork:// / grant handoff instead.
     target.searchParams.set("desktopAuth", "1");
     target.searchParams.set("desktopScheme", "openwork");
   } else if (webReturnOrigin !== null) {
@@ -1497,11 +1293,6 @@ export function readDenSettings(): DenSettings {
       : { baseUrl: window.localStorage.getItem(STORAGE_BASE_URL) ?? bootstrapConfig.baseUrl },
   );
 
-  // Origin coherence: the retained token and organization are only usable
-  // together with the origin that issued them. While the bootstrap is
-  // unresolved, or when it resolved to a different control plane, the
-  // retained session stays quarantined in storage — visible to no caller, so
-  // no credential-bearing request can mix origins.
   if (shouldWithholdDenCredentials(bootstrapConfig.baseUrl)) {
     return {
       ...baseUrls,
@@ -1549,7 +1340,6 @@ export function writeCachedDenDesktopConfig(key: string, config: DenDesktopConfi
       JSON.stringify(normalizeDenDesktopConfig(config)),
     );
   } catch {
-    // Quota / private-browsing failures are non-fatal — we just miss the cache next boot.
   }
 }
 
@@ -1577,16 +1367,6 @@ function mergePassiveDenField(
   return trimmed || current || null;
 }
 
-/**
- * Merge an in-memory den-session snapshot over the persisted settings for the
- * PASSIVE state->storage mirror. A passive sync must never delete persisted
- * credentials just because in-memory state has not (or could not) load them —
- * e.g. while the control plane is unreachable the org list never loads, and
- * mirroring `activeOrg: null` used to erase the stored org (and, after a
- * remount race, the auth token), permanently signing the user out on a
- * transient VPN/network outage. Explicit sign-out/change-server flows clear
- * storage through clearDenSession()/saveControlPlaneUrl() instead.
- */
 export function mergePassiveDenSettings(current: DenSettings, next: DenSettings): DenSettings {
   return {
     ...resolveDenBaseUrls(next),
@@ -1617,7 +1397,6 @@ function warnOnUnexpectedActiveOrgDrop(input: {
     window.__openworkOrgDropWarnings.push(stack);
     console.warn(stack);
   } catch {
-    // Diagnostics must never block the settings write they observe.
   }
 }
 
@@ -1657,10 +1436,6 @@ export function writeDenSettings(
     intentionalActiveOrgClear: options?.intentionalActiveOrgClear,
   });
 
-  // Quarantined credentials are invisible to callers, so a caller writing an
-  // empty session cannot have meant to delete them. Preserve the stored
-  // session untouched; explicit sign-out and server changes go through
-  // clearDenSession(), which deletes storage directly.
   const preserveQuarantinedSession =
     !authToken
     && readStoredDenAuthToken() !== null
@@ -1678,8 +1453,6 @@ export function writeDenSettings(
   if (!preserveQuarantinedSession) {
     if (authToken) {
       window.localStorage.setItem(STORAGE_AUTH_TOKEN, authToken);
-      // Record which control plane issued this token so later boots can prove
-      // origin coherence before using it.
       const sessionOrigin = denOriginComparisonKey(baseUrl);
       if (sessionOrigin) {
         window.localStorage.setItem(STORAGE_SESSION_ORIGIN, sessionOrigin);
@@ -1755,14 +1528,8 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_ID);
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_SLUG);
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_NAME);
-  // Keep the ID-only, account-and-origin-scoped last-org preference. A later
-  // sign-in can use it only after live membership and rollout verification.
   window.localStorage.removeItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY);
-  // Cached MCP results can contain member data. Clear every user/org
-  // namespace so another account using this browser profile cannot recover it.
   clearDashboardTileCacheStorage(window.localStorage);
-  // Sign-out resets any in-flight sign-in intent and pending org choice so a
-  // later handoff starts from a clean slate.
   clearDesktopSignInIntent();
   clearOrgSelectionPending();
 
@@ -1775,7 +1542,6 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
   });
 }
 
-/** Discard async org results after sign-out, a handoff, or a newer org choice. */
 export function isDenSessionSnapshotCurrent(snapshot: DenSettings): boolean {
   const current = readDenSettings();
   return denOriginComparisonKey(current.baseUrl) === denOriginComparisonKey(snapshot.baseUrl)
@@ -1784,7 +1550,6 @@ export function isDenSessionSnapshotCurrent(snapshot: DenSettings): boolean {
     && current.activeOrgId === snapshot.activeOrgId;
 }
 
-/** Commit an acknowledged user choice and its account-scoped preference together. */
 export async function selectDenActiveOrganization(organization: DenOrgSummary, settings: DenSettings): Promise<void> {
   const selectionWasPending = readOrgSelectionPending().pending;
   const requireCurrentSession = () => {
@@ -1795,8 +1560,6 @@ export async function selectDenActiveOrganization(organization: DenOrgSummary, s
   };
   requireCurrentSession();
   const client = createDenClient({ ...settings, token: settings.authToken });
-  // Verify the identity using this exact credential before making the choice.
-  // Saving on success must not depend on a later background refresh finishing.
   const user = await client.getSession();
   requireCurrentSession();
   await client.setActiveOrganization({ organizationId: organization.id });
@@ -1816,7 +1579,6 @@ export async function selectDenActiveOrganization(organization: DenOrgSummary, s
 
 export async function ensureDenActiveOrganization(options?: {
   forceServerSync?: boolean;
-  /** Bind the verified identity to the exact credential/origin, including on retries. */
   verifiedSession?: { userId: string; token: string; baseUrl: string };
 }) {
   const settings = readDenSettings();
@@ -1858,8 +1620,6 @@ export async function ensureDenActiveOrganization(options?: {
   }
   if (!isDenSessionSnapshotCurrent(settings)) return null;
 
-  // Seed returning users too, but never remember a guessed first-org fallback.
-  // The caller verified the identity; the directory above verified membership.
   if (verifiedSession && selectedOrgId === targetOrg.id) {
     rememberDenOrganization({
       serverKey: denOriginComparisonKey(settings.baseUrl),
@@ -2233,7 +1993,6 @@ function parseDenOrgUsableGatewayProvider(value: unknown): DenOrgUsableGatewayPr
   };
 }
 
-/** Lenient for display: one malformed row is dropped rather than hiding every provider. */
 function getDenOrgUsableGatewayProviders(payload: unknown): DenOrgUsableGatewayProvider[] {
   if (!isRecord(payload) || !Array.isArray(payload.inferenceProviders)) {
     throw new DenApiError(500, "invalid_gateway_providers_payload", "AI Gateway provider response was invalid.");
@@ -2823,11 +2582,6 @@ function getOrgPluginResolved(plugin: DenOrgPlugin, payload: unknown): DenOrgPlu
   return { plugin, memberships };
 }
 
-/**
- * Den can add config object types (for example MCP Apps) before the desktop
- * models them. Such rows are outside this app's inventory, so a completeness
- * check must not count them; malformed rows of a known type still fail it.
- */
 function hasModeledObjectType(value: unknown): boolean {
   return !isRecord(value) || typeof value.objectType !== "string" || parsePluginConfigObjectType(value.objectType) !== null;
 }
@@ -2897,11 +2651,6 @@ export function parseDenOpenWorkWebAccess(payload: unknown): DenOpenWorkWebAcces
   };
 }
 
-// Den requests target a control plane that does not answer CORS preflights.
-// On desktop, route cross-origin Den calls (including a Den API on a different
-// loopback port than the renderer) through the Electron main process so the
-// renderer never issues a blocked preflight. Same-origin requests can use the
-// renderer's own fetch.
 const resolveFetch = (url: string): FetchLike => {
   if (!isDesktopRuntime()) return globalThis.fetch;
   try {
@@ -2909,7 +2658,6 @@ const resolveFetch = (url: string): FetchLike => {
       return desktopFetch;
     }
   } catch {
-    // fall through to the main-process proxy on unparseable URLs
   }
   return (input, init) => desktopFetchViaMain(input, init);
 };
@@ -2925,9 +2673,7 @@ type DenRequestOptions = {
   organizationId?: string | null;
   automationModelAttentionCapable?: boolean;
   browserUploadPermissionsCapable?: boolean;
-  /** Cancels the request, e.g. a waiting status call when the window hides. */
   signal?: AbortSignal;
-  /** Leave the request out of connection diagnostics: its failure is not a connection problem. */
   unobserved?: boolean;
 };
 
@@ -2938,7 +2684,6 @@ async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: Request
 
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   const signal = controller?.signal;
-  // A caller's own signal still cancels; the timeout aborts the fetch too when both can be combined.
   const initWithSignal = signal && !init.signal
     ? { ...init, signal }
     : signal && init.signal && typeof AbortSignal.any === "function"
@@ -2952,7 +2697,6 @@ async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: Request
       try {
         controller?.abort();
       } catch {
-        // ignore
       }
       reject(new Error("Request timed out."));
     }, timeoutMs);
@@ -2979,16 +2723,13 @@ function flushFeatureUsage() {
   const orgId = settings.activeOrgId?.trim() ?? "";
   if (features.length === 0) return;
   if (!token || !orgId) {
-    // Signed out: let the next use after sign-in report it.
     for (const key of features) reportedFeatureUsage.delete(key);
     return;
   }
   void createDenClient({ ...settings, token }).reportFeatureUsage(orgId, features).catch(() => {
-    // Best effort: a lost report only hides one use from /admin.
   });
 }
 
-/** Report that the member just used a registry feature, for /admin; call where the feature is exercised, not on render. Batched, once per key per app session. */
 export function markFeatureUsed(key: string): void {
   if (reportedFeatureUsage.has(key)) return;
   reportedFeatureUsage.add(key);
@@ -3022,7 +2763,6 @@ async function requestJsonRaw<T>(
   }
   if (options.automationModelAttentionCapable) {
     headers[AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER] = AUTOMATION_MODEL_ATTENTION_CAPABILITY;
-    // Without it Den treats this desktop as a release that reads only once/daily/weekly schedules.
     headers[AUTOMATION_SCHEDULE_KINDS_HEADER] = AUTOMATION_SCHEDULE_KINDS.join(",");
   }
   if (options.body !== undefined) {
@@ -3100,7 +2840,6 @@ export function createDenClient(options: {
   baseUrl: string;
   apiBaseUrl?: string | null;
   token?: string | null;
-  /** Change detection must never interpret a partial/malformed inventory as removals. */
   requireCompleteInventory?: boolean;
 }) {
   const baseUrls = resolveDenClientBaseUrls(options);
@@ -3136,7 +2875,6 @@ export function createDenClient(options: {
     return pluginResolvedFrom(plugin, payload);
   }
 
-  /** One plugin out of GET /v1/resolved-plugins, failing the way its own `/resolved` request would. */
   function pluginResolvedFromBatch(plugin: DenOrgPlugin, payload: unknown): DenOrgPluginResolved {
     const failure = isRecord(payload) && isRecord(payload.failures) ? payload.failures[plugin.id] : null;
     if (isRecord(failure)) {
@@ -3152,7 +2890,6 @@ export function createDenClient(options: {
   }
 
   return {
-    /** The resolved web base URL and API base URL. */
     baseUrls,
 
     async setActiveOrganization(input: { organizationId?: string | null; organizationSlug?: string | null }): Promise<void> {
@@ -3170,6 +2907,18 @@ export function createDenClient(options: {
       return { user: getUser(payload), token: getToken(payload) };
     },
 
+
+    async sendAccountVerificationCode(email: string) {
+      await requestJson(baseUrls, "/api/auth/email-otp/send-verification-otp", {
+        method: "POST", token, body: { email, type: "email-verification" },
+      });
+    },
+
+    async verifyAccountEmail(email: string, otp: string) {
+      await requestJson(baseUrls, "/api/auth/email-otp/verify-email", {
+        method: "POST", token, body: { email, otp },
+      });
+    },
 
     async signOut() {
       await requestJson<unknown>(baseUrls, "/api/auth/sign-out", {
@@ -3191,12 +2940,6 @@ export function createDenClient(options: {
       return user;
     },
 
-    /**
-     * Sends this launch's startup report (one per launch, idempotent by
-     * attemptId) and resolves to the HTTP status. Rejects when the request
-     * does not complete. Telemetry: never retried here and never recorded as
-     * a connection failure.
-     */
     async reportDesktopStartup(
       report: DesktopStartupReport,
       options: { organizationId?: string | null; timeoutMs?: number } = {},
@@ -3280,7 +3023,6 @@ export function createDenClient(options: {
       };
     },
 
-    /** The Get set up checklist; null when unavailable. */
     async getActivation(orgId: string): Promise<ActivationState | null> {
       try {
         return activationStateSchema.parse(await requestJson<unknown>(baseUrls, "/v1/me/activation", { method: "GET", token, organizationId: orgId }));
@@ -3290,7 +3032,6 @@ export function createDenClient(options: {
       }
     },
 
-    /** Reports a Get set up step only this app can observe; returns the updated checklist (null when off). */
     async recordActivationEvent(orgId: string, event: ActivationEventRequest): Promise<ActivationState | null> {
       try {
         return activationStateSchema.parse(await requestJson<unknown>(baseUrls, "/v1/me/activation/events", { method: "POST", token, organizationId: orgId, body: event }));
@@ -3300,21 +3041,18 @@ export function createDenClient(options: {
       }
     },
 
-    /** The computers the member can reach through OpenWork. */
     async listRemoteDevices(orgId: string): Promise<RemoteDevice[]> {
       return remoteDeviceListResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices", {
         method: "GET", token, organizationId: orgId,
       })).devices;
     },
 
-    /** One computer with its 20 most recent events, newest first. */
     async getRemoteDevice(orgId: string, deviceId: string): Promise<RemoteDeviceDetailResponse> {
       return remoteDeviceDetailResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
         method: "GET", token, organizationId: orgId,
       }));
     },
 
-    /** Adds a virtual computer by hand. 409 `remote_device_exists`; 403 when `shared` needs a permission the member lacks. */
     async registerRemoteDevice(orgId: string, input: RemoteDeviceRegisterRequest): Promise<RemoteDevice> {
       return remoteDeviceResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices", {
         method: "POST", token, organizationId: orgId, body: input,
@@ -3327,34 +3065,24 @@ export function createDenClient(options: {
       })).device;
     },
 
-    /**
-     * Disconnects one of the member's own signed-in desktops: it takes no tasks and shares no
-     * sessions until someone signs in on it again. `signedOut` says whether OpenWork there was signed out too.
-     */
     async disconnectRemoteDevice(orgId: string, deviceId: string): Promise<RemoteDeviceDisconnectResponse> {
       return remoteDeviceDisconnectResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}/disconnect`, {
         method: "POST", token, organizationId: orgId, body: {},
       }));
     },
 
-    /** Takes a computer off the list. The computer itself keeps running. */
     async removeRemoteDevice(orgId: string, deviceId: string): Promise<void> {
       await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
         method: "DELETE", token, organizationId: orgId,
       });
     },
 
-    /**
-     * This desktop reports itself and how its computer use is doing. A background
-     * heartbeat: a 429 carries `retryAfterSeconds`, and no failure is a connection problem.
-     */
     async reportThisComputer(orgId: string, report: RemoteDeviceDesktopReport): Promise<RemoteDeviceDesktopReportResponse> {
       return remoteDeviceDesktopReportResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices/this-computer", {
         method: "PUT", token, organizationId: orgId, body: report, unobserved: true,
       }));
     },
 
-    /** Reports registry features the member just used (POST /v1/org/feature-usage); Den keeps only keys that are on for them. */
     async reportFeatureUsage(orgId: string, features: readonly string[]): Promise<void> {
       await requestJson<unknown>(baseUrls, "/v1/org/feature-usage", { method: "POST", token, organizationId: orgId, body: { features }, unobserved: true });
     },
@@ -3367,7 +3095,6 @@ export function createDenClient(options: {
       if (status.organizationId !== orgId) throw new Error("Usage response belongs to a different organization.");
       return status;
     },
-    /** The member's own past 30 days by model, token mix and usable models with prices. */
     async getGatewayMemberUsage(orgId: string) {
       if (!token || !orgId.trim()) throw new Error("Sign in and select an organization to view your usage.");
       return gatewayMemberUsageResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/gateway/usage/me?days=${GATEWAY_MEMBER_USAGE_DAYS}`, {
@@ -3466,9 +3193,6 @@ export function createDenClient(options: {
           body: {},
         });
       } catch (error) {
-        // Desktop releases can reach a Den that predates explicit recovery.
-        // Fall back to the established status request so the Retry action stays
-        // safe during staggered rollouts; newer Dens still bypass the cooldown.
         if (!(error instanceof DenApiError) || error.status !== 404) throw error;
         payload = await requestJson<unknown>(baseUrls, "/v1/cloud/instance", {
           method: "GET",
@@ -3492,9 +3216,6 @@ export function createDenClient(options: {
       const capabilities = isRecord(context) && isRecord(context.capabilities)
         ? context.capabilities
         : null;
-      // Missing means unsupported. This follows the established Den capability
-      // negotiation pattern so a newer hosted client never calls the Web billing
-      // route on an older Den deployment that does not advertise the contract.
       if (capabilities?.openworkWeb !== true) {
         return { hasAccess: false, accessSource: null, memberHasAccess: false };
       }
@@ -3516,8 +3237,6 @@ export function createDenClient(options: {
         method: "POST",
         token,
         organizationId: orgId,
-        // Tell Den this shell understands a deferred update; shells that do not
-        // opt in keep receiving the older already_current / flush_failed answers.
         body: { acceptsDeferral: true },
       });
       const result = parseCloudInstanceUpdateResult(payload);
@@ -3538,7 +3257,6 @@ export function createDenClient(options: {
       return providers;
     },
 
-    /** Never treats unsupported endpoints, auth failures, or partial parsing as absence. */
     async getModelRemovalInventory(orgId: string): Promise<ModelRemovalInventory> {
       const [legacy, gateway] = await Promise.all([
         requestJson<unknown>(baseUrls, "/v1/llm-providers", {
@@ -3565,11 +3283,6 @@ export function createDenClient(options: {
       }
     },
 
-    /**
-     * What the caller may share from this device with the organization.
-     * null when Den predates this endpoint, so
-     * the app offers nothing. Never carries a key.
-     */
     async getDeviceShareOptions(orgId: string, providerIds: readonly string[]): Promise<DeviceShareOptions | null> {
       try {
         const payload = await requestJson<unknown>(baseUrls, `/v1/inference-providers/device-share-options?providerIds=${encodeURIComponent(providerIds.join(","))}`, {
@@ -3586,7 +3299,6 @@ export function createDenClient(options: {
       }
     },
 
-    /** The member's usable Gateway providers, with models and pending sign-ins. [] on Den servers without Gateway. */
     async listOrgUsableGatewayProviders(orgId: string): Promise<DenOrgUsableGatewayProvider[]> {
       try {
         const payload = await requestJson<unknown>(baseUrls, "/v1/inference-providers?scope=usable", {
@@ -3618,11 +3330,6 @@ export function createDenClient(options: {
       });
     },
 
-    /**
-     * Null when this Den cannot report presence: desktops outlive the Den they
-     * were released against, and self-hosted Dens lag further still. Unknown
-     * presence is not an absent desktop, so callers must not warn on it.
-     */
     async getAutomationDesktopRunnerPresence(orgId: string): Promise<AutomationDesktopRunnerPresence | null> {
       try {
         return await requestJson<AutomationDesktopRunnerPresence>(baseUrls, "/v1/automation-runners/presence", {
@@ -3637,11 +3344,6 @@ export function createDenClient(options: {
       }
     },
 
-    /**
-     * The member's desktops and whether Cloud can run their Automations. Null
-     * when this Den predates the route: where an Automation can run is then
-     * unknown, and the caller keeps its fixed placement.
-     */
     async listAutomationRunners(orgId: string): Promise<AutomationExecutionTargetList | null> {
       try {
         return await requestJson<AutomationExecutionTargetList>(baseUrls, "/v1/automation-runners", {
@@ -3685,7 +3387,6 @@ export function createDenClient(options: {
       });
     },
 
-    /** Web creation surface: placement is fixed to OpenWork Cloud by the route. */
     async createCloudAutomation(orgId: string, input: CreateCloudAutomation): Promise<AutomationDetail> {
       return requestJson<AutomationDetail>(baseUrls, "/v1/cloud-automations", {
         method: "POST",
@@ -3782,7 +3483,6 @@ export function createDenClient(options: {
       );
     },
 
-    /** `executionTarget` runs this one occurrence there instead of on the Automation's own target. */
     async runAutomationNow(orgId: string, automationId: string, options: RunAutomationNow = {}): Promise<AutomationRun> {
       const payload = await requestJson<{ run: AutomationRun }>(
         baseUrls,
@@ -3831,11 +3531,6 @@ export function createDenClient(options: {
       return payload.run;
     },
 
-    /**
-     * Compact, versioned status of up to ten of the member's remote sessions.
-     * With waitMs, Den holds the call until one changes, so the timeout
-     * covers the wait.
-     */
     async getRemoteSessionStatus(orgId: string, input: RemoteSessionStatusRequest, options: { signal?: AbortSignal } = {}): Promise<RemoteSessionStatusResult> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/remote-sessions/status", {
         method: "POST", token, organizationId: orgId, body: input, signal: options.signal,
@@ -3844,22 +3539,18 @@ export function createDenClient(options: {
       return remoteSessionStatusResultSchema.parse(payload);
     },
 
-    /** A transcript page or pending receipt of one of the member's remote sessions; the caller parses it. */
     async remoteSessionAction(orgId: string, action: "read" | "send" | "stop" | "answer", input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
-      // A desktop has about 20 seconds to answer before Den returns a requestId instead.
       return requestJson<unknown>(baseUrls, `/v1/remote-sessions/${action}`, {
         method: "POST", token, organizationId: orgId, body: input, timeoutMs: 35_000, signal,
       });
     },
 
-    /** Deployment switches for people without an organization; missing keys are off. */
     async getDeploymentFeatures(options: { cache?: RequestCache } = {}): Promise<Record<string, boolean>> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/features", { method: "GET", ...(options.cache ? { cache: options.cache } : {}) });
       const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
       return Object.fromEntries(Object.entries(features).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
     },
 
-    /** Effective feature switches for the active organization (`GET /v1/org` `features`); missing keys are off. */
     async getOrgFeatures(orgId: string): Promise<Record<string, boolean>> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });
       const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
@@ -3916,11 +3607,6 @@ export function createDenClient(options: {
       return discovery;
     },
 
-    /**
-     * A connector only the caller can use until they share it, as My Library adds
-     * on the web. Den lets members add one that signs each person in with their
-     * own account, or that needs no sign-in; it refuses anything else from them.
-     */
     async createPersonalMcpConnection(
       orgId: string,
       input: { name: string; url: string; authType: "oauth" | "none" },
@@ -3977,11 +3663,6 @@ export function createDenClient(options: {
       );
     },
 
-    /**
-     * Private field in chat: a person saves an organization connection's shared key.
-     * With expectedUpdatedAt the key replaces each person's own key, only if the
-     * connection is unchanged since then.
-     */
     async saveMcpConnectionSharedKey(orgId: string, connectionId: string, apiKey: string, options: { expectedUpdatedAt?: string } = {}): Promise<void> {
       await requestJson<unknown>(
         baseUrls,
@@ -3990,7 +3671,6 @@ export function createDenClient(options: {
       );
     },
 
-    /** Private field in chat: a person saves a plugin's declared MCP server key through the plugin's own setup. */
     async savePluginConnectionKey(orgId: string, input: { pluginId: string; configObjectId: string; serverName: string; apiKey: string }): Promise<void> {
       await requestJson<unknown>(
         baseUrls,
@@ -3999,7 +3679,6 @@ export function createDenClient(options: {
       );
     },
 
-    /** Whether an AI Gateway provider's credential set already has a working shared key. Never reads the key. */
     async gatewayCredentialSetReady(orgId: string, inferenceProviderId: string, credentialSetId: string): Promise<boolean> {
       const payload = await requestJson<unknown>(
         baseUrls,
@@ -4010,7 +3689,6 @@ export function createDenClient(options: {
       return sets.some((set) => isRecord(set) && set.id === credentialSetId && set.credentialStatus === "ready");
     },
 
-    /** Private fields in chat: a person saves an AI Gateway provider's structured shared credential. */
     async saveGatewayProviderCredential(orgId: string, inferenceProviderId: string, credentialSetId: string, body: { credential: { kind: "aws_keys" | "gcp_service_account"; secret: string } } | { apiKeys: Record<string, string> }): Promise<void> {
       await requestJson<unknown>(
         baseUrls,
@@ -4019,7 +3697,6 @@ export function createDenClient(options: {
       );
     },
 
-    /** Private field in chat: a person saves an AI Gateway provider's shared API key. */
     async saveGatewayProviderKey(orgId: string, inferenceProviderId: string, credentialSetId: string, apiKey: string): Promise<void> {
       await requestJson<unknown>(
         baseUrls,
@@ -4067,7 +3744,6 @@ export function createDenClient(options: {
       return plugins;
     },
 
-    /** Changes whenever what members can use may have changed; null when this Den cannot tell. */
     async getInventoryRevision(orgId: string): Promise<string | null> {
       try {
         const payload = await requestJson<unknown>(
@@ -4098,10 +3774,6 @@ export function createDenClient(options: {
 
     getOrgPluginResolved: getPluginResolved,
 
-    /**
-     * Every plugin's contents in one request per 100 plugins. A Den without the
-     * batched route (404) gets the one-request-per-plugin route instead.
-     */
     async getOrgPluginsResolved(orgId: string, plugins: DenOrgPlugin[]): Promise<DenOrgPluginResolved[]> {
       const batches: DenOrgPlugin[][] = [];
       for (let start = 0; start < plugins.length; start += RESOLVED_PLUGINS_BATCH_SIZE) {
@@ -4134,7 +3806,6 @@ export function createDenClient(options: {
             normalizedPayloadJson?: Record<string, unknown>;
             metadata: { name: string; description?: string };
           };
-          /** Connector setup for an mcp component; Den configures the server before the plugin is returned. */
           connection?: {
             authType: "oauth" | "apikey" | "none";
             credentialMode: "per_member" | "shared";
@@ -4190,7 +3861,6 @@ export function createDenClient(options: {
       return parseDenLibraryAccessGrants(payload);
     },
 
-    /** Access for every active plugin the caller manages, in one request. */
     async listManagedPluginAccess(orgId: string): Promise<Map<string, DenLibraryAccessGrant[]>> {
       const payload = await requestJson<unknown>(
         baseUrls,
@@ -4279,11 +3949,6 @@ export function createDenClient(options: {
 
 export type DenClient = ReturnType<typeof createDenClient>;
 
-/**
- * Mint an org-scoped MCP access token for the Den cloud MCP using the
- * current desktop Den session. Returns null when signed out or no active
- * organization is selected.
- */
 export type DenMcpTokenMintContext = {
   baseUrl: string;
   authToken: string | null;

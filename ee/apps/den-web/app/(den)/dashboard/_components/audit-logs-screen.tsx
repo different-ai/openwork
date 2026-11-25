@@ -35,7 +35,6 @@ export function getAuditAccess(input: {
   return getOrgAccessFlags(input.orgContext.currentMember.role, input.orgContext.currentMember.isOwner, input.orgContext.currentMember.permissions).canViewAuditLogs ? "allowed" : "locked";
 }
 
-/** One line of state under the title, as Computers has "2 of 6 online". */
 function auditStateLine(shown: number, more: boolean, filtered: boolean) {
   if (!shown) return filtered ? "Nothing matches these filters" : "Nothing recorded yet";
   const count = `${shown.toLocaleString()}${more ? "+" : ""} ${shown === 1 && !more ? "operation" : "operations"}`;
@@ -67,7 +66,6 @@ const PERIODS = [
   { value: "720", label: "Last 30 days", hours: 720 },
 ] as const;
 
-/** Filter changes apply immediately; identifier search is debounced. */
 function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPending, onApply }: {
   filters: AuditFilters; members: readonly DenOrgMember[]; operations: AuditOperationSummary[];
   eventTypes: readonly string[]; eventTypesPending: boolean; onApply: (filters: AuditFilters) => void;
@@ -79,7 +77,6 @@ function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPend
   useEffect(() => {
     setDraft({ ...filters, from: auditLocalDate(filters.from), to: auditLocalDate(filters.to) });
     setError(null);
-    // A reset outside this toolbar (Show all operations) resets its local period too.
     if (!filters.from && !filters.to) setPeriod("");
   }, [filters]);
   const actions = [...new Set([...eventTypes, ...(draft.action ? [draft.action] : [])])].sort();
@@ -147,14 +144,12 @@ function AuditToolbar({ filters, members, operations, eventTypes, eventTypesPend
   </form>;
 }
 
-/** Who did it, in the row's lead lane: a person's initials, or a quiet mark for the system and services. */
 function AuditLead({ operation, members }: { operation: AuditOperationSummary; members: readonly DenOrgMember[] }) {
   const actor = operation.initiatingActor;
   if (actor.type === "user" && actor.id) return <PersonLead name={auditActorLabel(actor, members, operation.origin)} />;
   return <RowTile icon={actor.type === "service" ? Plug : Cog} />;
 }
 
-/** Lanes of the audit list, as wide as the matching Computers lanes. */
 const AUDIT_LANE = { result: "flex w-[120px] @md:w-40", origin: "hidden w-28 @3xl:block", time: "hidden w-24 @2xl:block" } as const;
 
 function AuditCompactOperations({ operations, scope, members, expanded, onExpand, onAccessError }: {
@@ -202,7 +197,6 @@ function AuditCompactOperations({ operations, scope, members, expanded, onExpand
 
 export function AuditLogsContent({ scope, members, captureIncluded }: {
   scope: AuditScope; members: readonly DenOrgMember[];
-  /** `entitlements.auditLogs`: new activity is recorded. Only used for the feature intro. */
   captureIncluded: boolean;
 }) {
   const client = useQueryClient();
@@ -218,8 +212,6 @@ export function AuditLogsContent({ scope, members, captureIncluded }: {
   const applyFilters = useCallback((next: AuditFilters) => {
     setExpanded(null); setFilters(next);
   }, []);
-  // Feature intro: full screen while nothing has been kept, banner when history
-  // exists but the plan no longer records new activity.
   const intro = useFeatureIntro("audit-logs", auditLogsIntroFacts({ included: captureIncluded, filters, operations: query.data ? operations : undefined }));
   if (accessError) return <AuditPage><AuditLocked error={accessError}>
     <DenButton variant="secondary" disabled={refreshing} onClick={() => {

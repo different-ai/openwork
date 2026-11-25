@@ -6,30 +6,19 @@ import { Button } from "@/components/ui/button"
 import { t } from "@/i18n"
 import { cn } from "@/lib/utils"
 
-/** What the person needs to know about one agent, in the order the header reports it. */
 export type AgentTrackerKind = "attention" | "working" | "error" | "done" | "stopped"
 
-/** A word other than the plain "Working" that the status lane shows while an agent works. */
 export type AgentTrackerWorkingNote = "retrying" | "reconnecting" | "starting"
 
 export type AgentTrackerStatus = {
   kind: AgentTrackerKind
-  /** Elapsed time while working, e.g. "1m 30s"; null when it is not known. */
   elapsed: string | null
-  /** Shown instead of the time while working. */
   workingNote?: AgentTrackerWorkingNote | null
-  /** What the agent waits for while kind is attention. */
   waitingFor?: "permission" | "question" | null
   stopping?: boolean
   shimmer?: boolean
 }
 
-/**
- * The one word (or time) a row shows. Local helpers and tasks on other
- * computers use the same words, so the list reads as one list. While an agent
- * works only its time shows, since the header already says how many work;
- * "Working" stays for screen readers.
- */
 export function agentTrackerStatusText(status: AgentTrackerStatus): { visible: string; spoken: string | null } {
   if (status.stopping) return { visible: t("session.subagent_tracker_stopping"), spoken: null }
   switch (status.kind) {
@@ -53,28 +42,17 @@ export function agentTrackerStatusText(status: AgentTrackerStatus): { visible: s
 
 type AgentTrackerRowProps = {
   id: string
-  /** Agent name, or the computer a remote task runs on. */
   name: string
   task: string
   status: AgentTrackerStatus
-  /** Opens the agent's chat; also what a click on the name or task does. */
   onOpen?: () => void
   openLabel: string
   onStop?: () => void
   stopLabel: string
-  /** Shown while the agent needs the person; defaults to opening it. */
   onReview?: () => void
-  /** Extra data attributes the row's callers and tests read. */
   rowAttributes?: HTMLAttributes<HTMLDivElement> & Record<`data-${string}`, string | undefined>
 }
 
-/**
- * One line in the composer's Agents list, for a local helper or a task on
- * another computer alike (DESIGN.md OW-LIST): name and task on the left edge
- * the composer's text uses, then the status word, then a fixed action lane.
- * Stop and Open appear on hover or focus so idle rows stay quiet; Review stays
- * visible while the agent needs the person. Colour marks only the word (V2).
- */
 export function AgentTrackerRow(props: AgentTrackerRowProps) {
   const { status } = props
   const text = agentTrackerStatusText(status)
@@ -91,8 +69,6 @@ export function AgentTrackerRow(props: AgentTrackerRowProps) {
       data-subagent-tracker-kind={status.kind}
       className="group/row mx-2 flex h-9 min-w-0 items-center gap-3 rounded-lg px-2 text-[13px] transition-colors hover:bg-gray-2 focus-within:bg-gray-2"
     >
-      {/* The name and task open the agent too, like Open does. Open stays
-          the keyboard and screen-reader target, so this is pointer-only. */}
       {props.onOpen ? (
         <button
           type="button"
@@ -130,7 +106,6 @@ export function AgentTrackerRow(props: AgentTrackerRowProps) {
             {t("session.subagent_tracker_review")}
           </Button>
         ) : null}
-        {/* Hidden, not removed, until hover or focus, so the lane keeps its width and keyboard order. */}
         <span className={cn("flex items-center gap-0.5", review ? "hidden" : "opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 [@media(hover:none)]:opacity-100")}>
           {props.onStop ? (
             <Button

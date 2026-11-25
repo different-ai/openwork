@@ -33,7 +33,6 @@ export function lowStorageCleanedUp(status: OpenworkDiskSpace): boolean {
   return status.level === "ok" && status.freeBytes !== null && status.freeBytes >= LOW_STORAGE_CLEANED_UP_BYTES
 }
 
-/** Reads a stored announcement defensively: anything unexpected reads as never announced. */
 export function parseLowStorageAnnouncement(raw: string | null): LowStorageAnnouncement | null {
   if (!raw) return null
   try {

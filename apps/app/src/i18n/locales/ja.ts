@@ -1,7 +1,3 @@
-/**
- * Japanese translations (日本語)
- */
-
 export default {
   "artifact.office_empty": "このファイルには読み取れるテキストがありません。元のファイルは別のアプリで開いてください。",
   "artifact.office_empty_slide": "このスライドには読み取れるテキストがありません。",

@@ -249,7 +249,6 @@ function parseAccessGrant(entry: unknown): MarketplaceAccessGrant | null {
   };
 }
 
-/** Who a collection is shared with (active grants). Shared by `useMarketplaceAccess` and lists of collections. */
 export function marketplaceAccessQueryOptions(marketplaceId: string | null) {
   return {
     enabled: Boolean(marketplaceId),

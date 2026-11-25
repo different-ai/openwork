@@ -1,4 +1,3 @@
-// Names used by `::highlight()` in `app/index.css`.
 const MATCHES = "settings-find";
 const CURRENT_MATCH = "settings-find-current";
 
@@ -7,7 +6,6 @@ function highlightRegistry() {
   return CSS.highlights ?? null;
 }
 
-/** Paints every match, and the one being visited more strongly. */
 export function paintFindHighlights(ranges: Range[], current: Range | null) {
   const registry = highlightRegistry();
   if (!registry) return;

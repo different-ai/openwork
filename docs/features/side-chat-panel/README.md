@@ -1,7 +1,7 @@
-# A side chat's pages show beside it (`sideChatPanel`)
+# A side chat's pages show beside it
 
-- **Feature key:** `sideChatPanel`
-- **Deployments:** cloud and self-hosted (`everywhere`), off by default
+- **Status:** generally available; `sideChatPanel` was retired in November 2026.
+- **Deployments:** cloud and self-hosted
 - **Author:** @reachjalil
 
 ## What people get
@@ -10,11 +10,6 @@ The browser and files panel follows the chat you are working in. When the
 chat in the split pane opens a page or a file, the panel shows it beside that
 chat. Click back into the main chat and the panel shows the main chat's pages
 again.
-
-With the feature off, the panel only ever shows the main chat's pages. A page
-opened from the split pane loads out of sight until that chat is moved into
-its own chat. A file opened from the split pane shows in the main chat's
-panel, so the click never opens an empty panel.
 
 ## Rules
 
@@ -28,7 +23,13 @@ panel, so the click never opens an empty panel.
 
 - `apps/app/src/react-app/domains/session/chat/workbench-panel-session.ts`
   picks the conversation the panel shows.
-- `apps/app/src/react-app/domains/session/chat/session-page.tsx` reads the
-  flag and uses that conversation for the panel, its tabs, and the
+- `apps/app/src/react-app/domains/session/chat/session-page.tsx` uses that
+  conversation for the panel, its tabs, and the
   conversation the desktop treats as on screen.
 - Test: `apps/app/tests/workbench-panel-session.test.ts`.
+
+## Older desktop builds
+
+Desktop builds that still read `sideChatPanel` get a fixed `true` from the
+features response, so their panel follows the side chat too. Stored overrides
+and operator locks for the key are ignored.

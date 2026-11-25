@@ -1,5 +1,4 @@
 import { NativeEventError } from "../native-mcp-events/protocol.js"
-import { markFeaturesUsed } from "../feature-usage.js"
 import { appLogger } from "../observability/logger.js"
 import { eventAccess, EventAccessError, requireEventThread } from "./context.js"
 import { eventPrompt, deliverySchema } from "./protocol.js"
@@ -22,20 +21,18 @@ export async function dispatchMcpEvent() {
       else await native.readNativeSource(subscription, subscription.name, JSON.parse(subscription.arguments), subscription.sessionId)
     } else if (!connections.some((connection) => connection.id === subscription.connectionId)) throw new EventAccessError("Connection no longer available")
     const { runner } = await requireEventThread(subscription, scopes)
-    const delivered = await handOffEvent(receipt.id, subscription, async () => {
+    await handOffEvent(receipt.id, subscription, async () => {
       const sent = await runner.sendTurn({ organizationId: subscription.organizationId, userId: subscription.userId }, {
         sessionId: subscription.sessionId, messageId: receipt.id,
         prompt: eventPrompt(subscription.instruction, subscription, event), model: subscription.model, execution: "steps",
       })
       if (!sent.ok) throw new Error("Runner did not accept event")
     }, "type" in event && event.type === "terminated")
-    if (delivered) markFeaturesUsed({ organizationId: subscription.organizationId, memberId: subscription.memberId, keys: ["mcpThreadEvents"] })
   } catch (error) {
     if (error instanceof EventAccessError) {
       await stopSubscription(receipt.subscriptionId)
       await finishEvent(receipt.id, "skipped")
     } else if (error instanceof NativeEventError) {
-      // The publisher sends its termination notice separately; never retry a now-forbidden occurrence.
       await finishEvent(receipt.id, "skipped")
     } else {
       await retryEvent(receipt.id, receipt.attempts)
@@ -52,7 +49,7 @@ export function startMcpEventWorker() {
     if (running || stopped) return
     running = (async () => {
       if (Date.now() - lastPrune > 60_000) { await pruneEvents(); lastPrune = Date.now() }
-      for (let i = 0; i < 20 && !stopped && await dispatchMcpEvent(); i++) { /* Bounded drain, leases shared by replicas. */ }
+      for (let i = 0; i < 20 && !stopped && await dispatchMcpEvent(); i++) {}
     })().catch(() => { appLogger.warn("MCP event queue unavailable", { component: "mcp_events" }) }).finally(() => { running = null })
   }
   const timer = setInterval(tick, 1000)

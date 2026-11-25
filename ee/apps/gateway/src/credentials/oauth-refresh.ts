@@ -1,9 +1,3 @@
-// Member credential renewal for the Gateway: Google (Vertex), Microsoft Entra ID
-// (Foundry, and LiteLLM proxies that accept sign-in tokens) and AWS IAM Identity
-// Center (Bedrock) access tokens are renewed with the member's stored refresh
-// token, near expiry, by exactly one Gateway replica at a time. What differs per
-// upstream (the token request and its response) is a RefreshProtocol; locking,
-// re-authorization and compare-and-set are shared.
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderCredentialTable, GatewayProviderTable, MemberTable } from "@openwork-ee/den-db"
 import { AwsSsoError, refreshAwsSsoToken, type FetchLike, createInferenceEgressFetch, classifyMicrosoftTokenError, isMicrosoftAccessTokenForApp, microsoftRefreshScopes, microsoftTokenUrl, readMicrosoftTokens } from "@openwork-ee/gateway-upstreams"
@@ -29,11 +23,6 @@ type CredentialRow = typeof GatewayProviderCredentialTable.$inferSelect
 type CredentialSnapshot = Pick<CredentialRow, "id" | "secret" | "expires_at" | "status"> & Partial<Pick<CredentialRow, "last_error">> & { kind: RefreshableCredentialKind }
 export type OauthCredentialRow = CredentialSnapshot & Pick<CredentialRow,
   "gateway_provider_id" | "credential_set_id" | "organization_id" | "subject" | "org_membership_id" | "updated_at" | "last_refreshed_at" | "refreshing_until"> & { secret_revision: string }
-/**
- * The member credential set as the request selected it. Its sign-in configuration must not have changed.
- * `api_scope` is the API scope the provider configures for members' Microsoft access tokens (a LiteLLM
- * provider with member Entra sign-in); null or absent is Azure Cognitive Services (Microsoft Foundry).
- */
 export type OauthClient = { id: string; oauth_client_id: string | null; oauth_client_secret: string | null; oauth_tenant_id?: string | null; api_scope?: string | null }
 export type RefreshScope = { credentialId: CredentialRow["id"]; provider: OauthClient; subject: string; authorization: GatewayCredentialLookup }
 export type RefreshLock = { scope: RefreshScope; credential: OauthCredentialRow }
@@ -45,9 +34,17 @@ export type OauthRefreshStore = {
   recordRefreshFailure(input: { lock: RefreshLock; error: string | null; permanent: boolean; now: Date }): Promise<boolean>
 }
 
+export type GoogleRenewalReason = "invalid_rapt" | "invalid_grant"
+
+export function googleRenewalReason(row: Pick<CredentialRow, "kind" | "status"> & { last_error?: string | null }): { googleReason?: GoogleRenewalReason } {
+  if (row.kind === "oauth_google" && row.status === "refresh_failed"
+    && (row.last_error === "invalid_rapt" || row.last_error === "invalid_grant")) return { googleReason: row.last_error }
+  return {}
+}
+
 export type OauthRefreshOutcome =
   | { kind: "refreshed"; credential: OauthCredentialRow }
-  | { kind: "auth_required" }
+  | { kind: "auth_required"; googleReason?: GoogleRenewalReason }
   | { kind: "configuration_required" }
   | { kind: "retry"; reason: "refresh_busy" | "refresh_unavailable" | "credential_changed" }
 
@@ -60,19 +57,16 @@ export type RefreshMemberToken = (input: {
   clock?: () => Date
 }) => Promise<OauthRefreshOutcome>
 
-/** Provider IDs whose member sets may hold each refreshable kind. */
 const providerIdsByKind: Record<RefreshableCredentialKind, readonly string[]> = {
   oauth_google: ["google-vertex", "google-vertex-anthropic"],
   oauth_azure: ["microsoft-foundry"],
   aws_sso: ["amazon-bedrock", "amazon-bedrock-mantle"],
 }
 
-/** A LiteLLM provider holds members' Entra ID tokens only in its member Microsoft Entra sign-in mode. */
 export function providerHoldsRefreshableKind(provider: { provider_id: string; settings: unknown }, kind: RefreshableCredentialKind) {
   return providerIdsByKind[kind].includes(provider.provider_id) || (kind === "oauth_azure" && liteLlmEntraScope(provider) !== null)
 }
 
-/** An invalid_client from Google or Entra ID is an administrator's app registration to repair; AWS clients are per sign-in. */
 export function isAdminRepairableKind(kind: GatewayProviderCredentialKind) {
   return kind === "oauth_google" || kind === "oauth_azure"
 }
@@ -136,7 +130,6 @@ const refreshMicrosoft: RefreshProtocol = async ({ secret, client, fetchToken })
   if (parsed.kind !== "oauth_azure" || !refreshToken || refreshToken.length > 32_768 || !/^[\x21-\x7e]+$/.test(refreshToken)) return { kind: "failed", error: "invalid_token_secret", permanent: true }
   const identity = parsed.token.microsoftIdentity
   const apiScope = client.api_scope ?? null
-  // The token belongs to the tenant, app and API scope it was issued for; a changed configuration is signed in to again, not refreshed.
   if (!identity || identity.tenantId.toLowerCase() !== client.oauth_tenant_id?.toLowerCase() || identity.clientId !== client.oauth_client_id
     || (identity.scope ?? null) !== apiScope) {
     return { kind: "failed", error: "invalid_token_secret", permanent: true }
@@ -158,9 +151,7 @@ const refreshMicrosoft: RefreshProtocol = async ({ secret, client, fetchToken })
   }
   const tokens = readMicrosoftTokens(body, apiScope)
   if (!tokens) return { kind: "failed", error: "invalid_token_response", permanent: false }
-  // A provider's own API scope: keep only a token for its app registration, never one for another Microsoft API.
   if (apiScope !== null && !isMicrosoftAccessTokenForApp(tokens.accessToken, client.oauth_client_id ?? "")) return { kind: "failed", error: "invalid_token_response", permanent: true }
-  // Entra ID rotates refresh tokens: always keep the newest.
   return { kind: "refreshed", expiresIn: tokens.expiresIn, secret: JSON.stringify({
     accessToken: tokens.accessToken, refreshToken: tokens.refreshToken ?? refreshToken, tokenType: "Bearer", microsoftIdentity: identity,
   }) }
@@ -170,7 +161,6 @@ const refreshAwsSso: RefreshProtocol = async ({ secret, fetchToken, requestedAt 
   const parsed = parseGatewayProviderSecret("aws_sso", secret)
   if (parsed.kind !== "aws_sso") return { kind: "failed", error: "invalid_token_secret", permanent: true }
   const value = parsed.awsSso
-  // The OIDC client registered at sign-in expires (90 days); its refresh token with it.
   if (value.clientSecretExpiresAt * 1000 <= requestedAt.getTime()) return { kind: "failed", error: "client_expired", permanent: true }
   try {
     const tokens = await refreshAwsSsoToken({ region: value.sso.region, client: { clientId: value.clientId, clientSecret: value.clientSecret, clientSecretExpiresAt: value.clientSecretExpiresAt },
@@ -179,7 +169,6 @@ const refreshAwsSso: RefreshProtocol = async ({ secret, fetchToken, requestedAt 
   } catch (error) {
     if (!(error instanceof AwsSsoError) || error.transient) return unavailable
     if (error.code === "aws_sso_invalid_response") return { kind: "failed", error: "invalid_token_response", permanent: false }
-    // invalid_grant, expired or a per-sign-in client AWS no longer accepts: the person signs in again.
     return { kind: "failed", error: error.code === "aws_sso_invalid_client" ? "client_expired" : "invalid_grant", permanent: true }
   }
 }
@@ -190,20 +179,16 @@ const protocols: Record<RefreshableCredentialKind, RefreshProtocol> = {
   aws_sso: refreshAwsSso,
 }
 
-/** The stored access token expires within the refresh window and a refresh token exists. */
 export function needsOauthRefresh(credential: { expires_at: Date | null }, hasRefreshToken: boolean, now: Date) {
   return credential.expires_at !== null && hasRefreshToken
     && credential.expires_at.getTime() - now.getTime() <= REFRESH_WINDOW_MS
 }
 
-/** Whether a parsed member secret carries a refresh token. */
 export function hasRefreshToken(secret: ReturnType<typeof parseGatewayProviderSecret>) {
   return secret.kind === "aws_sso" ? Boolean(secret.awsSso.refreshToken)
     : secret.kind === "oauth_google" || secret.kind === "oauth_azure" ? Boolean(secret.token.refreshToken) : false
 }
 
-// Secret comparison happens on decrypted values: the encrypted column uses
-// randomized ciphertext and cannot be compared with eq(). Writes compare its hash.
 export function sameOauthVersion(a: OauthCredentialRow, b: OauthCredentialRow) {
   return a.id === b.id && a.gateway_provider_id === b.gateway_provider_id && a.credential_set_id === b.credential_set_id
     && a.organization_id === b.organization_id && a.subject === b.subject
@@ -227,7 +212,6 @@ function canReuseOauthToken(credential: OauthCredentialRow, now: Date) {
 }
 
 export function createOauthRefresher(deps: {
-  /** Explicit transport injection is for offline tests; production should omit it. */
   tokenFetch?: typeof fetch
   store: OauthRefreshStore
   sleep?: (ms: number) => Promise<void>
@@ -244,13 +228,13 @@ export function createOauthRefresher(deps: {
     const clock = input.clock ?? (() => new Date(input.now.getTime() + Math.floor(performance.now() - started)))
     const scope = { credentialId: input.credential.id, provider: input.provider, subject: input.subject, authorization: input.authorization }
     const row = await deps.store.reloadCredential(scope)
-    if (!row || row.status !== "active") return { kind: "auth_required" }
+    if (!row || row.status !== "active") return { kind: "auth_required", ...(row && googleRenewalReason(row)) }
     if (isAdminRepairableKind(row.kind) && row.last_error === "invalid_client") return { kind: "configuration_required" }
     if (!row.expires_at || !Number.isFinite(row.expires_at.getTime())) return { kind: "auth_required" }
     if (canReuseOauthToken(row, clock())) return { kind: "refreshed", credential: row }
     const latest = async (reason: "refresh_busy" | "refresh_unavailable" | "credential_changed"): Promise<OauthRefreshOutcome> => {
       const winner = await deps.store.reloadCredential(scope)
-      if (!winner || winner.status !== "active") return { kind: "auth_required" }
+      if (!winner || winner.status !== "active") return { kind: "auth_required", ...(winner && googleRenewalReason(winner)) }
       if (isAdminRepairableKind(winner.kind) && winner.last_error === "invalid_client") return { kind: "configuration_required" }
       if (!winner.expires_at || !Number.isFinite(winner.expires_at.getTime())) return { kind: "auth_required" }
       const now = clock()
@@ -260,7 +244,6 @@ export function createOauthRefresher(deps: {
       if (canReuseOauthToken(winner, now) || (refreshed && winner.expires_at > now)) return { kind: "refreshed", credential: winner }
       return { kind: "retry", reason }
     }
-    // A delayed caller must not refresh a replacement using its old client.
     if (row.secret !== input.credential.secret) return { kind: "retry", reason: "credential_changed" }
     if (row.kind !== input.credential.kind) return { kind: "retry", reason: "credential_changed" }
     if (isAdminRepairableKind(row.kind) && (!input.provider.oauth_client_id || !input.provider.oauth_client_secret)) return { kind: "configuration_required" }
@@ -275,8 +258,6 @@ export function createOauthRefresher(deps: {
       return latest("refresh_busy")
     }
 
-    // Acquisition and HTTP are separate; re-read after acquisition and evaluate
-    // expiry again. Never send the caller's potentially obsolete refresh token.
     const current = await deps.store.reloadCredential(scope)
     if (!current || !sameOauthVersion(current, lock.credential)) return latest("credential_changed")
     let refreshable: boolean
@@ -310,8 +291,6 @@ export function createOauthRefresher(deps: {
     await deps.store.saveRefreshedToken({ lock, secret, expiresAt, now: clock() })
     return latest("credential_changed")
   }
-  // Database contention/outages are retryable too; never expose a driver error
-  // (which may contain SQL parameters) or turn infrastructure failure into reauth.
   return (input) => refresh(input).catch((): OauthRefreshOutcome => ({ kind: "retry", reason: "refresh_unavailable" }))
 }
 
@@ -325,13 +304,6 @@ function affectedRows(result: unknown): number {
   return 0
 }
 
-// No row locks anywhere in this store. Authorization is re-checked with plain reads
-// at each step, and every credential write is a compare-and-set against the exact
-// version that was read (updated_at, refreshing_until, active status and the stored
-// ciphertext hash). A concurrent refresh, Den revocation, re-authorization or token
-// replacement changes one of those, so the stale write matches no row. A Den access
-// change that lands between the check and the write is caught by the per-request
-// access check on the next call.
 export function createDbOauthRefreshStore(db: Db): OauthRefreshStore {
   const table = GatewayProviderCredentialTable
   const where = (scope: RefreshScope) => and(eq(table.id, scope.credentialId),
@@ -354,8 +326,6 @@ export function createDbOauthRefreshStore(db: Db): OauthRefreshStore {
       || set.oauth_client_id !== scope.provider.oauth_client_id || set.oauth_client_secret !== scope.provider.oauth_client_secret
       || (set.oauth_tenant_id ?? null) !== (scope.provider.oauth_tenant_id ?? null)
       || liteLlmEntraScope(provider) !== (scope.provider.api_scope ?? null)) return null
-    // Hash stored ciphertext, not a re-encrypted SQL parameter. Replacing even
-    // identical plaintext in the same millisecond gets a different revision.
     const [result] = await db.select({ credential: table, secret_revision: sql<string>`sha2(${table.secret}, 256)` })
       .from(table).where(where(scope))
     const row = result?.credential
@@ -363,7 +333,6 @@ export function createDbOauthRefreshStore(db: Db): OauthRefreshStore {
     return { ...row, kind: row.kind, secret_revision: result.secret_revision }
   }
 
-  /** Write only if the row is still exactly `expected`; false when anything changed since it was read. */
   async function writeIfUnchanged(scope: RefreshScope, expected: OauthCredentialRow, values: Partial<typeof table.$inferInsert>) {
     const result = await db.update(table).set(values).where(and(where(scope),
       eq(table.status, "active"),
@@ -383,7 +352,6 @@ export function createDbOauthRefreshStore(db: Db): OauthRefreshStore {
       if (!row || (isAdminRepairableKind(row.kind) && row.last_error === "invalid_client") || !sameOauthVersion(row, input.credential)
         || (row.refreshing_until && row.refreshing_until.getTime() >= input.now.getTime())) return null
       const updated_at = nextVersion(row, input.now)
-      // Two callers can pass the check above; only one compare-and-set matches.
       if (!await writeIfUnchanged(input.scope, row, { refreshing_until: input.until, updated_at })) return null
       return { scope: input.scope, credential: { ...row, refreshing_until: input.until, updated_at } }
     },

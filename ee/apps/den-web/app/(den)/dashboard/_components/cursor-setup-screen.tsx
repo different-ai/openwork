@@ -9,11 +9,6 @@ import { CursorSteps } from "./gateway-tool-setup";
 import { ItemHeader, ItemPage } from "./item-header";
 import { ItemPanel } from "./item-list";
 
-/**
- * Library › Models › Set up Cursor: what to paste into Cursor's
- * settings, with every model's Cursor name to copy. The key itself is only shown when it is created,
- * so this page links to creating one.
- */
 export function CursorSetupScreen() {
   const { orgSlug } = useOrgDashboard();
   const keys = useMyGatewayApiKeys();

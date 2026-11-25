@@ -23,15 +23,9 @@ import {
 } from "./outcomes.js"
 import { featureOutcomeReader } from "./readers.js"
 
-/**
- * /admin › Features, organized by feature across every organization: who has it on and uses it (feature_usage and
- * the feature state), what it did (its outcome reader, when it has one) and one health state.
- */
-
 export type FeatureOutcomeRangeKey = "7d" | "30d"
 export const FEATURE_OUTCOME_RANGES: Record<FeatureOutcomeRangeKey, number> = { "7d": 7, "30d": 30 }
 
-/** By-organization rows in one feature's detail; the busiest first. */
 const ORGANIZATION_ROWS_MAX = 200
 
 export type FeatureAdoption = { organizationsOn: number; membersUsing: number; lastUsedAt: Date | null }
@@ -42,10 +36,6 @@ export type FeatureReport = FeatureAdoption & {
   outcomes: FeatureOutcomeSummary | null
 }
 
-/**
- * Organizations the feature is on for, without reading each one: off everywhere or locked decides it for all, else
- * the deployment-wide state minus the organizations that override it.
- */
 export function organizationsWithFeatureOn(input: {
   key: FeatureKey
   environment: FeatureEnvironment
@@ -78,7 +68,6 @@ async function readOutcomes(key: FeatureKey, range: FeatureOutcomeRange): Promis
   return reader ? summarizeFeatureOutcomes(await reader(range), range) : null
 }
 
-/** Every feature on this deployment, in registry order. */
 export async function readFeatureReports(rangeKey: FeatureOutcomeRangeKey, now = new Date()) {
   const range = featureOutcomeRange(FEATURE_OUTCOME_RANGES[rangeKey], now)
   const keys = availableFeatureKeys(env.features.deployment)
@@ -113,7 +102,6 @@ export type FeatureOrganizationReport = {
   outcomes: FeatureOutcomeTotals | null
 }
 
-/** One feature with its by-organization breakdown: every organization that used it, has outcomes or overrides it. */
 export async function readFeatureReport(key: FeatureKey, rangeKey: FeatureOutcomeRangeKey, now = new Date()) {
   const range = featureOutcomeRange(FEATURE_OUTCOME_RANGES[rangeKey], now)
   const [organizations, rollouts, overrides, usage, outcomes] = await Promise.all([
@@ -136,7 +124,6 @@ export async function readFeatureReport(key: FeatureKey, rangeKey: FeatureOutcom
   }
   const byOrganization: FeatureOrganizationReport[] = ids.flatMap((organizationId) => {
     const name = names.get(organizationId)
-    // Usage and outcomes of a deleted organization are deleted with it; a leftover row is not shown.
     if (name === undefined) return []
     const override = overrides.get(organizationId)
     const used = adoptionOf(usage.filter((row) => row.organizationId === organizationId))

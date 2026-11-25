@@ -1,12 +1,5 @@
 import { z } from "zod"
 
-/**
- * The admin Computer fleet page: the sandboxes cloud conversations use as computers, as their providers report them
- * now, whether they run through the sandbox gateway (Differently) or on the direct provider (see
- * ee/apps/den-api/src/computer-fleet). States, sizes, times, provider ids and the owning organization's name only:
- * nothing a computer holds, and no credentials.
- */
-
 /** At most this many computers are listed, those needing attention first; `listTruncated` says when there are more. */
 export const COMPUTER_FLEET_LIST_LIMIT = 500
 /** At most this many organizations are offered to filter by. */
@@ -60,16 +53,13 @@ export const computerFleetSourceKindSchema = z.enum(["gateway", "direct"])
 export type ComputerFleetSourceKind = z.infer<typeof computerFleetSourceKindSchema>
 
 export const computerFleetSandboxSchema = z.object({
-  /** The provider's id for the sandbox, to look it up there. */
   id: z.string().min(1).max(200),
   source: computerFleetSourceKindSchema,
   provider: z.string().min(1).max(40),
-  /** Gateway only: the pool it was placed on and the backend that runs it. */
   pool: text(200),
   backend: text(200),
   region: text(200),
   state: computerFleetStateSchema,
-  /** The provider's own word for the state, and its reason when it gave one. */
   status: z.string().min(1).max(40),
   statusReason: text(300),
   attention: computerFleetAttentionSchema.nullable(),
@@ -77,20 +67,15 @@ export const computerFleetSandboxSchema = z.object({
   memoryMb: count.nullable(),
   diskGb: count.nullable(),
   createdAt: moment,
-  /** When its provider last changed its record: for a computer mid-step, about when the step began. */
   lastChangedAt: moment,
   startedAt: moment,
   pausedAt: moment,
   lastActivityAt: moment,
   expiresAt: moment,
   endedAt: moment,
-  /** The organization whose conversation it belongs to, when Den knows the conversation. */
   organization: z.object({ id: z.string().min(1).max(64), name: z.string().max(200) }).nullable(),
-  /** What it was built from: the gateway's template or snapshot, or the provider's snapshot. */
   image: text(200).default(null),
-  /** Whether that is what the runner builds new computers from now; null when either is not known. */
   imageCurrent: z.boolean().nullable().default(null),
-  /** Seconds it has spent running over its whole life, where the provider counts them. */
   runSeconds: count.nullable().default(null),
 })
 export type ComputerFleetSandbox = z.infer<typeof computerFleetSandboxSchema>
@@ -98,9 +83,7 @@ export type ComputerFleetSandbox = z.infer<typeof computerFleetSandboxSchema>
 /** How the runner treats one source's computers: what new ones are built from, and when it pauses and deletes them. */
 export const computerFleetSettingsSchema = z.object({
   image: text(200),
-  /** Seconds after a computer's last use before the runner pauses it. */
   idlePauseSeconds: count,
-  /** Days a computer is kept unused before it is deleted; ignored when `persistent`. */
   keepDays: count,
   persistent: z.boolean(),
 })
@@ -111,7 +94,6 @@ export const computerFleetPoolSchema = z.object({
   backend: text(200),
   region: text(200),
   enabled: z.boolean(),
-  /** The gateway's word: `healthy`, `degraded`, `unhealthy`. */
   health: z.string().max(40),
 })
 export type ComputerFleetPool = z.infer<typeof computerFleetPoolSchema>
@@ -119,16 +101,11 @@ export type ComputerFleetPool = z.infer<typeof computerFleetPoolSchema>
 export const computerFleetSourceSchema = z.object({
   source: computerFleetSourceKindSchema,
   provider: z.string().min(1).max(40),
-  /** `unsupported`: the runner uses this provider but cannot list its sandboxes. */
   status: z.enum(["ok", "unreachable", "unsupported"]),
-  /** Why it could not be read (`timeout`, `http_503`); null when it was. */
   error: text(40),
-  /** The provider holds more sandboxes than the runner read. */
   truncated: z.boolean(),
   pools: z.array(computerFleetPoolSchema).max(64),
-  /** Computers at this source, by what they are doing. */
   counts: z.object({ total: count, running: count, paused: count, attention: count }),
-  /** Null from a runner that does not say. */
   settings: computerFleetSettingsSchema.nullable().default(null),
 })
 export type ComputerFleetSource = z.infer<typeof computerFleetSourceSchema>
@@ -169,18 +146,13 @@ export type ComputerFleetTotals = z.infer<typeof computerFleetTotalsSchema>
 export const adminComputerFleetSchema = z.object({
   status: computerFleetStatusSchema,
   generatedAt: z.string().datetime(),
-  /** Why the runner's list could not be read (`http_404`: a runner from before it had one); null when it was. */
   runnerError: text(40),
   sources: z.array(computerFleetSourceSchema).max(8),
-  /** Every computer, or one organization's when the request named one. Always the whole fleet's in `totals`. */
   sandboxes: z.array(computerFleetSandboxSchema).max(COMPUTER_FLEET_LIST_LIMIT),
   listTruncated: z.boolean(),
   totals: computerFleetTotalsSchema,
-  /** The whole fleet's computers needing a look, by why; null from a server that does not say. */
   attentionCounts: computerFleetAttentionCountsSchema.nullable().default(null),
-  /** The organizations that have computers, most computers first, for the page's filter. */
   organizations: z.array(z.object({ id: z.string().min(1).max(64), name: z.string().max(200), computers: count })).max(COMPUTER_FLEET_ORGANIZATION_LIMIT).default([]),
-  /** Computers whose conversation Den does not know, so no organization can be named. */
   unknownOrganization: count.default(0),
 }).meta({ ref: "AdminComputerFleet" })
 export type AdminComputerFleet = z.infer<typeof adminComputerFleetSchema>
@@ -191,12 +163,9 @@ export const COMPUTER_FLEET_UNKNOWN_ORGANIZATION = "unknown"
 /** A lifecycle event of one computer. Never a command, a path or anything else a conversation did on it. */
 export const computerFleetEventSchema = z.object({
   at: moment,
-  /** `provider`: the sandbox gateway's own record. `den`: what Workbot's server reported to Den. */
   origin: z.enum(["provider", "den"]),
-  /** A fixed name: the gateway's action (`idled`, `woke`, `running`), or Den's event (`viewer_opened`, `paused`). */
   type: z.string().max(60),
   level: z.enum(["info", "warning", "error"]),
-  /** Den's one plain sentence, or the gateway's details as `name: value` pairs. */
   message: z.string().max(600),
 })
 export type ComputerFleetEvent = z.infer<typeof computerFleetEventSchema>
@@ -205,7 +174,6 @@ export type ComputerFleetEvent = z.infer<typeof computerFleetEventSchema>
 export const computerFleetPlacementSchema = z.object({
   pool: text(200),
   strategy: text(200),
-  /** `placed`, `waiting` or `rejected`. */
   outcome: text(40),
   reason: text(300),
   evaluatedAt: moment,
@@ -229,51 +197,36 @@ export type ComputerFleetPlacement = z.infer<typeof computerFleetPlacementSchema
 export const adminComputerDetailSchema = z.object({
   generatedAt: z.string().datetime(),
   computer: computerFleetSandboxSchema,
-  /** The label that ties it to its conversation at the provider: `hc-` and a hash of the session id. */
   key: text(200),
-  /** Gateway only: `private` (our own pool) or `external` (a provider's). */
   trust: text(40),
-  /** How many times the gateway tried to start it. */
   attempts: count.nullable(),
-  /** Gateway only: set while it is stopped or paused for being idle; its next use wakes it. */
   idledAt: moment,
-  /** Gateway only: set while a resume waits for a free slot or for a pause to finish. */
   resumeRequestedAt: moment,
-  /** Gateway only: a paused computer that holds no pool slot until it resumes. */
   slotReleased: z.boolean().nullable(),
-  /** The provider's own rules for this computer, in seconds; null where it has none or does not say. */
   limits: z.object({
     idleTimeoutSeconds: count.nullable(),
     ttlSeconds: count.nullable(),
     maxRunSeconds: count.nullable(),
     maxPausedSeconds: count.nullable(),
     autoDeleteSeconds: count.nullable(),
-    /** Seconds it has spent running over its whole life, where the provider counts them. */
     totalRunSeconds: count.nullable(),
   }),
   profile: text(200),
   classification: text(200),
   capabilities: z.array(z.string().max(200)).max(100),
   preemptible: z.boolean().nullable(),
-  /** How the runner treats this source's computers. */
   settings: computerFleetSettingsSchema.nullable(),
   placement: computerFleetPlacementSchema.nullable(),
-  /** The conversation it belongs to, when Den knows it. Never its name or content. */
   conversation: z.object({
     sessionId: z.string().min(1).max(128),
-    /** Workbot's main chat or a side chat; null when Den has no record of which. */
     chat: z.enum(["main", "side"]).nullable(),
     member: z.object({ id: z.string().min(1).max(64), name: z.string().max(255), email: z.string().max(320) }).nullable(),
     createdAt: moment,
     lastActiveAt: moment,
-    /** When the turn now running began; null when none is. */
     activeTurnSince: moment,
   }).nullable(),
-  /** What Workbot's server last reported about it to Den: `ready`, `paused`, `setup_required`, `unavailable`. */
   reported: z.object({ state: z.string().max(24), detail: text(300), at: moment }).nullable(),
-  /** Newest first. */
   events: z.array(computerFleetEventSchema).max(COMPUTER_FLEET_EVENT_LIMIT),
-  /** Why the provider's own events are missing: `unsupported` (it keeps none) or a read code such as `http_403`. */
   providerEventsError: text(40),
 }).meta({ ref: "AdminComputerDetail" })
 export type AdminComputerDetail = z.infer<typeof adminComputerDetailSchema>
@@ -286,7 +239,6 @@ export const COMPUTER_FLEET_HISTORY_HOURS: Record<ComputerFleetHistoryRange, num
 
 /** The highest reading of the fleet in one bucket. */
 export const computerFleetHistoryBucketSchema = z.object({
-  /** Bucket start, in milliseconds since the epoch (UTC). */
   at: count,
   total: count,
   running: count,
@@ -294,7 +246,6 @@ export const computerFleetHistoryBucketSchema = z.object({
   starting: count,
   failed: count,
   attention: count,
-  /** A provider, a pool or the runner's list was down at some reading in the bucket. */
   sourceDown: z.boolean(),
 })
 export type ComputerFleetHistoryBucket = z.infer<typeof computerFleetHistoryBucketSchema>
@@ -304,7 +255,6 @@ export const adminComputerFleetHistorySchema = z.object({
   bucketMinutes: z.number().int().positive(),
   from: z.string().datetime(),
   to: z.string().datetime(),
-  /** Only buckets with a reading are listed; a gap means nothing was recorded then. */
   buckets: z.array(computerFleetHistoryBucketSchema).max(30 * 24),
 }).meta({ ref: "AdminComputerFleetHistory" })
 export type AdminComputerFleetHistory = z.infer<typeof adminComputerFleetHistorySchema>

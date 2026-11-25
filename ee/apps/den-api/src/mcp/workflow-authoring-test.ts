@@ -56,7 +56,6 @@ export const workflowAuthoringTestOutputSchema = z.object({
 export async function executeWorkflowAuthoringTest(request: unknown, context: {
   organizationId: DenTypeId<"organization">
   orgMembershipId?: DenTypeId<"member">
-  /** The Code Mode a Workflow saved from this test would run on. */
   runtime?: CodemodeRuntime
   buildTools: () => Promise<BuiltCodemodeTools>
   recordRun: (input: RecordWorkflowRunInput) => Promise<DenTypeId<"workflowRun"> | null>
@@ -98,7 +97,6 @@ export async function executeWorkflowAuthoringTest(request: unknown, context: {
       return failure("invalid_arguments", "The input does not match inputSchema.", { receiptId })
     }
   }
-  // Live and adhoc tests see the same tools; live only fixes the input to server-supplied runtime values.
   const built = await context.buildTools()
   const startedAt = new Date()
   const result = await runCodemodeScript({ code, scriptInput, readOnlyInput: mode === "live", tools: built.tools, timeoutMs: 170_000, runtime: context.runtime })

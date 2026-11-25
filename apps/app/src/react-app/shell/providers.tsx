@@ -55,11 +55,6 @@ type AppProvidersProps = {
   children: ReactNode;
 };
 
-// One provider tree for every activation state. The runtime bridges below
-// (DesktopRuntimeBoot, AutomationRunnerBridge,
-// GlobalQueueDrainerBridge) each render nothing until enterprise activation
-// completes, so AppRoot-level consumers such as DesktopUpdaterProvider always
-// find the same contexts and nothing privileged starts before activation.
 export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
   return (
     <>
@@ -90,9 +85,6 @@ export function AppProviders({ children }: AppProvidersProps) {
   hydrateOpenworkServerSettingsFromEnv();
 
   useEffect(() => {
-    // Start the dev observability forwarder. Reads the current openwork-server
-    // URL on every flush so reconnects after port changes still work. In prod
-    // builds `startDebugLogger` is a no-op.
     startDebugLogger({
       serverUrl: async () => (await resolveOpenworkConnection()).normalizedBaseUrl,
     });

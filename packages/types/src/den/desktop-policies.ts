@@ -73,29 +73,10 @@ type DesktopPolicyDefinitionEntry = {
   userNotice: string;
   defaultValue: boolean;
 } & (
-  // Every restricted capability must have a place in the team editor.
-  // Display preferences remain editable in Restricted mode.
   | { restrictedValue: boolean; group: "ai" | "tools" | "app" }
   | { restrictedValue: null; group: "display" }
 );
 
-// Canonical desktop policy catalog.
-//
-// To add a new desktop policy item:
-// 1. Add a matching entry to `desktopPolicyDefinitions` below.
-// 2. Choose a safe `defaultValue` for orgs with missing/older policy data.
-// 3. Choose its `restrictedValue`: the value the Restricted policy mode locks
-//    the key to, or `null` for a display preference Restricted leaves alone.
-// 4. Wire desktop app behavior to read the key through the desktop config hooks.
-// 5. If the key affects Den web editing copy, update the `name`, `description`,
-//    `teamLabel`, `group`, and `userNotice` here rather than duplicating them elsewhere.
-// 6. Do not manually edit `desktopPolicyValueSchema`; it is generated from the
-//    IDs in this definition list.
-//
-// Policy booleans usually use allow-style names. For every policy item,
-// `false` means the feature is restricted/disabled; `true` or an omitted value
-// means the app should not block the feature locally unless a default/effective
-// policy calculation supplies `false`.
 export const desktopPolicyDefinitions = [
   {
     id: "allowCustomProviders",
@@ -111,9 +92,6 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowLocalModels",
-    // A policy stored before this key existed inherits `allowCustomProviders`
-    // (see normalizeDesktopPolicyValue): "Only models you provide" already
-    // blocked local models, and an admin exception already allowed them.
     teamLabel: "Use local models",
     group: "ai",
     name: "Local models (Ollama, LM Studio)",
@@ -124,8 +102,6 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowZenModel",
-    // Historical key name. OpenCode Zen is retired in every OpenWork app
-    // regardless of this value; it now only controls the free Auto model.
     teamLabel: "Use the free starter model",
     group: "ai",
     name: "Free starter model (Auto)",
@@ -238,8 +214,6 @@ export type OnboardingPromptConfig = {
   onboardingPromptDescriptions?: string[];
 };
 
-// Explicit access limits are applied after legacy grants. Omitted access keeps
-// existing policies' grant semantics unchanged.
 export const teamAccessSchema = z.object({
   mode: z.enum(["custom", "locked"]),
   capabilities: desktopPolicyValueSchema,
@@ -252,8 +226,6 @@ function normalizeTeamAccess(value: unknown): TeamAccess | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
-// Execution restrictions intersect across matching policies, independently of
-// the legacy union-of-grants booleans.
 export const desktopExecutionPolicySchema = z.object({
   commands: z.enum(["allow", "deny"]).default("allow"),
   blockedCommands: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
@@ -268,9 +240,6 @@ export const desktopExecutionPolicySchema = z.object({
   blockBrowserUploads: z.boolean().default(false),
 }).strict();
 export type DesktopExecutionPolicy = z.infer<typeof desktopExecutionPolicySchema>;
-// A member can belong to several teams, each contributing up to 100 patterns.
-// The effective union must not fail validation merely because it exceeds one
-// document's editing limit.
 const effectiveDesktopExecutionPolicySchema = desktopExecutionPolicySchema.extend({
   blockedCommands: z.array(z.string().min(1).max(500)).default([]),
 });
@@ -343,15 +312,6 @@ export const desktopPolicyUserNotices = Object.fromEntries(
   ]),
 ) as Record<DesktopPolicyKey, string>;
 
-// ---------------------------------------------------------------------------
-// Restricted policy mode: chat and organization-approved skills only.
-//
-// Restricted is an editor mode, not a stored flag. A policy is Restricted when
-// every key with a `restrictedValue` holds that value; display preferences
-// (`restrictedValue: null`) stay editable in both modes. Because the effective
-// policy is a union of grants, Restricted only locks members down when it is
-// applied to the default policy.
-// ---------------------------------------------------------------------------
 export function applyRestrictedDesktopPolicy(
   value: Required<DesktopPolicyValue>,
 ): Required<DesktopPolicyValue> {
@@ -377,9 +337,6 @@ export const restrictedDesktopPolicyValue = applyRestrictedDesktopPolicy(
   desktopPolicyDefaults,
 );
 
-// ---------------------------------------------------------------------------
-// Radix color families that can be used as a brand accent.
-// ---------------------------------------------------------------------------
 export const brandAccentColorValues = [
   "blue",
   "crimson",
@@ -463,27 +420,18 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     brandIconUrl: z.string().url().max(2048).optional(),
     brandAccentColor: z.enum(brandAccentColorValues).optional(),
     automationsEnabled: z.boolean().optional(),
-    /** This desktop may run the member's Desktop Automations. Missing means: follow automationsEnabled. */
     desktopAutomationsEnabled: z.boolean().optional(),
-    /** The organization can create Cloud Automations. Missing means: ask the execution target list. */
     cloudAutomationsEnabled: z.boolean().optional(),
     dashboardEnabled: z.boolean().optional(),
     connectEnabled: z.boolean().optional(),
-    /** The opencodeV2Only rollout: OpenCode v2 serves every chat and switching to v1 is off. Missing means off. */
     opencodeV2Only: z.boolean().optional(),
-    /** Compatibility for older clients: true. Current hosts always mirror personal API keys into OpenCode v2. */
     localProviderMirror: z.boolean().optional(),
-    /** Compatibility for older clients: true. Current clients always remove retired OpenCode Zen models. */
     removeOpencodeZen: z.boolean().optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
-    /** The member's agent permissions, present when the organization has them on. */
     agentPermissions: desktopAgentPermissionsSchema.optional(),
-    /** Present only for clients supporting browser upload permissions. */
     browserUploadPermissions: desktopBrowserUploadPermissionsSchema.optional(),
-    /** Verified account scope for files sent to connected accounts, as for browser uploads. */
     fileSendPermissions: desktopBrowserUploadPermissionsSchema.optional(),
-    /** The member's default model for new chats, present when the organization has one and the feature is on. */
     defaultModel: desktopConfigDefaultModelSchema.optional(),
   })
   .meta({ ref: "DenDesktopConfig" });
@@ -521,7 +469,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** JSON columns arrive as strings on engines like MariaDB (JSON = LONGTEXT alias). */
 function coerceJsonRecord(value: unknown): unknown {
   if (typeof value !== "string") return value;
   try {
@@ -583,8 +530,6 @@ export function normalizeDesktopPolicyValue(
           : [],
       ),
     ) as DesktopPolicyValue;
-    // Written before local models had their own switch: keep what the
-    // provider setting already meant for them.
     if (result.allowLocalModels === undefined && typeof result.allowCustomProviders === "boolean") {
       result.allowLocalModels = result.allowCustomProviders;
     }

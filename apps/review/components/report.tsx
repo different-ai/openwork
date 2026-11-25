@@ -15,7 +15,6 @@ import type { PreviewProviderOption } from "../lib/preview-options";
 import { composeSections, designNotesLabel, visualState, type Verdict } from "../lib/sections";
 import { closesStep, describeChange, isRepeat, stepChecks, stepFound } from "../lib/change";
 
-/** One sentence of state per verdict: what is true, and where to look first (P1, C6). */
 function verdictLine(verdict: Verdict, failedSections: number, incompleteSections: number, gaps: number) {
   if (verdict === "Failed") return `${failedSections} ${failedSections === 1 ? "section has" : "sections have"} a failing check. Start there.`;
   if (verdict === "Incomplete") {
@@ -50,10 +49,8 @@ const formatUtc = (value: string) => new Date(value).toLocaleString("en-US", { d
 
 export function Report({ report, id, connected, providerLabel, checkpointProviders, previewProviders }: {
   report: ReviewReport; id: string; connected: boolean;
-  /** The provider new previews launch on, e.g. "Freestyle". */
   providerLabel: string;
   previewProviders?: readonly PreviewProviderOption[];
-  /** Providers whose saved checkpoints this server can open. */
   checkpointProviders: readonly string[];
 }) {
   const [filter, setFilter] = useState("All");
@@ -64,7 +61,6 @@ export function Report({ report, id, connected, providerLabel, checkpointProvide
   const visibleSections = sections.filter((section) => filter === "All" || section.verdict === filter);
   const failures = sections.filter((section) => section.verdict === "Failed");
   const incompletes = sections.filter((section) => section.verdict === "Incomplete");
-  /** Clears the filter so the target exists, then scrolls to and focuses it. */
   function jumpTo(sectionId: string) {
     setFilter("All");
     requestAnimationFrame(() => {

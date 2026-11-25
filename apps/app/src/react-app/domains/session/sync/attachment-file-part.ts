@@ -161,20 +161,6 @@ function isTextLikeAttachmentMime(mime: string) {
   return mime.endsWith("+json") || mime.endsWith("+xml");
 }
 
-/**
- * AI SDK provider adapters only accept `image/*`, `application/pdf`, and
- * `text/plain` file parts; anything else throws UnsupportedFunctionalityError
- * server-side and poisons the session history. So model-facing file parts are
- * routed by one rule:
- * - text-like mimes are re-mimed to `text/plain` so opencode inlines their
- *   content via the Read tool (the proven `@file` mention mechanism);
- * - images, PDFs, and Office mimes pass through (Office parts are rewritten
- *   to text by the OpenWorkOfficeAttachments plugin before the provider);
- * - everything else returns `null`: workspace (`file://`) attachments fall
- *   back to a `text/plain` part that opencode mediates through the Read tool,
- *   while data-URL attachments are dropped (inlining binary bytes as text is
- *   garbage); the synthetic workspace-path note gives tools the bytes.
- */
 export function modelFacingAttachmentMime(mimeType: string): string | null {
   const mime = normalizedMime(mimeType);
   if (isTextLikeAttachmentMime(mime)) return "text/plain";
@@ -283,7 +269,6 @@ export function buildChatAttachmentInboxPath(input: { sessionId: string; filenam
   return `chat-attachments/${session}/${prefix}${filename}`;
 }
 
-/** True for a file the person attached to a message, as opposed to a workspace file they mentioned. */
 export function isChatAttachmentUrl(url: string) {
   return url.startsWith("file://") && url.includes(`/${WORKSPACE_INBOX_ROOT}/chat-attachments/`);
 }
@@ -298,8 +283,6 @@ function uploadErrorMessage(filename: string, error: unknown) {
 }
 
 function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInput {
-  // Synthetic: model/tools still see workspace paths, but the chat UI renders
-  // file parts as compact badges instead of this wall of path text.
   const binaryFiles = uploaded.filter((item) => modelFacingAttachmentMime(item.mime) === null);
   return {
     type: "text",
@@ -312,16 +295,9 @@ function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInp
 }
 
 async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise<FilePartInput | null> {
-  // Binary/unknown mimes get no model-facing file part. A `text/plain`
-  // `file://` part would make opencode run the Read tool on the bytes, which
-  // refuses with "Cannot read binary file" as a session error and drops the
-  // part anyway; the synthetic workspace-path note already gives tools the file.
   const modelMime = modelFacingAttachmentMime(item.mime);
   if (!modelMime) return null;
 
-  // Images need a browser-displayable URL so the transcript can show the same
-  // expandable miniature preview as paste/composer attachments. Workspace
-  // `file://` paths stay in the synthetic note for tool access.
   if (modelMime.startsWith("image/")) {
     return {
       type: "file",
@@ -340,9 +316,7 @@ async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise
 }
 
 export type WorkspaceAttachmentParts = {
-  /** Synthetic note listing every uploaded workspace path for tools. */
   note: TextPartInput;
-  /** One entry per attachment, in order; `null` when the model gets no file part. */
   files: Array<FilePartInput | null>;
   workspaceFiles?: Array<{ filename: string; mime: string; url: string }>;
 };
@@ -369,9 +343,6 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
 
   const uploaded: UploadedChatAttachment[] = [];
   for (const attachment of input.attachments) {
-    // Oversized images are re-encoded here, at send time, so the composer chip
-    // appears instantly at attach time and the canvas work happens while the
-    // chip already shows its uploading state.
     const file = await compressImageFile(attachment.file);
     const metadata = resolveAttachmentFileMetadata(file);
     const id = input.createId ? input.createId() : randomAttachmentId();

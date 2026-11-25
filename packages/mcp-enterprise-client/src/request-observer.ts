@@ -103,7 +103,6 @@ export function createEnterpriseMcpRequestObserver(input: {
     try {
       input.diagnosticSink?.(event)
     } catch {
-      // Diagnostics must never change the request outcome they observe.
     }
   }
 
@@ -112,8 +111,6 @@ export function createEnterpriseMcpRequestObserver(input: {
     lastFailedRequestPhase: () => lastFailedRequestPhase,
     lastRequestFailure: () => lastRequestFailure,
     fetch: async (rawUrl, init) => {
-      // Ending the session is cleanup after the operation: it must not replace
-      // the request phase or failure the operation recorded.
       if (init?.method === "DELETE") {
         return input.fetch(rawUrl, { ...init, signal: init.signal ? AbortSignal.any([init.signal, input.signal]) : input.signal })
       }
@@ -145,9 +142,6 @@ export function createEnterpriseMcpRequestObserver(input: {
             invalidToken: challenge.includes("invalid_token"),
           }
         } else if (isMcpRequestPhase(requestPhase)) {
-          // A successful retry proves that a preceding challenge was
-          // recoverable. OAuth discovery/refresh requests deliberately do not
-          // erase the resource's last rejection before that retry completes.
           lastRequestFailure = null
         }
         const responseBodyExcerpt = !response.ok && isMcpRequestPhase(requestPhase)

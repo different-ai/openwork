@@ -7,8 +7,6 @@ const CREDENTIAL_QUERY_KEYS = new Set(["key", "auth", "state", "nonce", "code"])
 
 function hasCredentialQuery(url: URL): boolean {
   return [...url.searchParams.keys()].some((key) => {
-    // URLSearchParams decodes ordinary encoded keys. Also handle nested encoding
-    // without ever inspecting, logging or returning the credential value.
     let decoded = key
     for (let round = 0; round < 2; round += 1) {
       try { decoded = decodeURIComponent(decoded) } catch { break }
@@ -54,7 +52,6 @@ export function manualOAuthState(endpoints: ManualOAuthEndpoints, resource: stri
   }
 }
 
-// These labels are display-only, never authorization-server identifiers for use.
 export function safeOAuthIssuerLabel(value: string | undefined): string {
   if (!value) return "an unspecified address"
   try { const url = new URL(value); return `${url.origin}${url.pathname}` } catch { return "an invalid address" }

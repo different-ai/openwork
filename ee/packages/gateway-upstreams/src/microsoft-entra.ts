@@ -27,7 +27,6 @@ export function microsoftRefreshScopes(apiScope: string | null = null) {
   return `${apiScope ?? MICROSOFT_COGNITIVE_SERVICES_SCOPE} offline_access`
 }
 
-/** Normalize URI scheme/authority or a GUID, never a resource path or permission name. */
 function canonicalMicrosoftScope(scope: string) {
   const separator = scope.lastIndexOf("/")
   const resource = scope.slice(0, separator)
@@ -36,14 +35,12 @@ function canonicalMicrosoftScope(scope: string) {
 }
 
 function matchesMicrosoftScope(returnedScope: string, apiScope: string | null) {
-  // Keep Foundry's resource-wide check: /.default returns individual delegated scopes.
   if (apiScope === null) return returnedScope.toLowerCase().startsWith("https://cognitiveservices.azure.com/")
   const expected = canonicalMicrosoftScope(apiScope)
   const granted = canonicalMicrosoftScope(returnedScope)
   const separator = expected.lastIndexOf("/")
   if (separator <= 0 || separator === expected.length - 1) return false
   if (!expected.endsWith("/.default")) return granted === expected
-  // Compare the complete resource, not an arbitrary prefix (which would accept nested APIs).
   return granted.lastIndexOf("/") === separator && granted.slice(0, separator) === expected.slice(0, separator) && granted.length > separator + 1
 }
 /** Entra access tokens last 60-90 minutes; anything far longer is not a token we asked for. */
@@ -84,9 +81,7 @@ export type MicrosoftTokenError = "invalid_client" | "invalid_grant" | "token_en
 export function classifyMicrosoftTokenError(status: number, body: unknown): MicrosoftTokenError {
   if (status === 429 || status >= 500) return "token_endpoint_unavailable"
   const error = typeof body === "object" && body !== null && "error" in body && typeof body.error === "string" ? body.error : null
-  // invalid_client covers a wrong or expired client secret (AADSTS7000215, AADSTS7000222): administrator repair.
   if (error === "invalid_client" || error === "unauthorized_client") return "invalid_client"
-  // invalid_grant and interaction_required: expired, revoked, or needs MFA or consent again. The person signs in again.
   if (error === "invalid_grant" || error === "interaction_required" || error === "consent_required") return "invalid_grant"
   return "token_exchange_failed"
 }

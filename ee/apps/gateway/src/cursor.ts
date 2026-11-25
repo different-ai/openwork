@@ -1,14 +1,3 @@
-// Cursor through the AI Gateway. Cursor's only way to another
-// provider is its OpenAI key and base URL override, so every model, whatever its provider speaks,
-// has to answer as OpenAI Chat Completions under one base URL, by a name a person can type.
-//
-// GET  /api/v1/cursor/models            the member's models under their Cursor names
-// POST /api/v1/cursor/chat/completions  Chat Completions in and out
-// POST /api/v1/cursor/responses         Responses in and out (read as a chat request, answered as
-//                                       a Responses object or event stream)
-// Both resolve the name, rewrite the request for the model's own protocol under the member's
-// Gateway alias, and hand it to the normal Gateway pipeline, which authorizes, meters and forwards
-// it, so any model works through either API whatever its provider speaks.
 import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import { AUTO_ROUTER_THINKING_LEVELS, autoRouterThinkingLevels, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { cursorModelName, matchCursorModel, parseCursorModelName } from "@openwork/types/den/gateway-cursor"
@@ -26,7 +15,6 @@ import { resolveSmartRouter, type SmartToolDependencies, type SmartToolRouter } 
 
 export const cursorPathPrefix = "/api/v1/cursor"
 export const cursorModelsPath = `${cursorPathPrefix}/models`
-/** Cursor's OpenAI override sends a model through Chat Completions or the Responses API. */
 export const cursorApiPaths = {
   [`${cursorPathPrefix}/chat/completions`]: "chat",
   [`${cursorPathPrefix}/responses`]: "responses",
@@ -37,16 +25,12 @@ export type CursorDependencies = {
   loadMemberGatewayAccess: (identity: GatewayContext) => Promise<GatewayMemberAccessRow[]>
   catalog: ProviderCatalog
   reasoningStore: ReasoningStore
-  /** The normal Gateway pipeline for a rewritten request. */
   forward: (target: AutoTarget) => Promise<Response>
-  /** Smart Routers: listed and routed when given. */
   smart?: SmartToolDependencies
 }
 
 export type CursorModel = {
-  /** The model's `ipm_…` id: what a Cursor name's ending is matched against. */
   modelId: string
-  /** The protocol the model's provider speaks. */
   family: ProtocolFamily
   name: string
   row: GatewayMemberAccessRow
@@ -54,11 +38,6 @@ export type CursorModel = {
   thinkingLevels: AutoRouterThinkingLevel[]
 }
 
-/**
- * The member's models Cursor can call: one per model, however many groups and credential sets
- * grant it, through the most specific grant (member, then team, then organization). Models whose
- * provider has no Chat Completions translation are left out.
- */
 export function cursorModels(rows: GatewayMemberAccessRow[], catalog: ProviderCatalog): CursorModel[] {
   const best = new Map<string, GatewayMemberAccessRow>()
   for (const row of rows) {
@@ -86,7 +65,6 @@ export function cursorModels(rows: GatewayMemberAccessRow[], catalog: ProviderCa
   return models.sort((a, b) => a.name.localeCompare(b.name) || a.modelId.localeCompare(b.modelId))
 }
 
-/** The OpenAI List Models shape, with each model's Cursor name as its id, then the member's Smart Routers. */
 export function listCursorModels(models: CursorModel[], routers: SmartToolRouter[] = []) {
   return {
     object: "list" as const,
@@ -98,7 +76,6 @@ export function listCursorModels(models: CursorModel[], routers: SmartToolRouter
       name: model.name,
       openwork: {
         provider_name: model.row.provider.name,
-        /** Append `:<level>` to the id to ask for one; `default` is the id alone. */
         thinking_levels: model.thinkingLevels,
       },
     })), ...routers.map((router) => ({
@@ -109,7 +86,6 @@ export function listCursorModels(models: CursorModel[], routers: SmartToolRouter
       name: router.name,
       openwork: {
         provider_name: "OpenWork",
-        /** Smart picks the model and its thinking level for every prompt. */
         thinking_levels: ["default" as const],
         smart_router: true,
       },
@@ -121,10 +97,6 @@ export function cursorError(status: number, code: string, message: string) {
   return Response.json({ error: { message, type: status >= 500 ? "api_error" : "invalid_request_error", code } }, { status })
 }
 
-/**
- * Cursor sends tools in the Responses API's flat shape (`{ type, name, parameters }`) to
- * /chat/completions; Chat Completions and every translator expect them under `function`.
- */
 export function normalizeCursorChatBody(body: JsonObject): JsonObject {
   const next: JsonObject = { ...body }
   if (Array.isArray(body.tools)) {
@@ -146,13 +118,11 @@ export function normalizeCursorChatBody(body: JsonObject): JsonObject {
   return next
 }
 
-/** The level a Responses request's `reasoning.effort` names, when the model has it. */
 export function requestedEffort(body: JsonObject, levels: readonly AutoRouterThinkingLevel[]): AutoRouterThinkingLevel | null {
   const effort = responsesReasoningEffort(body)
   return AUTO_ROUTER_THINKING_LEVELS.find((level) => level === effort && levels.includes(level)) ?? null
 }
 
-/** A Chat Completions answer as the Responses API's. Errors already share the `{error}` shape. */
 export async function asResponses(response: Response, model: string, tools?: ResponsesToolNames): Promise<Response> {
   if (!response.ok) return response
   const headers = new Headers(response.headers)
@@ -170,11 +140,6 @@ export async function asResponses(response: Response, model: string, tools?: Res
   return response
 }
 
-/**
- * Sends a Chat Completions request to a model through its provider's own protocol under the
- * member's Gateway alias, and answers as Chat Completions. Shared by every tool endpoint that
- * translates.
- */
 export async function sendTranslatedChat(input: {
   request: Request
   body: JsonObject
@@ -229,7 +194,6 @@ export async function handleCursorChat(input: {
   const requested = input.body.model
   const smart = await resolveSmartRouter(requested, identity, dependencies.smart)
   if (smart.kind === "router" && dependencies.smart) {
-    // Smart chooses the thinking level, so a level in the name is ignored.
     const body = normalizeCursorChatBody(api === "responses" ? responsesToChat(input.body) : input.body)
     const chat = await dependencies.smart.route({ request, body, routerId: smart.routerId })
     return api === "responses" ? asResponses(chat, typeof requested === "string" ? requested : "smart") : chat
@@ -243,13 +207,11 @@ export async function handleCursorChat(input: {
   if (match.kind === "ambiguous") {
     return cursorError(400, "ambiguous_cursor_model", `More than one of your models matches ${String(requested)}. Copy the name again from Set up Cursor in your OpenWork Library.`)
   }
-  // Same answer for a model that does not exist and one this member cannot use.
   if (match.kind === "none" || !match.model.row.model) {
     if (smart.kind === "unavailable") return smart.error()
     return cursorError(404, "model_not_found", `${String(requested)} is not one of your OpenWork models. Copy the name from Set up Cursor in your OpenWork Library.`)
   }
   const { model } = match
-  // A level in the name wins; otherwise a Responses request may carry one.
   const thinking = parsed.thinking === "default" && api === "responses" ? requestedEffort(input.body, model.thinkingLevels) ?? "default" : parsed.thinking
   if (!model.thinkingLevels.includes(thinking)) {
     const levels = model.thinkingLevels.filter((level) => level !== "default")

@@ -23,48 +23,16 @@ export const FEATURE_CATEGORIES = {
 export type FeatureCategory = keyof typeof FEATURE_CATEGORIES
 
 export type FeatureDefinition = {
-  /** Short name shown to platform admins and operators. */
   label: string
-  /** One sentence: what a person gets, in words they see in the product. */
   description: string
-  /** Group the feature is listed under in /admin. */
   category: FeatureCategory
-  /** Day the flag was first added to this registry, e.g. "2026-10-26". Never changes. */
   added: `${number}-${number}-${number}`
-  /** Year and month the entry was added or last changed, e.g. "2026-10". */
   since: `${number}-${number}`
-  /**
-   * GitHub handle of the person who owns the feature: who to ask what it does,
-   * whether it is safe to turn on, and when the flag can go. Shown in /admin.
-   */
   author: string
-  /**
-   * Repo path of the internal doc that explains the feature, e.g.
-   * "docs/features/new-thing/README.md". Internal docs live in the repo's
-   * docs/ folder, not the published site in packages/docs. A visual feature
-   * shows at least one screenshot (stored next to the doc); any other feature
-   * says what changes, for whom, how to try it and what turning it off does.
-   * Linked from /admin. Required for new features (`pnpm features:check`).
-   */
   docs?: `docs/${string}.md`
-  /** Products it exists on. Leave one out on purpose, e.g. ["cloud"] for cloud-only. */
   deployments: readonly FeatureDeployment[]
-  /** On or off for everyone on a fresh deployment: false for new work, true once everyone has it. */
   default: boolean
-  /**
-   * The switch is part of the product (e.g. platform admins turn Connect off for
-   * one organization), not a temporary rollout. Rollouts are deleted once done;
-   * `pnpm features:check` asks for a decision six months after `since`.
-   */
   permanent?: boolean
-  /**
-   * The feature works in the background (a schedule, a calendar, an agent's
-   * checks, messages sent by runs), so no request shows whether it ran or
-   * worked. /admin › Features reads its outcomes from the store that already
-   * holds them: den-api registers exactly one reader for each feature that
-   * sets this (ee/apps/den-api/src/feature-outcomes/readers.ts), and its
-   * typecheck fails without one.
-   */
   outcomes?: true
 }
 

@@ -1,36 +1,3 @@
-/**
- * `plugins.sources`: sync sources (Plugins › Sources), today GitHub
- * repositories that keep plugins and skills in sync with a branch.
- *
- * Exported per source (`connector_instance`, name unique per organization):
- * the repository, status, whether new plugins are imported automatically,
- * its targets (`connector_target`, keyed by repository: branch, ref and
- * repository id) with their mappings (`connector_mapping`, keyed by object
- * type + selector: path selector, target plugin `{ $ref:
- * "plugins.plugins/<id>" }`, auto-add, mapping options) and who can manage
- * it, by role.
- *
- * The GitHub App installation (`connector_account`) belongs to the instance
- * that installed it: it is exported as reference information only (`account`,
- * informational) and never created by an import. Creating a source needs an
- * active account with the same installation id in the target organization
- * (`connector_instance.connector_account_id` is required); without one the
- * item fails with `needs_setup` ("connect GitHub first"). Runtime sync state
- * (sync events, source bindings, tombstones, reconcile rows, discovery
- * caches, cursors) is never exported.
- *
- * Applying a new source, or changing its targets or mappings, queues a sync of
- * the changed targets (the worker then calls GitHub and imports files as
- * skills into the mapped plugins): `externalEffects`.
- *
- * Applies through the plugin-system store, as the connector routes do:
- * `createConnectorInstance`, `updateConnectorInstance`,
- * `setConnectorInstanceAutoImport`, `setConnectorInstanceLifecycle`,
- * `createConnectorTarget` / `updateConnectorTarget`, `createConnectorMapping` /
- * `updateConnectorMapping` / `deleteConnectorMapping`,
- * `queueConnectorTargetResync`, `removeConnectorInstance` and the access-grant
- * calls.
- */
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectorAccountTable,
@@ -75,13 +42,11 @@ import { ConfigApplyError, applyWithSteps, isJsonObject, ownManagerAccessPreflig
 
 const AREA = "plugins.sources"
 
-/** Target settings that are configuration; everything else in target_config_json (discovery cache…) is runtime. */
 const TARGET_CONFIG_KEYS = ["branch", "ref", "repositoryFullName", "repositoryId"] as const
 
 const scalarRecordSchema = z.record(z.string(), z.union([z.string().max(2048), z.number(), z.boolean(), z.null()]))
 
 const mappingSchema = z.object({
-  /** `<objectType>:<selector>`, unique per target. */
   key: z.string().min(1).max(300),
   mappingKind: z.enum(connectorMappingKindValues).default("path"),
   selector: z.string().trim().min(1).max(255),
@@ -92,7 +57,6 @@ const mappingSchema = z.object({
 }).strict()
 
 const targetSchema = z.object({
-  /** The repository (`owner/name`), unique per source. */
   remoteId: z.string().trim().min(1).max(255),
   targetKind: z.enum(connectorTargetKindValues).default("repository_branch"),
   branch: z.string().trim().min(1).max(255).nullable().default(null),
@@ -107,7 +71,6 @@ const specSchema = z.object({
   autoImportNewPlugins: z.boolean().default(true),
   targets: z.array(targetSchema).max(100).default([]),
   access: accessByRoleSchema.default({ orgWide: null, teams: { viewer: [], editor: [], manager: [] }, members: { viewer: [], editor: [], manager: [] } }),
-  /** The GitHub App installation on the source instance. Informational: re-connect it on another instance. */
   account: z.object({
     remoteId: z.string().max(255),
     displayName: z.string().max(255),
@@ -182,7 +145,6 @@ async function readSources(ctx: ConfigAreaContext, ids: readonly string[] | null
       spec: {
         connectorType: row.connectorType,
         repository: row.remoteId ?? null,
-        // `error` is sync state, not configuration.
         status: row.status === "error" ? "active" : row.status,
         autoImportNewPlugins: typeof config.autoImportNewPlugins === "boolean" ? config.autoImportNewPlugins : true,
         targets: ownTargets,
@@ -194,7 +156,6 @@ async function readSources(ctx: ConfigAreaContext, ids: readonly string[] | null
   return items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
 }
 
-/** The plain fields of an apply spec; mapping plugin refs are read separately (resolved, they carry `id`). */
 const applySpecSchema = specSchema.omit({ targets: true, access: true }).extend({
   targets: z.array(targetSchema.extend({
     mappings: z.array(mappingSchema.extend({ plugin: z.unknown() }).passthrough()).default([]),
@@ -225,7 +186,6 @@ async function createMappings(input: { actor: ActorContext; targetId: string; ta
 }
 
 function targetConfigFor(target: { branch: string | null; config: Record<string, string | number | boolean | null> }, current: unknown): Record<string, unknown> {
-  // Keep the runtime keys (discovery cache) of the current config; replace the configuration keys.
   const base: JsonObject = isJsonObject(current) ? { ...current } : {}
   for (const key of TARGET_CONFIG_KEYS) delete base[key]
   return { ...base, ...scalarConfig(target.config, TARGET_CONFIG_KEYS) }
@@ -238,7 +198,6 @@ async function queueSync(input: { actor: ActorContext; targetId: string; remoteI
 
 type AccountSpec = { remoteId: string; displayName: string } | null
 
-/** The target's active installation a new source can use: same connector type and installation id. */
 async function findAccount(ctx: ConfigAreaContext, connectorType: (typeof connectorTypeValues)[number], account: AccountSpec) {
   if (!account) return null
   const [row] = await ctx.db.select().from(ConnectorAccountTable).where(and(
@@ -360,7 +319,6 @@ export const pluginsSourcesArea = defineConfigArea({
         return { localId: instanceId, warnings }
       }
 
-      // update: only what the plan changes.
       const instanceId = normalizeDenTypeId("connectorInstance", op.targetId)
       const [current] = await ctx.db.select().from(ConnectorInstanceTable).where(and(eq(ConnectorInstanceTable.organizationId, organizationId), eq(ConnectorInstanceTable.id, instanceId))).limit(1)
       if (!current) throw new ConfigApplyError("connector_instance_not_found", `The source "${op.previous.name}" no longer exists.`, 404)

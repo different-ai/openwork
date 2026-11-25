@@ -15,21 +15,11 @@ import { DenSwitch } from "../../_components/ui/switch";
 import type { AgentPolicyScope } from "./workbot-agent-scope";
 import { useAgentConnectionTools } from "./workbot-proactive-data";
 
-/**
- * Manage › Workbot › Connectors, under one connection (`workbotAgentBrief`): a read-tools count opens
- * a dialog (DESIGN.md S3) with one row per tool (S2): its name, why it is or isn't allowed, and a switch
- * for the admin's choice. A tool no admin can allow (its provider marks it destructive, or one of Den's own operations
- * that changes things) keeps its row with a lock and the reason (P4). Agents only ever call the allowed ones.
- * The same rows show a team's choices on its Workbot tab (`scope`).
- */
-
-/** "3 read tools", "1 read tool", "No read tools". */
 export function readToolsLine(count: number): string {
   if (count === 0) return "No read tools";
   return `${count} read tool${count === 1 ? "" : "s"}`;
 }
 
-/** The summary's state: how many tools agents may call, or why that isn't known. */
 export function toolsSummary(view: AgentConnectionToolsView | undefined, failed: boolean, name: string): string {
   if (failed) return "Couldn't load its tools";
   if (!view) return "";
@@ -38,24 +28,16 @@ export function toolsSummary(view: AgentConnectionToolsView | undefined, failed:
   return readToolsLine(view.readTools);
 }
 
-/** The admin's choice for one tool, as a sources change: on is "allow", off is "deny". */
 export function toolChoiceChange(connectionId: string, tool: string, allowed: boolean): AgentSourcesPolicyInput {
   return { toolOverrides: { [connectionId]: { [tool]: allowed ? "allow" : "deny" } } };
 }
 
-/** Back to the automatic decision for every tool on this connection. */
 export function automaticToolsChange(connectionId: string): AgentSourcesPolicyInput {
   return { toolOverrides: { [connectionId]: null } };
 }
 
-/**
- * In tabbed settings: the same tools and choices, opened from a "Manage tools" button on the connection's own
- * row instead of a second line under it. The row keeps one line (the count beside the button); the dialog has room
- * for each tool's description, why it is or isn't allowed, and its switch.
- */
 export function AgentConnectionToolsButton({ orgId, scope, connectionId, name, connectHref, disabled, onChange }: {
   orgId: string;
-  /** Whose choices: Everyone's, or one team's. */
   scope?: AgentPolicyScope;
   connectionId: string;
   name: string;
@@ -89,7 +71,6 @@ function DialogToolRow({ tool, connectionId, disabled, onChange }: { tool: Agent
   );
 }
 
-/** The link's words: how many tools agents may call, or why that isn't known, short enough for a row. */
 export function toolsLinkLabel(view: AgentConnectionToolsView | undefined, failed: boolean): string {
   if (failed) return "Couldn't load tools";
   if (!view) return "Tools";
@@ -98,7 +79,6 @@ export function toolsLinkLabel(view: AgentConnectionToolsView | undefined, faile
   return readToolsLine(view.readTools);
 }
 
-/** The link and its dialog, from a loaded view (rendered without fetching in tests). */
 export function ConnectionToolsButton({ view, failed, name, connectionId, connectHref, disabled, onChange, initialOpen = false }: {
   view: AgentConnectionToolsView | undefined;
   failed: boolean;
@@ -135,7 +115,6 @@ export function ConnectionToolsButton({ view, failed, name, connectionId, connec
   );
 }
 
-/** The dialog contents, shared with render tests so the real tool rows and permission locks are covered. */
 export function ConnectionToolsContent({ view, failed, name, connectionId, connectHref, disabled, onChange }: {
   view: AgentConnectionToolsView | undefined;
   failed: boolean;

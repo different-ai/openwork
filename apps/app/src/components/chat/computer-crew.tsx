@@ -13,10 +13,6 @@ const STATES: Record<ComputerCrewMember["state"], string> = {
   done: "Done",
 }
 
-/**
- * While `enabled`, the chat's subagents on its computer, read from the
- * desktop with a live frame of each agent's app. Leaving stops the frames.
- */
 export function useComputerCrew(sessionId: string, enabled: boolean): ComputerCrewMember[] {
   const [members, setMembers] = useState<ComputerCrewMember[]>([])
   useEffect(() => {
@@ -37,7 +33,6 @@ export function useComputerCrew(sessionId: string, enabled: boolean): ComputerCr
   return members
 }
 
-/** One row per agent: its cursor's name and color, app, state and latest step; a row opens its live view. */
 export function ComputerCrew({ members, onOpen }: { members: readonly ComputerCrewMember[]; onOpen: (member: ComputerCrewMember) => void }) {
   if (!members.length) return null
   return (
@@ -59,7 +54,6 @@ export function ComputerCrew({ members, onOpen }: { members: readonly ComputerCr
   )
 }
 
-/** The crew alone, for a chat whose own turn used no computer steps. */
 export function ComputerCrewCard({ members, onOpen }: { members: readonly ComputerCrewMember[]; onOpen: (member: ComputerCrewMember) => void }) {
   if (!members.length) return null
   return (

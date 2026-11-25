@@ -1,20 +1,3 @@
-/**
- * Config blobs: export the organization's configuration as JSON and import it
- * back through change requests.
- * Design: docs/features/config-blobs/change-requests.md (API table).
- *
- * Every route: orgMemberRoute() → requireConfigScope(…) (UI sessions pass;
- * API keys only as config tokens holding the scope). Member permissions are the areas' own view /
- * manage keys, checked per request by the service (sensitive keys also need a
- * recent sign-in, exactly as in the dashboard).
- *
- * Every route that reads the organization (all but the schema and the area
- * list) reads from the primary: an export, a plan or a dry run compares
- * against what the organization holds now, and a script polls a change
- * request the moment it created it. A lagging replica would answer with a
- * stale export, a plan that is already out of date, or a 404 for a request
- * that exists. These are a few admin calls, not hot paths.
- */
 import {
   CONFIG_APPLY_RUN_STATUSES,
   CONFIG_BLOB_MAX_BYTES,
@@ -82,9 +65,6 @@ import {
 
 const BASE = "/v1/config-blobs"
 const TAGS = ["Config blobs"]
-
-// ---------------------------------------------------------------------------
-// OpenAPI shapes (the TypeScript contract is @openwork/types/den/config-blobs)
 
 const errorSchema = z.object({ error: z.string(), message: z.string().optional() }).passthrough().meta({ ref: "ConfigBlobError" })
 const notFoundSchema = z.object({ error: z.string() }).meta({ ref: "ConfigBlobNotFound" })
@@ -230,12 +210,8 @@ function describe(summary: string, description: string, ok: { status: 200 | 201 
   })
 }
 
-// ---------------------------------------------------------------------------
-// Caller
-
 type ConfigTokenVariables = { Variables: Partial<AuthContextVariables> }
 
-/** Any config scope (the area list is useful to every config token). Standard API keys: 403. */
 const requireAnyConfigScope: MiddlewareHandler<ConfigTokenVariables> = async (c, next) => {
   const apiKey: DenApiKeySession | null | undefined = c.get("apiKey")
   if (!apiKey) return next()
@@ -243,7 +219,6 @@ const requireAnyConfigScope: MiddlewareHandler<ConfigTokenVariables> = async (c,
   return c.json({ error: "config_scope_required", scope: "config:export" }, 403)
 }
 
-/** Settings are changed in the dashboard only: no API key may turn the second-approver rule off. */
 const refuseApiKeys: MiddlewareHandler<ConfigTokenVariables> = async (c, next) => {
   if (c.get("apiKey")) return c.json({ error: "forbidden", message: "Config settings can only be changed by a signed-in person." }, 403)
   return next()
@@ -273,12 +248,6 @@ async function configCaller(c: PermissionRouteContext, tokenAreas: string[] | nu
   }
 }
 
-/**
- * Approving and applying: a config token (D3: no session to step up), or a
- * person who signed in recently (the organization's "Enforce fresh admin
- * sessions" window, whatever the areas' permissions). Never an agent: the MCP
- * re-entry session is synthesized at request time, so it would always look fresh.
- */
 function requireApprovalStepUp(c: PermissionRouteContext): void {
   if (c.get("apiKey")) return
   const session = c.get("session")
@@ -291,20 +260,12 @@ function requireApprovalStepUp(c: PermissionRouteContext): void {
 
 const MCP_INTERNAL_SESSION_ID = "mcp_internal"
 
-/**
- * Downloads (export, before-snapshot) carry prompts, skills and other
- * confidential content: a person needs a recent sign-in (the organization's
- * "Enforce fresh admin sessions" window), answered with the same `reauth`
- * refusal as approving, which den-web turns into its re-sign-in prompt.
- * Config tokens skip it (no session to step up).
- */
 const requireRecentSignInForDownload: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
   const fresh = checkFreshPrivilegedSession({ apiKey: c.get("apiKey"), session: c.get("session") }, organizationPrivilegedSessionMaxAgeMs(c.get("organizationContext")))
   if (!fresh.ok) return c.json({ ...fresh.response, message: "For security, confirm it's you before downloading configuration." }, 403)
   return next()
 }
 
-/** Sends a service refusal; anything else is a real error for the app's handler. */
 function refusal(error: unknown): Response {
   if (error instanceof ConfigBlobError) {
     return new Response(JSON.stringify(error.body), { status: error.status, headers: { "Content-Type": "application/json", ...error.headers } })
@@ -327,11 +288,7 @@ function today(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-// ---------------------------------------------------------------------------
-// Routes
-
 export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  // Public: the format is the same for everyone, and editors and CI fetch it without credentials.
   app.get(
     `${BASE}/schema/:formatVersion`,
     describeRoute({

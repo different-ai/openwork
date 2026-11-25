@@ -55,7 +55,6 @@ type StripeBilling = {
   } | null;
   seats: StripeSeatBilling;
   web: StripeWebBilling | null;
-  /** Plan tier and "N joined, M invited" counts; null from older Den APIs. */
   plan: BillingPlanSummary | null;
   plans: BillingPlans | null;
 };
@@ -137,12 +136,10 @@ function parseStripeBilling(payload: unknown): StripeBilling | null {
   };
 }
 
-/** Neutral lock, not an error (DESIGN C5). Line items use the short label; the row says why. */
 function NotSoldBadge({ short = false }: { short?: boolean }) {
   return <DenBadge tone="neutral" icon={LockKeyhole}>{short ? "Not sold" : "Not sold on this deployment"}</DenBadge>;
 }
 
-/** `?addPeople=N` from a link that already knows who is being added (0 to 50). */
 function requestedAddPeopleFromUrl(): number | null {
   if (typeof window === "undefined") return null;
   const raw = new URLSearchParams(window.location.search).get("addPeople");
@@ -243,7 +240,6 @@ export function BillingDashboardScreen() {
     void refreshStripeBilling(false);
   }, [sessionHydrated, user, activeOrgId]);
 
-  // Read after commit: a client navigation (the Stripe return page) updates the URL after render.
   useEffect(() => {
     setRequestedAddPeople(requestedAddPeopleFromUrl());
     setCheckoutOutcome(checkoutOutcomeFromUrl());
@@ -339,7 +335,6 @@ export function BillingDashboardScreen() {
     try {
       await runReauthableAction("plan-checkout", async () => {
         setStripeActionBusy("plan-checkout");
-        // Stripe returns through the return page, which syncs the session and comes back here.
         const { url } = await startCheckout({ type: "plan", plan: "team", addPeople, returnTo: "/dashboard/billing" });
         window.location.href = url;
       });
@@ -380,8 +375,6 @@ export function BillingDashboardScreen() {
   const seatPrice = seatBilling ? formatMoneyMinor(seatBilling.unitAmount, seatBilling.currency) : null;
   const activeMemberCount = stripeBilling?.memberCount ?? 0;
 
-  // Without Stripe keys the deployment never charges for either product, so the
-  // page must not quote prices or threaten future charges.
   const aiConfigured = stripeBilling?.configured === true;
   const seatsConfigured = seatBilling?.configured === true;
   const webFeatureEnabled = runtimeConfigLoaded
@@ -398,8 +391,6 @@ export function BillingDashboardScreen() {
 
   const planSummary = stripeBilling?.plan ?? null;
   const planOffers = stripeBilling?.plans ?? null;
-  // Plan first (DESIGN s12). Only an older Den API without plans keeps the
-  // legacy seats card below.
   const showPlanCard = planSummary !== null && planOffers !== null;
   const peopleSummary = planSummary ? planUsageLabel(planSummary) ?? peopleLabel(planSummary) : `${activeMemberCount} ${activeMemberCount === 1 ? "person" : "people"}`;
   const planActiveLabel = planSummary && planSummary.tier !== "free"
@@ -409,8 +400,6 @@ export function BillingDashboardScreen() {
   const seatsActive = seatBilling?.hasActiveSubscription === true;
   const freeSeatCount = seatBilling?.freeSeatCount ?? 0;
   const billableSeatCount = seatBilling?.billableSeatCount ?? 0;
-  // The active seat subscription's quantity is what Stripe bills: every user,
-  // including pending invitations.
   const seatUnitAmount = seatBilling?.unitAmount ?? 0;
   const seatChargeMinor = !seatBilling
     ? 0
@@ -642,7 +631,6 @@ export function BillingDashboardScreen() {
                 View invoices
               </DenButton>
             ) : (
-              // Locked, with why and who can change it (P4, C5).
               <span className="inline-flex items-center gap-1.5 text-[13px] text-gray-500">
                 <LockKeyhole className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
                 {permissionLockReason("billing_invoices.view")}

@@ -4,7 +4,6 @@ import { FloatingSlotProvider, SessionFloatingLayer } from "../src/react-app/dom
 import { TooltipProvider } from "../src/components/ui/tooltip"
 import "../src/app/index.css"
 
-// The isolated world serves the real broker and adapter behind this IPC boundary.
 async function invoke(command: string, ...args: unknown[]) {
   if (command === "computerFollow") return null
   const input = command === "computerPresentation" ? { visible: args[1] } : args[0]

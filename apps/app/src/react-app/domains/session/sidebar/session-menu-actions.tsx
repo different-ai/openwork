@@ -19,7 +19,6 @@ type GroupActionsOptions = {
   groups: readonly { id: string; label: string }[];
   assignedGroupId: string | null;
   onAssignGroup: (groupId: string | null) => void;
-  /** Create only: creating a group never moves this session into it. */
   onCreateGroup?: () => void;
 };
 
@@ -38,7 +37,6 @@ export function buildSessionGroupActions(options: GroupActionsOptions): MenuActi
   ];
 }
 
-/** Human UI actions only. Destructive callbacks must open the existing safeguards/dialogs. */
 export function buildSessionMenuActions(options: GroupActionsOptions & {
   isPinned: boolean;
   isArchived: boolean;

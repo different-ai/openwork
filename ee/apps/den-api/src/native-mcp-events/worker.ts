@@ -2,7 +2,6 @@ import { randomBytes } from "node:crypto"
 import { and, asc, eq, lt, lte } from "@openwork-ee/den-db/drizzle"
 import { McpNativeSubscriptionTable as Subscription, McpNativeDeliveryTable as Delivery } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { acceptControl, acceptEvent, findSubscription, RECEIPT_RETENTION_MS } from "../mcp-events/repository.js"
 import { deliverySchema } from "../mcp-events/protocol.js"
 import { appLogger } from "../observability/logger.js"
@@ -21,7 +20,6 @@ async function terminate(row: NativeSubscription, error = new NativeEventError(-
   })
 }
 
-/** One leased observation per watch. The state and pending occurrence commit together. */
 export async function observeNativeEvent() {
   const row = await db.transaction(async tx => {
     const [watch] = await tx.select().from(Subscription).where(and(eq(Subscription.status, "active"), lte(Subscription.availableAt, new Date()))).orderBy(asc(Subscription.availableAt)).limit(1).for("update", { skipLocked: true })
@@ -30,7 +28,7 @@ export async function observeNativeEvent() {
   })
   if (!row) return false
   try {
-    if (row.expiresAt.getTime() <= Date.now() || !await organizationFeatureEnabled(row.organizationId, "nativeMcpEvents", { userId: row.userId })) { await stopNativeSubscription(row.id); return true }
+    if (row.expiresAt.getTime() <= Date.now()) { await stopNativeSubscription(row.id); return true }
     const watch = row.threadWatchId ? await findSubscription(row.threadWatchId) : null
     if (watch?.status === "pending") {
       await db.update(Subscription).set({ availableAt: new Date(Date.now() + 5000) }).where(eq(Subscription.id, row.id))
@@ -45,7 +43,6 @@ export async function observeNativeEvent() {
       const changed = observation !== live.observation
       const sequence = live.sequence + (changed && source.emit ? 1 : 0)
       if (changed && source.emit) {
-        // Finite watches bound retained traffic. Backpressure leaves the last observation unadvanced.
         if (sequence > 100) throw new NativeEventError(-32025, "Subscription event limit reached", { limit: "events", max: 100 })
         const id = randomBytes(24).toString("hex")
         await tx.insert(Delivery).values({ id, subscriptionId: row.id, organizationId: row.organizationId,
@@ -82,8 +79,7 @@ export async function deliverNativeEvent() {
         await tx.update(Delivery).set({ availableAt: new Date(Date.now() + 5000), attempts: Math.max(0, receipt.attempts - 1) }).where(eq(Delivery.id, receipt.id))
         return
       }
-      if (!live || !["active", ...(notice ? ["terminated"] : [])].includes(live.status) || live.expiresAt.getTime() <= Date.now()
-        || !await organizationFeatureEnabled(row.organizationId, "nativeMcpEvents", { userId: row.userId, database: tx, lock: "share" })) {
+      if (!live || !["active", ...(notice ? ["terminated"] : [])].includes(live.status) || live.expiresAt.getTime() <= Date.now()) {
         await tx.update(Delivery).set({ status: "skipped", payload: null }).where(eq(Delivery.id, receipt.id)); return
       }
       if (row.threadWatchId) {

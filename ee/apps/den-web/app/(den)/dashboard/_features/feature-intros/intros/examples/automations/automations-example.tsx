@@ -8,7 +8,6 @@ import { automationsExampleGroups } from "./automations-example-data";
 
 const items = automationsExampleGroups.flatMap((group) => group.items);
 
-/** Section example: one Automation running, two scheduled, on OpenWork Cloud and on a desktop. */
 export function AutomationsExample() {
   const step = useExampleStep(items.length);
   const active = step === null ? null : items[step] ?? null;

@@ -6,7 +6,6 @@ import { digest, sourceTree } from "@openwork/world-freestyle/cache";
 import { DaytonaApi, daytonaConfig, type Sandbox } from "./api.ts";
 import { DAYTONA_BASE_SNAPSHOT, ensureBase, ensureLayer, runScript, type DaytonaBuildOptions } from "./builder.ts";
 
-/** These are fresh direct app previews, not saved evidence-browser viewers. */
 import { DAYTONA_PREVIEW_WORLDS } from "./credentials.ts";
 export { DAYTONA_PREVIEW_WORLDS } from "./credentials.ts";
 export { PREVIEW_KIND } from "./kinds.ts";
@@ -20,7 +19,6 @@ const APP_USER = "openwork-preview";
 const APP_HOME = "/home/openwork-preview";
 const APP_BUILD = `${APP_HOME}/build`;
 const APP_PATH = `${ROOT}/tools/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
-// Bump the immutable world key: v1 worlds ran report code as root and are unsafe.
 const SECURITY_VERSION = 2;
 const LIFETIME_SECONDS = 2 * 3600;
 const BUILDER_KIND = "openwork-daytona-builder-v1";
@@ -45,8 +43,6 @@ export function previewOrigin(value: string): { origin: string; suffix: string }
   return { origin: url.origin, suffix: url.hostname.slice(url.hostname.indexOf(".")) };
 }
 
-// Keep the shared app runtime; adapt only its provider-specific browser domain.
-// A checked replacement fails closed if the shared asset changes shape.
 function daytonaRuntime(source: string): string {
   const original = 'browserHostSuffix: ".preview.openwork.software"';
   if (source.split(original).length !== 2) throw new Error("Shared app preview runtime has changed");
@@ -59,7 +55,6 @@ function unprivilegedCommand(command: string): string {
   return `${BUILD_ISOLATION} env -i HOME=${APP_HOME} USER=${APP_USER} LOGNAME=${APP_USER} PATH=${APP_PATH} /bin/bash -c '${command.replaceAll("'", "'\\''")}'`;
 }
 
-/** These paths are created before report code runs. Never make ROOT app-writable. */
 const APP_SETUP = `id -u ${APP_USER} >/dev/null 2>&1 || useradd --system --user-group --create-home --home-dir ${APP_HOME} --shell /usr/sbin/nologin ${APP_USER}
 test "$(id -u ${APP_USER})" -ne 0
 install -d -o root -g root -m 0755 ${ROOT}
@@ -101,7 +96,6 @@ function unprivilegedCompile(source: string): string {
   return source;
 }
 
-/** systemd retains the root listener even across a gateway restart: no port-squatting race. */
 function socketActivatedGateway(source: string): string {
   const original = 'server.listen(Number(process.env.OPENWORK_PREVIEW_GATEWAY_PORT ?? 8080), "0.0.0.0");';
   if (source.split(original).length !== 2) throw new Error("Shared preview gateway has changed");
@@ -129,8 +123,6 @@ Environment=OPENWORK_PREVIEW_ACCESS_FILE=${ACCESS_FILE}
 ExecStart=/usr/bin/env node ${ROOT}/gateway.mjs
 Restart=on-failure
 `;
-// No imports from the checkout. Prove the root systemd MainPID owns the kernel
-// listening socket, not merely that something answers on the advertised port.
 const GATEWAY_OWNER = `import { readFile, readdir, readlink } from "node:fs/promises";
 const pid = process.argv[2];
 if (!/^[1-9][0-9]*$/.test(pid ?? "")) throw new Error("Missing gateway MainPID");
@@ -186,7 +178,6 @@ export async function hasDaytonaPreview(sha: string, world: PreviewWorld, api = 
 export async function buildDaytonaPreview(sha: string, world: PreviewWorld, api = reviewDaytonaApi(), options: DaytonaBuildOptions = {}) {
   const descriptor = await previewDescriptor(sha, world);
   if ((await api.getSnapshot(descriptor.name))?.state === "active") return descriptor;
-  // Metadata only on the credentialed host. Public PR code executes solely in its guest.
   await sourceTree(sha, options.sourceFetch);
   const observe = options.observe ?? (() => {});
   await ensureLayer(api, { name: descriptor.name, stage: "review-world", withMemory: true, observe,
@@ -196,17 +187,11 @@ export async function buildDaytonaPreview(sha: string, world: PreviewWorld, api 
       prepare: (sandbox) => runScript(api, sandbox, "review-tools", descriptor.tools, options),
     }),
     prepare: async (sandbox) => {
-      // Daytona rewrites Host. The one port-bound gateway forwards only to app-web;
-      // Vite's same-origin engine proxy uses the provider's browser-domain suffix.
       const route = await api.signedPreviewUrl(sandbox.id, 8080, 60);
       const { suffix } = previewOrigin(route);
       for (const [name, source] of Object.entries(descriptor.scripts)) {
-        // Only the runtime entry point must be readable by the app UID. The
-        // gateway, health controller and its imports remain root-only.
         await api.writeFile(sandbox, `${ROOT}/${name}.mjs`, source, name === "runtime" ? 0o644 : 0o600);
       }
-      // Report checkout, installation and builds execute only behind the same
-      // unprivileged boundary; the controller and reserved gateway stay root-owned.
       await api.writeFile(sandbox, `${ROOT}/review-app-build.sh`, `#!/bin/bash\nset -euo pipefail\n${checkoutRecipe(sha)}\n${descriptor.dependencies}\n${descriptor.compile}\n`, 0o644);
       await api.writeFile(sandbox, "/etc/systemd/system/openwork-review-runtime.service", runtimeUnit(suffix), 0o600);
       await api.writeFile(sandbox, "/etc/systemd/system/openwork-review-gateway.service", GATEWAY_SERVICE, 0o600);
@@ -298,8 +283,6 @@ export async function launchDaytonaPreview(input: { gitSha: string; reportId: st
     ]);
     if (source?.trim() !== input.gitSha || head.trim() !== input.gitSha || controller?.trim() !== descriptor.controllerHash) throw new Error("Preview source mismatch");
     stage = "deadline";
-    // This runs in the clone, never the reusable snapshot. The guest shuts down
-    // even if the review function dies; provider auto-delete reclaims stopped VMs.
     const remaining = Math.floor((Date.parse(expiresAt) - Date.now()) / 1000);
     if (remaining <= 0) throw new Error("Preview expired during restore");
     await api.execChecked(sandbox, `systemd-run --unit=openwork-review-expiry --on-active=${remaining}s /usr/sbin/poweroff`, 30);

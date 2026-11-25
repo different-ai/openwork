@@ -23,7 +23,6 @@ export type Pending = {
   sentAt: number;
   uploads: Upload[];
   attachments: WorkbotAttachment[];
-  /** A correction is appended; it never removes the original conversation. */
   correctionOf?: string;
   correctionReference?: WorkbotCorrectionReference;
   failed: string | null;
@@ -43,7 +42,6 @@ export function createComposerState(uploadFile: Uploader) {
   const previewUrls = new Set<string>();
   const publish = (next: Snapshot) => { state = next; for (const listener of listeners) listener(); };
   const updateUpload = (key: string, patch: Partial<Upload>) => {
-    // Lists and messages without this file stay the same objects, so its progress re-renders only what shows it.
     const update = (uploads: Upload[]) => uploads.some(upload => upload.key === key) ? uploads.map(upload => upload.key === key ? { ...upload, ...patch } : upload) : uploads;
     const pending = state.pending.map(entry => { const uploads = update(entry.uploads); return uploads === entry.uploads ? entry : { ...entry, uploads }; });
     publish({ ...state, uploads: update(state.uploads), pending: pending.some((entry, index) => entry !== state.pending[index]) ? pending : state.pending });
@@ -68,7 +66,6 @@ export function createComposerState(uploadFile: Uploader) {
   let disposed = false;
   const addFiles = (files: File[]) => {
     if (disposed) return;
-    // A preview only for images this browser and Workbot show; a HEIC it couldn't convert stays a file tile.
     const added: Upload[] = files.map(file => ({ key: crypto.randomUUID(), file,
       previewUrl: isImage(file.type) ? URL.createObjectURL(file) : null,
       loaded: 0, status: "uploading", error: null, saved: null }));
@@ -80,7 +77,6 @@ export function createComposerState(uploadFile: Uploader) {
     getSnapshot: () => state,
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setText: (text: string) => publish({ ...state, text }),
-    /** HEIC photos are turned into JPEGs first (where the browser can), so they show and Workbot can read them. */
     add: (files: FileList | File[]) => {
       const list = Array.from(files);
       if (list.some(isHeic)) void uploadableFiles(list).then(addFiles);
@@ -97,7 +93,6 @@ export function createComposerState(uploadFile: Uploader) {
       if (upload) release(upload);
       publish({ ...state, uploads: state.uploads.filter(upload => upload.key !== key) });
     },
-    /** `keepDraft`: a message that isn't the draft (a correction, a tap on Show me) leaves the draft and its uploads alone. */
     enqueue: ({ keepDraft = false, ...input }: { id: string; text: string; context?: WorkbotViewContext; teachingId?: string; teachingStepId?: number; correctionOf?: string; correctionReference?: WorkbotCorrectionReference; attachments?: WorkbotAttachment[]; keepDraft?: boolean }) => {
       const separate = keepDraft || input.correctionOf !== undefined;
       const entry: Pending = { ...input, attachments: input.attachments ?? [], sentAt: Date.now(),
@@ -117,7 +112,6 @@ export function createComposerState(uploadFile: Uploader) {
       }) });
       try {
         if (retry) for (const upload of entry.uploads) {
-          // Only explicitly failed uploads retry. Successful ones keep their saved ids, even after send failure.
           if (upload.status !== "failed" || upload.saved) continue;
           waiters.delete(upload.key);
           start(upload);
@@ -132,7 +126,6 @@ export function createComposerState(uploadFile: Uploader) {
     },
     acknowledge: (ids: ReadonlySet<string>) => {
       if (!state.pending.some(entry => ids.has(entry.id))) return;
-      // The conversation can still be using the local preview while its remote thumbnail loads.
       for (const entry of state.pending) if (ids.has(entry.id)) for (const upload of entry.uploads) waiters.delete(upload.key);
       publish({ ...state, pending: state.pending.filter(entry => !ids.has(entry.id)) });
     },

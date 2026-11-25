@@ -1,8 +1,4 @@
-// Shared by the host and bundled engine plugins. Keep this outside
-// opencode-plugins: installed desktops relocate that directory out of the server.
 export function automationRuntimeKnowledge(runtimeProvider = process.env.DEN_RUNTIME_PROVIDER) {
-  // The Automation catalog section owns "read live before reporting"; these
-  // lines own capability roles, mutation gating, and schedule shape.
   const shared = [
     "OpenWork has first-class Automations. Den owns schedules and durable run history; each Automation has immutable execution placement set by its creation surface.",
     "Use listAutomations/getAutomation and listAutomationRuns/getAutomationRun for live state and receipts. Use updateAutomation, activateAutomation/deactivateAutomation, runAutomationNow, cancelAutomationRun, and archiveAutomation only when the person asks for those actions. Deactivation stops future runs but does not cancel a run already in progress.",

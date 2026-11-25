@@ -4,7 +4,6 @@ import { DenBadge } from "../../app/(den)/_components/ui/badge";
 
 export const shortDate = (value: string) => new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 
-// What each reason asks of the person working the list.
 export const PLAY: Record<OutreachPlay, { label: string; ask: string; icon: LucideIcon; tone: string }> = {
   follow_up: { label: "Follow up", ask: "You wrote and no reply is recorded. Nudge once, or close it.", icon: CalendarClock, tone: "text-[var(--dls-accent)]" },
   payment: { label: "Payment failed", ask: "Flag the failed payment before access is interrupted.", icon: CreditCard, tone: "text-[var(--ow-warning)]" },
@@ -24,7 +23,6 @@ type Billing = { plan: "free" | "team" | "enterprise"; paying: boolean; modelsAd
 type Outreach = { status: "not_contacted" | "contacted"; lastContactedAt: string | null };
 const PLAN_LABEL: Record<Billing["plan"], string> = { free: "Free", team: "Team", enterprise: "Enterprise" };
 
-// Matches the sales sheet's "Paying or not paying" and "Plan they are on" columns.
 export function BillingCell({ billing }: { billing: Billing }) {
   return <div className="whitespace-nowrap">
     <DenBadge size="sm" tone={billing.paying ? "success" : "neutral"}>{billing.paying ? "Paying" : "Not paying"}</DenBadge>

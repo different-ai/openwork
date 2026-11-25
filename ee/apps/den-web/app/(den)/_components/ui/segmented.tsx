@@ -12,11 +12,9 @@ export type DenSegmentedProps<T extends string> = {
   onChange: (value: T) => void;
   "aria-label": string;
   className?: string;
-  /** A test id for each option, for journeys that pick one among several groups. */
   optionTestId?: (value: T) => string;
 };
 
-/** A compact radio group for switching between related options. */
 export function DenSegmented<T extends string>({
   options,
   value,

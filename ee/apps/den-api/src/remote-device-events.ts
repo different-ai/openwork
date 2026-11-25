@@ -10,11 +10,9 @@ import {
 } from "@openwork/types/den/remote-devices"
 import { db } from "./db.js"
 
-/** A device's activity log: what remote-devices.ts and computer-disconnect.ts both append to. */
 export type RemoteDeviceDatabase = typeof db | typeof db.$primary | Parameters<Parameters<typeof db["transaction"]>[0]>[0]
 export type RemoteDeviceEventData = Record<string, string | number | boolean | null>
 
-/** Appends one event and bounds storage in the same transaction as its writer. */
 export async function recordRemoteDeviceEvent(database: RemoteDeviceDatabase, input: {
   organizationId: DenTypeId<"organization">
   deviceId: DenTypeId<"remoteDevice">
@@ -41,7 +39,6 @@ export async function recordRemoteDeviceEvent(database: RemoteDeviceDatabase, in
   await pruneRemoteDeviceEvents(input.deviceId, input.now, database)
 }
 
-/** Keeps a device's newest REMOTE_DEVICE_EVENT_LIMIT events from the last REMOTE_DEVICE_EVENT_RETENTION_MS. */
 export async function pruneRemoteDeviceEvents(deviceId: DenTypeId<"remoteDevice">, now = new Date(), database: RemoteDeviceDatabase = db) {
   await database.delete(RemoteDeviceEventTable).where(and(
     eq(RemoteDeviceEventTable.deviceId, deviceId),

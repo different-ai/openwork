@@ -1,21 +1,9 @@
-// Translates an Auto request (OpenAI Chat Completions) to Gemini
-// generateContent (Google AI Studio and Vertex AI share the body format), and
-// the response (JSON or SSE) back to Chat Completions.
-//
-// Gemini names the model in the path, not the body. Gemini 3 signs its
-// function calls (`thoughtSignature`) and requires the signature back on the
-// call when the conversation continues. Chat Completions cannot carry it, so
-// each signature is handed to `remember` keyed by the tool call id we made up
-// for it, and the caller passes it back in `reasoning`. When one is missing,
-// the documented placeholder skips the check instead of failing the request.
 import { randomUUID } from "node:crypto"
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { contentText, isJsonObject, type AutoRouteInfo, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 import type { ReasoningPayload, RememberReasoning } from "@openwork-ee/gateway-protocols/reasoning"
 import type { AutoTranslator } from "@openwork-ee/gateway-protocols/protocol"
 import { objectToolSchema } from "@openwork-ee/gateway-protocols/tool-schema"
-
-/** Receives reasoning state to keep for the tool calls it preceded. */
 
 /** Google's documented value for a function call whose signature was lost. */
 export const SKIP_THOUGHT_SIGNATURE = "skip_thought_signature_validator"
@@ -77,7 +65,6 @@ function toolResponse(content: unknown): JsonObject {
       const parsed: unknown = JSON.parse(trimmed)
       if (isJsonObject(parsed)) return parsed
     } catch {
-      // Not JSON; sent as text below.
     }
   }
   return { content: text }
@@ -92,7 +79,6 @@ type GeminiContent = { role: "user" | "model"; parts: JsonObject[] }
 function pushContent(list: GeminiContent[], role: "user" | "model", parts: JsonObject[]) {
   if (!parts.length) return
   const last = list[list.length - 1]
-  // Turns must alternate; merge consecutive contents from the same side.
   if (last && last.role === role) last.parts.push(...parts)
   else list.push({ role, parts })
 }
@@ -108,9 +94,6 @@ function isGemini3(model: string) {
   const version = geminiVersion(model)
   return version !== null && version.major >= 3
 }
-
-// ---------------------------------------------------------------------------
-// JSON Schema → Gemini's OpenAPI schema subset.
 
 const STRING_FORMATS = new Set(["enum", "date-time"])
 const NUMBER_FORMATS = new Set(["int32", "int64", "float", "double"])
@@ -134,7 +117,6 @@ function sanitizeNode(value: unknown, root: JsonObject, depth: number): JsonObje
     const { $ref: _ref, ...rest } = schema
     schema = { ...target, ...rest }
   }
-  // allOf: merge the parts; Gemini has no intersection.
   if (Array.isArray(schema.allOf)) {
     const { allOf, ...rest } = schema
     const merged: JsonObject = { ...rest }
@@ -218,9 +200,6 @@ export function sanitizeGeminiSchema(schema: unknown): JsonObject {
   return isJsonObject(schema) ? sanitizeNode(schema, schema, 0) : {}
 }
 
-// ---------------------------------------------------------------------------
-// Request.
-
 const GEMINI_3_LEVELS: Record<Exclude<AutoRouterThinkingLevel, "default">, string> = {
   none: "minimal", minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high",
 }
@@ -236,12 +215,10 @@ export function geminiThinkingConfig(upstreamModel: string, level: AutoRouterThi
   if (!version) return null
   const pro = /-pro\b/i.test(upstreamModel)
   if (version.major >= 3) {
-    // Gemini 3 cannot turn thinking off; Pro has no minimal level.
     const thinkingLevel = GEMINI_3_LEVELS[level]
     return { includeThoughts: true, thinkingLevel: pro && thinkingLevel === "minimal" ? "low" : thinkingLevel }
   }
   if (version.major === 2 && version.minor >= 5) {
-    // 2.5 Pro cannot turn thinking off; 128 is its smallest budget.
     const budget = level === "none" && pro ? 128 : GEMINI_2_BUDGETS[level]
     return budget === 0 ? { thinkingBudget: 0 } : { includeThoughts: true, thinkingBudget: budget }
   }
@@ -257,7 +234,6 @@ export function toGeminiBody(body: JsonObject, input: {
   upstreamModel: string
   thinkingLevel: AutoRouterThinkingLevel
   maxOutputTokens: number | null
-  /** Reasoning state remembered for earlier tool calls, by tool call id. */
   reasoning?: ReadonlyMap<string, ReasoningPayload>
 }): JsonObject {
   const system: JsonObject[] = []
@@ -294,8 +270,6 @@ export function toGeminiBody(body: JsonObject, input: {
           if (typeof signature === "string") { part.thoughtSignature = signature; signed = true }
           calls.push(part)
         }
-        // Gemini 3 checks the signature on the first call of each step;
-        // parallel calls after it carry none.
         const first = calls[0]
         if (gemini3 && first && !signed) first.thoughtSignature = SKIP_THOUGHT_SIGNATURE
         parts.push(...calls)
@@ -321,7 +295,6 @@ export function toGeminiBody(body: JsonObject, input: {
       const declaration: JsonObject = { name: fn.name }
       if (typeof fn.description === "string") declaration.description = fn.description
       const parameters = sanitizeGeminiSchema(objectToolSchema(fn.parameters))
-      // Gemini rejects an object schema without properties; leave it out.
       if (isJsonObject(parameters.properties) && Object.keys(parameters.properties).length) declaration.parameters = parameters
       return [declaration]
     })
@@ -354,9 +327,6 @@ export function toGeminiBody(body: JsonObject, input: {
   if (Object.keys(generationConfig).length) next.generationConfig = generationConfig
   return next
 }
-
-// ---------------------------------------------------------------------------
-// Response.
 
 function finishReason(reason: unknown, hasToolCalls: boolean) {
   switch (reason) {
@@ -408,14 +378,12 @@ function candidateParts(candidate: JsonObject): JsonObject[] {
   return Array.isArray(content.parts) ? content.parts.filter(isJsonObject) : []
 }
 
-/** The prompt was blocked before any candidate. */
 function promptBlocked(response: JsonObject) {
   return isJsonObject(response.promptFeedback) && typeof response.promptFeedback.blockReason === "string"
 }
 
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } }
 
-/** A function call part as a chat tool call, remembering its signature. */
 function toolCallFrom(part: JsonObject, remember?: RememberReasoning): ToolCall | null {
   const call = isJsonObject(part.functionCall) ? part.functionCall : null
   if (!call || typeof call.name !== "string") return null
@@ -543,7 +511,6 @@ export function geminiStreamToChat(body: ReadableStream<Uint8Array>, route: Auto
   }
 
   const drain = (controller: TransformStreamDefaultController<Uint8Array>, flush: boolean) => {
-    // Normalize CRLF and split complete events on blank lines.
     buffer = buffer.replace(/\r\n/g, "\n")
     let boundary = buffer.indexOf("\n\n")
     while (boundary >= 0 || (flush && buffer.trim())) {
@@ -555,7 +522,6 @@ export function geminiStreamToChat(body: ReadableStream<Uint8Array>, route: Auto
         if (line.startsWith(":")) comments.push(line)
         else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""))
       }
-      // Keep heartbeats flowing so proxies keep the connection open.
       if (comments.length && !data.length) controller.enqueue(encoder.encode(`${comments.join("\n")}\n\n`))
       const out = handle(data.join("\n"))
       if (out) controller.enqueue(encoder.encode(out))
@@ -571,7 +537,6 @@ export function geminiStreamToChat(body: ReadableStream<Uint8Array>, route: Auto
     flush(controller) {
       buffer += decoder.decode()
       drain(controller, true)
-      // Gemini has no end event: the stream closing ends the completion.
       if (started && !finished) controller.enqueue(encoder.encode(finish()))
     },
   }))

@@ -24,7 +24,6 @@ export type ConnectorToolIdentity = {
   serviceUrl: string | null;
   toolNamespace: string | null;
   connectionId: string | null;
-  /** Live member status from the org connection list; absent when unknown. */
   connectedForMe?: boolean;
 };
 
@@ -114,11 +113,6 @@ function identityFromConnection(connection: DenExternalMcpConnection): Connector
   };
 }
 
-/**
- * One first-class presentation inventory for every connector source the
- * desktop knows about. Later, user- and organization-specific entries replace
- * catalog fallbacks with the exact name, URL, and connection id in use.
- */
 export function buildConnectorToolIdentities(input: {
   mcpServers: McpServerEntry[];
   orgConnections: DenExternalMcpConnection[];
@@ -161,17 +155,10 @@ function capabilityName(part: DynamicToolUIPart): string | null {
   return typeof name === "string" && name.trim() ? name.trim() : null;
 }
 
-/** Same slug the server uses in `connectDirectMcpRuntimeName`. */
 function directSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 }
 
-/**
- * Directly exposed org connections run as `openwork-direct-<slug>-<digest>`
- * tools. Attribute them to the org connection with that name (its own icon
- * and display name); when the name is ambiguous or unknown, fall back to the
- * catalog entry for the service so the logo still shows.
- */
 function directConnectionIdentity(toolName: string, identities: ConnectorToolIdentity[]): ConnectorToolIdentity | null {
   if (!toolName.startsWith(CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX)) return null;
   const namespace = toolName.split("_")[0] ?? "";
@@ -191,13 +178,6 @@ function directConnectionIdentity(toolName: string, identities: ConnectorToolIde
   } : null;
 }
 
-/**
- * The connector behind a tool Connect lists for one action
- * (`openwork-cloud_linear_list_issues`) or behind `connection_status`, whose
- * input names the connection's namespace. Connect derives the namespace from
- * the connection's name, so the longest matching name wins, and the member's
- * own organization connection wins over a catalog entry of the same name.
- */
 function connectToolIdentity(part: DynamicToolUIPart, identities: ConnectorToolIdentity[]): ConnectorToolIdentity | null {
   const owns = connectToolOwnerTest(part);
   if (!owns) return null;
@@ -214,17 +194,14 @@ function connectToolOwnerTest(part: DynamicToolUIPart): ((connectionName: string
   if (part.toolName === CONNECT_STATUS_TOOL) {
     const input = part.input && typeof part.input === "object" && "connection" in part.input ? part.input.connection : null;
     if (typeof input !== "string") return null;
-    // Connect numbers a second connection of the same name ("linear_2").
     const namespace = input.trim().replace(/_\d+$/, "");
     return (name) => [input.trim(), namespace].includes(connectToolNamespace(name));
   }
   const action = connectActionToolName(part.toolName);
-  // `den` is OpenWork's own namespace, which no connection can take.
   if (!action || connectDenOperation(part.toolName)) return null;
   return (name) => connectActionForConnection(action, name) !== null;
 }
 
-/** Resolve a rendered tool call only when it can be attributed to a connector. */
 export function resolveConnectorToolIdentity(
   part: DynamicToolUIPart,
   identities: ConnectorToolIdentity[],

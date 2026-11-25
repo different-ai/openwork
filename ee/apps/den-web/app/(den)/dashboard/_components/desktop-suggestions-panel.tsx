@@ -18,7 +18,6 @@ type Suggestion = { prompt: string; description: string };
 const emptySuggestions = () => [{ prompt: "", description: "" }, { prompt: "", description: "" }];
 const suggestionsFor = (policy: DenDesktopPolicy | undefined): Suggestion[] => (policy?.policy.onboardingPrompts ?? []).map((prompt, index) => ({ prompt, description: policy?.policy.onboardingPromptDescriptions?.[index] ?? "" }));
 
-/** Suggestion fields alone change; assignments, priority and all other policy fields survive. */
 export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: string } | null }) {
   const { orgContext, orgId, runReauthableAction } = useOrgDashboard();
   const access = orgContext ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions) : null;
@@ -30,8 +29,6 @@ export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: st
   const defaults = desktopPolicies.find((policy) => policy.isDefault);
   const teamPolicies = desktopPolicies.filter((policy) => !policy.isDefault && policy.assignments.some((assignment) => assignment.teamId === team?.id));
   const promptPolicies = teamPolicies.filter((policy) => policy.policy.onboardingPrompts !== undefined);
-  // A team replacement must not rewrite a shared member, role or multi-team policy.
-  // Multiple policies (even disabled ones) need an explicit migration, not a guessed winner.
   const own = team ? promptPolicies.length === 1 ? promptPolicies[0] : undefined : defaults;
   const shared = own && !own.isDefault && own.assignments.some((assignment) => assignment.teamId !== team?.id || assignment.orgMemberId !== null || assignment.role !== null);
   const teamMembers = new Set(orgContext?.teams.find((entry) => entry.id === team?.id)?.memberIds ?? []);
@@ -60,7 +57,6 @@ export function DesktopSuggestionsPanel({ team }: { team: { id: string; name: st
       await runReauthableAction("save-desktop-suggestions", async () => {
         const latest = await requestJson("/v1/desktop-policies", { method: "GET", headers: orgScopeHeaders(orgId) }, 12000);
         if (!latest.response.ok) throw new Error("Couldn't verify current suggestions. Reload and try again.");
-        // Do not overwrite policy changes made in AI Gateway or another tab while this editor was open.
         if (JSON.stringify(parseDesktopPolicyList(latest.payload).desktopPolicies) !== JSON.stringify(desktopPolicies)) {
           await reloadPolicies();
           throw new Error("Policies changed while you were editing. Reload and review the current suggestions before saving.");

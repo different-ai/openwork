@@ -4,10 +4,6 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import { getReactQueryClient } from "./query-client";
 
-/**
- * Subscribe to a TanStack Query cache entry as plain external state.
- * Pass a null key to pin the fallback (used while route params are missing).
- */
 export function useQueryCacheState<T>(queryKey: readonly unknown[] | null, fallback: T): T {
   const queryClient = getReactQueryClient();
   return useSyncExternalStore(
@@ -17,11 +13,6 @@ export function useQueryCacheState<T>(queryKey: readonly unknown[] | null, fallb
   );
 }
 
-/**
- * Subscribe to several array-valued cache entries as one stable array. This is
- * useful for a selected session plus a dynamic set of child sessions, where
- * calling one hook per child would violate React's fixed hook ordering.
- */
 export function useQueryCacheArrayState<T>(
   queryKeys: readonly (readonly unknown[])[],
   fallback: T[],

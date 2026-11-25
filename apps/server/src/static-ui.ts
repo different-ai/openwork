@@ -125,14 +125,9 @@ function contentType(extension: string): string {
   return "application/octet-stream";
 }
 
-/**
- * Only the UI's own page loads, or a person opening it in a tab, sign in
- * automatically. Another site framing or fetching the page gets no token.
- */
 function bootstrapTokenFor(request: Request, token: string): string {
   if (!shouldInjectBootstrapToken()) return "";
   const site = request.headers.get("sec-fetch-site");
-  // Older browsers and non-browser clients send no fetch metadata.
   if (!site || site === "same-origin" || site === "none") return token;
   const opensTab = request.headers.get("sec-fetch-mode") === "navigate"
     && request.headers.get("sec-fetch-dest") === "document";

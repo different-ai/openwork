@@ -4,13 +4,6 @@ import { presentOpencodeSessionError } from "@/react-app/domains/session/sync/se
 import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter"
 import type { RemoteTranscriptMessage, RemoteTranscriptPart } from "./remote-session-thread"
 
-/**
- * A remote task's transcript as chat messages, so the main chat renderer
- * (`MessageList`) shows it with the same rail, labels, folding and details as
- * a local turn: text and reasoning stay text and reasoning, and each tool step
- * becomes the same `dynamic-tool` part a local tool call produces.
- */
-
 type ToolPart = Extract<RemoteTranscriptPart, { type: "tool" }>
 
 function parseInput(input: string | null): unknown {
@@ -19,7 +12,6 @@ function parseInput(input: string | null): unknown {
     const parsed: unknown = JSON.parse(input)
     return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {}
   } catch {
-    // Cut short at the wire cap: the step still renders by its name.
     return {}
   }
 }
@@ -42,8 +34,6 @@ function toolUIPart(part: ToolPart, live: boolean): DynamicToolUIPart {
   if (status === "completed" || (status === null && part.output !== null)) {
     return { ...base, state: "output-available", input, output: part.output ?? "" }
   }
-  // Pending or running. Once the turn settled without finishing it, it was
-  // interrupted: show it as a finished step with nothing to report.
   if (!live) return { ...base, state: "output-available", input, output: part.output ?? "" }
   return status === "pending" || status === "streaming"
     ? { ...base, state: "input-streaming", input }
@@ -78,10 +68,6 @@ function metadata(message: RemoteTranscriptMessage) {
   return Object.keys(opencode).length > 0 ? { metadata: { opencode } } : {}
 }
 
-/**
- * Maps a transcript page to chat messages. `running` marks the task's latest
- * turn as still going, so its open steps show as in progress.
- */
 export function remoteTranscriptToUIMessages(
   messages: readonly RemoteTranscriptMessage[],
   options: { running: boolean },

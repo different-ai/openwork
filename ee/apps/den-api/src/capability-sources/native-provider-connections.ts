@@ -14,32 +14,19 @@ import { getConnectedAccountsForListing, getOrgOAuthClient, getOrgOAuthClients }
 import { readProviderTenantId } from "./oauth-tenant.js"
 import { listExternalMcpConnections, listUsableNativeProviderConnections } from "./external-mcp-connections.js"
 
-/**
- * Native providers (google-workspace, ...) surface in the SAME member-facing
- * list as external MCP connections, so the desktop app renders and connects
- * them with zero client changes: once an org admin saves an OAuth client for
- * a provider, every granted surface that lists usable connections shows a
- * per-member card for it. Legacy entries are synthetic; multi-account
- * connectors use ExternalMcpConnectionTable rows and are explicitly fenced
- * out of the external MCP client merge.
- */
-
 export type NativeProviderConnectionEntry = {
   id: string
   name: string
   url: string
   authType: "oauth"
   credentialMode: "per_member"
-  /** Native providers are implemented by Den itself and never have a standard MCP catalog to expose. */
   exposeDirectly: false
-  /** Absent for legacy synthetic entries without a stored connector row. */
   createdAt?: string
   connected: boolean
   connectedAt: string | null
   connectedForMe: boolean
   needsReconnect: boolean
   missingFeatures: string[]
-  /** Which service this connector fronts ("google-workspace"), so an admin-named card ("Acme Labs") can still say what it signs in to. */
   nativeProviderKey: string
   externalAccountId?: string | null
   grantedScopes?: string[]
@@ -51,7 +38,6 @@ export type NativeProviderConnectionEntry = {
 type NativeProviderReconnectState = {
   needsReconnect: boolean
   missingFeatures: string[]
-  /** Required scopes the stored grant does not cover; names only, safe to log. */
   missingScopes: string[]
 }
 
@@ -119,14 +105,6 @@ export function buildNativeProviderEntry(
 
 export type NativeProviderPolicyError = { kind: "policy_blocked"; message: string }
 
-/**
- * Connect is generally available: the per-organization `mcpConnections` opt-out
- * was retired on purpose (product decision, 2026-10), so a stored `false`
- * override no longer blocks native actions. Access is limited per connection
- * (team grants) and by each member's own credentials, both enforced where the
- * connection is resolved. Only a missing organization is refused here.
- */
-
 export async function nativeProviderConnectionPolicyError(organizationId: DenTypeId<"organization">): Promise<NativeProviderPolicyError | null> {
   const [organization] = await db
     .select({ id: OrganizationTable.id })
@@ -145,7 +123,6 @@ export async function listNativeProviderUsableEntries(input: {
   orgMembershipId: DenTypeId<"member">
   teamIds?: DenTypeId<"team">[]
 }): Promise<NativeProviderConnectionEntry[]> {
-  // Recheck at resolution so retained capability names and Code Mode calls cannot bypass an org disable.
   if (await nativeProviderConnectionPolicyError(input.organizationId)) return []
   const entries: NativeProviderConnectionEntry[] = []
   const connections = (await listUsableNativeProviderConnections({
@@ -156,9 +133,6 @@ export async function listNativeProviderUsableEntries(input: {
     const provider = connection.nativeProviderKey ? NATIVE_OAUTH_PROVIDERS[connection.nativeProviderKey] : undefined
     return provider ? [{ connection, provider }] : []
   })
-  // Legacy native-provider clients never had connector rows. Keep their
-  // literal registry key visible org-wide without moving either credentials
-  // or connected accounts.
   const legacyProviders = Object.values(NATIVE_OAUTH_PROVIDERS)
   const clients = await getOrgOAuthClients(input.organizationId, [
     ...connections.map(({ connection }) => connection.id),
@@ -222,8 +196,6 @@ export async function resolveDefaultNativeProviderCredentialId(input: {
   teamIds: DenTypeId<"team">[]
 }): Promise<string | null> {
   if (await nativeProviderConnectionPolicyError(input.organizationId)) return null
-  // The literal registry key is the legacy alias: it has no connector row or
-  // access grants, so it intentionally remains implicitly org-wide.
   if (await getOrgOAuthClient(input.organizationId, input.nativeProviderKey)) {
     return input.nativeProviderKey
   }
@@ -246,7 +218,6 @@ export async function resolveDefaultNativeProviderCredentialId(input: {
   return connectors.length === 1 ? connectors[0].id : null
 }
 
-/** Admin configuration lookup only; member flows must use the grant-aware default resolver above. */
 export async function resolveManageableNativeProviderCredentialId(input: {
   organizationId: DenTypeId<"organization">
   nativeProviderKey: string

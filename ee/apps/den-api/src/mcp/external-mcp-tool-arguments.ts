@@ -59,7 +59,6 @@ export function validateExternalMcpToolArguments(
   }
 
   try {
-    // The remote server wrote this schema's patterns: see runWithTimeLimit.
     const result = runWithTimeLimit(() => validatorProvider.getValidator<Record<string, unknown>>(schema)(value), SCHEMA_CHECK_TIME_LIMIT_MS)
     if (result.valid) return { ok: true, arguments: value }
     return {
@@ -73,7 +72,6 @@ export function validateExternalMcpToolArguments(
     }
   } catch (error) {
     if (error instanceof TimeLimitExceededError) {
-      // The stopped check may have left this validator half-way through compiling.
       validatorProvider = new AjvJsonSchemaValidator()
       return { ok: false, error: "invalid_arguments", issues: [{ path: "/", keyword: "schema_validation", message: SCHEMA_CHECK_TOO_SLOW_MESSAGE }] }
     }

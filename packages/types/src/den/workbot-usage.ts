@@ -46,11 +46,8 @@ export const WORKBOT_USAGE_DAYS = 30
 const count = z.number().int().nonnegative()
 
 const workbotUsageSumsSchema = z.object({
-  /** US dollars in millionths, as the gateway recorded it. */
   costMicroUsd: count,
-  /** Model requests; one Workbot answer makes several. */
   requests: count,
-  /** Requests with no known cost; they add nothing to `costMicroUsd`. */
   unpricedRequests: count,
   inputTokens: count,
   outputTokens: count,
@@ -60,15 +57,11 @@ export type WorkbotUsageSums = z.infer<typeof workbotUsageSumsSchema>
 
 export const workbotUsageResponseSchema = z.object({
   days: count,
-  /** The first UTC day (YYYY-MM-DD) with any recorded Workbot usage; null when there is none yet. */
   since: z.string().nullable(),
   totals: workbotUsageSumsSchema.extend({ members: count }),
-  /** One entry per UTC day in the window, oldest first, days without usage included. */
   daily: z.array(workbotUsageSumsSchema.extend({ day: z.string() })),
   surfaces: z.array(workbotUsageSumsSchema.extend({ surface: z.enum(WORKBOT_USAGE_SURFACES) })),
-  /** Most expensive first. An empty `model` is a request whose model the gateway never learned. */
   models: z.array(workbotUsageSumsSchema.extend({ model: z.string() })),
-  /** Most expensive first. `name` is null for a member who has since left. */
   members: z.array(workbotUsageSumsSchema.extend({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable() })),
 })
 export type WorkbotUsageResponse = z.infer<typeof workbotUsageResponseSchema>

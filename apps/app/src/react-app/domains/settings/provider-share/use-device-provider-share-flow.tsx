@@ -8,43 +8,23 @@ import { ShareProviderDialog } from "./share-provider-dialog";
 import { useDeviceProviderShare } from "./use-device-provider-share";
 
 export type DeviceProviderShareFlow = {
-  /** Per device provider id: shareable, or already shared. Empty when the feature is off. */
   rows: ReadonlyMap<string, DeviceProviderShareRow>;
   emptyState: OrganizationShareEmptyState;
-  /** Den answered: the person may share (even if nothing here is shareable). */
   canShare: boolean;
-  /** Den has answered, so `firstShareable` and `canShare` are final for now. */
   resolved: boolean;
-  /** The first row one confirmation can share, for entry points outside the row. */
   firstShareable: { id: string; name: string } | null;
-  /** Opens the confirmation for a provider on this device. */
   open: (provider: { id: string; name: string }) => void;
-  /** The confirmation dialog; render it once on the page. */
   dialog: ReactNode;
 };
 
-/**
- * Settings › AI Providers: share a key saved on this device with the
- * organization. Owns the confirmation and
- * what follows it, so the page only places the row action and the dialog.
- */
 export function useDeviceProviderShareFlow(input: {
   providers: readonly ShareableDeviceProvider[];
   runtimeWorkspaceId: string | null | undefined;
   organizationName: string;
-  /** Sends the share through this computer's server; rejects with the server's error. */
   share: (providerId: string, verifiedToken?: string) => Promise<{ inferenceProviderId: string; name: string }>;
-  /**
-   * The guided ending (`providerFilterSyncFix`): the confirmation stays open
-   * until this device knows whether the shared provider is listed under the
-   * organization, then asks which copy this device keeps.
-   */
   guided?: {
-    /** Refreshes this device and answers whether what Den created is listed here. Safe to call again. */
     confirmArrival: (providerId: string, shared: { inferenceProviderId: string; name: string }) => Promise<SharedProviderArrival>;
-    /** Removes the person's own key from this device, moving their default model to the organization's copy first; rejects with a sentence to show. */
     removeDeviceKey: (providerId: string, organizationProviderId: string) => Promise<void>;
-    /** Brings the organization's providers into view once the dialog closes. */
     showOrganizationProviders: () => void;
   };
 }): DeviceProviderShareFlow {
@@ -52,7 +32,6 @@ export function useDeviceProviderShareFlow(input: {
   const workspaceId = input.runtimeWorkspaceId ?? null;
   const health = useCallback((providerId: string): ProviderCredentialHealth =>
     (workspaceId ? healthEntries[credentialHealthKey(workspaceId, providerId)]?.status : undefined) ?? "unverified", [healthEntries, workspaceId]);
-  // The page rebuilds its provider list on every render; key the question on what is in it.
   const providerKey = input.providers.map((provider) => `${provider.id}\u001f${provider.name}\u001f${provider.source ?? ""}`).join("\n");
   const providers = useMemo(() => input.providers.map((provider) => ({ ...provider })), [providerKey]);
   const share = useDeviceProviderShare({ providers, health });
@@ -69,7 +48,6 @@ export function useDeviceProviderShareFlow(input: {
   }, [providers, share.rows]);
 
   const guided = input.guided;
-  // What Den created for each provider shared from this dialog, so "Check again" asks about the same one.
   const shared = useRef(new Map<string, { inferenceProviderId: string; name: string }>());
   const inputShare = input.share;
   const shareAndRemember = useCallback(async (providerId: string, verifiedToken?: string) => {
@@ -85,7 +63,6 @@ export function useDeviceProviderShareFlow(input: {
       verificationRequired={share.options?.verificationRequired === true}
       onShare={shareAndRemember}
       onShared={(provider) => {
-        // Guided, the dialog itself reports the result; a toast would repeat it.
         if (!guided) toast.success(`Shared ${provider.name} with ${organizationName}`);
         void share.refresh();
       }}

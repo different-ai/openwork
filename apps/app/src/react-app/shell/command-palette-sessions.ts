@@ -35,7 +35,6 @@ export function buildCommandPaletteSessions(
       workspace.path?.trim() ||
       t("session.workspace_fallback");
 
-    // Sub-agent sessions live inside their parent's task card, not in pickers.
     for (const session of getRootSessions(sessionsByWorkspaceId[workspace.id] ?? [])) {
       const sessionId = session.id.trim();
       if (!sessionId) continue;

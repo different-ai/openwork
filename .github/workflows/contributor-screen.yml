@@ -17,6 +17,7 @@ on:
         type: string
         required: true
 
+cache-mode: none
 permissions: {}
 
 jobs:

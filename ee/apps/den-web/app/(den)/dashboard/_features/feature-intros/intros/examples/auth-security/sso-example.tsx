@@ -4,7 +4,6 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows, ExampleServiceMark } from "../example-parts";
 import { EXAMPLE_DOMAIN, EXAMPLE_ORG, OKTA, ssoExampleSettings } from "./auth-security-example-data";
 
-/** SSO tab example: what people see when they sign in, and the connection behind it. */
 export function SsoExample() {
   const step = useExampleStep(ssoExampleSettings.length);
 

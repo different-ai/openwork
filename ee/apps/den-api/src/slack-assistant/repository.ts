@@ -28,7 +28,6 @@ import { CLAIMABLE_STATUSES, THREAD_ACTIVE_STATUSES } from "./statuses.js"
 export type InstallationRow = typeof Installation.$inferSelect
 export type EventRow = typeof Event.$inferSelect
 export type ThreadRow = typeof Thread.$inferSelect
-/** Pass `db.$primary` when the installation may have been written moments ago. */
 export async function getInstallation(connectionId: DenTypeId<"externalMcpConnection">, database: typeof db.$primary = db) {
   return (await database.select().from(Installation).where(eq(Installation.connectionId, connectionId)).limit(1))[0] ?? null
 }
@@ -40,11 +39,6 @@ export function isSlackConnection(connection: ExternalMcpConnectionRow) {
     new URL(connection.url).hostname === "mcp.slack.com"
   )
 }
-/**
- * A connection the assistant can answer and message members from: Slack's own, or a sandbox's sample Slack, whose
- * installation holds a sample bot token (only sandbox setup writes one). The setup and install routes keep the
- * stricter isSlackConnection, so a real Slack app is never installed on a sample connector.
- */
 export function isSlackAssistantConnection(connection: ExternalMcpConnectionRow, installation: Pick<InstallationRow, "botToken"> | null | undefined) {
   if (isSlackConnection(connection)) return true
   return (
@@ -54,20 +48,12 @@ export function isSlackAssistantConnection(connection: ExternalMcpConnectionRow,
     connection.oauthIssuerReviewRequiredAt === null
   )
 }
-/**
- * A member's own Slack calls with their connector token: Slack's API, or the sandbox's sample Slack when the
- * installation is a sample app. Null when that sample Slack can't be used now.
- */
 async function memberSlackCall(installation: InstallationRow, token: string, client: (token: string) => SlackCall): Promise<SlackCall | null> {
   if (!isSandboxSlackToken(installation.botToken)) return client(token)
   const baseUrl = await sandboxSlackApiBase(installation.connectionId)
   return baseUrl ? slackClient(token, fetch, baseUrl) : null
 }
 
-// Called only after the member completes the existing user OAuth flow. MCP's
-// oauth.v2.user.access has a standard token response; auth.test recovers the
-// provider-authenticated user/team (the equivalent of oauth.v2.access's
-// authed_user.id), never an email or an id supplied by the browser.
 export async function bindSlackOAuthMember(
   connection: ExternalMcpConnectionRow,
   memberId: DenTypeId<"member">,
@@ -85,8 +71,6 @@ export async function bindSlackOAuthMember(
     .parse(await slack("auth.test", {}))
   if (actor.bot_id || actor.team_id !== installation.teamId) throw new Error("slack_assistant_wrong_workspace")
   await db.transaction(async (tx) => {
-    // Share the connector deletion lock so a late OAuth callback cannot
-    // recreate an identity after its connection has been removed.
     const [current] = await tx
       .select()
       .from(ExternalMcpConnectionTable)
@@ -139,12 +123,6 @@ const LINK_BACKFILL_INTERVAL_MS = 10 * 60_000
 const LINK_BACKFILL_MAX_MEMBERS = 200
 const lastLinkBackfill = new Map<string, number>()
 
-/**
- * Members who connected Slack before the assistant was installed have a token but no Slack identity link,
- * which used to force them to disconnect and reconnect. Link them from their existing token instead
- * (auth.test through bindSlackOAuthMember, which also replays their pending requests). Runs at most once
- * per installation every ten minutes per process. Returns how many members were newly linked.
- */
 export async function linkConnectedSlackMembers(installation: InstallationRow, client: (token: string) => SlackCall = slackClient, now = Date.now) {
   const last = lastLinkBackfill.get(installation.connectionId)
   if (last !== undefined && now() - last < LINK_BACKFILL_INTERVAL_MS) return 0
@@ -175,7 +153,6 @@ export async function linkConnectedSlackMembers(installation: InstallationRow, c
       await bindSlackOAuthMember(connection, memberId, client)
       count += 1
     } catch {
-      // Wrong workspace, revoked token or an identity bound elsewhere: that member reconnects as before.
     }
   }
   return count
@@ -187,7 +164,6 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     connectionId: installation.connectionId,
   })
   if (!connection || !isSlackAssistantConnection(connection, installation)) return null
-  // primary: events re-queued by bindSlackOAuthMember run right away, and a revoked identity must stop at once.
   const identities = await db.$primary
     .select()
     .from(Identity)
@@ -251,8 +227,6 @@ export type SlackActor = NonNullable<Awaited<ReturnType<typeof resolveSlackActor
 export async function enqueueSlackEvent(installation: InstallationRow, eventId: string, event: SlackEvent) {
   const id = scopeKey(installation.connectionId, eventId)
   return db.transaction(async (tx) => {
-    // Serialize ingress quota admission per installed workspace. Retries are
-    // checked first and do not consume the quota a second time.
     await tx
       .select({ id: Installation.connectionId })
       .from(Installation)
@@ -344,10 +318,8 @@ export async function lockSlackThread(event: EventRow, actor: SlackActor) {
       .onDuplicateKeyUpdate({ set: { id } })
     const thread = (await tx.select().from(Thread).where(eq(Thread.id, id)).for("update"))[0]
     if (!thread) return { thread: null, busy: false }
-    // `busy`: another of this member's tasks is running here, so this message waits its turn.
     if (thread.activeEventId && thread.activeEventId !== event.id) return { thread: null, busy: true }
     if (thread.activeEventId !== event.id) {
-      // Messages in a thread run in the order they were sent: an older one still waiting goes first.
       const older = await tx
         .select({ id: Event.id })
         .from(Event)
@@ -376,15 +348,11 @@ export async function releaseSlackThread(event: EventRow) {
 export async function saveSlackSession(threadId: string, sessionId: string) {
   await db.update(Thread).set({ sessionId, workspaceId: "headless" }).where(eq(Thread.id, threadId))
 }
-/** The thread's runner session is gone: its next message starts a fresh one. */
 export async function clearSlackSession(threadId: string) {
   await db.update(Thread).set({ sessionId: null, workspaceId: null }).where(eq(Thread.id, threadId))
 }
 export async function cancelSlackThread(installation: InstallationRow, event: SlackEvent) {
   if (!event.user || !event.channel || !event.thread_ts) return
-  // Private replies may run in a DM while the source mention was in a channel.
-  // Search only this signed actor's active events, then match source or output.
-  // primary: Stop must see the event that started running moments ago.
   const candidates = await db.$primary
     .select()
     .from(Event)
@@ -404,8 +372,6 @@ export async function cancelSlackThread(installation: InstallationRow, event: Sl
       output.success && output.data.channel === event.channel && output.data.threadTs === event.thread_ts
     return matchesSource || matchesOutput
   })
-  // Stop ends the task that is running; messages the member sent while it ran start next. With nothing
-  // running yet, Stop cancels the request itself.
   const running = matches.filter((candidate) => candidate.status === "running")
   for (const candidate of running.length ? running : matches)
     await db.update(Event).set({ cancelled: true, availableAt: new Date() }).where(eq(Event.id, candidate.id))
@@ -459,7 +425,6 @@ export async function removeSlackIdentities(connectionId: DenTypeId<"externalMcp
 export async function findSlackThread(event: EventRow, actor: SlackActor) {
   return (
     (
-      // primary: lockSlackThread/saveSlackSession wrote this row moments ago.
       await db.$primary
         .select()
         .from(Thread)
@@ -480,8 +445,6 @@ export async function admitSlackRun(event: EventRow, installation: InstallationR
       .for("update")
     const current = (await tx.select({ status: Event.status }).from(Event).where(eq(Event.id, event.id)))[0]
     if (current?.status === "running") return true
-    // A burst of terminal failures pauses new work for this installation;
-    // already admitted runs can finish. The window expires automatically.
     const [failures] = await tx
       .select({ total: count() })
       .from(Event)
@@ -519,8 +482,6 @@ export async function pruneSlackEvents() {
     .update(Event)
     .set({ status: "expired", payload: JSON.stringify({ type: "expired" }) })
     .where(and(eq(Event.status, "awaiting_link"), lt(Event.createdAt, new Date(Date.now() - 900_000))))
-  // Retain encrypted run content for seven days, then remove it together with
-  // its dedupe record. Native sessions follow the member's existing retention.
   await db
     .delete(Event)
     .where(
@@ -531,7 +492,6 @@ export async function pruneSlackEvents() {
     )
 }
 export async function latestSlackContext(event: EventRow) {
-  // primary: the context event is enqueued just before the invocation that reads it.
   const rows = await db.$primary
     .select({ payload: Event.payload })
     .from(Event)

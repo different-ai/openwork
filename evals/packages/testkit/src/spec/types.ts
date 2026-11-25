@@ -66,6 +66,7 @@ export interface User {
 export interface Agent {
   computerProgram(input: { sessionId: string; surface: "computer" | "browser"; code: string; tabId?: string; timeoutMs?: number }): Promise<unknown>;
   browserTask(input: import("@openwork/behaviors").BrowserTaskInput): Promise<import("@openwork/behaviors").BrowserTaskReply>;
+  privateValues(input: import("@openwork/behaviors").PrivateValuesInput): Promise<import("@openwork/behaviors").BrowserTaskReply>;
   browserRequest(input: { url: string; method?: string; body?: string }): Promise<{ reached: boolean; error?: string }>;
   desktopApi(path: string, input: { method: string; body?: unknown }): Promise<{ status: number; body: unknown }>;
   run(action: string, args?: unknown): Promise<unknown>;

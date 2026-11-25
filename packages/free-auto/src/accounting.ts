@@ -12,7 +12,6 @@ export type FreePrices = { inputPrice: number; cachedInputPrice: number; outputP
  * Input tokens include the cached ones, which OpenAI bills at the cheaper cached input price.
  */
 export function freeUsageAmount(prices: FreePrices, inputTokens: number, outputTokens: number, cachedInputTokens = 0): number {
-  // Luna prices the entire request at long-context rates once input exceeds 272K tokens.
   const longContext = inputTokens > 272_000;
   const cached = Math.min(cachedInputTokens, inputTokens);
   const input = (inputTokens - cached) * prices.inputPrice + cached * prices.cachedInputPrice;

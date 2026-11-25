@@ -7,7 +7,6 @@ import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton } from "./item-list";
 import { PluginLogo } from "./item-logo";
 import { type TeamPluginAccessItem, useRevokeTeamPluginAccess, useTeamPluginAccess } from "./team-access-data";
 
-/** Each access path stays separate: revoking a team grant does not revoke a catalog grant. */
 export function TeamPluginAccessPanel({ teamId, teamName, orgSlug, canRevoke }: {
   teamId: string;
   teamName: string;
@@ -21,7 +20,6 @@ export function TeamPluginAccessPanel({ teamId, teamName, orgSlug, canRevoke }: 
   const source = (item: TeamPluginAccessItem) => item.edge === "direct_team" ? "This team"
     : item.edge === "org_wide" ? "Everyone" : `Through ${item.marketplace?.name}`;
 
-  // With feature intros on, the Access intro replaces "No plugin access yet" (DESIGN.md I1); null while loading or failed.
   const introFacts = access.data && !access.error ? { plugins: items.length } : null;
 
   return <FeatureIntroGate introKey="team-detail.access" facts={introFacts}><section aria-label="Plugins & connections" data-testid="team-plugin-access">

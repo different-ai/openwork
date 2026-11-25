@@ -51,9 +51,7 @@ function MatrixCell({ cell, number }: { cell: CapabilityCell; number?: number })
 
 type Props = {
   caption: string;
-  /** Column whose header reads in full ink, for pages focused on it. */
   emphasis?: ProductKey;
-  /** Group labels to show, in order. Totals and notes cover only these rows. Defaults to every group. */
   groups?: string[];
 };
 

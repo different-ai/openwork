@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { GATEWAY_USAGE_LIMIT_ERROR_CODE, hasGatewayUsageLimitHttpMarker, gatewayUsageTimeframeSchema, type GatewayUsageBucket, type GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits";
 
-// Limit copy lives with Den Web's My Usage page so both surfaces say the same thing.
 export {
   formatGatewayMoney,
   formatGatewayReset,
@@ -23,7 +22,6 @@ export const gatewayUsageErrorDetailsSchema = z.object({
     hardLimit: z.literal(true), allowRequestReset: z.boolean(),
   }).refine((bucket) => bucket.usedMicroUsd >= bucket.allowanceMicroUsd)).min(1).max(3),
   retryAt: z.iso.datetime(),
-  /** Set when a provider limit (not the default) blocked the request. */
   provider: z.object({ id: z.string().min(1).max(64), name: z.string().max(255) }).optional(),
 });
 export const gatewayUsageErrorEvidenceSchema = z.object({
@@ -93,29 +91,21 @@ export function corroboratesGatewayUsageError(evidence: GatewayUsageErrorEvidenc
   ));
 }
 
-/** Every bucket the member has: default limits and each provider limit. */
 export function allGatewayUsageBuckets(status: Pick<GatewayUsageStatus, "buckets" | "providers">): GatewayUsageBucket[] {
   return [...status.buckets, ...(status.providers ?? []).flatMap((provider) => provider.buckets)];
 }
 
 export type GatewayUsageScopeView = {
-  /** The status as the selected model sees it: its provider limit, or the default limits. */
   status: GatewayUsageStatus;
-  /** Set when a provider limit governs the selected model. */
   providerName: string | null;
 };
 
-/**
- * The limits that govern requests to one Gateway provider. A provider limit
- * replaces the default for that provider; every other provider uses the default.
- */
 export function gatewayUsageForProvider(status: GatewayUsageStatus, gatewayProviderId: string | null | undefined): GatewayUsageScopeView {
   const provider = gatewayProviderId ? status.providers?.find((entry) => entry.providerId === gatewayProviderId) : undefined;
   if (!provider) return { status, providerName: null };
   return { status: { ...status, state: provider.state, buckets: provider.buckets }, providerName: provider.providerName };
 }
 
-/** Whether another Gateway provider the member has is not paused, so switching models would help. */
 export function gatewayUsageCanSwitchProvider(
   status: GatewayUsageStatus | undefined,
   selectedProviderId: string | null | undefined,

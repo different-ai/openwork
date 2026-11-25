@@ -37,7 +37,6 @@ export const coerceToString = (value: unknown): string => {
   if (value instanceof SandboxSet) return "[object Set]"
   if (value instanceof SandboxURL) return value.url.href
   if (value instanceof SandboxURLSearchParams) return value.params.toString()
-  // A caught error reads like JavaScript's: "Error: message", never "[object Object]".
   const errorName = errorBrandName(value)
   if (errorName !== undefined) {
     const message = (value as { message?: unknown }).message
@@ -66,7 +65,6 @@ export const invokeCoercion = (ref: CoercionFunction, args: Array<unknown>, node
     if (ref.name === "parseInt") return parseInt(coerceToString(raw))
     return parseFloat(coerceToString(raw))
   }
-  // Copying drops the error brand, so a caught error is read before it is copied.
   if (ref.name === "String" && errorBrandName(raw) !== undefined) return coerceToString(raw)
   const value = boundedData(args[0], `${ref.name} input`)
   if (ref.name === "Number") return coerceToNumber(value)

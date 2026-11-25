@@ -34,7 +34,6 @@ function clock(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-/** An AWS account number in the groups AWS shows it in. */
 function accountNumber(id: string) {
   return id.replace(/^(\d{4})(\d{4})(\d{4})$/, "$1 $2 $3");
 }
@@ -76,7 +75,6 @@ function StepText({ title, description, pending = false }: { title: ReactNode; d
   );
 }
 
-/** Where the organization's people sign in to AWS, so every AWS link lands in the right account. */
 function AwsSignInDialog({ open, onClose, saved, onSave }: {
   open: boolean; onClose: () => void; saved: AwsSignIn | null; onSave: (value: AwsSignIn | null) => Promise<void>;
 }) {
@@ -141,7 +139,6 @@ function AwsSignInDialog({ open, onClose, saved, onSave }: {
   );
 }
 
-/** Deployments as a list; each one opens as its own page. */
 export function GuidedDeploymentsList() {
   const { orgSlug } = useOrgDashboard();
   const router = useRouter();
@@ -158,7 +155,6 @@ export function GuidedDeploymentsList() {
     enabled && access.canViewDeployments && !loading && !error && configuration ? { deployments: deployments.length, cloudReady: available } : null,
   );
 
-  // Feature intro action (DESIGN.md I5): ?new=1 opens Create deployment once, then leaves the address.
   const searchParams = useSearchParams();
   const newRequested = searchParams.get("new") === "1";
   useEffect(() => {
@@ -228,7 +224,6 @@ export function GuidedDeploymentsList() {
   );
 }
 
-/** One deployment: what to do next in the cloud account, then how it is running. */
 export function GuidedDeploymentPage({ deploymentId }: { deploymentId: string }) {
   const { orgSlug, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
   const [configuring, setConfiguring] = useState(false);
@@ -252,7 +247,6 @@ export function GuidedDeploymentPage({ deploymentId }: { deploymentId: string })
     onResult: (item, next) => { replace(item); setLaunch(next); setActionError(null); },
   } : null;
 
-  // Coming back to an approval that is still open: fetch its link again, once for each sign-in.
   const reopenKey = deployment && run && run.kind !== "configure" && awaiting && canManage && canPrepare && !activeLaunch ? `${run.id} ${signIn?.portalUrl ?? ""} ${signIn?.roleName ?? ""}` : null;
   const attempted = useRef<string | null>(null);
   const reopenRef = useRef<() => Promise<boolean>>(async () => false);

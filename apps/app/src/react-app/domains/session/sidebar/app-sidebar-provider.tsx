@@ -12,7 +12,6 @@ export type SidebarContextValue = {
   developerMode: boolean;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
-  /** Why a row needs the person when a delegated child, not the session itself, is asking. */
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   sessionAttentionKindById?: Record<string, SessionWaitingKind>;
@@ -28,7 +27,6 @@ export type SidebarContextValue = {
   onOpenDeleteSession?: (sessionId: string, workspaceId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => void;
   onArchiveSessions?: (sessions: { workspaceId: string; sessionId: string }[], archived: boolean) => void;
-  multiSelectEnabled: boolean;
   isSessionArchived: (workspaceId: string, sessionId: string) => boolean;
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
@@ -40,7 +38,6 @@ export type SidebarContextValue = {
   expandedWorkspaceIds: Set<string>;
   sessionNumberShortcutOs: SessionNumberShortcutOs;
   sessionNumberShortcutByTarget: ReadonlyMap<string, number>;
-  /** Sessions listed under the session they were started from, per workspace. Empty while that is off. */
   sessionTreeFor: (workspaceId: string) => SessionTree;
 };
 

@@ -6,10 +6,6 @@ export type ExhaustedAllowance = {
   limitedBucket?: { limitAmount: number; usedAmount: number; windowEndAt: Date }
 }
 
-/**
- * The organization used its OpenWork Models allowance. Not a rate limit: it lasts until the window resets, so the
- * answer tells clients not to retry, says when it resets, and never names the organization.
- */
 export function openWorkModelsAllowanceResponse(limits: ExhaustedAllowance, now = Date.now()): Response {
   const headers = new Headers({
     "content-type": "application/json",

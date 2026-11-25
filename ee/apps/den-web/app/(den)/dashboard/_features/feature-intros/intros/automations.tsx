@@ -5,21 +5,10 @@ import { OPENWORK_INSTALL_ROUTE } from "./analytics";
 import { docsPage } from "./docs";
 import { AutomationsExample } from "./examples/automations/automations-example";
 
-/**
- * Facts My Automations reports from the list it already loads
- * (`GET /v1/automations`). A missing fact means "not loaded yet".
- */
 export type AutomationsFacts = {
-  /** Automations that aren't archived (what the list shows). */
   automations?: number;
 };
 
-/*
- * Den only monitors Automations: Desktop ones are created and edited in the
- * OpenWork app, Cloud ones in OpenWork Web (behind `openworkWeb`). Schedules
- * here are the ones every Automation can use (once, daily, weekly): meeting
- * triggers are Cloud-only and need Google Calendar, so the copy doesn't promise them.
- */
 export const automationsIntros = [
   defineFeatureIntro<AutomationsFacts>({
     key: "automations",
@@ -40,7 +29,6 @@ export const automationsIntros = [
     },
     docsUrl: docsPage("start-here/do-work-with-it/automations"),
     ctas: [
-      // OpenWork Web's address comes from runtime config, which an intro can't link to, so the note points there instead.
       {
         when: (ctx) => ctx.orgContext.capabilities.openworkWeb,
         label: "Download OpenWork",

@@ -7,7 +7,6 @@ import { env } from "../env.js"
 import { requestExternalMcpEvents } from "../capability-sources/enterprise-mcp-client-adapter.js"
 import { validateExternalMcpToolArguments } from "../mcp/external-mcp-tool-arguments.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
-import { markFeaturesUsed } from "../feature-usage.js"
 import { canonicalArguments, eventListSchema, MAX_SUBSCRIPTION_TTL_MS, subscribedSchema } from "./protocol.js"
 import { eventAccess, EventAccessError, requireEventThread, type EventThread } from "./context.js"
 import { findSubscription, stopSubscription, type EventSubscription } from "./repository.js"
@@ -67,7 +66,6 @@ export async function subscribe(thread: EventThread, originalScopes: readonly st
   const now = new Date()
   const expiresAt = new Date(now.getTime() + Math.min(input.ttlMs, MAX_SUBSCRIPTION_TTL_MS))
   const row = await db.transaction(async (tx) => {
-    // Serialize creation per member so repeated tool calls cannot create duplicate active watches.
     await tx.select({ id: MemberTable.id }).from(MemberTable).where(eq(MemberTable.id, thread.memberId)).for("update")
     const existing = await tx.select().from(Subscription).where(and(eq(Subscription.organizationId, thread.organizationId), eq(Subscription.memberId, thread.memberId), eq(Subscription.sessionId, thread.sessionId), inArray(Subscription.status, ["pending", "active"]), gt(Subscription.expiresAt, now)))
     const same = existing.find((entry) => entry.connectionId === connection.id && entry.name === input.name && entry.arguments === argumentsJson)
@@ -85,16 +83,13 @@ export async function subscribe(thread: EventThread, originalScopes: readonly st
     const result = subscribedSchema.parse(await request("events/subscribe", { name: row.name, arguments: input.arguments, delivery: { mode: "webhook", url: row.callbackUrl, secret: row.secret }, cursor: null, ttlMs: expiresAt.getTime() - now.getTime() }))
     const grantedUntil = new Date(Math.min(expiresAt.getTime(), result.refreshBefore ? Date.parse(result.refreshBefore) : Infinity))
     if (grantedUntil.getTime() <= Date.now()) throw new Error("Subscription already expired")
-    // Recheck after the network call. A kill switch or unsubscribe during verification wins.
     await connectionFor(thread, scopes, input.connectionId)
     await db.update(Subscription).set({ remoteId: result.id, expiresAt: grantedUntil, status: "active", cursor: result.cursor, incomplete: result.truncated }).where(and(eq(Subscription.id, row.id), eq(Subscription.status, "pending")))
     const saved = await findSubscription(row.id)
     if (!saved || saved.status !== "active") throw new Error("Subscription stopped")
-    markFeaturesUsed({ organizationId: thread.organizationId, memberId: thread.memberId, keys: ["mcpThreadEvents"] })
     return { ...subscriptionSummary(saved), truncated: result.truncated }
   } catch {
     await stopSubscription(row.id)
-    // Even an ambiguous subscribe failure might have created the remote subscription.
     await request("events/unsubscribe", { name: row.name, arguments: input.arguments, delivery: { mode: "webhook", url: row.callbackUrl } }).catch(() => undefined)
     throw new EventAccessError("The MCP subscription could not be activated. Check the connection and callback reachability, then try again.")
   }
@@ -114,6 +109,6 @@ export async function unsubscribe(thread: EventThread, scopes: readonly string[]
     const { connection } = await connectionFor(thread, scopes, row.connectionId)
     await requestExternalMcpEvents({ connection, member: { orgMembershipId: thread.memberId }, redirectUri: `${publicOrigin()}/v1/mcp-connections/${connection.id}/connect/callback`, method: "events/unsubscribe", params: { name: row.name, arguments: JSON.parse(row.arguments), delivery: { mode: "webhook", url: row.callbackUrl } } })
     remoteStopped = true
-  } catch { /* Local stop is authoritative even if the provider is unreachable or access was revoked. */ }
+  } catch {}
   return { id, status: "stopped", remoteStopped }
 }

@@ -1,10 +1,5 @@
 import type { AuditOperationSummary } from "@openwork/types/den/audit";
 
-/**
- * Sample data only: no API calls (DESIGN.md I7). `action` is a real stored
- * action, so the row reads exactly as the Audit logs list words it
- * (`auditActionSentence`); `target` is the resource label under it.
- */
 export const auditLogsExampleRows: ReadonlyArray<{
   actor: string;
   initials: string;

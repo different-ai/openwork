@@ -2,13 +2,6 @@ import type { DynamicToolUIPart } from "ai"
 
 import { parseRecord, type CapabilityCallSentence } from "./capability-call"
 
-/**
- * OpenWork's own app tools (`openwork_context`, `openwork_query`,
- * `openwork_execute`) as sentences a person reads: what was looked at or
- * changed, named by what they see in the sidebar. Affordance ids, session ids
- * and group ids never show.
- */
-
 export const OPENWORK_NATIVE_TOOL = /^openwork_(context|query|execute)$/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -22,7 +15,6 @@ function text(value: unknown, max = 60): string | null {
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed
 }
 
-/** Ids such as `grp_8f2k…` or `ses_…` are plumbing; a label like "Done" is not. */
 function label(value: unknown): string | null {
   const candidate = text(value)
   return candidate && !/^[a-z]{2,8}_[A-Za-z0-9-]{6,}$/.test(candidate) ? candidate : null
@@ -39,7 +31,6 @@ function resultRecord(part: DynamicToolUIPart): Record<string, unknown> | null {
   return record
 }
 
-/** A command that returned `{ ok: false, error }` did not happen, whatever the engine state says. */
 export function openWorkNativeFailure(part: DynamicToolUIPart): string | null {
   if (!OPENWORK_NATIVE_TOOL.test(part.toolName)) return null
   const result = resultRecord(part)
@@ -104,7 +95,6 @@ export function openWorkNativeSentence(part: DynamicToolUIPart): CapabilityCallS
   if (id === "models.list") return sentence("Looking up available models", "Looked up available models", "Couldn't look up models")
   if (id === "automation.propose") return sentence("Proposing an automation", "Proposed an automation", "Couldn't propose the automation")
 
-  // Unknown affordances still read as plain words: "workspace.list" → "workspace list".
   const words = id.split(/[._-]+/).filter(Boolean).join(" ")
   return tool === "query"
     ? sentence(`Looking up ${words || "OpenWork"}`, `Looked up ${words || "OpenWork"}`, `Couldn't look up ${words || "OpenWork"}`)

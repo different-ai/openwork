@@ -2,9 +2,8 @@ import { HEADLESS_SESSION_HEADER } from "@openwork/types/den/workbot-usage"
 import { z } from "zod"
 import type { DesktopView, HeadlessModelAccess, Message, ToolCall, ToolSpec } from "./types.js"
 
-/** Constructed per run: never mutates the deployment adapter or retains another member's credentials. */
 export function createModelAdapter(access: HeadlessModelAccess, options: { maxOutputTokens: number; fetch?: typeof fetch }): ModelClient {
-  const config = { ...options, baseUrl: access.baseUrl }
+  const config = { ...options, baseUrl: access.baseUrl, headers: access.headers }
   const client = access.protocol === "anthropic" ? anthropicModel(config)
     : access.protocol === "openai-responses" ? openAIResponsesModel(config)
     : openAIModel(config)
@@ -18,50 +17,23 @@ export type ModelRequest = {
   model: string
   apiKey: string
   signal: AbortSignal
-  /**
-   * The conversation the call is for, sent as a header so OpenWork's gateway can attribute the spend to Workbot
-   * (Den › Analytics › Workbot). The gateway never forwards it to the model provider; callers set it only for calls
-   * that go through the gateway.
-   */
   sessionId?: string
-  /** Streams the model's text as it is written. Without it the call is not streamed. */
   onText?: (delta: string) => void
-  /** The streamed text so far is void: the call is being retried from the start. */
   onReset?: () => void
-  /**
-   * The model started writing a call to this tool (streamed calls only), before its input is complete; again each time
-   * more of what it is doing is known, while the rest of its input is still being written: the desktop `view` it works
-   * in (so a caller shows browser work as browser work from the start) and its `description`.
-   */
   onTool?: OnTool
-  /**
-   * Messages after which the provider may cache the request so far (Anthropic). Without them, the request is cached
-   * up to its last message. The system prompt is always a cache point, so at most three are used.
-   */
   cacheAfter?: ReadonlySet<Message>
-  /**
-   * Text the model already wrote for this answer (a step cut off mid-call, see steps.ts): the call continues it, and
-   * the step's text starts with it. Only for clients with `continuesAnswers`.
-   */
   continueFrom?: string
 }
 export type ModelStep = {
-  /** Provider-reported answering model, when the gateway exposes it (may differ from a requested alias). */
   model?: string
   text: string
   toolCalls: ToolCall[]
-  /** inputTokens includes cachedInputTokens. */
   usage: Usage
-  /** The reply stopped at the output-token cap: it is unfinished, and a call it was writing carries `CUT_OFF_CALL`. */
   cutOff?: boolean
 }
 export type Usage = { inputTokens: number; cachedInputTokens: number; outputTokens: number }
 export type ModelClient = {
   complete(request: ModelRequest): Promise<ModelStep>
-  /**
-   * Accepts `continueFrom`: the provider takes a partial assistant message and continues it. Anthropic Messages does,
-   * without extended thinking (which this runner never turns on); OpenAI's APIs don't.
-   */
   continuesAnswers?: boolean
 }
 
@@ -71,7 +43,6 @@ export class ModelError extends Error {
     message: string,
     readonly retryable: boolean,
     readonly retryAfterMs?: number,
-    /** What the provider said (its error message and request id), short, for logs and support; never shown as is. */
     readonly detail?: string,
   ) {
     super(message)
@@ -82,7 +53,6 @@ const errorBody = z
   .object({ error: z.union([z.string(), z.object({ type: z.string().optional(), code: z.string().nullish(), message: z.string().optional() }).loose()]).optional(), message: z.string().optional() })
   .loose()
 
-/** One line saying why a provider refused a request, from its error body, with the request id to look it up. */
 export function describeProviderError(body: string, requestId: string | null): string {
   let text = body.trim()
   try {
@@ -94,9 +64,7 @@ export function describeProviderError(body: string, requestId: string | null): s
       if (message) text = kind ? `${kind}: ${message}` : message
     }
   } catch {
-    // Not JSON: keep the text.
   }
-  // Provider messages don't carry keys, but never log one if a proxy echoes it.
   const redacted = text.replace(/\b(sk|ow_[a-z]+|key)[-_][A-Za-z0-9_-]{8,}/g, "[redacted]").replace(/\s+/g, " ").slice(0, 300)
   return requestId ? `${redacted} (request ${requestId})` : redacted
 }
@@ -119,19 +87,13 @@ const defaultSleep: Sleep = (ms, signal) =>
 
 const RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504, 529])
 const MAX_ATTEMPTS = 3
-/**
- * A model call's time limit. A non-streamed call must finish within it; a streamed one must start within it and then
- * never go this long without sending anything, so a long reply that keeps writing isn't cut off by the clock.
- */
 const CALL_TIMEOUT_MS = 180_000
 
-/** A timer that never keeps a Node process alive by itself (a no-op where timers are plain numbers). */
 function unref<T>(timer: T): T {
   ;(timer as { unref?: () => void }).unref?.()
   return timer
 }
 
-/** Hands back a streamed response whose body fails after `CALL_TIMEOUT_MS` without a chunk (through `deadline`). */
 function abortWhenIdle(response: Response, deadline: AbortController): Response {
   if (!response.body) return response
   const abort = () => deadline.abort(new Error("The model stream went quiet."))
@@ -156,7 +118,6 @@ function retryAfterMs(response: Response): number | undefined {
   return Number.isFinite(seconds) ? Math.min(seconds * 1000, 30_000) : undefined
 }
 
-/** POSTs JSON with bounded retries on transient failures and returns the successful response. Never logs secrets. */
 async function openResponse(input: {
   fetch: Fetch
   sleep: Sleep
@@ -192,13 +153,10 @@ async function openResponse(input: {
     if (response.ok) return response
     const body = await response.text().catch(() => "")
     const requestId = response.headers.get("x-openwork-request-id") ?? response.headers.get("request-id")
-    // Only authoritative HTTP refusals select a recovery flow. Provider text or
-    // SSE fields never turn a transient failure into a purchase prompt.
     const modelsRoute = /\/api\/v1\/(chat\/completions|responses)$/.test(new URL(input.url).pathname)
     const freeLimit = response.status === 429 && modelsRoute
       && response.headers.get("X-OpenWork-Error-Code") === "free_allowance_exhausted"
       && response.headers.get("X-OpenWork-Usage-State") === "blocked"
-    // Keep this adapter independent of unbuilt workspace runtime exports.
     const usageLimit = (response.status === 429 && ["openwork_gateway_usage_limit_exceeded", "openwork_models_allowance_reached"].includes(response.headers.get("X-OpenWork-Error-Code") ?? "") && response.headers.get("X-OpenWork-Usage-State") === "blocked")
       || (response.status === 429 && modelsRoute && response.headers.has("x-openwork-limit-bucket-id") && response.headers.has("x-openwork-limit-window-type"))
     const recoveryCode = freeLimit ? "model_free_allowance_exhausted" : usageLimit ? "model_usage_limit_exceeded"
@@ -219,7 +177,6 @@ async function postJson(input: Parameters<typeof openResponse>[0]): Promise<unkn
   return (await openResponse(input)).json()
 }
 
-/** Server-sent events from a streamed model response: one parsed JSON `data` payload at a time. */
 async function* sseData(response: Response, signal: AbortSignal): AsyncGenerator<unknown> {
   if (!response.body) throw new ModelError("model_bad_response", "The AI gateway sent an empty stream.", true)
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
@@ -243,7 +200,6 @@ async function* sseData(response: Response, signal: AbortSignal): AsyncGenerator
           try {
             yield JSON.parse(data)
           } catch {
-            // A keep-alive or comment, not an event.
           }
         }
         boundary = buffer.search(/\r?\n\r?\n/)
@@ -254,7 +210,6 @@ async function* sseData(response: Response, signal: AbortSignal): AsyncGenerator
   }
 }
 
-/** Streams a call; a stream cut off mid-way is retried from the start, after telling the reader to drop its text. */
 async function withStreamRetries(request: ModelRequest, sleep: Sleep, run: () => Promise<ModelStep>): Promise<ModelStep> {
   for (let attempt = 1; ; attempt += 1) {
     try {
@@ -269,11 +224,9 @@ async function withStreamRetries(request: ModelRequest, sleep: Sleep, run: () =>
 
 const streamInterrupted = () => new ModelError("model_stream_interrupted", "The AI gateway stream ended early.", true)
 
-/** The error a call gets when the reply stopped at the output-token cap while writing it. */
 export const CUT_OFF_CALL =
   "Your reply reached the output limit while writing this call, so it was cut off and not run. Send less in one call: split long code, scripts or documents into parts (for example, write a file in several pieces, then run it)."
 
-/** Marks a step that stopped at the output-token cap; a call left unparsable by the cut gets `CUT_OFF_CALL`. */
 function cutOffStep(step: ModelStep, cutOff: boolean): ModelStep {
   if (!cutOff) return step
   return { ...step, cutOff: true, toolCalls: step.toolCalls.map((call) => (call.inputError ? { ...call, input: {}, inputError: CUT_OFF_CALL } : call)) }
@@ -285,21 +238,14 @@ function parseArguments(raw: string): Pick<ToolCall, "input" | "inputError"> {
     const parsed = z.record(z.string(), z.unknown()).safeParse(value)
     if (parsed.success) return { input: parsed.data }
   } catch {
-    // fall through
   }
   return { input: {}, inputError: "Tool arguments were not a JSON object." }
 }
 
-/** A call's description comes before its other arguments (a script can run to 32,000 characters), so look no further. */
 const DESCRIPTION_SCAN_CHARS = 4_096
 
-/** Told when a tool call starts being written, then whenever its view or description becomes known. */
 export type OnTool = (name: string, description?: string, view?: DesktopView) => void
 
-/**
- * A top-level string argument of a tool call as streamed so far, once its value is complete; a nested field of the
- * same name never counts. Null until then, or when it isn't among the first arguments written.
- */
 function streamedString(json: string, wanted: string): string | null {
   if (json.length > DESCRIPTION_SCAN_CHARS) return null
   let depth = 0
@@ -329,22 +275,16 @@ function streamedString(json: string, wanted: string): string | null {
   return null
 }
 
-/** The top-level `description` of a tool call's arguments as streamed so far, once complete and not blank. */
 export function streamedDescription(json: string): string | null {
   const value = streamedString(json, "description")
   return value?.trim() ? value : null
 }
 
-/** The desktop `view` (browser or computer) of a tool call's arguments as streamed so far, once complete. */
 export function streamedView(json: string): DesktopView | null {
   const value = streamedString(json, "view")
   return value === "browser" || value === "computer" ? value : null
 }
 
-/**
- * Follows one tool call's arguments as they stream and tells `onTool` each time its view or description becomes
- * known, with everything known so far, so each report stands on its own. Silent once both are known.
- */
 export function toolProgress(onTool: OnTool) {
   let view: DesktopView | undefined
   let description: string | undefined
@@ -358,8 +298,6 @@ export function toolProgress(onTool: OnTool) {
     onTool(name, description, view)
   }
 }
-
-// ---------------------------------------------------------------- Anthropic
 
 type CacheControl = { cache_control?: { type: "ephemeral" } }
 type AnthropicImage = { type: "image"; source: { type: "base64"; media_type: string; data: string } }
@@ -379,16 +317,9 @@ type AnthropicBlock = CacheControl &
   )
 type AnthropicMessage = { role: "user" | "assistant"; content: AnthropicBlock[] }
 
-/**
- * A transcript every provider accepts, whatever produced it: it starts with a message from the person, each tool
- * result directly follows the call it answers, every call has its result, and no message is empty. Providers
- * refuse anything else with a 400, and the same transcript would then fail on every retry. Messages it keeps are
- * returned as they were (same objects), so callers can still recognize them. `repairs` counts what it changed.
- */
 export function normalizeTranscript(messages: readonly Message[]): { messages: Message[]; repairs: number } {
   const out: Message[] = []
   let repairs = 0
-  // The latest assistant message with tool calls, and the calls still waiting for their result.
   let open: { index: number; waiting: Set<string> } | null = null
   const settle = () => {
     if (open && open.waiting.size) {
@@ -397,7 +328,6 @@ export function normalizeTranscript(messages: readonly Message[]): { messages: M
       if (call?.role === "assistant") {
         const toolCalls = call.toolCalls.filter((entry) => !waiting.has(entry.id))
         repairs += call.toolCalls.length - toolCalls.length
-        // Nothing answered it and it said nothing: no result follows it, so it is the last message so far.
         if (toolCalls.length === 0 && !call.text.trim()) out.splice(open.index, 1)
         else out[open.index] = { ...call, toolCalls }
       }
@@ -423,13 +353,8 @@ export function normalizeTranscript(messages: readonly Message[]): { messages: M
   return { messages: out, repairs }
 }
 
-/** Anthropic allows four cache points per request; the system prompt takes one. */
 const MAX_MESSAGE_CACHE_POINTS = 3
 
-/**
- * Anthropic needs strict user/assistant alternation; adjacent same-role entries are merged. Messages in `cacheAfter`
- * end with a cache point (the newest three at most).
- */
 export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: ReadonlySet<Message>): AnthropicMessage[] {
   const out: AnthropicMessage[] = []
   const cachePoints: AnthropicBlock[] = []
@@ -438,7 +363,6 @@ export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: R
     const blocks: AnthropicBlock[] =
       message.role === "user"
         ? [
-            // Files first, then the question: models answer better about a document placed before the ask.
             ...(message.documents ?? []).map((document) => ({
               type: "document" as const,
               title: document.name.slice(0, 500),
@@ -448,7 +372,6 @@ export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: R
               type: "image" as const,
               source: { type: "base64" as const, media_type: image.mediaType, data: image.data },
             })),
-            // An empty text block is refused; a message of only files has none.
             ...(message.text.trim() ? [{ type: "text" as const, text: message.text }] : []),
           ]
         : message.role === "tool"
@@ -456,7 +379,6 @@ export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: R
               {
                 type: "tool_result",
                 tool_use_id: message.callId,
-                // Tool results may carry text, image, and document blocks: a PDF a tool returned is read as-is.
                 content: message.images?.length || message.documents?.length
                   ? [
                       { type: "text" as const, text: message.output },
@@ -475,7 +397,6 @@ export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: R
               },
             ]
           : [
-              // Whitespace-only text is refused too.
               ...(message.text.trim() ? [{ type: "text" as const, text: message.text }] : []),
               ...message.toolCalls.map((call) => ({
                 type: "tool_use" as const,
@@ -519,11 +440,6 @@ const anthropicResponse = z.object({
     .optional(),
 })
 
-/**
- * Every agent step resends the whole conversation. Two cache breakpoints (the
- * system prompt + tools, and the newest message) let each step reuse the
- * previous prefix, which is most of the input cost of a multi-step turn.
- */
 function withCacheBreakpoint(messages: AnthropicMessage[]): AnthropicMessage[] {
   const last = messages.at(-1)
   const block = last?.content.at(-1)
@@ -548,7 +464,6 @@ const anthropicEvent = z
 
 const tokenCount = (value: unknown) => (typeof value === "number" ? value : 0)
 
-/** Assembles a streamed Anthropic Messages response into the same step a non-streamed call returns. */
 async function readAnthropicStream(
   response: Response,
   signal: AbortSignal,
@@ -626,6 +541,7 @@ export function anthropicModel(options: {
   maxOutputTokens: number
   fetch?: Fetch
   sleep?: Sleep
+  headers?: Record<string, string>
 }): ModelClient {
   const sleep = options.sleep ?? defaultSleep
   const call = (request: ModelRequest, stream: boolean, continued: string) => {
@@ -634,14 +550,13 @@ export function anthropicModel(options: {
       fetch: options.fetch ?? fetch,
       sleep,
       url: `${options.baseUrl}/messages`,
-      headers: { "x-api-key": request.apiKey, "anthropic-version": "2023-06-01", ...sessionHeader(request) },
+      headers: { ...options.headers, "x-api-key": request.apiKey, "anthropic-version": "2023-06-01", ...sessionHeader(request) },
       signal: request.signal,
       body: {
         model: request.model,
         max_tokens: options.maxOutputTokens,
         ...(stream ? { stream: true } : {}),
         system: [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }],
-        // A partial answer goes last, as the assistant's: the model continues it.
         messages: continued ? [...messages, { role: "assistant", content: [{ type: "text", text: continued }] }] : messages,
         ...(request.tools.length
           ? { tools: request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema })) }
@@ -652,8 +567,6 @@ export function anthropicModel(options: {
   return {
     continuesAnswers: true,
     async complete(request) {
-      // Anthropic refuses a final assistant message that ends in whitespace. Continuing needs a request from the
-      // person or tool results before it.
       const last = request.messages.at(-1)
       const continued = last && last.role !== "assistant" ? (request.continueFrom ?? "").trimEnd() : ""
       if (request.onText) {
@@ -696,8 +609,6 @@ export function anthropicModel(options: {
   }
 }
 
-// ------------------------------------------------- OpenAI chat completions
-
 type OpenAIContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } }
@@ -713,7 +624,6 @@ type OpenAIMessage =
 
 export function toOpenAIMessages(system: string, messages: readonly Message[]): OpenAIMessage[] {
   const out: OpenAIMessage[] = [{ role: "system", content: system }]
-  // OpenAI refuses a tool message that doesn't answer the assistant message before it, as Anthropic does.
   for (const message of normalizeTranscript(messages).messages) {
     if (message.role === "user") {
       if (!message.images?.length && !message.documents?.length) out.push({ role: "user", content: message.text })
@@ -735,7 +645,6 @@ export function toOpenAIMessages(system: string, messages: readonly Message[]): 
     }
     else if (message.role === "tool") {
       out.push({ role: "tool", tool_call_id: message.callId, content: message.output })
-      // Chat Completions tool messages are text-only, so images and PDFs follow as user content.
       if (message.images?.length || message.documents?.length)
         out.push({
           role: "user",
@@ -831,7 +740,6 @@ const openAIChunk = z
   })
   .loose()
 
-/** Assembles a streamed Chat Completions response into the same step a non-streamed call returns. */
 async function readOpenAIStream(
   response: Response,
   signal: AbortSignal,
@@ -890,7 +798,7 @@ async function readOpenAIStream(
   }, cutOff)
 }
 
-export function openAIModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep }): ModelClient {
+export function openAIModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep; headers?: Record<string, string> }): ModelClient {
   return {
     async complete(request) {
       const sleep = options.sleep ?? defaultSleep
@@ -898,11 +806,10 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
         fetch: options.fetch ?? fetch,
         sleep,
         url: `${options.baseUrl}/chat/completions`,
-        headers: { authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
+        headers: { ...options.headers, authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
         signal: request.signal,
         body: {
           model: request.model,
-          // max_completion_tokens is OpenAI's current output cap (max_tokens is rejected by newer models).
           max_completion_tokens: options.maxOutputTokens,
           ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
           messages: toOpenAIMessages(request.system, request.messages),
@@ -942,12 +849,6 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
   }
 }
 
-// ------------------------------------------------------------ OpenAI Responses
-
-/**
- * OpenAI's Responses API, for models that only accept function tools there (newer OpenAI models refuse tools on
- * Chat Completions). Stateless like the Chat Completions client: `store: false`, the whole transcript every call.
- */
 type ResponsesContent =
   | { type: "input_text"; text: string }
   | { type: "input_image"; image_url: string }
@@ -967,12 +868,10 @@ function responsesMedia(message: { images?: { mediaType: string; data: string }[
 
 export function toResponsesInput(messages: readonly Message[]): ResponsesItem[] {
   const out: ResponsesItem[] = []
-  // Like Chat Completions, a call's output must follow the call that asked for it.
   for (const message of normalizeTranscript(messages).messages) {
     if (message.role === "user") out.push({ role: "user", content: [...responsesMedia(message), { type: "input_text", text: message.text }] })
     else if (message.role === "tool") {
       out.push({ type: "function_call_output", call_id: message.callId, output: message.output })
-      // Function outputs are text-only, so images and PDFs follow as user content.
       const media = responsesMedia(message)
       if (media.length)
         out.push({ role: "user", content: [{ type: "input_text", text: `${message.documents?.length ? "Files" : "Images"} returned by ${message.name}:` }, ...media] })
@@ -1031,7 +930,6 @@ function responsesStep(result: z.infer<typeof responsesResult>): ModelStep {
   }, result.status === "incomplete" && result.incomplete_details?.reason === "max_output_tokens")
 }
 
-/** Why a Responses call failed: `code` in OpenAI's own events, `type` where a gateway passes a provider's error on. */
 const responsesError = z.object({ code: z.string().nullish().catch(undefined), type: z.string().nullish().catch(undefined), message: z.string().optional() }).loose()
 
 const responsesEvent = z
@@ -1047,10 +945,6 @@ const responsesEvent = z
   })
   .loose()
 
-/**
- * Failures that pass on their own: the provider had a problem or is busy, as Anthropic's `overloaded_error` and
- * `api_error` are. Anything else (a refused prompt or image, a quota) would fail the same way again.
- */
 const TRANSIENT_RESPONSES_ERRORS: ReadonlySet<string> = new Set([
   "server_error",
   "server_is_overloaded",
@@ -1060,7 +954,6 @@ const TRANSIENT_RESPONSES_ERRORS: ReadonlySet<string> = new Set([
   "rate_limit_error",
 ])
 
-/** Assembles a streamed Responses call into the same step a non-streamed call returns. */
 async function readResponsesStream(
   response: Response,
   signal: AbortSignal,
@@ -1068,7 +961,6 @@ async function readResponsesStream(
   onTool: OnTool = () => undefined,
 ): Promise<ModelStep> {
   let final: z.infer<typeof responsesResult> | undefined
-  // Calls being written, by output position, until each has said where and what it is doing.
   const calls = new Map<number, { name: string; args: string; progress: ReturnType<typeof toolProgress> }>()
   try {
     for await (const raw of sseData(response, signal)) {
@@ -1092,7 +984,6 @@ async function readResponsesStream(
         const failed = z.object({ error: responsesError.nullish() }).loose().safeParse(event.data.response)
         const error = (failed.success ? failed.data.error : undefined) ?? event.data.error
         const reason = error?.message ?? event.data.message ?? "unknown error"
-        // The call is made again from the start, like a stream that ended early (withStreamRetries).
         const transient = [error?.code, error?.type, event.data.code].some((kind) => typeof kind === "string" && TRANSIENT_RESPONSES_ERRORS.has(kind))
         throw new ModelError(transient ? "model_stream_interrupted" : "model_failed", `The model failed: ${reason.slice(0, 300)}`, transient, undefined, reason.slice(0, 300))
       }
@@ -1105,7 +996,7 @@ async function readResponsesStream(
   return responsesStep(final)
 }
 
-export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep }): ModelClient {
+export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep; headers?: Record<string, string> }): ModelClient {
   return {
     async complete(request) {
       const sleep = options.sleep ?? defaultSleep
@@ -1113,7 +1004,7 @@ export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens
         fetch: options.fetch ?? fetch,
         sleep,
         url: `${options.baseUrl}/responses`,
-        headers: { authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
+        headers: { ...options.headers, authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
         signal: request.signal,
         body: {
           model: request.model,
@@ -1124,7 +1015,6 @@ export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens
           ...(stream ? { stream: true } : {}),
           ...(request.tools.length
             ? {
-                // strict: false keeps MCP tool schemas as they are; strict mode would reject most of them.
                 tools: request.tools.map((tool) => ({ type: "function", name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })),
               }
             : {}),
@@ -1141,16 +1031,10 @@ export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens
   }
 }
 
-// ------------------------------------------------------------ model list
-
 export type ModelOption = { id: string; name: string }
 
 const modelList = z.object({ data: z.array(z.object({ id: z.string(), name: z.string().optional() }).loose()) }).loose()
 
-/**
- * Models the configured Gateway route can serve with the runner's key, so an admin can only pick one that works.
- * Gateway names carry a "(group / credentials)" suffix that means nothing to an admin; it is dropped.
- */
 export async function fetchGatewayModels(input: {
   baseUrl: string
   protocol: "anthropic" | "openai" | "openai-responses"

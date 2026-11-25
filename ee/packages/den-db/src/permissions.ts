@@ -34,19 +34,6 @@ import {
 
 export * from "./permission-states"
 
-/**
- * Data access for organization permissions (docs/permissions/overview.md,
- * sections 5, 6 and 8).
- *
- * - `permission_set_permission` is append-only. The latest row by
- *   (created_at, id) for a set and key is its current state; no row means
- *   denied. Never update or delete rows: insert a new one.
- * - Keys that are no longer in the catalog are ignored on read.
- * - Writers that change a set's rows (the edit endpoint, reconciliation) must
- *   call `lockPermissionSet` inside their transaction before reading the
- *   current state, so concurrent writers serialize per set.
- */
-
 type Db = ReturnType<typeof createDenDb>["db"]
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
 /** The root database or a transaction. */
@@ -67,10 +54,6 @@ export const DEFAULT_PERMISSION_SET_NAMES: Readonly<Record<PermissionDefaultSetK
 const ID_CHUNK_SIZE = 500
 const RECONCILE_BATCH_SIZE = 200
 
-// ---------------------------------------------------------------------------
-// Database access
-// ---------------------------------------------------------------------------
-
 export type PermissionSetSummary = {
   id: PermissionSetId
   organizationId: OrganizationId
@@ -85,7 +68,6 @@ export type DefaultPermissionSets = Record<PermissionDefaultSetKey, PermissionSe
 export type ActiveTeamPermissionSet = {
   permissionSetId: PermissionSetId
   permissionSetName: string
-  /** Set when the team holds a built-in set (Billing manager, Super admin) instead of a custom role. */
   defaultKey: PermissionDefaultSetKey | null
   teamId: TeamId
   teamName: string
@@ -106,7 +88,6 @@ const permissionSetColumns = {
   archivedAt: PermissionSetTable.archivedAt,
 }
 
-/** Runs `run` in a transaction, or in a savepoint when `database` already is one. */
 function inTransaction<T>(database: PermissionDatabase, run: (tx: Tx) => Promise<T>): Promise<T> {
   return database.transaction(run)
 }
@@ -226,10 +207,6 @@ export async function ensureDefaultPermissionSets(
     if (!isPermissionDuplicateKeyError(error)) throw error
   }
 
-  // A locking read sees sets committed by a concurrent caller even when
-  // `database` is a transaction whose snapshot predates them.
-  // In a transaction (a savepoint when `database` already is one), so it reads the primary:
-  // on the root database a replica can lag the sets just inserted.
   const created = await inTransaction(database, (tx) => getDefaultPermissionSets(tx, organizationId, { lock: "share" }))
   if (!hasEveryDefaultPermissionSet(created)) throw new DefaultPermissionSetsMissingError(organizationId)
   return created
@@ -359,16 +336,9 @@ export type AuthoritativeTeamMembership = {
 
 /** What decides whether one team membership carries authority (listAuthoritativeTeamMemberships). */
 export type TeamMembershipScimFacts = {
-  /** A scim_group still maps this team. */
   teamHasScimGroup: boolean
-  /** That group's provider's group mapping mode, or null when the provider no longer exists. */
   groupMappingMode: string | null
-  /** The identity provider still lists this member in that group (a live scim_group_member link to this membership). */
   listedByIdentityProvider: boolean
-  /**
-   * A scim_group_member row links this membership as a SCIM projection, but its group no longer
-   * exists, no longer maps this team, or its provider no longer exists.
-   */
   orphanedScimProjection: boolean
 }
 
@@ -464,7 +434,6 @@ export async function listAuthoritativeTeamMemberships(
       eq(ScimGroupMemberTable.orgMembershipId, MemberTable.id),
       eq(ScimGroupMemberTable.remoteUserId, MemberTable.userId),
     ))
-    // Any SCIM projection link to this membership, live or not, with its own group and provider.
     .leftJoin(ProjectionLinkTable, eq(ProjectionLinkTable.teamMemberId, TeamMemberTable.id))
     .leftJoin(ProjectionGroupTable, eq(ProjectionGroupTable.id, ProjectionLinkTable.groupId))
     .leftJoin(ProjectionProviderTable, and(
@@ -474,7 +443,6 @@ export async function listAuthoritativeTeamMemberships(
     .where(membershipFilter)
   const rows = input.lock ? await query.for(input.lock) : await query
 
-  // The left joins can repeat a membership; fold its rows into one set of facts.
   const byMembership = new Map<string, { membership: AuthoritativeTeamMembership; facts: TeamMembershipScimFacts }>()
   for (const row of rows) {
     const entry = byMembership.get(row.teamMemberId) ?? {

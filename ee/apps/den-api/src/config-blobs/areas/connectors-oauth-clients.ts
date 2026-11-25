@@ -1,25 +1,3 @@
-/**
- * `connectors.oauth-clients`: the org's own OAuth apps for native providers
- * (Google Workspace, Microsoft 365, …), one per provider key.
- *
- * Scope (v1): rows whose `provider_id` is a registered native provider key.
- * Rows keyed by a connection id belong to that connection: an external MCP
- * connection's pre-registered client is exported inside `connectors.mcp`
- * (`oauth.client`), because its provider id IS the connection's id and a
- * separate item would reference its own owner. For the same reason the client
- * of a native-provider connection (kind `native_provider`) is exported inside
- * that connection's `connectors.mcp` item (`native.client`). The sandbox's
- * sample Microsoft client is not exported.
- *
- * Exported: client id, selected optional features, tenant id. Never the
- * client secret (a `$secret` placeholder) nor anything else in `extra`
- * (registration tokens, cached discovery).
- *
- * Applies through POST /v1/oauth-providers/:providerId/client
- * (`saveOrgOAuthProviderClient`): identity changes revoke members' sign-ins
- * first, as in the dashboard. Den has no route that removes an OAuth app, so
- * items are never deleted.
- */
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { OrgOAuthClientTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -51,9 +29,7 @@ const AREA = "connectors.oauth-clients"
 const specSchema = z.object({
   providerId: z.string().trim().min(1).max(255),
   clientId: z.string().trim().min(1).max(512),
-  /** Optional permission features the members are asked for. null leaves the stored selection as it is. */
   features: z.array(z.string().trim().min(1).max(128)).nullable().default(null),
-  /** Microsoft Entra tenant, for providers bound to one tenant. */
   tenantId: z.string().trim().min(1).max(253).nullable().default(null),
   clientSecret: specSecretSchema,
 }).strict()
@@ -86,7 +62,6 @@ export const connectorsOAuthClientsArea = defineConfigArea({
     get: (item) => typeof item.spec.providerId === "string" ? item.spec.providerId : null,
   }],
   transactional: false,
-  // Changing the client id or tenant revokes members' tokens at the provider.
   externalEffects: true,
   protectedFromDelete: () => "OAuth apps can't be removed in Den; change the client instead.",
 
@@ -124,9 +99,7 @@ export const connectorsOAuthClientsArea = defineConfigArea({
         throw new ConfigApplyError("immutable_field", "An OAuth app's provider can't change; create one for the other provider instead.", 400, "providerId")
       }
       const decided = secretWrite(resolvedSecret(spec.clientSecret, "clientSecret"))
-      // "unset" of a secret that is not stored writes nothing.
       const secret = decided === null && op.kind === "update" && !secretIsSet(op.previous.spec.clientSecret) ? undefined : decided
-      // An update sends only what changed: the route keeps omitted fields as stored.
       const inScope = (path: string) => op.kind === "create" || touches(op.changes, path)
       const body: SaveOrgOAuthProviderClientBody = {
         ...(inScope("clientId") ? { clientId } : {}),
@@ -147,7 +120,6 @@ export const connectorsOAuthClientsArea = defineConfigArea({
         return { localId: op.kind === "update" ? op.targetId : "" }
       }
       const { c, payload } = await configRouteContext(ctx)
-      // One save: the route writes all of these in one upsert of the client row.
       await log.run(first, async () => {
         await expectRouteOk(await saveOrgOAuthProviderClient(c, payload, providerId, body, {
           requireLiteralProvider: true,

@@ -17,7 +17,6 @@ import { useFeatureIntroUnseen, type FeatureIntroKey } from "../feature-intros";
 type AnalyticsView = "adoption" | "library" | "workbot" | "workflows";
 type AnalyticsViewLink = { id: AnalyticsView; label: string; href: string; icon: typeof BarChart3 };
 
-/** Each view's feature intro, for its quiet "not viewed yet" dot (DESIGN.md I9). Workbot has none. */
 const ANALYTICS_VIEW_INTROS: Record<AnalyticsView, FeatureIntroKey | null> = {
   adoption: "analytics",
   library: "analytics.library",
@@ -26,16 +25,8 @@ const ANALYTICS_VIEW_INTROS: Record<AnalyticsView, FeatureIntroKey | null> = {
 };
 
 export const analyticsSurfaceClass = `analytics-surface ${AUTOMATION_CARD_CLASS}`;
-/** Same content inset as Computers; header ownership stays separate. */
 export const analyticsPageClass = `${DASHBOARD_PAGE_CLASS} grid gap-6`;
 
-/**
- * The header every Analytics view shares: the title (the tab already says what
- * the page is, so no description, DESIGN.md P2), one short line for state only
- * (for example when counting started), and the
- * tab strip. The state line always takes its height so the tabs never move
- * between views.
- */
 export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }: {
   orgSlug?: string | null; active: AnalyticsView;
   title: string; action?: ReactNode; caption?: ReactNode;
@@ -45,19 +36,16 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
   const introUnseen = useFeatureIntroUnseen();
   const adoption: AnalyticsViewLink = { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 };
   const library: AnalyticsViewLink = { id: "library", label: "Plugins & connectors", href: getLibraryUsageRoute(orgSlug), icon: Blocks };
-  // What Workbot spends on models, for the people who can see usage, where Workbot is available.
   const workbot: AnalyticsViewLink = { id: "workbot", label: "Workbot", href: getWorkbotUsageRoute(orgSlug), icon: Bot };
   const workflows: AnalyticsViewLink = { id: "workflows", label: "Workflow Runs", href: getWorkflowRunsRoute(orgSlug), icon: ScrollText };
   const pages = [
     adoption,
     ...(libraryUsage ? [library] : []),
     ...(libraryUsage && orgContext?.capabilities.workbot ? [workbot] : []),
-    // Personal run history remains reachable by existing links.
     ...((active === "workflows") && orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [workflows] : []),
   ];
   return <header className="grid gap-6">
     <div data-dashboard-flat-header>
-      {/* One page, one name: the heading is the section, and the tabs name its views. */}
       <DenPageHeader title="Analytics" size="compact" state={caption} action={action} className="break-words" />
       <span className="sr-only" data-analytics-view-title>{title}</span>
     </div>
@@ -92,7 +80,6 @@ export function AnalyticsLoading({ label }: { label: string }) {
   </div>;
 }
 
-/** The one way an Analytics view says it could not load: what happened, and one way to try again. */
 export function AnalyticsErrorState({ title, onRetry, retrying = false }: { title: string; onRetry: () => void; retrying?: boolean }) {
   return <div className={analyticsSurfaceClass} role="alert">
     <AnalyticsEmptyState title={title}

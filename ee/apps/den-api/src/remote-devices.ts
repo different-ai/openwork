@@ -64,17 +64,6 @@ import { pruneRemoteDeviceEvents, recordRemoteDeviceEvent as recordEvent, type R
 
 export { pruneRemoteDeviceEvents }
 
-/**
- * Remote devices (feature `remoteDevices`): Den's registry of the computers a
- * member can reach through OpenWork. See packages/types/src/den/remote-devices.ts
- * for the model and docs/features/remote-devices/README.md for the rollout.
- *
- * Three writers, one table: a signed-in desktop reports itself (and the VMs it
- * is configured to reach), Workbot's server reports what happens to a chat's
- * cloud computer, and members register virtual computers by hand. Desktops
- * that only ever registered a runner are copied in when someone lists devices,
- * so the list is complete from the first read.
- */
 type OrganizationId = DenTypeId<"organization">
 type MemberId = DenTypeId<"member">
 type DeviceId = DenTypeId<"remoteDevice">
@@ -88,7 +77,6 @@ type EventData = RemoteDeviceEventData
 const DESKTOP_PROVIDER: RemoteDeviceProvider = "openwork_desktop"
 const WORKBOT_COMPUTER_LABEL = "Workbot's computer"
 const SYNC_LIMIT = 500
-/** A Workbot viewer renews its connection every 45 seconds; one event per sitting is enough. */
 const VIEWER_EVENT_QUIET_MS = 10 * 60_000
 const TOUCH_QUIET_MS = 60_000
 
@@ -105,7 +93,6 @@ const NOT_DISCONNECTABLE_MESSAGE = "Only a computer signed in to OpenWork Deskto
 
 const iso = (value: Date | null) => value?.toISOString() ?? null
 
-/** A losing first-registration transaction must re-read the winner before applying ownership checks. */
 async function registrationTransaction<T>(work: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>): Promise<T> {
   return withDeadlockRetry(async () => {
     for (let attempt = 0; ; attempt++) {
@@ -139,11 +126,6 @@ function latest(...values: Array<Date | null | undefined>): Date | null {
 
 type RunnerFacts = { lastSeenAt: Date; capabilities: readonly string[]; appVersion: string; sessionAccess: RemoteSessionAccessMode | null }
 
-/**
- * What other devices may do on a signed-in desktop that takes tasks; null for
- * every other computer and for a disconnected desktop. `policy` is the one of
- * the computer's owner.
- */
 function remoteAccessOf(
   row: Pick<DeviceRow, "kind" | "provider">,
   runner: Pick<RunnerFacts, "capabilities" | "sessionAccess"> | null,
@@ -167,16 +149,10 @@ function availabilityOf(row: Pick<DeviceRow, "kind" | "provider" | "state">, las
   return remoteDeviceAvailability({ kind: row.kind, provider: row.provider, state: row.state, lastSeenAt: lastSeenAt?.getTime() ?? null, now })
 }
 
-/** Never heard from, or not for `ms`. A signed-in desktop that still reports would come back after being removed. */
 function quietSince(lastSeenAt: Date | null, now: number, ms: number) {
   return lastSeenAt === null || now - lastSeenAt.getTime() > ms
 }
 
-/**
- * Since when Workbot has been working in a Workbot computer's chat, from the
- * runner's own report of its running turn. A turn Den never heard end stops
- * counting after a day.
- */
 function workingSinceOf(row: Pick<DeviceRow, "provider">, activeTurnSince: Date | null | undefined, now: number): string | null {
   if (row.provider !== "workbot" || !activeTurnSince) return null
   return now - activeTurnSince.getTime() <= REMOTE_DEVICE_WORKING_MAX_MS ? activeTurnSince.toISOString() : null
@@ -186,10 +162,8 @@ function deviceView(row: DeviceRow, input: {
   viewer: RemoteDeviceActor
   canManageShared: boolean
   runner: RunnerFacts | null
-  /** Den's index row for a Workbot computer's chat; null for every other computer. */
   session: WorkbotSession | null
   disconnectedAt: Date | null
-  /** The viewer's own policy: every desktop they see is theirs. Null when none of them takes tasks. */
   policy: RemoteSessionAccessPolicy | null
   now: number
 }): RemoteDevice {
@@ -215,7 +189,6 @@ function deviceView(row: DeviceRow, input: {
     computerId: row.kind === "desktop" && input.runner?.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY) ? row.externalId : null,
     workbotChat: row.workbotChat,
     workingSince: workingSinceOf(row, input.session?.activeTurnSince, input.now),
-    // Desktops name themselves and Workbot's computers are named after their chat.
     canRename: manages && row.source === "manual",
     canRemove: manages && (!signedIn || disconnected || quietSince(lastSeenAt, input.now, REMOTE_DEVICE_DESKTOP_RETENTION_MS)),
     disconnectedAt: iso(input.disconnectedAt),
@@ -237,12 +210,6 @@ function organizationComputerEventView(row: typeof RemoteDeviceEventTable.$infer
   return { ...eventView(row), data: row.data ?? null, actorId: row.actorId }
 }
 
-/**
- * Copies desktops that registered a runner but never reported as a device, so
- * a desktop on an older app version (or asleep since the feature came on) is
- * still listed. Personal reads retain their age window; team inventory reconciles
- * all retained registrations in its organization in bounded batches.
- */
 async function syncDesktopsFromRunners(scope: { organizationId: OrganizationId; memberId?: MemberId; includeStale?: boolean }, now: Date) {
   const cutoff = new Date(now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS)
   const missing = await db.select({
@@ -261,7 +228,6 @@ async function syncDesktopsFromRunners(scope: { organizationId: OrganizationId; 
     ))
     .where(and(
       isNull(RemoteDeviceTable.id),
-      // Rows from before runner ids were scoped are replaced on the desktop's next registration.
       sql`${AutomationRunnerTable.id} like 'rnr|_%' escape '|'`,
       scope.includeStale ? undefined : gte(AutomationRunnerTable.last_seen_at, cutoff),
       scope.organizationId ? eq(AutomationRunnerTable.organization_id, scope.organizationId) : undefined,
@@ -302,11 +268,9 @@ async function runnerFacts(ids: readonly string[]): Promise<Map<string, RunnerFa
 
 type WorkbotSession = { title: string; activeTurnSince: Date | null }
 
-/** Den's index rows for the chats Workbot's computers belong to: the chat's name and the turn running in it. */
 async function workbotSessions(devices: readonly DeviceRow[]): Promise<Map<string, WorkbotSession>> {
   const workbot = devices.filter((row) => row.provider === "workbot" && row.ownerMemberId !== null)
   if (workbot.length === 0) return new Map()
-  // Never enrich a forged or historical device row from another tenant/member's session.
   const rows = await db.select({ deviceId: RemoteDeviceTable.id, title: HeadlessSessionIndexTable.title, activeTurnSince: HeadlessSessionIndexTable.activeTurnSince })
     .from(RemoteDeviceTable).innerJoin(HeadlessSessionIndexTable, and(
       eq(HeadlessSessionIndexTable.sessionId, RemoteDeviceTable.externalId),
@@ -317,14 +281,12 @@ async function workbotSessions(devices: readonly DeviceRow[]): Promise<Map<strin
   return new Map(rows.map((row) => [row.deviceId, { title: row.title, activeTurnSince: row.activeTurnSince }]))
 }
 
-/** What a member's view of these rows needs besides the rows; `actor` is the member whose list it is. */
 async function related(rows: readonly DeviceRow[], actor: RemoteDeviceActor) {
   const [runners, sessions, disconnections] = await Promise.all([
     runnerFacts(rows.filter((row) => row.kind === "desktop").map((row) => row.externalId)),
     workbotSessions(rows),
     deviceDisconnections(rows.filter((row) => row.provider === DESKTOP_PROVIDER).map((row) => row.id)),
   ])
-  // Read only when one of their desktops takes tasks from other devices.
   const policy = rows.some((row) => row.ownerMemberId === actor.memberId && takesRemoteTasks(row, runners.get(row.externalId) ?? null, disconnections.has(row.id)))
     ? await readRemoteSessionAccessPolicy(actor.organizationId, { memberId: actor.memberId })
     : null
@@ -341,7 +303,6 @@ function visibleTo(actor: RemoteDeviceActor) {
 
 const AVAILABILITY_ORDER: Record<RemoteDeviceAvailability, number> = { online: 0, needs_setup: 1, paused: 2, unknown: 3, offline: 4 }
 
-/** The caller's own computers and the ones shared with the organization, online first. */
 export async function listMemberRemoteDevices(actor: RemoteDeviceActor, options: { canManageShared: boolean; now?: Date }): Promise<RemoteDevice[]> {
   const now = options.now ?? new Date()
   await syncDesktopsFromRunners({ organizationId: actor.organizationId, memberId: actor.memberId }, now)
@@ -354,7 +315,6 @@ export async function listMemberRemoteDevices(actor: RemoteDeviceActor, options:
       viewer: actor, canManageShared: options.canManageShared, runner: runners.get(row.externalId) ?? null, session: sessions.get(row.id) ?? null,
       disconnectedAt: disconnections.get(row.id) ?? null, policy, now: now.getTime(),
     }))
-    // A desktop nobody has heard from in a month is gone, as its runner registration is; a disconnected one a month after that.
     .filter((device) => device.kind !== "desktop" || recent(device.lastSeenAt) || recent(device.disconnectedAt))
     .sort((a, b) => AVAILABILITY_ORDER[a.availability] - AVAILABILITY_ORDER[b.availability]
       || (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? "")
@@ -382,7 +342,6 @@ export async function readMemberRemoteDevice(actor: RemoteDeviceActor, deviceId:
   return { device: await viewOne(row, actor, options.canManageShared, options.now ?? new Date()), events: events.map(eventView) }
 }
 
-/** Registers a virtual computer by hand, for the caller or (with `shared`) for the whole organization. */
 export async function registerRemoteDevice(actor: RemoteDeviceActor, input: RemoteDeviceRegisterRequest, options: { canManageShared: boolean; now?: Date }): Promise<RemoteDevice> {
   const now = options.now ?? new Date()
   if (input.shared && !options.canManageShared) throw new RemoteDeviceError("remote_device_forbidden", "Only people who manage desktop policies can share a computer with the whole organization.")
@@ -397,7 +356,6 @@ export async function registerRemoteDevice(actor: RemoteDeviceActor, input: Remo
     if (existing && (existing.ownerMemberId !== actor.memberId && (existing.ownerMemberId !== null || !options.canManageShared))) {
       throw new RemoteDeviceError("remote_device_forbidden", "You cannot restore a computer owned by someone else or shared without manage permission.")
     }
-    // Restoring an entry must not silently transfer its owner or change its sharing.
     if (existing && (existing.ownerMemberId === null) !== input.shared) {
       throw new RemoteDeviceError("remote_device_forbidden", "Restoring a computer cannot change who owns it.")
     }
@@ -449,7 +407,6 @@ export async function renameRemoteDevice(actor: RemoteDeviceActor, deviceId: Dev
   return viewOne(row, actor, options.canManageShared, now)
 }
 
-/** Takes a computer off the list. Nothing is deleted at its provider, and a computer that reports again comes back. */
 export async function removeRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, options: { canManageShared: boolean; now?: Date }) {
   const now = options.now ?? new Date()
   await db.transaction(async (tx) => {
@@ -459,11 +416,6 @@ export async function removeRemoteDevice(actor: RemoteDeviceActor, deviceId: Dev
   })
 }
 
-/**
- * The caller disconnects their own signed-in desktop. Someone else's computer
- * is as unknown as one that does not exist; a computer that never signs in
- * cannot be disconnected.
- */
 export async function disconnectMemberRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, options: { sessionId: string; canManageShared: boolean; now?: Date }) {
   const now = options.now ?? new Date()
   const row = await visibleRow(actor, deviceId)
@@ -482,7 +434,6 @@ function desktopState(report: RemoteDeviceDesktopReport): { state: RemoteDeviceS
   const selected = computerUse.computers.find((computer) => computer.id === computerUse.selectedId && computer.placement === "local")
     ?? computerUse.computers.find((computer) => computer.placement === "local")
   if (!selected || selected.readiness === null || selected.readiness === "ready") return { state: "ready", detail: null }
-  // The desktop itself is running; what needs attention is its computer use.
   return { state: selected.readiness === "setup-required" ? "setup_required" : "ready", detail: selected.detail || null }
 }
 
@@ -517,11 +468,6 @@ function stateEvent(state: RemoteDeviceState, detail: string | null): { level: R
   return { level, message: detail ? `${STATE_SENTENCE[state]}: ${detail}` : STATE_SENTENCE[state] }
 }
 
-/**
- * A signed-in desktop's report about itself: creates or refreshes its row,
- * records what changed, and does the same for the VMs it is configured to
- * reach (never one that belongs to another member).
- */
 export async function reportDesktopDevice(
   actor: RemoteDeviceActor,
   report: RemoteDeviceDesktopReport,
@@ -537,8 +483,6 @@ export async function reportDesktopDevice(
       eq(RemoteDeviceTable.externalId, externalId),
     )
     const [existing] = await tx.select().from(RemoteDeviceTable).where(identity).limit(1).for("update")
-    // Read under the row lock a disconnect takes: a disconnected desktop's report touches nothing,
-    // and only a sign-in made after the disconnect connects it again.
     const disconnection = await findDisconnection(actor.organizationId, actor.memberId, report.installId, tx)
     if (disconnection && await reconnectIfSignedInAgain(disconnection, options.session, { database: tx, now }) === "refused") throw new ComputerDisconnectedError()
     const values = {
@@ -584,7 +528,6 @@ export async function reportDesktopDevice(
     if (!stored) throw new Error("remote_device_missing")
     return stored
   })
-  // A desktop that has not asked for a runner credential lately is still signed out when it is disconnected.
   if (options.session) {
     await automationRepository.noteDesktopRunnerSignIn({ organizationId: actor.organizationId, ownerMemberId: actor.memberId, runnerId: report.installId, authSessionId: options.session.id })
   }
@@ -593,7 +536,6 @@ export async function reportDesktopDevice(
 
 const READINESS_STATE = { ready: "ready", "setup-required": "setup_required", unsupported: "unavailable", unavailable: "unavailable" } as const
 
-/** A VM the desktop is configured to reach: registered for its member on first sight, refreshed after that. */
 async function reportReachableVm(tx: Database, actor: RemoteDeviceActor, computer: RemoteDeviceReportedComputer, now: Date, canManageShared: boolean) {
   if (computer.placement !== "remote" || !computer.provider || !computer.externalId) return
   const [existing] = await tx.select().from(RemoteDeviceTable).where(and(
@@ -601,7 +543,6 @@ async function reportReachableVm(tx: Database, actor: RemoteDeviceActor, compute
     eq(RemoteDeviceTable.provider, computer.provider),
     eq(RemoteDeviceTable.externalId, computer.externalId),
   )).limit(1).for("update")
-  // Someone else's VM: this desktop having its id does not make it this member's.
   if (existing && existing.ownerMemberId !== actor.memberId && (existing.ownerMemberId !== null || !canManageShared)) return
   const state: RemoteDeviceState | null = computer.readiness ? READINESS_STATE[computer.readiness] : null
   const detail = state && state !== "ready" ? computer.detail || null : null
@@ -615,7 +556,6 @@ async function reportReachableVm(tx: Database, actor: RemoteDeviceActor, compute
     await recordEvent(tx, { organizationId: actor.organizationId, deviceId: id, type: "registered", actor: "device", message: "Connected from OpenWork Desktop", data: { provider: computer.provider }, now })
     return
   }
-  // No probe this time (the desktop only checks the computer agents use): leave what is known alone.
   if (!state && !existing.removedAt) return
   const next = state ?? existing.state
   await tx.update(RemoteDeviceTable).set({
@@ -631,7 +571,6 @@ async function reportReachableVm(tx: Database, actor: RemoteDeviceActor, compute
 
 const VIEW_NAME = { browser: "Browser", computer: "Computer" } as const
 
-/** What a failure code from Workbot's runner means for the computer. */
 function workbotFailure(code: string | null): { state: RemoteDeviceState; detail: string; level: RemoteDeviceEventLevel } {
   if (code === "desktop_updating") return { state: "ready", detail: "Updating to a newer image", level: "warning" }
   if (code === "desktop_outdated") return { state: "setup_required", detail: "Needs a rebuild to get the current image", level: "warning" }
@@ -639,11 +578,6 @@ function workbotFailure(code: string | null): { state: RemoteDeviceState; detail
   return { state: "unavailable", detail: "Could not connect", level: "error" }
 }
 
-/**
- * What Workbot's server saw happen to a chat's cloud computer. The row is
- * created on the first report. Returns false when the session's computer
- * belongs to another member (never expected: session ids are derived per member).
- */
 export async function reportWorkbotComputer(actor: RemoteDeviceActor, report: RemoteDeviceWorkbotReport, now = new Date()): Promise<boolean> {
   return registrationTransaction(async (tx) => {
     const [session] = await tx.select().from(HeadlessSessionIndexTable)
@@ -683,7 +617,6 @@ export async function reportWorkbotComputer(actor: RemoteDeviceActor, report: Re
     } else {
       const quiet = existing.lastSeenAt !== null && now.getTime() - existing.lastSeenAt.getTime() < TOUCH_QUIET_MS
       const unchanged = existing.state === values.state && (existing.statusDetail ?? null) === values.statusDetail && !existing.removedAt === !removed && existing.workbotChat === report.chat
-      // A live viewer reports every renewal; skip the write when nothing would change.
       if (!(quiet && unchanged)) await tx.update(RemoteDeviceTable).set({ ...values, ...(removed ? {} : { lastSeenAt: now }) }).where(eq(RemoteDeviceTable.id, existing.id))
     }
     const message = workbotEventMessage(report, failure?.detail ?? null)
@@ -716,14 +649,11 @@ function workbotEventMessage(report: RemoteDeviceWorkbotReport, failure: string 
   }
 }
 
-/** Every device row, event and disconnection of an organization, when the organization is deleted. */
 export async function deleteOrganizationRemoteDevices(database: Database, organizationId: OrganizationId) {
   await deleteOrganizationComputerDisconnections(database, organizationId)
   await database.delete(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.organizationId, organizationId))
   await database.delete(RemoteDeviceTable).where(eq(RemoteDeviceTable.organizationId, organizationId))
 }
-
-// Organization team inventory. Every read is scoped before querying the registry.
 
 export type OrganizationComputerFilters = OrganizationInstanceFilters & {
   organizationId: OrganizationId
@@ -732,19 +662,15 @@ export type OrganizationComputerFilters = OrganizationInstanceFilters & {
   provider?: RemoteDeviceProvider
   availability?: RemoteDeviceAvailability
   problems?: boolean
-  /** Also list desktops nobody has heard from for ORGANIZATION_COMPUTER_STALE_MS. */
   includeStale?: boolean
   page?: number
   pageSize?: number
 }
 
-/** What the reader may do to the computers they see: `computers.disconnect`, without the recent sign-in the action itself needs. */
 export type OrganizationComputerViewer = { canDisconnect: boolean }
 
-/** Last contact as readers see it: the device's own report or its runner's presence, whichever is newer. */
 const seenSql = sql<Date | null>`greatest(coalesce(${RemoteDeviceTable.lastSeenAt}, '1970-01-01'), coalesce(${AutomationRunnerTable.last_seen_at}, '1970-01-01'))`
 
-/** `remoteDeviceAvailability` in SQL, for filtering and counting; test/api/remote-devices.api.test.ts holds the two together. */
 function availabilitySql(now: Date) {
   const cutoff = new Date(now.getTime() - REMOTE_DEVICE_ONLINE_WINDOW_MS)
   const recent = sql`${seenSql} >= ${sql.param(cutoff, RemoteDeviceTable.lastSeenAt)}`
@@ -770,11 +696,6 @@ const runnerJoin = and(
   eq(AutomationRunnerTable.owner_member_id, RemoteDeviceTable.ownerMemberId),
 )
 
-/**
- * Desktops a team list leaves out unless asked: not heard from for
- * ORGANIZATION_COMPUTER_STALE_MS, or disconnected that long ago. A disconnected
- * desktop stays listed until then however long it had been quiet before.
- */
 function staleSql(now: Date) {
   const cutoff = new Date(now.getTime() - ORGANIZATION_COMPUTER_STALE_MS)
   return sql`(${RemoteDeviceTable.provider} = ${DESKTOP_PROVIDER} and (case
@@ -802,7 +723,6 @@ type OrganizationComputerRow = {
   organizationName: string | null
   ownerName: string | null
   ownerEmail: string | null
-  /** Null when the owner's member row is gone. */
   ownerMemberRowId: MemberId | null
   ownerRemovedAt: Date | null
   ownerUserId: string | null
@@ -843,13 +763,11 @@ async function organizationComputerViews(
   const ids = rows.map((row) => row.device.id)
   const since = problemsSince(now)
   const runnerOf = (row: OrganizationComputerRow) => row.runnerCapabilities ? { capabilities: row.runnerCapabilities, sessionAccess: row.runnerSessionAccess } : null
-  // The policy is each owner's own (features can be on for some members only): one batched read for the page.
   const taskOwners = rows.flatMap((row) => row.device.ownerMemberId && takesRemoteTasks(row.device, runnerOf(row), row.disconnectedAt !== null) ? [row.device.ownerMemberId] : [])
   const [problems, lastEvents, policies, sessions] = await Promise.all([
     ids.length === 0 ? [] : db.select({ deviceId: RemoteDeviceEventTable.deviceId, total: sql<number>`count(*)` }).from(RemoteDeviceEventTable)
       .where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), inArray(RemoteDeviceEventTable.deviceId, ids), inArray(RemoteDeviceEventTable.level, ["warning", "error"]), gte(RemoteDeviceEventTable.createdAt, since)))
       .groupBy(RemoteDeviceEventTable.deviceId),
-    // One short indexed read per device on the page; a page is at most ORGANIZATION_COMPUTER_PAGE_SIZE.
     Promise.all(ids.map(async (id) => (await db.select().from(RemoteDeviceEventTable).where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, id)))
       .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(1))[0] ?? null)),
     readRemoteSessionAccessPolicies(organizationId, taskOwners),
@@ -862,7 +780,6 @@ async function organizationComputerViews(
     const lastEvent = lastEvents[index]
     const signedIn = device.provider === DESKTOP_PROVIDER
     const disconnected = row.disconnectedAt !== null
-    // Their computer can no longer act for them: the membership check refuses its runner credential.
     const former = device.ownerMemberId !== null && (row.ownerMemberRowId === null || row.ownerRemovedAt !== null || row.ownerUserId === null)
     return {
       id: device.id,
@@ -891,13 +808,11 @@ async function organizationComputerViews(
         && (former || disconnected || device.source === "manual" || (signedIn && quietSince(lastSeenAt, now.getTime(), ORGANIZATION_COMPUTER_STALE_MS))),
       disconnectedAt: iso(row.disconnectedAt),
       canDisconnect: viewer.canDisconnect && signedIn && device.ownerMemberId !== null && !former && !disconnected,
-      // A former member's computer is refused by the membership check, whatever it last reported.
       remoteAccess: former ? null : remoteAccessOf(device, runnerOf(row), disconnected, device.ownerMemberId ? policies.get(device.ownerMemberId) : null),
     }
   })
 }
 
-/** All members and shared computers in this organization, filtered and paged on the server. */
 export async function listOrganizationComputerRecords(filters: OrganizationComputerFilters, viewer: OrganizationComputerViewer, now = new Date()): Promise<OrganizationComputerListResponse> {
   await syncDesktopsFromRunners({ organizationId: filters.organizationId, includeStale: true }, now)
   const pageSize = Math.max(1, Math.min(ORGANIZATION_COMPUTER_PAGE_SIZE, filters.pageSize ?? ORGANIZATION_COMPUTER_PAGE_SIZE))
@@ -944,7 +859,6 @@ export async function listOrganizationComputerRecords(filters: OrganizationCompu
   }
 }
 
-/** One device with everything Den knows that explains its state: the last report, its events, runner and session rows, and the owner's features. */
 export async function readOrganizationComputerRecord(organizationId: OrganizationId, deviceId: DeviceId, viewer: OrganizationComputerViewer, now = new Date()): Promise<OrganizationComputerDetailResponse | null> {
   const [row] = await organizationComputerQuery(and(eq(RemoteDeviceTable.organizationId, organizationId), eq(RemoteDeviceTable.id, deviceId))).limit(1)
   if (!row) return null
@@ -1000,12 +914,11 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
       computerUse: true,
       remoteComputers: features.remoteComputers,
       browserUse: true,
-      sandboxGateway: features.sandboxGateway,
+      sandboxGateway: false,
     },
   }
 }
 
-/** One computer of the organization as its team list shows it, to someone who holds `computers.disconnect`. */
 async function manageableOrganizationComputer(organizationId: OrganizationId, deviceId: DeviceId, now: Date, live: boolean) {
   const [row] = await organizationComputerQuery(and(
     eq(RemoteDeviceTable.organizationId, organizationId), eq(RemoteDeviceTable.id, deviceId), live ? isNull(RemoteDeviceTable.removedAt) : undefined,
@@ -1015,11 +928,6 @@ async function manageableOrganizationComputer(organizationId: OrganizationId, de
   return { row, view }
 }
 
-/**
- * Someone with `computers.disconnect` disconnects a current member's signed-in
- * desktop. A former member's desktop is already refused by the membership
- * check, so there is nothing to disconnect: it can be removed instead.
- */
 export async function disconnectOrganizationComputer(actor: RemoteDeviceActor, deviceId: DeviceId, options: { sessionId: string | null; now?: Date }) {
   const now = options.now ?? new Date()
   const { row, view } = await manageableOrganizationComputer(actor.organizationId, deviceId, now, false)
@@ -1033,7 +941,6 @@ export async function disconnectOrganizationComputer(actor: RemoteDeviceActor, d
   return { device: disconnected.view, signedOut, ownerMemberId }
 }
 
-/** Someone with `computers.disconnect` takes a computer off the team list. A connected desktop would only report itself back. */
 export async function removeOrganizationComputer(actor: RemoteDeviceActor, deviceId: DeviceId, now = new Date()) {
   const { row, view } = await manageableOrganizationComputer(actor.organizationId, deviceId, now, true)
   if (!view.canRemove) {

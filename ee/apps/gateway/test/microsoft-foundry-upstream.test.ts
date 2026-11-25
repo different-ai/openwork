@@ -54,7 +54,6 @@ function accessRow(mode: Mode): GatewayAccessRow {
 function app(settings: Record<string, unknown>, mode: Mode, credential = credentials[mode]) {
   const sent: Request[] = []
   let providerReads = 0
-  let featureReads = 0
   const row = accessRow(mode)
   const provider: GatewayProvider = {
     id: providerId, organization_id: organizationId, provider_id: "microsoft-foundry", status: "active", settings,
@@ -77,7 +76,6 @@ function app(settings: Record<string, unknown>, mode: Mode, credential = credent
     reporter: { request: () => {}, handledError: () => {} },
     checkUsage: async () => null,
     loadGatewayProvider: async (input) => { providerReads++; assert.equal(input.consistency, undefined); return provider },
-    checkLiteLlmEntraFeature: async () => { featureReads++; throw new Error("feature storage unavailable") },
     loadGatewayAccess: async (_scope, consistency) => { assert.equal(consistency, undefined); return [row] },
     loadProviderCredential: async (input) => { assert.equal(input.consistency, undefined); return credential },
     catalog: createProviderCatalog({ "microsoft-foundry": { npm: "@ai-sdk/anthropic", env: ["ANTHROPIC_FOUNDRY_API_KEY"] } }),
@@ -88,7 +86,7 @@ function app(settings: Record<string, unknown>, mode: Mode, credential = credent
     headers: { "content-type": "application/json", "anthropic-version": "2023-06-01" },
     body: JSON.stringify({ model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
   })
-  return { sent, send, providerReads: () => providerReads, featureReads: () => featureReads }
+  return { sent, send, providerReads: () => providerReads }
 }
 
 async function withAllowedOrigins<T>(origins: string, run: () => Promise<T>) {
@@ -103,21 +101,19 @@ async function withAllowedOrigins<T>(origins: string, run: () => Promise<T>) {
 }
 
 test("a member's Entra ID token goes to the provider's own Foundry resource", async () => {
-  const { sent, send, providerReads, featureReads } = app({ resourceName: "acme-foundry" }, "member")
+  const { sent, send, providerReads } = app({ resourceName: "acme-foundry" }, "member")
   assert.equal((await send()).status, 200)
   assert.equal(providerReads(), 1)
-  assert.equal(featureReads(), 0)
   assert.equal(sent.length, 1)
   assert.equal(sent[0]?.url, `${resourceHost}/anthropic/v1/messages`)
   assert.equal(sent[0]?.headers.get("authorization"), "Bearer entra-member-token-fixture")
 })
 
-test("fresh Foundry credentials do not opt into LiteLLM identity binding or feature reads", async () => {
+test("fresh Foundry credentials do not opt into LiteLLM identity binding", async () => {
   const credential = { ...credentials.member, secret: JSON.stringify({ accessToken: "foundry-existing-token-fixture" }) }
-  const { sent, send, providerReads, featureReads } = app({ resourceName: "acme-foundry" }, "member", credential)
+  const { sent, send, providerReads } = app({ resourceName: "acme-foundry" }, "member", credential)
   assert.equal((await send()).status, 200)
   assert.equal(providerReads(), 1)
-  assert.equal(featureReads(), 0)
   assert.equal(sent[0]?.headers.get("authorization"), "Bearer foundry-existing-token-fixture")
 })
 

@@ -22,7 +22,6 @@ export const MAX_OFFICE_TEXT_CHARS = 24_000;
 export type OfficeKind = "docx" | "pptx" | "xlsx";
 
 export type OfficeTextOptions = {
-  /** A tool that reads further into a workbook; the preview points to it. Without one it only says what is not shown. */
   spreadsheetReadTool?: string;
 };
 
@@ -86,11 +85,6 @@ function sheetSummaryLine(sheet: XlsxSheetData, total: number): string {
   return `sheet ${quoted(sheet.info.name)} (${sheet.info.position} of ${total}): ${facts.join("; ")}`;
 }
 
-/**
- * Compact workbook preview for the model: one summary line per sheet plus a
- * Markdown grid with real row numbers and column letters for as many sheets
- * as the cell budget allows.
- */
 async function extractXlsxText(bytes: Uint8Array, options: OfficeTextOptions): Promise<string> {
   const tool = options.spreadsheetReadTool;
   const workbook = await openXlsxWorkbook(bytes);

@@ -52,6 +52,7 @@ function allowance(family: FreeAllowanceStore["family"]) {
   const charged: FreePrincipal[] = []
   const store: FreeAllowanceStore = {
     family,
+    safetyPaused: async () => false,
     consumeNonce: async () => "accepted",
     consumeSession: async () => {},
     read: async () => ({ state: "ready", code: null, allowance: null }),
@@ -67,20 +68,22 @@ function post(path: string, body: Record<string, unknown>) {
 const chat = { model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }] }
 const responses = { model: INFERENCE_FREE_MODEL_ID, input: "hello" }
 
-function guestApp(address: string) {
+function guestApp(address: string, paused = false) {
   const upstream = openAi()
   const { charged, store } = allowance("anonymous")
   const app = new Hono()
+  store.safetyPaused = async () => paused
   registerAnonymousInferenceRoutes(app, { config, store, fetch: upstream.fetch, clientAddress: () => address })
   return { app, upstream, charged }
 }
 
-function memberApp(principal: MemberPrincipal) {
+function memberApp(principal: MemberPrincipal, blocked?: string) {
   const upstream = openAi()
   const { charged, store } = allowance("member")
   const key: InferenceKeyRow = { id: principal.inferenceKeyId, organization_id: principal.organizationId, org_membership_id: principal.memberId,
     name: null, key_hash: "fixture", key_prefix: null, encrypted_key: null, status: "active", revoked_at: null,
     created_at: new Date(0), updated_at: new Date(0) }
+  store.safetyPaused = async(candidate) => freePrincipalHash(candidate) === blocked
   const handler = createFreeMemberHandler({ config, store, fetch: upstream.fetch, findMember: async () => principal, defaultPinned: async () => false })
   const app = new Hono()
   app.all("*", (c) => handler(c, key))
@@ -163,3 +166,23 @@ for (const [protocol, path, body] of [["Chat Completions", DESKTOP_FREE_CHAT_PAT
     assert.equal(JSON.stringify(sent).includes("someone-else"), false)
   })
 }
+
+
+test("a paused safety identifier never reaches either provider endpoint", async () => {
+  const { app, upstream } = guestApp("203.0.113.7", true)
+  for (const [path, body] of [[DESKTOP_FREE_CHAT_PATH, chat], [DESKTOP_FREE_RESPONSES_PATH, responses]] as const) {
+    const response = await app.request(post(path, body))
+    assert.equal(response.status, 403)
+    assert.equal((await response.json()).error.code, "free_safety_paused")
+  }
+  assert.equal(upstream.bodies.length, 0)
+})
+
+test("a safety pause follows the member across organizations and replacement keys", async () => {
+  const first = member("paused-member")
+  for (const principal of [first, member(first.id)]) {
+    const { app, upstream } = memberApp(principal, freePrincipalHash(first))
+    assert.equal((await app.request(post(MEMBER_FREE_RESPONSES_PATH, responses))).status, 403)
+    assert.equal(upstream.bodies.length, 0)
+  }
+})

@@ -63,7 +63,6 @@ import { BrowserSecretsButton } from "./browser-secrets-dialog";
 import { NO_SESSION_SIDE_PANEL_KEY } from "./side-panel-session";
 import { useBrowserSecretsEnabled } from "./use-browser-secrets";
 
-/** Floating browser presentation controls, present only while that feature is on. */
 export type BrowserPresentationControls = {
   onPresent: (mode: BrowserPresentationMode) => void;
 };
@@ -80,15 +79,11 @@ type SidePanelProps = {
   emptyView: EmptyPanelView;
   onShowEmptyChooser: () => void;
   onOpenFiles: () => void;
-  /** Floating browser presentation; undefined keeps the docked-only browser. */
   browserPresentation?: BrowserPresentationControls;
-  /** The browser is shown full screen: keep its tab but not a second native view here. */
   browserShownElsewhere?: boolean;
   sideChat?: { content: React.ReactNode; onOpen: () => void };
 };
 
-// HMR can remount this module without unmounting BrowserPanelContent, leaving
-// the native Electron browser overlay visible — hide it before the module reloads.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     getElectronBrowser()?.hide?.();
@@ -156,7 +151,6 @@ type SidePanelTabProps = {
   onClose: (tab: PanelTabEntry) => void;
 };
 
-/** A browser tab's site icon, a spinner while it loads, or a globe. */
 export function BrowserTabIcon({ tab }: { tab: BrowserPanelTab }) {
   if (tab.favicon) return <img src={tab.favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />;
   return tab.status === "loading" ? <Loader2 className="animate-spin" /> : <Globe />;
@@ -189,7 +183,6 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
         event.stopPropagation();
         showBrowserTabContextMenu({ clientX: event.clientX, clientY: event.clientY });
       } : undefined}
-      // Middle-click closes a tab, as in a browser; stopping mousedown keeps it from starting autoscroll.
       onMouseDown={(event: React.MouseEvent<HTMLDivElement>) => {
         if (event.button === 1) event.preventDefault();
       }}
@@ -240,7 +233,6 @@ type BrowserPanelContentProps = {
   sessionId: string;
   tab: BrowserPanelTab;
   onClose: () => void;
-  /** Where this content is shown and how to move it, with the floating browser feature on. */
   presentation?: BrowserPresentationControls & { mode: "side" | "fullscreen" | "window" };
 };
 
@@ -314,7 +306,6 @@ export function BrowserPanelContent({
       return;
     }
 
-    // Drawn into the popped-out window, this content measures and repaints with that window.
     const view = content.ownerDocument.defaultView ?? window;
     let disposed = false;
     let ready = false;
@@ -330,7 +321,6 @@ export function BrowserPanelContent({
     };
 
     const resetNativeView = async () => {
-      // This hide only stages fresh geometry; it is not leaving browser focus.
       await browser.hide?.({ preserveShortcutFocus: true });
 
       if (disposed) {
@@ -358,17 +348,14 @@ export function BrowserPanelContent({
     const watchBounds = () => {
       boundsFrame = null;
       syncBounds();
-      // Position-only layout changes and dialog occlusion also need tracking.
       scheduleBounds();
     };
 
     void resetNativeView();
 
-    // Panel constraints can settle in ResizeObserver after this frame's RAF.
     const observer = new ResizeObserver(syncBounds);
     observer.observe(content);
     view.addEventListener("resize", invalidateBounds);
-    // The bridge lives in the app window, so this event always arrives there.
     window.addEventListener("openwork:browser:bounds-invalidated", invalidateBounds);
 
     return () => {
@@ -592,7 +579,6 @@ export function BrowserPanelContent({
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {isAvailable ? (
-          // A page the agent controls is drawn scaled inside this area; the rest frames it.
           <div ref={contentRef} data-browser-shortcut-tab={tab.id} className={`h-full overflow-hidden${tab.agentViewport ? " bg-muted" : ""}`}>
             {blockedSite && !suspended ? (
               <BlockedSitePage url={blockedSite.url} message={blockedSite.message} errorDescription={blockedSite.errorDescription} />
@@ -766,7 +752,6 @@ export function SidePanel({
       execute: async () => {
         if (!client || !workspaceId) return { ok: false, error: "Workspace client is not ready." };
 
-        // Minimal single-page PDF that draws "OpenWork PDF" — base64 encoded.
         const pdfBase64 =
           "JVBERi0xLjQKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvUGFyZW50IDIgMCBSL01lZGlhQm94WzAgMCAzMDAgMTQ0XS9SZXNvdXJjZXM8PC9Gb250PDwvRjEgNCAwIFI+Pj4+L0NvbnRlbnRzIDUgMCBSPj4KZW5kb2JqCjQgMCBvYmoKPDwvVHlwZS9Gb250L1N1YnR5cGUvVHlwZTEvQmFzZUZvbnQvSGVsdmV0aWNhPj4KZW5kb2JqCjUgMCBvYmoKPDwvTGVuZ3RoIDQ0Pj4Kc3RyZWFtCkJUCi9GMSAyNCBUZgo3MiA3MCBUZAooT3BlbldvcmsgUERGKSBUagpFVAplbmRzdHJlYW0KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDU4IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDI0MSAwMDAwMCBuIAowMDAwMDAwMzEyIDAwMDAwIG4gCnRyYWlsZXIKPDwvU2l6ZSA2L1Jvb3QgMSAwIFI+PgpzdGFydHhyZWYKNDA2CiUlRU9G";
         const binary = atob(pdfBase64);
@@ -931,7 +916,6 @@ function siteHost(url: string): string {
   }
 }
 
-/** A site the organization's website rules block, shown like a browser's own blocked-site page. */
 function BlockedSitePage({ url, message, errorDescription }: { url: string; message: string; errorDescription: string }) {
   return (
     <div className="flex h-full items-center justify-center p-6" data-testid="browser-blocked-site" role="alert">

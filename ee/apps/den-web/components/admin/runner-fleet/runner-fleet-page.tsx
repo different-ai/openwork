@@ -170,7 +170,6 @@ export function RunnerFleetPage() {
   const configured = fleet !== null && fleet.status !== "not_configured";
   const history = useRunnerFleetHistory(range, configured);
   const liveIds = useMemo(() => fleet?.nodes.map((node) => node.id) ?? [], [fleet]);
-  // The grids lay themselves out against the hour, not the second: a new minute is often enough.
   const gridNow = Math.floor(now / 60_000) * 60_000;
 
   if (state.status === "signed-out" || state.status === "forbidden") return <AdminAccessScreen state={state.status} message={state.message} onRetry={retry} />;

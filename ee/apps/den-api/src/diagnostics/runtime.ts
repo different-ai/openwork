@@ -4,14 +4,6 @@ import { googleConnectorCheck, slackConnectorCheck, type SlackLiveResult } from 
 import type { ConnectorTargets, GoogleConnectorTarget } from "./connectors.js"
 import { mapLimited, type EvaluatedProvider } from "./provider-checks.js"
 
-/**
- * Per-replica caches and admission for live diagnostics checks. Live results
- * are kept in memory for CACHE_TTL_MS and reused only while the provider's
- * configuration and credential are unchanged; a durable rate limit allows one
- * live refresh per organization (connectors: per member) per REFRESH_WINDOW_MS
- * across replicas. Reads never wait for a live check.
- */
-
 export const DIAGNOSTICS_CACHE_TTL_MS = 10 * 60_000
 export const DIAGNOSTICS_REFRESH_WINDOW_MS = 30_000
 const MAX_CACHE_ENTRIES = 2_000
@@ -19,7 +11,6 @@ const CONNECTOR_CONCURRENCY = 4
 
 export type DiagnosticsRuntimeDeps = {
   now: () => number
-  /** Durable admission: null when admitted, else Retry-After seconds. */
   admit: (key: string, windowMs: number) => Promise<number | null>
   evaluateProviders: (organizationId: string, live: boolean, previousSuccess: ReadonlyMap<string, string>) => Promise<EvaluatedProvider[]>
   loadConnectors: (organizationId: string) => Promise<ConnectorTargets>
@@ -28,7 +19,6 @@ export type DiagnosticsRuntimeDeps = {
   onError?: (scope: string, error: unknown) => void
 }
 
-/** Pending, admitted, or Retry-After seconds when another check ran recently. */
 export type RefreshAdmission = "started" | "running" | "nothing_to_check" | number
 
 type ProviderCacheEntry = { checkedAt: number; rows: Map<string, { version: string; check: ProviderCheck }> }
@@ -66,8 +56,6 @@ export function createDiagnosticsRuntime(deps: DiagnosticsRuntimeDeps) {
     return "started"
   }
 
-  // ── Providers ───────────────────────────────────────────────────────────
-
   function refreshProviders(organizationId: string): Promise<RefreshAdmission> {
     return admitRun(providerRuns, organizationId, `diagnostics:providers:${organizationId}`, async () => {
       const success = providerSuccess.get(organizationId) ?? new Map<string, string>()
@@ -82,10 +70,6 @@ export function createDiagnosticsRuntime(deps: DiagnosticsRuntimeDeps) {
     })
   }
 
-  /**
-   * Stored facts now, merged with the latest live results. With `refresh`, a
-   * missing or expired live result starts a background check (rate limited).
-   */
   async function providers(organizationId: string, options: { include: (check: ProviderCheck) => boolean; refresh: boolean }): Promise<ProvidersDiagnostics> {
     const stored = await deps.evaluateProviders(organizationId, false, providerSuccess.get(organizationId) ?? new Map())
     const cache = fresh(providerCache.get(organizationId))
@@ -97,7 +81,6 @@ export function createDiagnosticsRuntime(deps: DiagnosticsRuntimeDeps) {
         stale = true
         return row.check
       }
-      // Live outcome, with today's model count and member counts.
       return { ...cached.check, members: row.check.members, models: { ...cached.check.models, configured: row.check.models.configured } }
     })
     if (options.refresh && stale) await refreshProviders(organizationId).catch(report("providers.refresh"))
@@ -108,8 +91,6 @@ export function createDiagnosticsRuntime(deps: DiagnosticsRuntimeDeps) {
       items: items.filter(options.include).slice(0, 100),
     }
   }
-
-  // ── Connectors ──────────────────────────────────────────────────────────
 
   const memberKey = (organizationId: string, orgMembershipId: string) => `${organizationId}:${orgMembershipId}`
 
@@ -165,16 +146,13 @@ export function createDiagnosticsRuntime(deps: DiagnosticsRuntimeDeps) {
   return {
     providers,
     connectors,
-    /** POST /check: start a live provider check unless one ran recently. */
     async checkProviders(organizationId: string): Promise<RefreshAdmission> {
       return refreshProviders(organizationId)
     },
-    /** POST /check: start the caller's connector check unless one ran recently. */
     async checkConnectors(organizationId: string, orgMembershipId: string): Promise<RefreshAdmission> {
       const targets = await hasConnectorsToCheck(organizationId)
       return targets ? refreshConnectors(organizationId, orgMembershipId, targets) : "nothing_to_check"
     },
-    /** Test seam: wait for background checks to finish. */
     async settle() {
       await Promise.all([...providerRuns.values(), ...connectorRuns.values()])
     },

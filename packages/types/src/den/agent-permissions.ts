@@ -31,8 +31,8 @@ import { z } from "zod";
  *
  * To add a permission: add a definition below and enforce it wherever that
  * action can happen. Only engine actions belong in agent-permission-engine.ts;
- * browser_upload, file_send, host_execution and sandbox_opt_out are enforced by the OpenWork
- * host and must never enter the engine grammar.
+ * browser_upload, file_send, host_execution, sandbox_opt_out and the four private_value
+ * actions are enforced by the OpenWork host and must never enter the engine grammar.
  *
  * host_execution is the sandbox-only switch: blocking it means the agent's
  * commands and files run in the local sandbox, and everything else that runs
@@ -44,7 +44,7 @@ export const AGENT_PERMISSION_DECISIONS = ["allow", "ask", "deny"] as const;
 export type AgentPermissionDecision = (typeof AGENT_PERMISSION_DECISIONS)[number];
 
 /** OpenCode permission actions, plus local MCP, computer use (with its files and clipboard) and app scripting enforced by OpenWork. */
-export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload", "file_send", "host_execution", "sandbox_opt_out"] as const;
+export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload", "file_send", "host_execution", "sandbox_opt_out", "private_value_fill", "private_value_command", "private_value_paste", "private_value_terminal", "private_value_run"] as const;
 
 export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "computerFiles", "computerClipboard", "appScripting", "hostExecution", "sandboxOptOut"] as const;
 export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "computer_files", "computer_clipboard", "script", "host_execution", "sandbox_opt_out"] as const;
@@ -58,38 +58,37 @@ export const AGENT_SANDBOX_ONLY_CAPABILITY_HEADER = "X-OpenWork-Sandbox-Only";
  * offer the sandbox next to the usual tools whenever its rollout is on.
  */
 export const AGENT_SANDBOX_MODES_CAPABILITY_HEADER = "X-OpenWork-Sandbox-Modes";
-
+/** Desktops that enforce the private-value permissions say so; Den keeps their rules from the ones that do not. */
+export const AGENT_PRIVATE_VALUES_CAPABILITY_HEADER = "X-OpenWork-Private-Value-Permissions";
+export const AGENT_PRIVATE_VALUE_PERMISSION_KEYS = ["privateValueFills", "privateValueCommands", "privateValuePaste", "privateValueTerminal", "privateValueRuns"] as const;
+export const AGENT_PRIVATE_VALUE_PERMISSION_ACTIONS = ["private_value_fill", "private_value_command", "private_value_paste", "private_value_terminal", "private_value_run"] as const;
 /** What blocking computer use blocks too: everything else the agent does in apps. */
 export const AGENT_COMPUTER_USE_DEPENDENT_ACTIONS = ["computer_files", "computer_clipboard", "script"] as const;
 export type AgentPermissionAction = (typeof AGENT_PERMISSION_ACTIONS)[number];
 
 export type AgentPermissionPatternKind = "command" | "website";
 
-export type AgentPermissionSection = "commands" | "files" | "computer" | "web" | "extensions";
+export type AgentPermissionSection = "commands" | "files" | "computer" | "web" | "privateValues" | "extensions";
 
 export const agentPermissionSections: readonly { id: AgentPermissionSection; label: string }[] = [
   { id: "commands", label: "Commands" },
   { id: "files", label: "Files" },
   { id: "computer", label: "Computer use" },
   { id: "web", label: "Web" },
+  { id: "privateValues", label: "Private values" },
   { id: "extensions", label: "Skills and MCP servers" },
 ];
 
 type AgentPermissionDefinitionEntry = {
   key: string;
   section: AgentPermissionSection;
-  /** What the agent does, as the row's label. */
   label: string;
-  /** One sentence, shown as the row's tooltip. */
   description: string;
   action: AgentPermissionAction;
-  /** `choice` is a picklist of decisions; `toggle` is a switch. */
   control: "choice" | "toggle";
-  /** By default a toggle allows when on; a requirement denies when on. */
+  decisions?: readonly AgentPermissionDecision[];
   toggleMeans?: "allows" | "requires";
-  /** The patterns its lists hold, or null when it has no lists. */
   patterns: AgentPermissionPatternKind | null;
-  /** What one pattern names, for "Always block a command". */
   patternNoun: string | null;
 };
 
@@ -207,6 +206,59 @@ export const agentPermissionDefinitions = [
     patternNoun: "website",
   },
   {
+    key: "privateValueFills",
+    section: "privateValues",
+    label: "Fill private values on websites",
+    description: "Passwords, codes and other values the agent puts into a website without seeing them. The member approves every fill on a card. Ask first also stops a member from choosing Always. Always allow lists the websites left to the member when the rest are blocked.",
+    action: "private_value_fill",
+    control: "choice",
+    decisions: ["ask", "deny"],
+    patterns: "website",
+    patternNoun: "website",
+  },
+  {
+    key: "privateValueCommands",
+    section: "privateValues",
+    label: "Get private values from commands",
+    description: "Commands OpenWork runs on the member's computer to get a private value, such as a password manager's own command. The agent never sees what a command prints.",
+    action: "private_value_command",
+    control: "choice",
+    decisions: ["allow", "deny"],
+    patterns: "command",
+    patternNoun: "command",
+  },
+  {
+    key: "privateValuePaste",
+    section: "privateValues",
+    label: "Paste private values in the chat",
+    description: "The member pastes a value into OpenWork's own card and it goes straight to the website, program or request that needs it. The agent never sees it.",
+    action: "private_value_paste",
+    control: "toggle",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "privateValueTerminal",
+    section: "privateValues",
+    label: "Let the agent run its private-value programs in its own terminal",
+    description: "Off keeps every program the agent has used to get a private value out of its own terminal, where it would read what the program prints. No list of names: any program named as a source counts. The same programs still work through the card the member approves.",
+    action: "private_value_terminal",
+    control: "toggle",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "privateValueRuns",
+    section: "privateValues",
+    label: "Give private values to programs",
+    description: "Programs the agent runs with a private value in their environment or in a file only they read, such as a deploy script that needs a token. The member approves every run on a card, and the agent sees what the program prints with every value hidden.",
+    action: "private_value_run",
+    control: "choice",
+    decisions: ["allow", "deny"],
+    patterns: "command",
+    patternNoun: "command",
+  },
+  {
     key: "fileSends",
     section: "files",
     label: "Send files to connected accounts",
@@ -265,9 +317,9 @@ export const agentPermissionDecisionLabels: Record<AgentPermissionDecision, stri
   deny: "Block",
 };
 
-/** The decision each control offers: a toggle cannot ask. */
-export function agentPermissionDecisionsFor(definition: Pick<AgentPermissionDefinition, "control">): readonly AgentPermissionDecision[] {
-  return definition.control === "toggle" ? ["allow", "deny"] : AGENT_PERMISSION_DECISIONS;
+/** The decision each control offers: a toggle cannot ask, and a choice may offer fewer than all three. */
+export function agentPermissionDecisionsFor(definition: Pick<AgentPermissionDefinition, "control" | "decisions">): readonly AgentPermissionDecision[] {
+  return definition.control === "toggle" ? ["allow", "deny"] : definition.decisions ?? AGENT_PERMISSION_DECISIONS;
 }
 
 /** Existing permissions allow by default: the member's own settings apply. */
@@ -277,9 +329,11 @@ export const AGENT_PERMISSION_DEFAULT_DECISION: AgentPermissionDecision = "allow
  * Permissions the member decides when the administrator sets nothing: the
  * app asks, and the member may remember their answer. An explicit Allow is
  * authority to skip that prompt; an explicit Ask first asks every time.
+ * Private-value fills offer no Allow: nothing skips their card, and an
+ * allowed website is one left to the member.
  */
-export const AGENT_PERMISSION_MEMBER_DECIDES_KEYS = ["browserUploads", "fileSends"] as const satisfies readonly AgentPermissionKey[];
-export const AGENT_PERMISSION_MEMBER_DECIDES_ACTIONS = ["browser_upload", "file_send"] as const satisfies readonly AgentPermissionAction[];
+export const AGENT_PERMISSION_MEMBER_DECIDES_KEYS = ["browserUploads", "fileSends", "privateValueFills"] as const satisfies readonly AgentPermissionKey[];
+export const AGENT_PERMISSION_MEMBER_DECIDES_ACTIONS = ["browser_upload", "file_send", "private_value_fill"] as const satisfies readonly AgentPermissionAction[];
 
 export function agentPermissionMemberDecides(key: string): boolean {
   return AGENT_PERMISSION_MEMBER_DECIDES_KEYS.some((entry) => entry === key);
@@ -289,8 +343,12 @@ function actionMemberDecides(action: AgentPermissionAction): boolean {
   return AGENT_PERMISSION_MEMBER_DECIDES_ACTIONS.some((entry) => entry === action);
 }
 
-/** Member-decided permissions ask by default, without asserting an administrator's authority. */
+/**
+ * Member-decided permissions ask by default, without asserting an administrator's authority.
+ * Password managers in the agent's own terminal are blocked until an administrator allows them.
+ */
 export function agentPermissionDefaultDecision(key: AgentPermissionKey): AgentPermissionDecision {
+  if (key === "privateValueTerminal") return "deny";
   return agentPermissionMemberDecides(key) ? "ask" : AGENT_PERMISSION_DEFAULT_DECISION;
 }
 
@@ -302,22 +360,16 @@ export const agentPermissionPatternPlaceholders: Record<AgentPermissionPatternKi
   website: "docs.example.com",
 };
 
-// ---------------------------------------------------------------------------
-// Patterns
-// ---------------------------------------------------------------------------
-
 type WebsitePattern =
   | { kind: "any" }
   | { kind: "site"; scheme: "http" | "https" | null; host: string; subdomains: boolean; port: string | null; path: string };
 
-/** The pattern's scheme, null when it names none, or undefined when it is not a website's. */
 function websiteScheme(value: string | undefined): "http" | "https" | null | undefined {
   if (value === undefined) return null;
   const scheme = value.toLowerCase();
   return scheme === "http" || scheme === "https" ? scheme : undefined;
 }
 
-/** `example.com.` is the same site as `example.com`. */
 function withoutTrailingDot(host: string): string {
   return host.endsWith(".") ? host.slice(0, -1) : host;
 }
@@ -332,7 +384,6 @@ function parseWebsitePattern(input: string): WebsitePattern | null {
   const rest = schemeMatch ? value.slice(schemeMatch[0].length) : value;
   const slash = rest.indexOf("/");
   const authority = slash === -1 ? rest : rest.slice(0, slash);
-  // A trailing `/*` or `/` adds nothing: paths match as prefixes.
   let path = slash === -1 ? "" : rest.slice(slash);
   if (path.endsWith("/*")) path = path.slice(0, -2);
   while (path.endsWith("/")) path = path.slice(0, -1);
@@ -347,11 +398,9 @@ function parseWebsitePattern(input: string): WebsitePattern | null {
     return null;
   }
   if (parsed.pathname !== "/" || parsed.username || parsed.password) return null;
-  // `:08080` is port 8080, as an address would write it.
   const portNumber = /:(\d{1,5})$/.exec(hostAndPort)?.[1];
   const explicitPort = portNumber === undefined ? null : String(Number(portNumber));
   if (explicitPort !== null && Number(explicitPort) > 65535) return null;
-  // A port the pattern names, even its scheme's default, limits it to that port.
   return {
     kind: "site",
     scheme,
@@ -420,12 +469,6 @@ function globMatches(pattern: string, value: string): boolean {
   return patternIndex === pattern.length;
 }
 
-/**
- * A path as a server may route it: encoded letters, digits, `-._~` and
- * separators (%2F, %5C) decoded, other encodings in upper case, dot segments
- * resolved and repeated slashes collapsed, so `/priv%61te`, `/private%2Fsecret`
- * or `/a/%2E%2E/private` compare as `/private/...`.
- */
 function canonicalWebsitePath(path: string): string {
   const decoded = path
     .replace(/%([0-9a-f]{2})/gi, (encoded, hex: string) => {
@@ -433,7 +476,6 @@ function canonicalWebsitePath(path: string): string {
       if (char === "/" || char === "\\") return "/";
       return /^[A-Za-z0-9._~-]$/.test(char) ? char : encoded.toUpperCase();
     })
-    // Collapse repeated slashes first: a path starting with `//` would resolve as another host.
     .replace(/\/{2,}/g, "/");
   try {
     return new URL(decoded, "http://host").pathname;
@@ -481,11 +523,8 @@ export function websitePatternEngineResources(pattern: string, effect: AgentPerm
   if (!website) return [];
   if (website.kind === "any") return ["*"];
   const host = `${website.subdomains ? "*." : ""}${website.host}`;
-  // A pattern without a port matches every port: its allow resources cover
-  // addresses that name one, while its deny resources leave them to the plugin.
   const ports = website.port ? [`:${website.port}`] : effect === "deny" ? [""] : ["", ":*"];
   return (website.scheme ? [website.scheme] : ["https", "http"]).flatMap((scheme) => {
-    // An address leaves out its scheme's default port, so allowing it covers addresses without one.
     const defaultPort = website.port === (scheme === "https" ? "443" : "80");
     return (effect !== "deny" && defaultPort ? [...ports, ""] : ports).flatMap((port) => {
       const site = `${scheme}://${host}${port}${website.path}`;
@@ -493,10 +532,6 @@ export function websitePatternEngineResources(pattern: string, effect: AgentPerm
     });
   });
 }
-
-// ---------------------------------------------------------------------------
-// Settings: what an admin saves for everyone or for one team
-// ---------------------------------------------------------------------------
 
 export const agentPermissionSettingSchema = z
   .object({
@@ -526,7 +561,8 @@ export const agentPermissionSettingsSchema = z
       const setting = settings[definition.key];
       if (!setting) continue;
       if (setting.decision && !agentPermissionDecisionsFor(definition).includes(setting.decision)) {
-        context.addIssue({ code: "custom", path: [definition.key, "decision"], message: `${definition.label} is either allowed or blocked.` });
+        const offered = agentPermissionDecisionsFor(definition).map((decision) => agentPermissionDecisionLabels[decision]).join(" or ");
+        context.addIssue({ code: "custom", path: [definition.key, "decision"], message: definition.control === "toggle" ? `${definition.label} is either allowed or blocked.` : `${definition.label} is set to ${offered}.` });
       }
       for (const list of ["allow", "block"] as const) {
         const patterns = setting[list] ?? [];
@@ -564,6 +600,13 @@ export function withoutBrowserUploadPermissions(settings: AgentPermissionSetting
 export function withoutFileSendPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
   const visible = { ...settings };
   delete visible.fileSends;
+  return visible;
+}
+
+/** Hide the private-value settings from editors that do not know them, or while their rollout is off. */
+export function withoutPrivateValuePermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
+  const visible = { ...settings };
+  for (const key of AGENT_PRIVATE_VALUE_PERMISSION_KEYS) delete visible[key];
   return visible;
 }
 
@@ -633,16 +676,11 @@ export function normalizeAgentPermissionSettings(value: unknown): AgentPermissio
   return settings;
 }
 
-// ---------------------------------------------------------------------------
-// Rules: what a member's apps receive and enforce
-// ---------------------------------------------------------------------------
-
 /** One delivered rule, checked strictly where it is enforced (Den sends them in `DenDesktopConfig.agentPermissions`). */
 export const agentPermissionRuleSchema = z.object({
   action: z.enum(AGENT_PERMISSION_ACTIONS),
   resource: z.string().min(1).max(500),
   effect: z.enum(AGENT_PERMISSION_DECISIONS),
-  /** Who set it: "Everyone" or a team's name. */
   source: z.string().min(1).max(255),
 });
 
@@ -663,6 +701,11 @@ export function withoutFileSendRules(rules: readonly AgentPermissionRule[]): Age
   return rules.filter((rule) => rule.action !== "file_send");
 }
 
+/** Private-value rules must not reach clients that cannot read them, or any client while the rollout is off. */
+export function withoutPrivateValueRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
+  return rules.filter((rule) => !AGENT_PRIVATE_VALUE_PERMISSION_ACTIONS.some((action) => action === rule.action));
+}
+
 /** host_execution rules must not reach clients that cannot read them. */
 export function withoutHostExecutionRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
   return rules.filter((rule) => rule.action !== "host_execution");
@@ -681,13 +724,11 @@ export function withoutSandboxOptOutRules(rules: readonly AgentPermissionRule[])
 export function resolveSandboxRequirement(rules: readonly AgentPermissionRule[] | undefined): {
   use: boolean;
   force: boolean;
-  /** Who requires Use ("Everyone" or a team's name), or null. */
   useSource: string | null;
   forceSource: string | null;
 } {
   const forceRule = matchingAgentPermissionRule(rules, "host_execution", "*");
   const useRule = matchingAgentPermissionRule(rules, "sandbox_opt_out", "*");
-  // Both are switches: anything but Allow from the organization requires the mode.
   const force = forceRule !== null && forceRule.effect !== "allow";
   const ownUse = useRule !== null && useRule.effect !== "allow";
   return {
@@ -705,11 +746,6 @@ export function agentPermissionRulesRequireSandbox(rules: readonly AgentPermissi
 
 export const AGENT_SANDBOX_ONLY_UPDATE_REQUIRED_SOURCE = "Sandbox-only policy requires an updated OpenWork app";
 
-/**
- * Actions a desktop without sandbox-only support already enforces. Blocking
- * them is how a required sandbox fails closed there: that desktop cannot run
- * the sandbox, so it must not run agents' tools on the computer instead.
- */
 const SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS = ["shell", "edit", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "mcp", "webfetch"] as const satisfies readonly AgentPermissionAction[];
 
 /**
@@ -722,20 +758,20 @@ const SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS = ["shell", "edit", "external_director
  */
 export function agentPermissionRulesForClient(
   rules: readonly AgentPermissionRule[],
-  supports: { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes?: boolean },
+  supports: { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes?: boolean; privateValues?: boolean },
 ): AgentPermissionRule[] {
   let delivered: AgentPermissionRule[] = [...rules];
-  // Requiring Use restricts nothing a desktop could do: one that cannot read it keeps working as before.
+  if (!supports.privateValues) delivered = withoutPrivateValueRules(delivered);
+  else if (matchingAgentPermissionRule(delivered, "private_value_terminal", "*") === null) {
+    delivered.push({ action: "private_value_terminal", resource: "*", effect: "deny", source: AGENT_PERMISSION_EVERYONE });
+  }
   if (!supports.sandboxModes) delivered = withoutSandboxOptOutRules(delivered);
   if (!supports.browserUploads) delivered = withoutBrowserUploadRules(delivered);
   if (!supports.fileSends) delivered = withoutFileSendRules(delivered);
   if (!supports.sandboxOnly) delivered = withoutHostExecutionRules(delivered);
-  // Published clients drop unknown actions. Refuse browsing conservatively
-  // rather than silently dropping an active managed upload permission.
   if (!supports.browserUploads && rules.some((rule) => rule.action === "browser_upload")) {
     delivered.push({ action: "webfetch", resource: "*", effect: "deny", source: "Browser upload policy requires an updated OpenWork app" });
   }
-  // Last, so no allowed pattern reopens host execution on a desktop without the sandbox.
   if (!supports.sandboxOnly && agentPermissionRulesRequireSandbox(rules)) {
     for (const action of SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS) {
       delivered.push({ action, resource: "*", effect: "deny", source: AGENT_SANDBOX_ONLY_UPDATE_REQUIRED_SOURCE });
@@ -750,13 +786,10 @@ export function agentPermissionRulesForClient(
  * organization's Block, and a member's Block stands when the organization allows.
  */
 export function resolveHostExecution(input: {
-  /** The member's own setting; true is the default. */
   localAllow: boolean;
-  /** The organization's delivered rules, or undefined when signed out. */
   rules: readonly AgentPermissionRule[] | undefined;
 }): { decision: "allow" | "deny"; managed: boolean; source: string | null } {
   const rule = matchingAgentPermissionRule(input.rules, "host_execution", "*");
-  // host_execution is a switch: anything but Allow from the organization blocks.
   const organization: AgentPermissionDecision = rule && rule.effect !== "allow" ? "deny" : "allow";
   const decision = stricterAgentPermissionDecision(input.localAllow ? "allow" : "deny", organization);
   const managed = organization === "deny";
@@ -766,7 +799,6 @@ export function resolveHostExecution(input: {
 export const AGENT_PERMISSION_EVERYONE = "Everyone";
 
 export type AgentPermissionPolicySettings = {
-  /** "Everyone" or the team's name, shown wherever a rule decides. */
   source: string;
   settings: AgentPermissionSettings;
 };
@@ -780,7 +812,6 @@ export function stricterAgentPermissionDecision(left: AgentPermissionDecision, r
 export type ResolvedAgentPermission = {
   definition: AgentPermissionDefinition;
   decision: AgentPermissionDecision;
-  /** Who set the decision, or null when only the permission's default applies. */
   decisionSource: string | null;
   allow: { pattern: string; source: string }[];
   block: { pattern: string; source: string }[];
@@ -846,24 +877,18 @@ export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[
   const rules = resolved.flatMap(({ definition, decision, decisionSource, allow, block }) => {
     const action = definition.action;
     const restricted = decision !== "allow" && decisionSource !== null;
-    // Unlike engine permissions, an explicit Allow of a member-decided
-    // permission is authority to skip the member's prompt. An unset Ask has
-    // no admin source or base rule.
     const memberDecides = actionMemberDecides(action);
-    const explicit = decisionSource !== null && (restricted || memberDecides);
+    const explicit = decisionSource !== null && (restricted || memberDecides || action === "private_value_terminal");
     return [
       ...(explicit ? [{ action, resource: "*", effect: decision, source: decisionSource }] : []),
       ...(restricted || memberDecides ? allow.map(({ pattern, source }) => ({ action, resource: pattern, effect: "allow" as const, source })) : []),
       ...block.map(({ pattern, source }) => ({ action, resource: pattern, effect: "deny" as const, source })),
     ];
   });
-  // Any command can change files, so blocking file edits blocks commands too.
-  // Last, so no allowed command pattern reopens it.
   const edits = resolved.find((entry) => entry.definition.action === "edit");
   if (edits?.decision === "deny" && edits.decisionSource !== null) {
     rules.push({ action: "shell", resource: "*", effect: "deny", source: edits.decisionSource });
   }
-  // Files, the clipboard and app scripts all act in apps, so blocking computer use blocks them last.
   const computer = resolved.find((entry) => entry.definition.action === "computer");
   if (computer?.decision === "deny" && computer.decisionSource !== null) {
     for (const action of AGENT_COMPUTER_USE_DEPENDENT_ACTIONS) rules.push({ action, resource: "*", effect: "deny", source: computer.decisionSource });
@@ -889,7 +914,7 @@ export function resolveAgentPermissionRules(input: {
 }
 
 function ruleMatches(rule: AgentPermissionRule, resource: string): boolean {
-  return rule.action === "webfetch" || rule.action === "browser_upload" ? websitePatternMatches(resource, rule.resource) : wildcardMatch(resource, rule.resource);
+  return rule.action === "webfetch" || rule.action === "browser_upload" || rule.action === "private_value_fill" ? websitePatternMatches(resource, rule.resource) : wildcardMatch(resource, rule.resource);
 }
 
 /** The last rule for this action that matches the resource, as OpenCode evaluates permission rules. */
@@ -907,7 +932,6 @@ export function matchingAgentPermissionRule(
 
 export type AgentPermissionDecisionResult = {
   effect: AgentPermissionDecision;
-  /** The rule that decided, or null when only the action's default applies. */
   rule: AgentPermissionRule | null;
   resource: string;
 };
@@ -941,6 +965,11 @@ const BLOCKED_SUBJECT: Record<AgentPermissionAction, (resource: string) => strin
   webfetch: (resource) => resource === "*" ? "opening websites" : `opening ${resource}`,
   browser_upload: (resource) => resource === "*" ? "uploading files to websites" : `uploading files to ${resource}`,
   file_send: () => "sending files to connected accounts",
+  private_value_fill: (resource) => resource === "*" ? "filling private values on websites" : `filling private values on ${resource}`,
+  private_value_command: (resource) => resource === "*" ? "getting private values from commands" : `getting a private value from the command \`${resource}\``,
+  private_value_paste: () => "pasting private values in the chat",
+  private_value_terminal: () => "running its private-value programs in the agent's own terminal",
+  private_value_run: (resource) => resource === "*" ? "giving private values to programs" : `giving private values to the command \`${resource}\``,
   host_execution: () => "running tools on this computer outside the sandbox",
   sandbox_opt_out: () => "working without the OpenWork Sandbox",
   websearch: () => "searching the web",

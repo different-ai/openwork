@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopConfigSchema, isLocalModelProviderId, localModelsAllowed, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
+import { PRIVATE_VALUE_FILLS_ROUTE, privateValueFillReportResponseSchema, type PrivateValueFillReport } from "@openwork/types/den/private-value-fills";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
@@ -9,22 +10,18 @@ import { ApiError } from "./errors.js";
 import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
-import { AGENT_SANDBOX_MODES_CAPABILITY_HEADER, resolveSandboxRequirement, type AgentPermissionAction, type AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
+import { AGENT_PRIVATE_VALUES_CAPABILITY_HEADER, AGENT_PRIVATE_VALUE_PERMISSION_ACTIONS, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, resolveSandboxRequirement, type AgentPermissionAction, type AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
 import { readSandboxSettings, readAppliedSandboxSettings, readSandboxRequirement, sandboxSettingsRevision, writeSandboxRequirement, type SandboxSettings } from "./sandbox-settings-store.js";
 import { readActivatedEnterpriseDenOrigin } from "./enterprise-den-origin.js";
 import { sandboxHostRequest, sandboxPromptHasHostFiles } from "./sandbox-host-guards.js";
 
-/** Only the rules enforced by the host surface requesting them. */
 export function agentPermissionRulesForActions(rules: readonly AgentPermissionRule[], actions: readonly AgentPermissionAction[]): AgentPermissionRule[] {
   return rules.filter((rule) => actions.includes(rule.action));
 }
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
-/** Org-managed providers: Den-imported (lpr_), Gateway (ipr_), hosted OpenWork Models and Smart Routers. */
 const MANAGED_PROVIDER = /^(?:lpr_|ipr_)|^openwork(?:-auto)?$/i;
-/** One member's sign-in: another member of the same organization has another token. */
 function sessionKey(session: CloudProviderDenSession) { return `${session.baseUrl}\n${session.orgId}\n${session.token}`; }
-// The first cold read previously had 10s; keep two reads under the 15s plugin budget and one read under the 10s session-install budget.
 const DEN_READ_DEADLINE_MS = 6_000;
 const DEN_READ_ATTEMPT_TIMEOUT_MS = 3_500;
 const DEN_READ_MAX_ATTEMPTS = 2;
@@ -67,10 +64,9 @@ function transientTransportReason(error: unknown): DenRetryReason | null {
 }
 
 const SANDBOX_FRESHNESS_MS = 2_000;
-type SandboxAccess = { enabled: boolean; featureEnabled: boolean; scope: string; hostDenied: boolean; hostPolicyVerified: boolean; useRequired: boolean };
+type SandboxAccess = { enabled: boolean; scope: string; hostDenied: boolean; hostPolicyVerified: boolean; useRequired: boolean };
 type SandboxVerification = "verified" | "refreshing" | "checking" | "unavailable";
 export type SandboxSettingsSnapshot = SandboxSettings & {
-  featureEnabled: boolean;
   effectiveUseSandbox: boolean;
   effectiveForceSandbox: boolean;
   managedUse: boolean;
@@ -89,18 +85,14 @@ export function managedDesktopPolicy(config: ServerConfig, options?: { sandboxFr
   return service;
 }
 class ManagedDesktopPolicy {
-  // Only the evaluation route accepts this ephemeral engine credential.
   readonly evaluationToken = randomBytes(32).toString("base64url");
   private session: CloudProviderDenSession | null = null;
   private generation = 0;
   private installed: { generation: number; policy: DesktopConfig | null } | undefined;
   private fetching: { generation: number; promise: Promise<DesktopConfig | null> } | undefined;
-  /** The last policy verified for this sign-in, used while a fresh read is in flight or Den is unreachable. */
   private lastKnown: { key: string; policy: DesktopConfig } | undefined;
   onChange: (() => void) | undefined;
-  /** Live rollout state, independent of persisted model and permission changes. */
   onV2OnlyChange: ((enabled: boolean) => void) | undefined;
-  /** The window delivered a sign-in, or signed out. */
   onIdentityDelivered: (() => void) | undefined;
   constructor(private readonly config: ServerConfig, private readonly sandboxFreshnessMs: number) {}
   authenticatesEvaluation(request: Request): boolean {
@@ -111,33 +103,25 @@ class ManagedDesktopPolicy {
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   }
   async setSession(session: CloudProviderDenSession): Promise<void> {
-    // The desktop re-delivers the same identity on every launch, reload, and
-    // resume. Only a different account may invalidate in-flight verifications.
     const current = this.session;
     if (!current || sessionKey(current) !== sessionKey(session)) {
       this.generation++;
       const generation = this.generation;
-      // Publish the new identity before the first await. Otherwise a concurrent
-      // host check could verify the old identity under this new generation.
       this.session = session;
       this.resetSandboxAuthority();
       this.installed = undefined;
       this.onV2OnlyChange?.(false);
       const required = await readSandboxRequirement(this.config, session.baseUrl, session.orgId);
       this.identityChanged(generation);
-      // A fresh read that completed during the DB read outranks stored state.
       if (!this.sandboxOrgVerified) this.sandboxOrgForce = required;
     }
     this.session = session;
     this.onIdentityDelivered?.();
     if (current && sessionKey(current) !== sessionKey(session)) {
-      // Another sign-in, even in the same organization, never keeps the
-      // previous one's policy: not while Den is unreachable, nor in the engine.
       this.lastKnown = undefined;
       const cleared = await clearManagedDesktopPolicy(this.config);
       if (cleared.changed) this.onChange?.();
     }
-    // Installing an identity never waits on Den while only model access is enforced.
     if (DESKTOP_POLICY_ENFORCEMENT_ENABLED) await this.current();
     else void this.current().catch(() => undefined);
   }
@@ -168,9 +152,6 @@ class ManagedDesktopPolicy {
     for (let attempt = 1; attempt <= DEN_READ_MAX_ATTEMPTS; attempt += 1) {
       this.identityChanged(generation);
       if (attempt > 1) {
-        // An immediate retry can hit the same brief outage and leave a page's
-        // stylesheet canceled. Back off inside the existing deadline, without
-        // adding attempts or retrying denials, rate limits, or identity changes.
         if (deadline - performance.now() <= DEN_READ_RETRY_DELAY_MS) throw new Error("Den read deadline exceeded");
         await delay(DEN_READ_RETRY_DELAY_MS);
         this.identityChanged(generation);
@@ -181,7 +162,7 @@ class ManagedDesktopPolicy {
         onSend?.();
         const response = await externalFetch(`${session.baseUrl}${path}`, {
           headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId,
-            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", "X-OpenWork-Sandbox-Only": "1", [AGENT_SANDBOX_MODES_CAPABILITY_HEADER]: "1" } : {}),
+            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", "X-OpenWork-Sandbox-Only": "1", [AGENT_SANDBOX_MODES_CAPABILITY_HEADER]: "1", [AGENT_PRIVATE_VALUES_CAPABILITY_HEADER]: "1" } : {}),
           },
           redirect: "error",
           signal: AbortSignal.timeout(Math.min(DEN_READ_ATTEMPT_TIMEOUT_MS, remainingMs)),
@@ -220,9 +201,7 @@ class ManagedDesktopPolicy {
     const generation = this.generation;
     if (!session) {
       await readGlobalRuntimeOpencodeConfig(this.config);
-      // A local-only read cannot grant access after a managed identity arrives.
       this.identityChanged(generation);
-      // A cached policy is not device enrollment: enforcement follows the session.
       return null;
     }
     let policy: DesktopConfig;
@@ -233,18 +212,12 @@ class ManagedDesktopPolicy {
       if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
       this.onV2OnlyChange?.(false);
       if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) {
-        // Never block on Den: keep the last policy verified for this sign-in, or none.
         console.warn("[openwork:model-access] Den unreachable; using the last known model access");
-        // Model access/permissions keep their offline policy. A rollout is
-        // different: a stale grant must not re-enable v2-only mode after its
-        // kill switch changed while disconnected.
         return this.lastKnown?.key === sessionKey(session) ? { ...this.lastKnown.policy, opencodeV2Only: false } : null;
       }
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
-    // While only model access and agent permissions are enforced, cache a policy only when it carries
-    // one of them, so other organizations keep exactly the engine config and reload behaviour they had.
     const restrictsModelAccess = policy.allowCustomProviders === false || !localModelsAllowed(policy);
     const hasAgentPermissions = (policy.agentPermissions?.rules.length ?? 0) > 0;
     const result = DESKTOP_POLICY_ENFORCEMENT_ENABLED || restrictsModelAccess || hasAgentPermissions
@@ -257,19 +230,10 @@ class ManagedDesktopPolicy {
     if (result.changed) this.onChange?.();
     return policy;
   }
-  /**
-   * v1 has no reliable organization external-folder enforcement. Refuse its
-   * execution instead of silently treating either Ask first or Block as Allow.
-   * Guard the forwarding boundary, not request bodies or project config: even
-   * a custom agent, saved command, permission reply or terminal cannot opt out.
-   * Reads and Stop stay available so old chats can be viewed and stopped.
-   */
   async assertLegacyExecutionRequest(request: Request, path: string): Promise<void> {
     const decoded = decodeURIComponent(path);
     const terminal = /\/(?:pty|persistent-pty|terminal)(?:\/|$)/.test(decoded);
     if (request.method === "POST" && /\/session\/[^/]+\/abort\/?$/.test(decoded)) return;
-    // Even a v1 read can initialize a workspace and start its local MCPs.
-    // Only v2 has the replacement catalog and MCP pre-spawn guards.
     await this.assertLegacyHostExecution();
     if (["GET", "HEAD", "OPTIONS"].includes(request.method) && !terminal) return;
     const generation = this.generation;
@@ -316,8 +280,6 @@ class ManagedDesktopPolicy {
     const enginePath = decoded.replace(/^\/opencode2?/, "").replace(/^\/api/, "");
     let input: Record<string, unknown> = {};
     if (request.body) {
-      // The HTTP adapter exposes a stream even for a bodyless POST (session
-      // creation and instance disposal both use one in the legacy engine).
       const text = await request.clone().text();
       this.identityChanged(generation);
       if (text.trim()) {
@@ -329,7 +291,6 @@ class ManagedDesktopPolicy {
     }
     await assert("sync");
     if (terminal) await assert(/\/shell(?:\/|$)/.test(decoded) ? "shell" : "terminal", input);
-    // Command templates can run shell substitutions before tool hooks fire.
     if (/\/session\/[^/]+\/command(?:\/|$)/.test(enginePath)) await assert("saved_command");
     if (/^\/(?:config|global\/config)(?:\/|$)/.test(enginePath)) await assert("engine_config");
     if (/^\/(?:mcp|plugins?|skills?|agents?)(?:\/|$)/.test(enginePath)) await assert("extensions");
@@ -342,14 +303,8 @@ class ManagedDesktopPolicy {
     const model = typeof input.model === "object" && input.model !== null ? Object.fromEntries(Object.entries(input.model)) : input;
     if ("providerID" in model) await assert("model", model);
   }
-  /**
-   * While the rest of desktop policy is suspended, only model access (the AI Gateway's "Who can use models") is enforced, on the two engine
-   * requests that can reach a personal provider: signing in to one and sending with one of its models. Bodies that
-   * are not JSON are left alone, and nothing here waits on Den.
-   */
   private async assertProviderUse(request: Request, path: string, engine: boolean): Promise<void> {
     if (!engine || ["GET", "HEAD", "OPTIONS"].includes(request.method)) return;
-    // Without a known restrictive policy there is nothing to check, so sends are never read or delayed.
     const policy = this.knownPolicy();
     if (policy?.allowCustomProviders !== false && localModelsAllowed(policy)) return;
     const enginePath = decodeURIComponent(path).replace(/^\/opencode2?/, "").replace(/^\/api/, "");
@@ -364,13 +319,6 @@ class ManagedDesktopPolicy {
     const model = isRecord(body.model) ? body.model : body;
     if (typeof model.providerID === "string") await this.assert("model", { providerID: model.providerID });
   }
-  /**
-   * Refuses a member adding a local skill or MCP server their agent
-   * permissions block. A policy verified for this sign-in decides; without
-   * one it waits briefly for Den's answer. When Den cannot answer, the member
-   * keeps working with the latest rules stored on this computer, like every
-   * other desktop policy, rather than being refused.
-   */
   async assertAgentPermission(action: "skill" | "mcp", name: string): Promise<void> {
     if (!this.session) return;
     const generation = this.generation;
@@ -408,7 +356,6 @@ class ManagedDesktopPolicy {
   private sandboxOrgUse = false;
   private sandboxOrgVerified = false;
   private sandboxRulesRestrictive = false;
-  private lastSandboxFeatureEnabled = false;
   private sandboxVerification: SandboxVerification = "checking";
   private sandboxRetryDelayMs = 0;
   private sandboxRetryAt = 0;
@@ -424,7 +371,6 @@ class ManagedDesktopPolicy {
     this.sandboxOrgUse = false;
     this.sandboxOrgVerified = false;
     this.sandboxRulesRestrictive = false;
-    this.lastSandboxFeatureEnabled = false;
     this.sandboxVerification = "checking";
     this.sandboxRetryDelayMs = 0;
     this.sandboxRetryAt = 0;
@@ -432,7 +378,6 @@ class ManagedDesktopPolicy {
     this.sandboxDesktopSentAt = -Infinity;
   }
 
-  // Share the desktop-config request with sign-in and other current-policy readers.
   private readSandboxDesktopConfig(session: CloudProviderDenSession, generation: number): Promise<DesktopConfig> {
     if (this.sandboxDesktopRead?.generation === generation) return this.sandboxDesktopRead.promise;
     let sentAt = performance.now();
@@ -441,12 +386,9 @@ class ManagedDesktopPolicy {
       this.identityChanged(generation);
       const rules = agentPermissionRulesOf(policy);
       const requirement = resolveSandboxRequirement(rules);
-      // Sandbox tools must not bypass existing command/edit/folder approval rules.
       const restrictive = rules.some(rule => ["shell", "edit", "external_directory"].includes(rule.action) && rule.effect !== "allow");
       if (this.sandboxOrgForce !== requirement.force || this.sandboxOrgUse !== requirement.use
         || this.sandboxRulesRestrictive !== restrictive) this.sandboxFresh = undefined;
-      // Publish restrictions as soon as desktop config answers, even when the
-      // independent rollout read is still pending or unavailable.
       this.sandboxOrgForce = requirement.force;
       this.sandboxOrgUse = requirement.use;
       this.sandboxOrgVerified = true;
@@ -470,7 +412,6 @@ class ManagedDesktopPolicy {
       useRequired: this.sandboxOrgUse || this.sandboxOrgForce,
     };
   }
-  /** Desired local Force and last verified authority, without waiting on Den. */
   async requiresSandbox(localForceSandbox?: boolean): Promise<boolean> {
     const force = localForceSandbox ?? (await readSandboxSettings(this.config)).forceSandbox;
     const { hostDenied, hostPolicyVerified } = this.sandboxAuthority();
@@ -480,7 +421,6 @@ class ManagedDesktopPolicy {
     const effectiveForceSandbox = this.isolationTransition || applied.forceSandbox || access.hostDenied || !access.hostPolicyVerified;
     return {
       ...local,
-      featureEnabled: access.featureEnabled,
       effectiveForceSandbox,
       effectiveUseSandbox: effectiveForceSandbox || (access.enabled && (local.useSandbox || access.useRequired)),
       managedUse: access.useRequired,
@@ -499,24 +439,18 @@ class ManagedDesktopPolicy {
     if (performance.now() < this.sandboxRetryAt || this.settledForSettings()) return;
     void this.localSandboxAccess().catch(() => undefined);
   }
-  /** Settings counts freshness from when the answer arrived, so a slow
-   * organization service cannot keep an open page re-checking forever.
-   * Admission keeps its stricter clock, counted from when the read was sent. */
   private settledForSettings(): boolean {
     return this.sandboxVerification === "verified" && this.sandboxFresh?.revision === sandboxSettingsRevision(this.config)
       && performance.now() - this.sandboxSettledAt < this.sandboxFreshnessMs;
   }
-  /** For Settings UI only. Report the last rollout, never using it as admission authority. */
   sandboxSettingsSnapshot(local: SandboxSettings, applied: SandboxSettings): SandboxSettingsSnapshot {
     const inFlight = this.sandboxRead?.generation === this.generation;
-    // A verified answer being checked again stays quiet in Settings; only a
-    // first check or a retry after a failure is reported as "checking".
     const verification: SandboxVerification = this.sandboxVerification === "verified"
       ? (inFlight || !this.settledForSettings() ? "refreshing" : "verified")
       : inFlight ? "checking" : this.sandboxVerification;
     return this.settingsResponse(local, applied, {
-      ...this.sandboxAuthority(), scope: "unverified", featureEnabled: this.lastSandboxFeatureEnabled,
-      enabled: this.lastSandboxFeatureEnabled && this.sandboxVerification !== "unavailable" && !this.sandboxRulesRestrictive,
+      ...this.sandboxAuthority(), scope: "unverified",
+      enabled: this.sandboxVerification === "verified" && !this.sandboxRulesRestrictive,
     }, verification);
   }
   private freshSandboxAccess(revision: number): SandboxAccess | undefined {
@@ -524,8 +458,6 @@ class ManagedDesktopPolicy {
     return fresh && fresh.revision === revision && performance.now() < fresh.until
       && (!this.session || this.desktopFresh()) ? fresh.access : undefined;
   }
-  /** Verified authority, shared per identity. A failed read never enables the rollout
-   * or replaces the last verified organization requirement with an allow. */
   localSandboxAccess(): Promise<SandboxAccess> {
     const generation = this.generation;
     const revision = sandboxSettingsRevision(this.config);
@@ -533,8 +465,6 @@ class ManagedDesktopPolicy {
     if (fresh) return Promise.resolve(fresh);
     const existing = this.sandboxRead;
     if (existing?.generation === generation) {
-      // A write invalidates the outstanding result without starting parallel
-      // reads for the same identity. Fetch again after that round settles.
       return existing.revision === revision ? existing.promise : existing.promise.then(() => this.localSandboxAccess());
     }
     const promise = this.refreshSandboxAccess(this.session, generation, revision);
@@ -546,34 +476,23 @@ class ManagedDesktopPolicy {
   }
   private async refreshSandboxAccess(session: CloudProviderDenSession | null, generation: number, revision: number): Promise<SandboxAccess> {
     try {
-      let featureEnabled: boolean;
       let scope: string;
-      let rolloutSentAt: number;
+      let verifiedAt: number;
       if (session) {
-        // Wait for both, even on failure, so current-policy reads can keep
-        // independently verified Force knowledge and a slow read stays shared.
-        rolloutSentAt = performance.now();
-        const [policy, org] = await Promise.allSettled([
-          this.readSandboxDesktopConfig(session, generation), this.readDenJson(session, "/v1/org", generation, false, () => { rolloutSentAt = performance.now(); }),
-        ]);
+        await this.readSandboxDesktopConfig(session, generation);
         this.identityChanged(generation);
-        if (policy.status !== "fulfilled" || org.status !== "fulfilled") throw new Error("Sandbox verification failed");
-        const features = isRecord(org.value) && isRecord(org.value.features) ? org.value.features : {};
-        featureEnabled = features.sandboxTools === true;
+        verifiedAt = this.sandboxDesktopSentAt;
         scope = sessionKey(session);
       } else {
-        rolloutSentAt = performance.now();
-        const signedOut = await this.readSignedOutFeatures(() => { rolloutSentAt = performance.now(); });
+        verifiedAt = performance.now();
+        scope = `signed-out:${await this.signedOutDenOrigin()}`;
         this.identityChanged(generation);
-        featureEnabled = signedOut.features.sandboxTools === true;
-        scope = `signed-out:${signedOut.origin}`;
       }
-      const access = { ...this.sandboxAuthority(), featureEnabled, enabled: featureEnabled && !this.sandboxRulesRestrictive, scope };
-      this.lastSandboxFeatureEnabled = featureEnabled;
+      const access = { ...this.sandboxAuthority(), enabled: !this.sandboxRulesRestrictive, scope };
       this.sandboxVerification = "verified";
       this.sandboxRetryDelayMs = 0;
       this.sandboxRetryAt = 0;
-      this.sandboxFresh = { revision, until: rolloutSentAt + this.sandboxFreshnessMs, access };
+      this.sandboxFresh = { revision, until: verifiedAt + this.sandboxFreshnessMs, access };
       this.sandboxSettledAt = performance.now();
       return access;
     } catch {
@@ -581,21 +500,23 @@ class ManagedDesktopPolicy {
       this.sandboxVerification = "unavailable";
       this.sandboxRetryDelayMs = Math.min(30_000, this.sandboxRetryDelayMs ? 2 * this.sandboxRetryDelayMs : 2_000);
       this.sandboxRetryAt = performance.now() + this.sandboxRetryDelayMs;
-      return { ...this.sandboxAuthority(), enabled: false, featureEnabled: this.lastSandboxFeatureEnabled, scope: "unverified" };
+      return { ...this.sandboxAuthority(), enabled: false, scope: "unverified" };
     }
   }
-  /** What the deployment turns on for someone with no organization. */
-  private async readSignedOutFeatures(onSend?: () => void): Promise<{ origin: string; features: Record<string, unknown> }> {
+  private async signedOutDenOrigin(): Promise<string> {
     const origin = this.config.trustedDenOrigin ?? await readActivatedEnterpriseDenOrigin() ?? "https://api.openworklabs.com";
     const url = new URL(origin);
     if (url.username || url.password || url.search || url.hash || url.pathname !== "/"
       || (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)))) throw new Error("Untrusted Den origin");
-    onSend?.();
-    const response = await externalFetch(new URL("/v1/features", url).href, { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(DEN_READ_ATTEMPT_TIMEOUT_MS) });
+    return url.origin;
+  }
+  private async readSignedOutFeatures(): Promise<Record<string, unknown>> {
+    const origin = await this.signedOutDenOrigin();
+    const response = await externalFetch(new URL("/v1/features", origin).href, { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(DEN_READ_ATTEMPT_TIMEOUT_MS) });
     if (!response.ok) throw new Error("Feature verification failed");
     const payload: unknown = await response.json();
     const features = isRecord(payload) && isRecord(payload.features) ? payload.features : payload;
-    return { origin: url.origin, features: isRecord(features) ? features : {} };
+    return isRecord(features) ? features : {};
   }
   private desktopFresh(): boolean {
     return performance.now() - this.sandboxDesktopSentAt < this.sandboxFreshnessMs;
@@ -606,10 +527,6 @@ class ManagedDesktopPolicy {
     const generation = this.generation;
     if (!session) return;
     if (!this.desktopFresh()) {
-      // An answer to a read sent before this check began cannot establish an
-      // Allow once it is old: read again. An answer to a read sent after the
-      // check began is current however long it took to arrive, so a slow
-      // organization service does not leave the member sandbox-only.
       const checkStartedAt = performance.now();
       const current = () => this.sandboxDesktopSentAt >= checkStartedAt || this.desktopFresh();
       let verified = false;
@@ -640,11 +557,6 @@ class ManagedDesktopPolicy {
     this.identityChanged(generation);
   }
 
-  /**
-   * Whether the agent engine follows the computer's proxy settings: the
-   * signed-in organization's rollout, or the deployment's when signed out.
-   * Undefined when it could not be read, which is not a "no".
-   */
   async systemProxyEnabled(): Promise<boolean | undefined> {
     const session = this.session;
     const generation = this.generation;
@@ -654,7 +566,7 @@ class ManagedDesktopPolicy {
         const payload = await this.readDenJson(session, "/v1/org", generation);
         features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
       } else {
-        features = (await this.readSignedOutFeatures()).features;
+        features = await this.readSignedOutFeatures();
       }
       this.identityChanged(generation);
       return features.desktopSystemProxy === true;
@@ -663,17 +575,61 @@ class ManagedDesktopPolicy {
     }
   }
 
-  /** Remote computers require the signed-in organization's verified rollout. */
   async remoteComputersEnabled(): Promise<boolean> {
     return this.organizationFeatureEnabled("remoteComputers");
   }
 
-  /** Secret handles in the built-in browser require the signed-in organization's verified rollout. */
   async browserSecretHandlesEnabled(): Promise<boolean> {
     return this.organizationFeatureEnabled("browserSecretHandles");
   }
 
-  private async organizationFeatureEnabled(key: "remoteComputers" | "browserSecretHandles"): Promise<boolean> {
+  async privateValuesEnabled(): Promise<boolean> {
+    return this.organizationFeatureEnabled("privateValues");
+  }
+
+  async privateValuePolicy(): Promise<{ enabled: boolean; rules: AgentPermissionRule[] }> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session || !await this.privateValuesEnabled()) return { enabled: false, rules: [] };
+    const policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
+    this.identityChanged(generation);
+    return { enabled: true, rules: agentPermissionRulesForActions(agentPermissionRulesOf(policy), AGENT_PRIVATE_VALUE_PERMISSION_ACTIONS) };
+  }
+
+  async recordPrivateValueFill(report: PrivateValueFillReport): Promise<{ ok: true; recorded: boolean } | { ok: false; code: string }> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) return { ok: false, code: "not_signed_in" };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await delay(100 * attempt);
+      if (generation !== this.generation) return { ok: false, code: "policy_identity_changed" };
+      try {
+        const response = await externalFetch(`${session.baseUrl}${PRIVATE_VALUE_FILLS_ROUTE}`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json", "Content-Type": "application/json",
+            Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId,
+          },
+          body: JSON.stringify(report),
+          redirect: "error",
+          signal: AbortSignal.timeout(2_000),
+        });
+        if (!response.ok) {
+          void response.body?.cancel().catch(() => undefined);
+          if (response.status >= 500) continue;
+          return { ok: false, code: "den_rejected" };
+        }
+        const result = privateValueFillReportResponseSchema.safeParse(await response.json());
+        if (!result.success) return { ok: false, code: "den_invalid_response" };
+        return { ok: true, recorded: result.data.recorded };
+      } catch (error) {
+        if (!transientTransportReason(error)) break;
+      }
+    }
+    return { ok: false, code: "den_unavailable" };
+  }
+
+  private async organizationFeatureEnabled(key: "remoteComputers" | "browserSecretHandles" | "privateValues"): Promise<boolean> {
     const session = this.session;
     const generation = this.generation;
     if (!session) return false;
@@ -683,19 +639,10 @@ class ManagedDesktopPolicy {
       const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
       return features[key] === true;
     } catch {
-      // Missing, unreachable, signed-out or changed identity never grants access.
       return false;
     }
   }
 
-  /**
-   * The member's rules for a desktop host surface, read by the desktop
-   * process itself rather than taken from the app window. Den is asked first
-   * (briefly); when it cannot answer, the policy verified for this sign-in,
-   * else (for non-strict callers only) the latest rules stored on this
-   * computer. Strict legacy execution requires verification bound to the
-   * current sign-in, never the unscoped disk row. Signed out there are none.
-   */
   private async agentPermissionRulesFor(actions: readonly AgentPermissionAction[], requireVerified = false): Promise<AgentPermissionRule[]> {
     if (!this.session) return [];
     const fresh = await Promise.race([
@@ -703,20 +650,12 @@ class ManagedDesktopPolicy {
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
     ]);
     const verified = fresh ?? this.knownPolicy();
-    // The global runtime row is not bound to a sign-in: a previous org's Allow
-    // (or empty policy) must never authorize legacy execution for this member.
-    // Only a fresh read or the in-memory policy verified for this session can.
     if (!verified && requireVerified) {
       throw new ApiError(403, "policy_unavailable", "Your organization's folder permissions could not be verified. Reconnect and try again, or use the default OpenCode v2 engine.");
     }
     const policy = verified ?? (await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy;
     return agentPermissionRulesForActions(agentPermissionRulesOf(policy), actions);
   }
-  /**
-   * Upload consent may persist across chats. Its identity and authority must be
-   * fresh and verified, never an old disk policy, renderer state or token hash.
-   * Unreachable Den cannot authorize an upload with a remembered grant.
-   */
   async browserUploadPolicy(): Promise<{
     enabled: boolean;
     scope: { baseUrl: string; organizationId: string; memberId: string } | null;
@@ -738,14 +677,6 @@ class ManagedDesktopPolicy {
       rules: agentPermissionRulesForActions(agentPermissionRulesOf(policy), ["browser_upload"]),
     };
   }
-  /**
-   * The member's verified decision for files sent to connected accounts
-   * (Drive uploads and saves, Gmail and Outlook drafts with attachments).
-   * Disabled means the rollout is off or nobody is signed in: each tool then
-   * keeps its earlier prompt. A remembered approval is never used on a policy
-   * Den did not just verify for this sign-in.
-   */
-  /** The organization Den last answered with the file-send rollout on; a rotated token does not forget it. */
   private fileSendsSeenOn: string | null = null;
   async fileSendPolicy(): Promise<{
     enabled: boolean;
@@ -761,8 +692,6 @@ class ManagedDesktopPolicy {
       policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
     } catch (error) {
       if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
-      // These sends go through OpenWork Cloud. When it cannot answer and this
-      // sign-in was last seen with the rollout on, refuse rather than guess.
       if (this.fileSendsSeenOn === `${session.baseUrl}\n${session.orgId}`) {
         throw new ApiError(503, "policy_unavailable", "Your organization's permissions could not be verified, so nothing was sent. Check your connection and try again.");
       }
@@ -796,11 +725,9 @@ class ManagedDesktopPolicy {
     }
     return this.agentPermissionRulesFor(["computer", "computer_files", "computer_clipboard", "script"]);
   }
-  /** The desktop config verified for this sign-in, without waiting on Den. Null signed out or before Den first answered. */
   known(): DesktopConfig | null {
     return this.knownPolicy();
   }
-  /** The policy to enforce now: verified for this sign-in, else the last one verified for it; never waits on Den. */
   private knownPolicy(): DesktopConfig | null {
     const session = this.session;
     if (!session) return null;
@@ -816,9 +743,7 @@ class ManagedDesktopPolicy {
     const ids = Array.isArray(input.providerIDs) ? input.providerIDs.filter((id): id is string => typeof id === "string")
       : typeof input.providerID === "string" ? [input.providerID] : [];
     for (const id of ids) {
-      // OpenCode Zen is not part of model access; it stays as it is today.
       if (id.toLowerCase() === "opencode") continue;
-      // Ollama and LM Studio follow their own switch, in either model access mode.
       if (isLocalModelProviderId(id)) {
         if (localAllowed) continue;
         throw action === "model"
@@ -856,8 +781,6 @@ class ManagedDesktopPolicy {
           { path: "/v1/llm-providers?scope=usable", field: "llmProviders", gateway: false },
           { path: "/v1/inference-providers?scope=usable", field: "inferenceProviders", gateway: true },
         ].map(async ({ path, field, gateway }) => {
-          // Older Den deployments have no gateway resource. Never treat other
-          // failures as an empty or cached grant list.
           const catalog = await this.readDenJson(session, path, generation, gateway);
           if (gateway && catalog === null) return false;
           const items = isRecord(catalog) ? catalog[field] : null;

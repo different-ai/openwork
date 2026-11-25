@@ -15,14 +15,6 @@ import { computerSessionAccess, runnerAccessCapabilities, type ComputerSessionAc
 import type { RemoteSessionCommand } from "./commands.js"
 import { sessionTimestampIso } from "./timestamps.js"
 
-/**
- * A member's own sessions across their computers: the ones they reach through
- * a remote-session command, and the ones their computers report that they
- * could attach to. Nothing here reads another member's computers or commands;
- * callers pass what they already scoped to one person.
- */
-
-/** Commands shown in one list; older delivered sessions stay reachable by their ids. */
 export const MEMBER_SESSION_COMMAND_LIMIT = 100
 
 const PLATFORM_LABELS: Record<RemoteSessionDesktopRecord["platform"], string> = {
@@ -31,7 +23,6 @@ const PLATFORM_LABELS: Record<RemoteSessionDesktopRecord["platform"], string> = 
   linux: "Linux computer",
 }
 
-/** The computer's own name when it reported one, else what kind of computer it is. */
 export function computerLabel(computer: RemoteSessionDesktopRecord): string {
   return computer.inventory?.computer.label ?? PLATFORM_LABELS[computer.platform]
 }
@@ -44,7 +35,6 @@ export function sessionAccessOf(computer: RemoteSessionDesktopRecord, policy: Re
   return computerSessionAccess({ ...runnerAccessCapabilities(computer.capabilities), reported: computer.sessionAccess ?? null }, policy)
 }
 
-/** The computer a command ran on or waits for, among the member's computers; null when it is no longer registered. */
 export function commandComputer(
   command: Pick<RemoteSessionCommand, "organizationId" | "ownerMemberId" | "claimedByRunnerId" | "targetComputerId">,
   computers: readonly RemoteSessionDesktopRecord[],
@@ -74,11 +64,6 @@ export type AttachableSession = {
   session: RunnerReportedSession
 }
 
-/**
- * Sessions the member's computers report that no command reaches yet. Only a
- * computer whose owner and organization both allow every session lists any.
- * `covered` holds the sessions a command already reaches or is attaching to.
- */
 export function attachableSessions(
   computers: readonly RemoteSessionDesktopRecord[],
   policy: RemoteSessionAccessPolicy,
@@ -92,7 +77,6 @@ export function attachableSessions(
   })
 }
 
-/** The key `attachableSessions` uses for a session a command covers. */
 export function coveredSessionKey(computer: RemoteSessionDesktopRecord, workspaceId: string, sessionId: string): string {
   return sessionKey(computer.computerId, workspaceId, sessionId)
 }
@@ -103,7 +87,6 @@ function commandSession(
   policy: RemoteSessionAccessPolicy,
 ): MemberSession | null {
   const computer = commandComputer(command, computers)
-  // Nothing reaches a computer that is off; its sessions are listed again once it is allowed.
   if (computer && sessionAccessOf(computer, policy).effectiveAccess === "off") return null
   const projection = commandProjection(command)
   const identity = {
@@ -129,7 +112,6 @@ function commandSession(
       latestStep: null,
     }
   }
-  // A session that was started on the computer stays listed only while its owner and the organization allow it.
   if (command.kind === "attach" && (!computer || sessionAccessOf(computer, policy).effectiveAccess !== "all")) return null
   const reported = computer?.sessions?.find((session) => session.sessionId === command.sessionId && session.workspaceId === command.workspaceId)
   return {
@@ -137,10 +119,8 @@ function commandSession(
     workspaceId: command.workspaceId,
     workspaceName: workspaceName(computer, command.workspaceId),
     sessionId: command.sessionId,
-    // The computer's own title is the current one; the command's is from when it was queued.
     title: reported?.title.trim() || command.title,
     reach: "reachable",
-    // An attached session says nothing until its computer first reports on it.
     state: command.kind === "attach" && !command.session ? reportedState(reported) : projection.state,
     waitingFor: projection.waitingFor,
     pending: projection.pending ?? null,
@@ -171,7 +151,6 @@ export function memberSessionComputers(
   }))
 }
 
-/** `commands` are the member's delivered and still-queued commands, newest first. */
 export function memberSessionList(input: {
   policy: RemoteSessionAccessPolicy
   computers: readonly RemoteSessionDesktopRecord[]

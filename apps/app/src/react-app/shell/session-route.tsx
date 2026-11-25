@@ -189,10 +189,10 @@ import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types
 import {
   connectGatewayProvider,
   GATEWAY_CONNECT_TIMEOUT_MESSAGE,
-  isGatewaySetConnected,
+  isPendingGatewaySignInConnected,
   type GatewayConnectProvider,
   isCloudManagedProviderKey,
-  resolveGatewayConnectProviders,
+  resolvePendingGatewaySignIns,
   resolveGatewayCloudProviderIds,
   resolveGatewayProviderIds,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
@@ -323,12 +323,6 @@ import {
   useProviderListQuery,
 } from "@/react-app/infra/provider-list-query";
 
-/**
- * Serialize an SDK error value into a string that parseSessionError can parse.
- * Preserves the original shape (name, data, message) as JSON when possible,
- * so the session surface can detect ProviderModelNotFoundError and offer
- * recovery actions like "Change model".
- */
 function serializeSDKError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -386,7 +380,6 @@ function focusPromptSoon() {
 }
 
 const EVAL_UNAVAILABLE_PROVIDER_ID = "eval-unavailable-provider";
-/** Bound on the first chat waiting for the organization provider sync. */
 const FIRST_CHAT_PROVIDER_SYNC_TIMEOUT_MS = 20_000;
 
 function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
@@ -431,9 +424,6 @@ export function SessionRoute() {
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
   const artifactsLabel = "Artifacts";
-  // Artifacts and Automations stay in the sidebar while signed out, on Desktop
-  // and Web alike: each page is an empty state that asks to sign in and calls
-  // nothing.
   const denAuthChecking = denAuth.status === "checking";
   const dashboardSurfaceAvailable = cloudSurfaceAvailable({
     deploymentEnabled: mcpAppsDashboardEnabled,
@@ -447,8 +437,6 @@ export function SessionRoute() {
   const activityRouteActive = shellConfig.notifications && activityRouteRequested;
   const local = useLocal();
   const automationDeploymentEnabled = useAutomationDeploymentEnabled();
-  // Desktop and Web share one Automations surface; the runtime only decides
-  // the placement of what each creates. Den's deployment flag stays the gate.
   const automationsEnabled = automationDeploymentEnabled;
   const automationsSurfaceAvailable = cloudSurfaceAvailable({
     deploymentEnabled: automationsEnabled,
@@ -517,7 +505,6 @@ export function SessionRoute() {
   ]);
   const reloadCoordinator = useReloadCoordinator();
   const checkDesktopRestriction = useCheckDesktopRestriction();
-  // The organization's (or team's) default model for new chats; only the v2 engine applies it.
   const orgConfiguredDefaultModel = useOrgRestrictions().defaultModel;
   const restrictionNotice = useRestrictionNotice();
   const [activeOrganizationRole, setActiveOrganizationRole] = useState<DenOrgRole | null>(null);
@@ -589,7 +576,6 @@ export function SessionRoute() {
   const workspaceDefaultScope = workspaceModelScope({ profileId: modelProfileId,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId, opencodeBaseUrl, localRuntime: isDesktopRuntime() });
   const workspaceDefault = useWorkspaceDefaultModel(workspaceDefaultScope);
-  // An organization model this desktop confirms it cannot use falls back to the app's own default.
   const [unusableOrgDefaultKey, setUnusableOrgDefaultKey] = useState<string | null>(null);
   const orgNewTaskModel = useMemo(() => {
     const model = orgDefaultModelForEngine(orgConfiguredDefaultModel, opencodeBaseUrl);
@@ -598,7 +584,6 @@ export function SessionRoute() {
   const newChatDefault = newChatDefaultModel({ workspaceDefault, orgDefault: orgNewTaskModel,
     appDefault: { model: local.prefs.defaultModel, variant: local.prefs.modelVariant ?? null } });
   const configuredNewTaskModel = newChatDefault.model;
-  // This route creates the provider below; use its same scope when choosing a new-task default.
   const autoAccessWorkspace = { openworkServerClient: selectedWorkspaceEndpoint?.client ?? null,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? "" };
   const observedAutoSnapshot = useObservedAutoAccessSnapshot(autoAccessWorkspace);
@@ -606,7 +591,6 @@ export function SessionRoute() {
   const autoChecking = isDesktopRuntime() && observedAutoSnapshot?.status !== "error" && !observedAutoStatus;
   const newTaskModel = modelForNewTask(configuredNewTaskModel, observedAutoStatus, autoChecking);
   const newTaskVariant = newChatDefault.variant;
-  // Background callers (automations, remote sessions) read this from the workspace's server.
   useWorkspaceDefaultModelSync({ endpoint: selectedWorkspaceEndpoint, connected: !selectedWorkspaceError,
     model: newTaskModel, variant: newTaskVariant, pending: autoChecking });
   const changeNewTaskModel = useCallback((model: ModelRef, variant: string | null = null) => {
@@ -645,8 +629,6 @@ export function SessionRoute() {
   const prefetchRuntimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId;
   const cancelOpeningPrefetchRef = useRef<(() => void) | undefined>(undefined);
   const handlePrefetchSession = useCallback((workspaceId: string, sessionId: string) => {
-    // Only the selected workspace has a confirmed runtime here. Never infer an
-    // endpoint for a pinned/other-workspace row just to warm its transcript.
     if (workspaceId !== selectedWorkspaceId || !canPrefetchSelectedWorkspace || !prefetchRuntimeWorkspaceId || !selectedWorkspaceServerToken
       || !sessionsByWorkspaceIdRef.current[workspaceId]?.some((session) => session.id === sessionId)) return;
     const endpoint = { opencodeBaseUrl: opencodeBaseUrl.trim(), token: selectedWorkspaceServerToken.trim() };
@@ -663,10 +645,6 @@ export function SessionRoute() {
     cancelOpeningPrefetchRef.current?.();
     cancelOpeningPrefetchRef.current = undefined;
   }, [handlePrefetchSession]);
-  // The dashboard is user-scoped while MCP servers are workspace-scoped: the
-  // selected workspace's runtime is primary, and every other available one is
-  // a per-tile fallback so tiles keep working when the selected workspace does
-  // not configure their server.
   const dashboardEndpoints = useMemo(() => {
     if (!dashboardRouteActive && !retainedArtifactsScope) return [];
     const endpoints: ResolvedWorkspaceEndpoint[] = [];
@@ -740,7 +718,6 @@ export function SessionRoute() {
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     providerModel: cloudMcpProviderModel,
   });
-  // Global prefs belong to new tasks; existing conversations own their selection.
   const newTaskAgent = local.prefs.selectedAgent;
   const setNewTaskAgent = useCallback(
     (agent: string | null) => {
@@ -756,8 +733,6 @@ export function SessionRoute() {
     fallbackAgent: newTaskAgent,
     onFallbackAgentChange: setNewTaskAgent,
   });
-  // One-way latch for "a refreshRouteState is currently running"; prevents
-  // overlapping route refreshes from queueing up when the user clicks fast.
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
@@ -769,7 +744,6 @@ export function SessionRoute() {
   const [providerDefaults, setProviderDefaults] = useState<Record<string, string>>({});
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   const [disabledProviderIds, setDisabledProviderIds] = useState<string[]>([]);
-  // Bump to re-filter provider list when den session changes (sign-in/out)
   const [denSessionVersion, setDenSessionVersion] = useState(0);
   useEffect(() => {
     const handler = () => setDenSessionVersion((v) => v + 1);
@@ -781,14 +755,9 @@ export function SessionRoute() {
     };
   }, []);
 
-  // Provider IDs that were just added — used to highlight them as
   useEffect(() => {
     setPaletteAccessibleTargets([]);
   }, [selectedSessionId, selectedWorkspaceId]);
-
-  // Provider catalog cache. Used to compute the reasoning/thinking variant
-  // options for whichever model is currently selected so the composer's
-  // behavior pill actually shows its options (bug: was empty before).
 
   const activeReloadBlockingSessions = useMemo(
     () =>
@@ -831,8 +800,6 @@ export function SessionRoute() {
     if (!isDesktopRuntime() || selectedWorkspace?.workspaceType !== "local") return;
     let cancelled = false;
     let checking = false;
-    // Ports and credentials can survive a restart. Observe the host's actual
-    // generation even when no settings-change event accompanies it.
     const interval = window.setInterval(async () => {
       if (checking || document.visibilityState !== "visible") return;
       checking = true;
@@ -841,7 +808,6 @@ export function SessionRoute() {
         if (cancelled || !info.running || info.generation === openworkServerHostInfoState?.generation) return;
         await refreshRouteState({ supersede: true });
       } catch {
-        // The next probe can recover a temporarily unavailable desktop bridge.
       } finally {
         checking = false;
       }
@@ -901,8 +867,6 @@ export function SessionRoute() {
     }
   }, [sessionsByWorkspaceId, sessionDraftScope, pendingConversations]);
   useEffect(() => {
-    // Only the pending route may adopt its completion. Background completion
-    // never navigates away from a conversation the person chose meanwhile.
     if (!pendingConversation?.sessionId) return;
     carryDraftBrowser(pendingConversation.sessionId);
     writeLastSessionFor(pendingConversation.destination.workspaceId, pendingConversation.sessionId);
@@ -930,9 +894,10 @@ export function SessionRoute() {
   const attentionLocale = currentLocale();
   const remoteAttentionKey = useRemoteThreadAttentionKey();
   const sideChats = useWorkbenchStore((state) => state.sideChats);
+  const inlineSuggestions = useDesktopFeature("composerInlineSuggestions");
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
   const sideQuestionsEnabled = useDesktopFeature("sideQuestions");
-  // A side chat records the session it was opened from, so it is listed under it everywhere.
+  const sideChatFromSelectionEnabled = useDesktopFeature("sideChatFromSelection");
   const sideChatLinkFor = useCallback((parent: { workspaceId: string; sessionId: string } | null | undefined, workspaceId: string): SessionLink | undefined => {
     if (!sessionTreeEnabled || !parent || parent.workspaceId !== workspaceId) return undefined;
     if (!canLinkSessionTo(sessionsByWorkspaceIdRef.current[workspaceId] ?? [], parent.sessionId)) return undefined;
@@ -961,7 +926,6 @@ export function SessionRoute() {
           sourceById[session.id] = entry.blockedBy.relationship;
         }
       }
-      // A task this chat started on another computer waits on the person, like a sub-agent would.
       for (const session of group.sessions) {
         const remote = remoteAttention.get(session.id);
         const own = statusById[session.id];
@@ -980,7 +944,6 @@ export function SessionRoute() {
     return workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId)
       ?.sessions.find((session) => session?.id === selectedSessionId) ?? null;
   }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
-  // Palette, header button and Cmd/Ctrl+Shift+E all run this one toggle. The archive flow is set up further down.
   const archiveSessionRef = useRef<((sessionId: string, archived: boolean, workspaceId: string) => Promise<unknown>) | null>(null);
   const currentSessionArchived = (selectedSidebarSession?.time?.archived ?? 0) > 0;
   const currentSessionArchive = useMemo(() => {
@@ -1037,9 +1000,6 @@ export function SessionRoute() {
     });
   const newTaskBehavior = useMemo(() => getModelBehaviorSummary(newTaskModel?.providerID ?? "",
     newTaskModel ? providerCatalog[newTaskModel.providerID]?.[newTaskModel.modelID] : undefined, newTaskVariant), [newTaskModel, newTaskVariant, providerCatalog]);
-  // Same as Settings: a member who signed in before creating a workspace
-  // still has the local server's managed engine, so organization providers
-  // sync at sign-in instead of racing the first chat's workspace creation.
   const engineRootEndpoint = useMemo(
     () => (isDesktopRuntime() && !loading && workspaces.length === 0
       ? resolveEngineRootEndpoint({ baseUrl, token })
@@ -1060,6 +1020,7 @@ export function SessionRoute() {
     cloudProviderSyncReady,
     cloudProviderList,
     refreshCloudProviderSync,
+    resyncGatewaySignIn,
     liveProviderSync,
   } = useSessionProviderAuth({
     opencodeClient: providerAuthClient,
@@ -1132,7 +1093,8 @@ export function SessionRoute() {
   const handleModelPickerOpen = useCallback(() => {
     void preWorkspaceGatewayModels.refresh().catch(() => undefined);
     void refreshCloudProviderSync("model_picker_open");
-  }, [preWorkspaceGatewayModels.refresh, refreshCloudProviderSync]);
+    void sessionProviderAuthStore.refreshLiveGatewaySignIns();
+  }, [preWorkspaceGatewayModels.refresh, refreshCloudProviderSync, sessionProviderAuthStore]);
   const openWorkModelsEntitled = useMemo(() => {
     if (!denAuth.isSignedIn) return false;
     const fromOrg = sessionProviderAuthSnapshot.cloudOrgProviders.some(
@@ -1162,8 +1124,12 @@ export function SessionRoute() {
     [sessionProviderAuthSnapshot.importedCloudProviders],
   );
   const gatewayConnectProviders = useMemo(
-    () => denAuth.isSignedIn ? resolveGatewayConnectProviders(sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders) : [],
-    [denAuth.isSignedIn, sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders],
+    () => resolvePendingGatewaySignIns({
+      signedIn: denAuth.isSignedIn,
+      liveGatewayProviders: sessionProviderAuthSnapshot.liveGatewayProviders,
+      skippedProviders: sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders,
+    }),
+    [denAuth.isSignedIn, sessionProviderAuthSnapshot.liveGatewayProviders, sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders],
   );
   const gatewayConnectAbort = useRef<AbortController | null>(null);
   const gatewayModelSelectionRef = useRef<GatewayModelSelectionHandle | null>(null);
@@ -1191,12 +1157,11 @@ export function SessionRoute() {
         openUrl: (url) => platform.openLink(url),
         resync: async () => {
           synced = false;
-          await refreshCloudProviderSync("manual");
-          synced = sessionProviderAuthStore.getSnapshot().gatewayUsageProviderScope != null;
+          synced = await resyncGatewaySignIn();
         },
         isConnected: () => synced && (request
           ? sessionProviderAuthStore.isGatewayModelAvailable(provider, request.model)
-          : isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders)),
+          : isPendingGatewaySignInConnected(provider, sessionProviderAuthStore.getSnapshot())),
       });
       if (!connected && !signal.aborted && !request) {
         toast.error(GATEWAY_CONNECT_TIMEOUT_MESSAGE, { action: { label: "Retry sign-in", onClick: () => {
@@ -1208,7 +1173,7 @@ export function SessionRoute() {
       if (!signal.aborted && !request) toast.error(describeRouteError(error));
       return false;
     }
-  }, [platform, refreshCloudProviderSync, sessionProviderAuthStore]);
+  }, [platform, resyncGatewaySignIn, sessionProviderAuthStore]);
   const refreshOrganizationModelAccess = useCallback(async () => {
     await refreshCloudProviderSync("manual");
   }, [refreshCloudProviderSync]);
@@ -1241,7 +1206,6 @@ export function SessionRoute() {
     providerListQuery.data,
     restrictToCloudProviders,
   ]);
-  // Members whose organization has Luna in OpenWork Models move off free Auto onto their own usage.
   const newTaskLunaReplacement = openWorkModelsLunaReplacement(configuredNewTaskModel, entitledModelOptions);
   useEffect(() => {
     if (newTaskLunaReplacement) changeNewTaskModel(newTaskLunaReplacement, null);
@@ -1260,10 +1224,6 @@ export function SessionRoute() {
       if (starter) local.setPrefs((previous) => ({ ...previous, defaultModel: starter, modelVariant: null }));
     } catch {}
   }, [initialAutoAccess.isPending, initialAutoAccess.fetchStatus, initialAutoAccess.data, cloudProviderList, providerListQuery.data, loading, selectedSessionId, sessionsByWorkspaceId, workspaceSessionGroups, local, workspaceDefault]);
-  // OpenCode Zen is retired (using the existing Zen
-  // policy): disable the provider in the engine on the screen everyone uses,
-  // not only while Settings is open, and move a Zen default to a model the
-  // person can actually use. Never re-enable Zen here; that races Disconnect.
   const opencodeZenBlocked = checkDesktopRestriction({ restriction: "allowZenModel" });
   useEffect(() => {
     if (!opencodeZenBlocked || !providerAuthClient || !selectedWorkspaceId) return;
@@ -1275,7 +1235,6 @@ export function SessionRoute() {
     if (!opencodeZenBlocked) return;
     const current = local.prefs.defaultModel;
     if (current && current.providerID !== "opencode") return;
-    // Already filtered by policy, so Zen is gone from it while blocked.
     const usable = entitledModelOptions.filter((option) => option.providerID !== "opencode");
     const replacement = starterModel(usable) ?? usable[0];
     if (replacement) local.setPrefs((previous) => ({ ...previous, defaultModel: { providerID: replacement.providerID, modelID: replacement.modelID }, modelVariant: null }));
@@ -1309,10 +1268,6 @@ export function SessionRoute() {
     gatewayProviderIds,
     cloudProvidersEnabled: denAuth.isSignedIn,
   });
-  // Which session the open model picker targets. Selecting a model while a
-  // session is targeted remembers it for that conversation only; null means
-  // the picker edits the global default (e.g. opened from the new-providers
-  // toast). Composer "All models" carries the session id on the open event.
   const [modelPickerSessionId, setModelPickerSessionId] = useState<string | null>(null);
   const modelPickerSelection = useSessionModelStore((state) =>
     modelPickerSessionId ? state.bySessionId[modelPickerSessionId] ?? null : null,
@@ -1330,9 +1285,6 @@ export function SessionRoute() {
     return resolveOrgDefaultModelReplacement({
       runtimeOptions: providerListModelEntitlementOptions(runtimeProviderList).filter((option) => !isAutoModel(option)
         || (!freeAutoSwitchedOff(initialAutoAccess.data) && !(initialAutoAccess.isPending && initialAutoAccess.fetchStatus !== "idle"))),
-      // Same pending rule as computeModelAvailability: a connected workspace
-      // engine whose catalog has not answered (e.g. still reloading after a
-      // provider was configured) must not be read as "provider missing".
       runtimeCatalogPending: Boolean(selectedWorkspaceId && opencodeClient) && !runtimeProviderList,
       assignedOptions: organizationAssignedModelOptions,
       currentDefault: local.prefs.defaultModel,
@@ -1355,25 +1307,12 @@ export function SessionRoute() {
   useEffect(() => {
     if (entitledOrgDefaultModel && !hasPendingGatewayModelSelection()) writeStoredDefaultModel(entitledOrgDefaultModel);
   }, [entitledOrgDefaultModel]);
-  // Availability is resolved per effective model identity: the New Task
-  // composer validates the global default while each conversation validates
-  // its OWN remembered provider/model against the current workspace's
-  // catalogs. The provider-list query is keyed by server + workspace
-  // directory, so a workspace switch supersedes the old catalog (the new key
-  // reads as unsettled → pending) instead of judging the new workspace with
-  // stale data.
-  //
-  // Debounce catalog churn before checking Den. Time alone never confirms an
-  // organization model's removal: two complete member inventory reads, with an
-  // engine refetch between them, must independently establish lost assignment.
   const modelRecoveryScope = JSON.stringify([sessionDraftScope, opencodeBaseUrl, selectedWorkspaceId]);
   const selectedSessionModelSelection = useSessionModelStore((state) =>
     (selectedSessionId ? state.bySessionId[selectedSessionId] ?? null : null),
   );
   const activeComposerModel = selectedSessionModelSelection?.model ?? (selectedSessionId ? local.prefs.defaultModel : newTaskModel) ?? null;
   const recoveryChatKey = modelRecoveryChatKey(modelRecoveryScope, selectedSessionId);
-  // Persist names under the existing stable workspace identity, not a local
-  // server port or engine-version URL that can change at the next launch.
   const modelDisplayScope = workspaceDefaultScope ? JSON.stringify([sessionDraftScope, workspaceDefaultScope]) : null;
   const rememberedModelTitles = useMemo(() => readModelDisplayMemory(modelDisplayScope ?? ""), [modelDisplayScope]);
   useEffect(() => {
@@ -1400,7 +1339,6 @@ export function SessionRoute() {
       liveProviderSync,
       providerList: providerListQuery.data,
     })), [
-    // The tick only forces re-evaluation of denials tracked by the gate.
     availabilityRecheckTick,
     checkDesktopRestriction,
     cloudProviderList,
@@ -1446,8 +1384,6 @@ export function SessionRoute() {
   const resolveModelAvailability = useCallback((model: ModelRef | null): ModelAvailability => {
     const verdict = resolveCatalogModelAvailability(model);
     if (verdict.status !== "unavailable" || verdict.reason === "provider_blocked") return verdict;
-    // Catalog absence alone cannot revoke an organization model. Without two
-    // authoritative reads keep the selection usable, including sign-in-required providers.
     if (model && isCloudManagedProviderKey(model.providerID)
       && !(organizationRemovalConfirmed && activeComposerModel?.providerID === model.providerID
         && activeComposerModel.modelID === model.modelID)) return { status: "pending" };
@@ -1462,8 +1398,6 @@ export function SessionRoute() {
   useEffect(() => {
     if (orgNewTaskModelUnavailable && orgNewTaskModel) setUnusableOrgDefaultKey(`${orgNewTaskModel.providerID}/${orgNewTaskModel.modelID}`);
   }, [orgNewTaskModel, orgNewTaskModelUnavailable]);
-  // The composer the user is looking at: the selected conversation's
-  // remembered model when it has one, otherwise the global default.
   const activeComposerAvailability = resolveModelAvailability(activeComposerModel);
   const activeComposerTargetsSession = Boolean(selectedSessionModelSelection && selectedSessionId);
   const selectedModelUnavailableKey = activeComposerAvailability.status === "unavailable" && activeComposerModel
@@ -1474,8 +1408,6 @@ export function SessionRoute() {
   useEffect(() => {
     if (hasPendingGatewayModelSelection()) return;
     if (!selectedModelUnavailableKey || activityRouteActive) {
-      // The active composer's model is fine (or pending): a later loss of it
-      // is handled again.
       autoOpenedUnavailableModelRef.current = null;
       return;
     }
@@ -1483,9 +1415,6 @@ export function SessionRoute() {
       selectedModelUnavailableKey,
       signedIn: denAuth.isSignedIn,
       cloudProviderSyncReady,
-      // Silent default repair only applies when the broken selection IS the
-      // default; a conversation's own unavailable model must surface the
-      // picker for that conversation instead.
       entitledOrgDefaultModel: activeComposerTargetsSession || workspaceDefault ? false : Boolean(entitledOrgDefaultModel),
       organizationModelsEmpty: organizationModelsEmpty && !organizationRemovalConfirmed,
       autoOpenedUnavailableModelKey: autoOpenedUnavailableModelRef.current,
@@ -1497,16 +1426,11 @@ export function SessionRoute() {
 
     autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
     const targetSessionId = selectedSessionId;
-    // A local disconnect or policy restriction isn't an organization removal.
     if (!organizationRemovalConfirmed) {
       window.dispatchEvent(new CustomEvent(openComposerModelPickerEvent, { detail: { sessionId: targetSessionId ?? undefined, focusAlternative: true } }));
       return;
     }
-    // Move on to the next model the picker lists that can run, instead of
-    // stopping the person with a dialog. Only when nothing else can run does
-    // the composer's own picker open to say so.
     const collections = useModelCollectionsStore.getState();
-    // Named options from the same catalog the entitlement check reads, limited to what the member may use.
     const entitled = new Set(entitledModelOptions.filter((option) => !option.disabled).map((option) => `${option.providerID}/${option.modelID}`));
     const connected = new Set(runtimeModelOptions(cloudProviderList ?? providerListQuery.data)
       .map((option) => `${option.providerID}/${option.modelID}`));
@@ -1527,12 +1451,6 @@ export function SessionRoute() {
     if (previous) useModelRecoveryStore.getState().record(recoveryChatKey, { previous, replacement });
   }, [activityRouteActive, activeComposerModel, activeComposerTargetsSession, changeNewTaskModel, cloudProviderList, cloudProviderSyncReady, denAuth.isSignedIn, entitledModelOptions, entitledOrgDefaultModel, providerListQuery.data, organizationModelsEmpty, resolveModelAvailability, selectedModelUnavailableKey, selectedSessionId, workspaceDefault, organizationRemovalConfirmed, recoveryChatKey, modelPicker.actionOptions, rememberedModelTitles, modelRemovalConfirmation.assignedModels]);
 
-  // Optimistic model selection: a remembered model is treated as valid until
-  // the availability gate CONFIRMS it absent (selectedModelUnavailable).
-  // A merely-pending verdict (cloud sync settling, catalog reloading) never
-  // blocks task creation or paints loading chrome — if the optimism turns out
-  // wrong, the send-time re-check and the composer's model-unavailable pill
-  // surface it where the person can act on it.
   const hasUsableModel = Boolean(activeComposerModel && !selectedModelUnavailable);
   const canCreateTask = Boolean(
     opencodeClient &&
@@ -1585,8 +1503,6 @@ export function SessionRoute() {
 
     const applyProviderState = (value: ProviderListResponse) => {
       if (cancelled) return;
-      // When not signed in, filter out every cloud-managed provider key so
-      // stale org imports and the hosted `openwork` catalog do not reappear.
       const hasCloudAuth = !!readDenSettings().authToken?.trim();
       const all = hasCloudAuth
         ? ((value.all ?? []) as ProviderListItem[])
@@ -1598,8 +1514,6 @@ export function SessionRoute() {
         : (value.connected ?? []).filter((id) => !isCloudManagedProviderKey(id));
       setProviders(all);
       setProviderConnectedIds(connected);
-      // New-provider detection is handled globally by the provider auth
-      // store's applyProviderListState, which fires dispatchNewProviders.
     };
 
     void (async () => {
@@ -1614,7 +1528,6 @@ export function SessionRoute() {
         });
         if (!cancelled) setDisabledProviderIds(disabledProviders);
       } catch {
-        // ignore config read failures and continue with provider discovery
       }
 
       try {
@@ -1646,9 +1559,6 @@ export function SessionRoute() {
     : t("session.default_model");
 
   const listSlashCommands = useCallback(async (): Promise<SlashCommandOption[]> => {
-    // engineReloadVersion is included so the callback identity changes after
-    // an engine reload, which invalidates the composer's command list cache
-    // and causes it to re-fetch (picking up newly created skills).
     void engineReloadVersion;
     if (!opencodeClient) return [];
     const commands = await listCommands(opencodeClient, selectedWorkspaceRoot || undefined);
@@ -1656,12 +1566,7 @@ export function SessionRoute() {
     return [{ id: "openwork:side-question", name: SIDE_QUESTION_COMMAND, description: t("side_question.command_description"), source: "command" }, ...commands];
   }, [engineReloadVersion, opencodeClient, selectedWorkspaceRoot, sideQuestionsEnabled]);
 
-  // Shared by the composer (plug menu, @ mentions) and the command palette.
-  // Hidden and subagent-only entries are excluded — those are task-tool
-  // delegation targets, not agents the user can run a session as.
   const listAgents = useCallback(async () => {
-    // Include engineReloadVersion so the composer refetches after newly added
-    // agent files become available, even when the inline picker is hidden.
     void engineReloadVersion;
     if (!opencodeClient) return [];
     const list = unwrap(await opencodeClient.app.agents());
@@ -1695,11 +1600,8 @@ export function SessionRoute() {
   const [dashboardHeaderActionsTarget, setDashboardHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   const [automationsHeaderActionsTarget, setAutomationsHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
 
-  // A task on another computer opens in the main pane under
-  // `remote:<threadKey>` and returns to its chat like a helper.
   const remoteTaskRouteActive = Boolean(remoteThreadKey) && !activityRouteActive && !pendingConversation;
   const remoteHelperNavigation = useMemo(() => ({
-    // The same scope the chat pane remembers its return in (session-page.tsx).
     scope: JSON.stringify([opencodeBaseUrl?.trim() ?? "", selectedWorkspaceEndpoint?.workspaceId || null, sessionDraftScope]),
     openParent: (sessionId: string) => navigateToWorkspaceSession(selectedWorkspaceId, sessionId),
   }), [opencodeBaseUrl, selectedWorkspaceEndpoint?.workspaceId, sessionDraftScope, navigateToWorkspaceSession, selectedWorkspaceId]);
@@ -1712,12 +1614,6 @@ export function SessionRoute() {
       return null;
     }
 
-    // Transient-safety: when the user switches workspaces the URL-driven
-    // selectedSessionId may still point at a session from the old workspace
-    // for one render tick. Only block rendering when we KNOW the session
-    // belongs to a different workspace (i.e., it exists in another
-    // workspace's list). A brand-new session that hasn't been refreshed
-    // into any list yet must still render so "New task" feels instant.
     let sessionOwnedByOtherWorkspace = false;
     for (const [workspaceId, sessions] of Object.entries(sessionsByWorkspaceId)) {
       if (workspaceId === selectedWorkspaceId) continue;
@@ -1730,12 +1626,6 @@ export function SessionRoute() {
       return null;
     }
 
-    // Note: do NOT include `client`, `workspaceId`, `sessionId`,
-    // `opencodeBaseUrl`, or `openworkToken` here. SessionPage forwards those
-    // explicitly to SessionSurface from the per-workspace endpoint resolved
-    // by `resolveWorkspaceEndpoint`. If we leak them in here, the spread of
-    // `surfaceProps` in SessionPage overrides those correct values with the
-    // local server's.
     return {
       workspaceRoot: selectedWorkspaceRoot,
       draftScope: sessionDraftScope,
@@ -1752,8 +1642,6 @@ export function SessionRoute() {
       gatewayUsageProviderScope: sessionProviderAuthSnapshot.gatewayUsageProviderScope ?? null,
       modelPickerOpen: modelPicker.compactOpen,
       modelOptions: modelPicker.options,
-      // Legacy fallback only; each surface resolves availability for its own
-      // effective session model through `resolveModelAvailability`.
       modelUnavailable: selectedModelUnavailable,
       modelUnavailableMessage,
       modelRecoveryScope,
@@ -1779,7 +1667,6 @@ export function SessionRoute() {
           openSettings: handleOpenSettings,
         });
       },
-      // Library detail ids hold ":" and "/", so they travel as one encoded segment.
       onOpenLibraryDetail: (detailId: string) => handleOpenExtensions(encodeURIComponent(detailId)),
       skillSharingProvider: CreatedSkillSharingProvider,
       onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, agent?: string | null): Promise<CloudMcpSubmissionResult> => {
@@ -1798,21 +1685,15 @@ export function SessionRoute() {
           assertCurrent();
           await ensurePendingConversationGroup(sessionDraftScope, selectedWorkspaceId, targetSessionId, assignNewSessionGroup);
           assertCurrent();
-          // Per-conversation model memory: a session that picked its own model
-          // sends with it (and its variant) instead of the global default.
           const sessionModelSelection = getSessionModelSelection(targetSessionId);
           const sendModel = sessionModelSelection?.model ?? local.prefs.defaultModel;
           const sendVariant = sessionModelSelection ? sessionModelSelection.variant : modelVariantValue;
           const sendAgent = agent === undefined ? getSessionAgentSelection(targetSessionId, newTaskAgent) : agent;
-          // Send-time validation targets the exact provider/model identity this
-          // conversation displays and will submit — not the global default.
           if (resolveModelAvailability(sendModel ?? null).status === "unavailable") {
             throw new Error("Selected model is unavailable. Choose another model before sending.");
           }
 
           return submitWithCloudMcpReadiness({
-            // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
-            // message, including tasks that do not use connected services.
             skipGate: true,
             send: async () => {
               assertCurrent();
@@ -1854,9 +1735,6 @@ export function SessionRoute() {
                   });
                   markTaskRunStart(targetSessionId);
                   taskRunQuality.start(targetSessionId, sendModel);
-                  // Den org adoption signals (auth-gated inside; no-op when signed out).
-                  // This remains inside the post-readiness send closure so a blocked
-                  // Cloud submission cannot create a run or report that one started.
                   const projectDimension = readWorkspaceProjectDimension(selectedWorkspaceId);
                   const modelSelection = sessionModelSelection ? "manual" : "default";
                   const telemetryDimensions = [
@@ -1933,8 +1811,6 @@ export function SessionRoute() {
                     if (isPromptAdmissionUnknown(result.error)) throw result.error;
                     throw new Error(serializeSDKError(result.error));
                   }
-                  // Remember what this conversation used last so returning to it
-                  // (or splitting it beside another session) keeps its own model.
                   if (sendModel && getQueuedSendGeneration(targetSessionId) === generation) {
                     useSessionModelStore.getState().setModel(targetSessionId, sendModel, sendVariant ?? null);
                   }
@@ -1955,7 +1831,6 @@ export function SessionRoute() {
       cloudMcpSubmissionState,
       onOpenConnect: () => handleOpenExtensions(),
       onDraftChange: () => {
-        // Draft persistence will be wired once the full React shell owns session state.
       },
       attachmentsEnabled: true,
       attachmentsDisabledReason: null,
@@ -1988,15 +1863,12 @@ export function SessionRoute() {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return false;
         try {
-          // Abort any running generation first; OpenCode rejects revert on busy sessions.
           await abortSessionSafe(opencodeClient, targetSessionId, selectedWorkspaceRoot || undefined, {
             source: "session.revert_to_message.before_revert",
             initiator: "user",
             reason: "abort active run before reverting transcript",
           });
           const reverted = await revertSession(opencodeClient, targetSessionId, messageId);
-          // Stamp the revert cursor into the local caches so the transcript
-          // rewinds immediately instead of waiting for a full reload.
           applySessionRevert(selectedWorkspaceId, reverted);
           return true;
         } catch (error) {
@@ -2030,7 +1902,6 @@ export function SessionRoute() {
           || selectedConversationRef.current.sessionId !== navigationOwner.sessionId
           || selectedConversationRef.current.draftScope !== navigationOwner.draftScope
           || focusedWorkbenchPaneOwner() !== paneOwner) return;
-        // A fork continues with the model and setting its source conversation used.
         const sourceSelection = getSessionModelSelection(targetSessionId);
         if (sourceSelection) useSessionModelStore.getState().setModel(forked.id, sourceSelection.model, sourceSelection.variant);
         writeLastSessionFor(selectedWorkspaceId, forked.id);
@@ -2419,8 +2290,6 @@ export function SessionRoute() {
     workspaceConnectionStateById,
     workspaces,
   ]);
-  // Once revealed, background refreshes must not replace usable content. A
-  // missing model is an actionable composer state, not a startup dependency.
   const cloudContentRevealed = useRef(false);
   const cloudRoutePending = !selectedWorkspaceError && !routeNotFoundMessage &&
     (effectiveLoading || !opencodeClient || !selectedWorkspaceId);
@@ -2447,8 +2316,6 @@ export function SessionRoute() {
   ) : null;
   const gatedRouteNotFoundMessage = cloudWorkspaceReadyForRouteErrors ? routeNotFoundMessage : null;
 
-  // Activity "Try it": put the newly shared skill in the New session composer,
-  // after anything already drafted there, and open it. Nothing is sent.
   const trySkillInNewSession = useCallback((resource: ActivityResource) => {
     if (!selectedWorkspaceId || !resource.skillSlug || !resource.capability) return;
     const destination = { workspaceId: selectedWorkspaceId };
@@ -2472,10 +2339,6 @@ export function SessionRoute() {
     focusPromptSoon();
   }, [navigate, selectedWorkspaceId, sessionDraftScope]);
 
-  // Workspace-scoped wiring for the empty-state hero's full composer. Unlike
-  // `surfaceProps` this exists without a selected session, so the hero offers
-  // the same skills/commands/agent/model controls before the session is
-  // created. The route seeds these choices into the created session.
   const newTaskComposerContext = useMemo<NewTaskComposerContext | null>(() => {
     return {
       client,
@@ -2545,6 +2408,7 @@ export function SessionRoute() {
       listAgents,
       onSelectAgent: setNewTaskAgent,
       listCommands: listSlashCommands,
+      inlineSuggestions,
       searchFiles: async (query: string) => {
         const trimmed = query.trim();
         if (!trimmed || !opencodeClient) return [];
@@ -2564,7 +2428,6 @@ export function SessionRoute() {
           openSettings: handleOpenSettings,
         });
       },
-      // Library detail ids hold ":" and "/", so they travel as one encoded segment.
       onOpenLibraryDetail: (detailId: string) => handleOpenExtensions(encodeURIComponent(detailId)),
       skillSharingProvider: CreatedSkillSharingProvider,
     };
@@ -2574,6 +2437,7 @@ export function SessionRoute() {
     handleOpenSettings,
     listAgents,
     listSlashCommands,
+    inlineSuggestions,
     local,
     modelUnavailableMessage,
     modelRecoveryScope,
@@ -2608,10 +2472,6 @@ export function SessionRoute() {
 
   const handleOpenCreateWorkspace = useCallback(() => {
     if (!canCreateWorkspaces()) return;
-    // Respect the org-level `allowMultipleWorkspaces` restriction (dev
-    // #1505). If the checker returns true, the admin has disabled
-    // adding further workspaces; surface a friendly notice instead of
-    // opening the modal.
     if (
       workspaces.length > 0 &&
       checkDesktopRestriction({ restriction: "allowMultipleWorkspaces" })
@@ -2668,7 +2528,6 @@ export function SessionRoute() {
     try {
       await revealDesktopItemInDir(path);
     } catch {
-      // ignore
     }
   }, [workspaces]);
 
@@ -2680,8 +2539,6 @@ export function SessionRoute() {
           "Remove this workspace from the sidebar?";
         if (!window.confirm(message)) return;
       }
-      // Remove from both stores so the next refresh can't resurrect the row
-      // from whichever list wins the merge.
       if (client) {
         await client.deleteWorkspace(workspaceId).catch(() => undefined);
       }
@@ -2737,9 +2594,6 @@ export function SessionRoute() {
     try {
       setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
       setRouteError(null);
-      // A stalled engine (rollover, overload) misses the 10 s request timeout
-      // and used to surface as a dead-end "unavailable" toast that only Cmd+R
-      // seemed to fix. Retry transient failures with a visible countdown first.
       const created = await withTransientEngineRetry({
         load: () => createRouteSessionOnEngine(endpoint, workspace.path?.trim() || undefined, sideChatLinkFor(sideChatOwner, workspaceId)),
         retryDelaysMs: TASK_CREATE_RETRY_DELAYS_MS,
@@ -2770,7 +2624,6 @@ export function SessionRoute() {
       useComposerStateStore.setState({ pendingFocusSessionId: session.id });
       rememberPendingCreatedSession(workspaceId, session.id);
       seedCreatedSessionSnapshot(workspaceId, session);
-      // Defaults are engine-specific: use the endpoint that actually created the session.
       applyWorkspaceDefaultToSession(session.id, sessionEndpoint);
       useSessionAgentStore.getState().setAgent(session.id, agent);
       setSessionsByWorkspaceId((current) => {
@@ -2819,8 +2672,6 @@ export function SessionRoute() {
           label: "Retry",
           onClick: () => void handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs, source),
         },
-        // A blue/green reload brings up a fresh engine without killing live
-        // sessions; the full desktop restart stays a last resort elsewhere.
         ...(failure.kind === "not_responding"
           ? {
               cancel: {
@@ -2853,7 +2704,6 @@ export function SessionRoute() {
     focusPromptSoon();
   }, [navigate]);
 
-  // Shared by Cmd/Ctrl+N and the command palette's "New session".
   const createNewSessionInSelectedWorkspace = useCallback(() => {
     if (selectedWorkspaceId) handleCreateTaskInWorkspace(selectedWorkspaceId);
   }, [handleCreateTaskInWorkspace, selectedWorkspaceId]);
@@ -2870,13 +2720,11 @@ export function SessionRoute() {
     [navigate],
   );
 
-  // Text selected in a reply starts a side chat of that session with the text
-  // quoted. A side chat already beside it is a conversation of its own, so this
-  // opens a new draft; an open draft just gets the quote added.
   const handleStartSideChatWithQuote = useCallback((text: string) => {
     const workbench = useWorkbenchStore.getState();
     const parent = workbench.primary;
     if (!parent) return;
+    markFeatureUsed("sideChatFromSelection");
     if (sideQuestionsEnabled) {
       useSideQuestionStore.getState().setQuote(parent.sessionId, text);
       showSideChatTab(parent.sessionId);
@@ -2893,7 +2741,6 @@ export function SessionRoute() {
     const draft = appendQuoteToDraft(existing, text);
     const attached = workbench.sideChats[workbenchSessionKey(parent)];
     if (attached?.draftDestination && isSameWorkbenchSession(workbench.secondary, attached)) {
-      // That draft's composer is on screen and owns its text: hand it the new text.
       setPendingChatSeed(draft);
     } else {
       saveSessionDraft(sessionDraftScope, destination.workspaceId, newSessionDraftSlot(destination), { text: persistableComposerDraftText(draft), mode: "prompt" });
@@ -2902,14 +2749,9 @@ export function SessionRoute() {
       workbench.openTab(tab);
       workbench.setSideChat(parent, tab);
     }
-    markFeatureUsed("sessionTree");
     focusPromptSoon();
   }, [sessionDraftScope, sideQuestionsEnabled]);
 
-  // Latest session-list state for prev/next session tab navigation. The
-  // `options` field is updated by `onSessionTabsChange` from SessionPage so we
-  // only cycle through tabs the user actually opened (not artifact sessions).
-  // The remaining fields are refreshed during render.
   const sessionTabNavRef = useRef<{
     options: OpenSessionTab[];
     workspaceId: string;
@@ -2978,8 +2820,6 @@ export function SessionRoute() {
   const gatewayProviderScopeKey = JSON.stringify([selectedWorkspaceId, selectedWorkspaceRoot, opencodeBaseUrl, selectedWorkspaceEndpoint?.baseUrl, selectedWorkspaceEndpoint?.workspaceId, openworkServerHostInfoState?.generation, denSessionVersion]);
   const favoriteModelScope = useRef({ workspaceId: selectedWorkspaceId, sessionId: selectedSessionId, providerScopeKey: gatewayProviderScopeKey });
   favoriteModelScope.current = { workspaceId: selectedWorkspaceId, sessionId: selectedSessionId, providerScopeKey: gatewayProviderScopeKey };
-  // Shortcut model switching: the next pinned model, or the first model from the next source.
-  // A model that needs its provider sign-in first opens the Login dialog instead of switching.
   const cycleFavoriteModel = useCallback((source = false) => {
     const workbench = useWorkbenchStore.getState();
     const target = captureFavoriteModelTarget(workbench, favoriteModelScope.current);
@@ -3020,9 +2860,6 @@ export function SessionRoute() {
   }), [cycleFavoriteModel]);
   useControlAction(cycleFavoriteModelControlAction);
 
-  // Model shortcuts (ENG-398): a saved key switches the focused conversation
-  // to a saved model + reasoning + Fast preference. An unavailable model never
-  // changes the current model and never removes the shortcut.
   const applyModelShortcutRef = useRef<(shortcut: Shortcut, chordLabel: string, attempt?: number) => void>(() => {});
   const applyModelShortcut = useCallback((shortcut: Shortcut, _chordLabel: string, attempt = 0) => {
     const target = captureFavoriteModelTarget(useWorkbenchStore.getState(), favoriteModelScope.current);
@@ -3042,8 +2879,6 @@ export function SessionRoute() {
     });
 
     if (decision.kind === "pending") {
-      // Catalog still settling: retry briefly instead of treating the model as
-      // unavailable. No transient UI is shown for a key press.
       if (attempt < 10) {
         window.setTimeout(() => applyModelShortcutRef.current(shortcut, _chordLabel, attempt + 1), 500);
       }
@@ -3057,7 +2892,6 @@ export function SessionRoute() {
         sessionModels.setModel(activeSessionId, modelRef, decision.variant);
         sessionModels.setVariant(activeSessionId, decision.variant);
       }
-      // Without a focused conversation the shortcut sets the new-task model, which follows the workspace default.
       else changeNewTaskModel(modelRef, decision.variant);
       featureAnalytics.modelChanged(selection?.model ?? (activeSessionId ? local.prefs.defaultModel : newTaskModel), modelRef, Boolean(activeSessionId));
       useModelCollectionsStore.getState().recordRecent(modelRef);
@@ -3071,8 +2905,6 @@ export function SessionRoute() {
   applyModelShortcutRef.current = applyModelShortcut;
   useModelShortcutKeys(applyModelShortcut);
 
-  // Fast toggle (⌃⇧F / Ctrl+Alt+F): flips Fast for the focused conversation's
-  // model and keeps its reasoning level. A model without Fast never changes.
   const toggleFastMode = useCallback(() => {
     const target = captureFavoriteModelTarget(useWorkbenchStore.getState(), favoriteModelScope.current);
     if (!target) return null;
@@ -3087,7 +2919,6 @@ export function SessionRoute() {
     const current = selection ? selection.variant : activeSessionId ? modelVariantValue : newTaskVariant;
     const decision = decideFastToggle(options, current);
     if (decision.kind === "not_offered") return null;
-    // Same targets as the thinking-mode cycle: the focused conversation, else the new-task model.
     if (activeSessionId && selection) useSessionModelStore.getState().setVariant(activeSessionId, decision.next);
     else if (!activeSessionId) changeNewTaskModel(model, decision.next);
     else local.setPrefs((previous) => ({ ...previous, modelVariant: decision.next }));
@@ -3146,8 +2977,6 @@ export function SessionRoute() {
   }, [navigateToWorkspaceSession, selectedWorkspaceId]);
 
   const openModelPickerForControl = useCallback(() => {
-    // Opened while a conversation is visible: target that conversation so the
-    // picker's checkmark and the selection it writes match the composer.
     setModelPickerSessionId(selectedSessionId || null);
     modelPicker.setOpen(true);
   }, [selectedSessionId]);
@@ -3245,9 +3074,6 @@ export function SessionRoute() {
           defaultModel: unavailableModel,
           modelVariant: null,
         }));
-        // Per-conversation memory is session-scoped: seeding "both" makes the
-        // open conversation's own model unavailable; "default" reproduces the
-        // workspace-switch state where only the global default is missing.
         if (scope === "both" && selectedSessionId) {
           useSessionModelStore.getState().setModel(selectedSessionId, unavailableModel, null);
         }
@@ -3306,8 +3132,6 @@ export function SessionRoute() {
         if (!parent) return { ok: false, error: "The selected session is unavailable." };
 
         const childSessionId = `${selectedSessionId}:eval-child`;
-        // Match a real session.created event: a concurrent list snapshot must
-        // not remove this newly seeded child before its approval is answered.
         rememberPendingCreatedSession(selectedWorkspaceId, childSessionId);
         const request: PendingPermission = {
           id: `${selectedSessionId}:eval-child-permission`,
@@ -3319,8 +3143,6 @@ export function SessionRoute() {
             description: "Inspect the delegated task workspace",
           },
           always: [],
-          // Keep this deterministic proof request newer than any concurrent
-          // snapshot so the dev seam behaves like a live post-snapshot event.
           receivedAt: Number.MAX_SAFE_INTEGER,
           protocol: "legacy",
           evaluation: true,
@@ -3400,15 +3222,11 @@ export function SessionRoute() {
       return;
     }
 
-    // Pre-workspace (chat-first) there is no opencode client yet, so the
-    // modal cannot load auth methods — fall back to the AI Providers page.
     void sessionProviderAuthStore.openProviderAuthModal({ returnFocusTarget: "composer" }).catch(() => {
       handleOpenSettings("/settings/ai");
     });
   }, [handleOpenSettings, restrictionNotice, sessionProviderAuthStore]);
 
-  // "Connect more providers" in the compact model picker (and anything else
-  // outside this route's prop tree) requests the provider auth modal here.
   useEffect(() => {
     const handler = () => handleOpenProviderAuth();
     window.addEventListener(openProviderAuthEvent, handler);
@@ -3459,8 +3277,6 @@ export function SessionRoute() {
     focusPromptSoon();
   }, [changeNewTaskModel, local.prefs.defaultModel, newTaskModel, newTaskVariant]);
 
-  // Refresh the non-tab fields of the nav ref during render. The `options`
-  // field is maintained by the `onSessionTabsChange` callback from SessionPage.
   sessionTabNavRef.current = {
     options: sessionTabNavRef.current.options,
     workspaceId: selectedWorkspaceId,
@@ -3480,7 +3296,6 @@ export function SessionRoute() {
     ) ?? null;
   }, [paletteSessionOptions, selectedSessionId, selectedWorkspaceId]);
 
-  // Management actions intentionally target the route/main session, not the focused side chat.
   const currentSessionActionPaletteItems = useMemo<PaletteItem[]>(() => {
     if (!selectedSessionId || !selectedWorkspaceId || !currentSessionForGroupMove) return [];
     const target = { workspaceId: selectedWorkspaceId, sessionId: selectedSessionId, title: currentSessionForGroupMove.title };
@@ -3490,7 +3305,7 @@ export function SessionRoute() {
       isArchived,
       groups: [], assignedGroupId: null,
       onTogglePin: () => sessionManagementStore.getState().togglePin(target.sessionId),
-      onAssignGroup: () => {}, // The palette's group submode also supports unsent drafts.
+      onAssignGroup: () => {},
       onRename: opencodeClient ? () => requestSessionDialog({ action: "rename", target }) : undefined,
       onDelete: client ? () => requestSessionDialog({ action: "delete", target }) : undefined,
       onArchive: opencodeClient ? async () => {
@@ -3502,8 +3317,6 @@ export function SessionRoute() {
 
   const paletteSecondarySession = useWorkbenchStore((state) => state.secondary);
 
-  // An empty composer has a group too: the one its new task will be created in.
-  // The focused unsent side chat wins over the main empty composer.
   const paletteDraftDestination = useWorkbenchStore((state) => (
     state.focusedPane === "secondary" && state.secondary?.draftDestination ? state.secondary.draftDestination : null
   ));
@@ -3512,7 +3325,6 @@ export function SessionRoute() {
     const draftGroup = new URLSearchParams(location.search).get("draftGroup") || undefined;
     const destination = paletteDraftDestination
       ?? (selectedSessionId ? null : { workspaceId: selectedWorkspaceId, groupId: draftGroup });
-    // Groups are listed for the selected workspace only.
     if (!destination || destination.workspaceId !== selectedWorkspaceId) return null;
     const draftOwnerKey = newSessionDraftOwnerKey(sessionDraftScope, destination);
     return draftOwnerKey ? { draftOwnerKey, groupId: destination.groupId ?? null } : null;
@@ -3713,8 +3525,6 @@ export function SessionRoute() {
     if (workspaceId === selectedWorkspaceId) void refreshCloudProviderSync("new_chat");
     claimComposerSessionDraftScope(session.id, sessionDraftScopeKey(pending.scope, endpoint.workspaceId, session.id));
     markComposerAutoSend(session.id, pendingConversationAutoSendPayload(pending, endpoint, session.id));
-    // The first message was typed in the new-task composer; keep the keyboard
-    // in the created session's composer so a follow-up needs no extra click.
     useComposerStateStore.setState({ pendingFocusSessionId: session.id });
     rememberPendingCreatedSession(workspaceId, session.id);
     applyWorkspaceDefaultToSession(session.id, endpoint);
@@ -3761,10 +3571,6 @@ export function SessionRoute() {
         await workspaceSetSelected(createdId).catch(() => undefined);
         await workspaceSetRuntimeActive(createdId).catch(() => undefined);
       }
-      // First workspace on a fresh install: the OpenWork server was started
-      // engine-less (it only spawns OpenCode at boot when a workspace already
-      // exists), so sessions would hang forever. This boots the engine when
-      // it isn't running, same as the old /welcome flow did.
       let sessionBaseUrl = baseUrl;
       let sessionToken = token;
       if (targetWorkspace && isDesktopRuntime()) {
@@ -3773,8 +3579,6 @@ export function SessionRoute() {
           workspace: targetWorkspace,
           allWorkspaces: list.workspaces,
         }).catch(() => undefined);
-        // The engine boot can restart the server with fresh tokens; re-resolve
-        // so the first-session creation below doesn't use stale credentials.
         const fresh = await resolveOpenworkConnection().catch(() => null);
         if (fresh?.normalizedBaseUrl && fresh.resolvedToken) {
           sessionBaseUrl = fresh.normalizedBaseUrl;
@@ -3782,7 +3586,6 @@ export function SessionRoute() {
         }
       }
       setCreateWorkspaceOpen(false);
-      // Mark onboarding complete so the /welcome redirect never fires again.
       local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
       await refreshRouteState();
       if (onPrepared) {
@@ -3796,9 +3599,6 @@ export function SessionRoute() {
         const workspacePath = targetWorkspace?.path?.trim() || folder;
         const firstTaskPrompt = options?.firstTaskPrompt?.trim() ?? "";
         const firstTaskAttachments = options?.firstTaskAttachments ?? [];
-        // A workspace registry mutation must not eagerly instantiate an
-        // OpenCode directory. Chat-first creation still needs a session for
-        // its supplied prompt; ordinary creation lands on the New task state.
         const session = createdOnServer && sessionBaseUrl && sessionToken && (firstTaskPrompt || firstTaskAttachments.length > 0)
           ? await createClient(
               `${(buildOpenworkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
@@ -3819,20 +3619,15 @@ export function SessionRoute() {
           useSessionAgentStore.getState().setAgent(session.id, agent);
           captureAnalyticsEvent("task_created", { source: "workspace_created", workspace_type: "local" });
           if (firstTaskPrompt || firstTaskAttachments.length) {
-            // Attachment chips only survive in-memory (File objects), so the
-            // persisted fallback draft drops their tokens.
             saveSessionDraft(sessionDraftScope, targetWorkspaceId, session.id, { text: firstTaskPrompt.replace(/\[attachment [^\]]+\]/g, "").trim(), mode: "prompt" });
             claimComposerSessionDraftScope(
               session.id,
               sessionDraftScopeKey(sessionDraftScope, targetWorkspaceId, session.id),
             );
-            // The composer reads its draft from the composer state store, not
-            // the persisted draft store — seed both so the prompt shows up.
             useComposerStateStore.getState().setDraft(session.id, firstTaskPrompt);
             if (firstTaskAttachments.length) {
               useComposerStateStore.getState().setAttachments(session.id, firstTaskAttachments);
             }
-            // One-step run: the session surface sends the seeded draft itself.
             markComposerAutoSend(session.id);
           }
           writeLastSessionFor(targetWorkspaceId, session.id);
@@ -3859,11 +3654,6 @@ export function SessionRoute() {
     }
   }, [baseUrl, client, local, navigateToWorkspaceSession, newTaskAgent, refreshRouteState, reloadWorkspaceSessions, rememberPendingCreatedSession, token]);
 
-  /**
-   * Chat-first onboarding: the empty-state composer creates a default chat
-   * workspace under the user's home folder instead of asking where to put
-   * it. Falls back to the create-workspace modal off desktop.
-   */
   const handleChatFirstTask = useCallback(async (prompt: string, attachments?: ComposerAttachment[], handoff?: NewTaskComposerHandoff) => {
     const pending = beginPendingConversation({ scope: sessionDraftScope, destination: { workspaceId: "" },
       submitted: handoff?.submitted ?? { draft: prompt, attachments: attachments ?? [], mentions: {}, pasteParts: [], revertMessageId: null } });
@@ -3881,9 +3671,6 @@ export function SessionRoute() {
           if (canCreateWorkspaces()) handleOpenCreateWorkspace();
           throw new Error("Choose a workspace before retrying this message.");
         }
-        // The first workspace's engine instance reads its providers when this
-        // chat starts. Let the organization provider sync begun at sign-in
-        // finish first (bounded; on timeout the send proceeds as before).
         if (newTaskModel && isCloudManagedProviderKey(newTaskModel.providerID)) {
           await new Promise<void>((resolve) => {
             const timer = window.setTimeout(resolve, FIRST_CHAT_PROVIDER_SYNC_TIMEOUT_MS);
@@ -3930,9 +3717,6 @@ export function SessionRoute() {
   }), [handleCreateWorkspace]);
   useControlAction(createWorkspaceControlAction);
 
-  // Sessions created outside this window (server-side session.create, other
-  // clients) never reach a non-selected workspace's cached list, so callers
-  // that create them ask the sidebar to refetch that one workspace.
   const reloadWorkspaceSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "workspace.reload_sessions",
     label: "Reload a workspace's sessions",
@@ -3981,9 +3765,6 @@ export function SessionRoute() {
     >
     {opencodeClient && selectedWorkspaceEndpoint && opencodeBaseUrl && selectedWorkspaceServerToken ? (
       <ReactSessionRuntime
-        // Use the server-side workspace id so the React Query cache keys
-        // session-sync writes match the keys SessionSurface reads from. Otherwise events arrive but
-        // the UI never sees them and gets stuck on "thinking".
         workspaceId={selectedWorkspaceEndpoint.workspaceId}
         sessionId={selectedSessionId}
         activeSessionIds={activeSelectedWorkspaceSessionIds}
@@ -4096,19 +3877,16 @@ export function SessionRoute() {
             try {
               window.dispatchEvent(new CustomEvent("openwork-close-right-pane"));
             } catch {
-              // ignore
             }
           }}
         />
       }
-      // Page titles match their sidebar labels.
       primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? artifactsLabel : automationsRouteActive ? "Automations" : dashboardRouteActive ? artifactsLabel : undefined}
-      // Dashboard, Automations and Library share one flat page surface.
       primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || extensionsMainOpen ? "flat" : undefined}
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation || remoteTaskRouteActive)}
       primaryHeader={remoteTaskRouteActive && remoteThreadKey ? <RemoteSessionHeader key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} /> : undefined}
       onOpenRemoteTask={openRemoteTask}
-      onStartSideChatWithQuote={sessionTreeEnabled || sideQuestionsEnabled ? handleStartSideChatWithQuote : undefined}
+      onStartSideChatWithQuote={sideChatFromSelectionEnabled ? handleStartSideChatWithQuote : undefined}
       retainedArtifactSlot={retainedArtifactsScope ? {
         scope: retainedArtifactsScope,
         active: dashboardRouteActive && !appsRouteActive,
@@ -4200,11 +3978,6 @@ export function SessionRoute() {
           if (workspaceId === selectedWorkspaceId) return true;
           setLegacySelectedWorkspaceId(workspaceId);
           writeActiveWorkspaceId(workspaceId || null);
-          // Route adoption owns desktop persistence and server activation.
-          // Centralizing those effects lets rapid navigation coalesce to the
-          // last route instead of racing stale IPC and engine reloads.
-          // If we remember what the user last opened here and that session
-          // still exists in our local list, navigate. Otherwise stay put.
           const remembered = readLastSessionFor(workspaceId);
           if (remembered && remembered !== selectedSessionId) {
             const known = sessionsByWorkspaceId[workspaceId];
@@ -4221,7 +3994,6 @@ export function SessionRoute() {
         onOpenSession: (workspaceId, sessionId) => {
           setLegacySelectedWorkspaceId(workspaceId);
           writeActiveWorkspaceId(workspaceId || null);
-          // Back/forward can open a task on another computer; it is not a local session to restore.
           if (!isRemoteSessionRouteId(sessionId)) writeLastSessionFor(workspaceId, sessionId);
           navigateToWorkspaceSession(workspaceId, sessionId);
         },
@@ -4332,9 +4104,6 @@ export function SessionRoute() {
       onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
       onArchiveSessions={opencodeClient ? async (sessions, archived) => { await archiveSessionsInWorkspaces(sessions, archived); } : undefined}
       statusBar={{
-        // No per-session loading state here: the account row renders only
-        // app-scoped facts. Session loading lives in the pane; an unresolved
-        // model surfaces in the composer where the person can act on it.
         reloadBusy: reloadCoordinator.reloadBusy,
         reloadError: reloadCoordinator.reloadError,
         openWorkConnectState: sessionMcpMaintenance,
@@ -4440,14 +4209,12 @@ export function SessionRoute() {
         try {
           window.dispatchEvent(new CustomEvent("openwork-open-accessible-target", { detail: target }));
         } catch {
-          // ignore event dispatch failures
         }
       }}
       onHideAccessibleTarget={(target) => {
         try {
           window.dispatchEvent(new CustomEvent("openwork-hide-accessible-target", { detail: target }));
         } catch {
-          // ignore event dispatch failures
         }
       }}
       sessions={paletteSessionOptions}
@@ -4508,7 +4275,6 @@ export function SessionRoute() {
         if (modelPickerSessionId) {
           const store = useSessionModelStore.getState();
           store.setModel(modelPickerSessionId, model, value);
-          // Same-model selection preserves settings; explicit effort edits do not.
           store.setVariant(modelPickerSessionId, value);
         } else changeNewTaskModel(model, value);
       }}

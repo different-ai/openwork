@@ -1,25 +1,11 @@
-/**
- * What apply reads, kept to the items it writes (change-requests.md › Apply):
- * - `readItemsFor`: one helper for "read these ids" (`area.readItems`, else
- *   the area's export filtered);
- * - `checkWrittenItems`: re-reads every item an update or delete writes and
- *   compares its `itemRev` with the plan's `targetRev`; checks the targets of
- *   resolved references (other than people) still exist; for creates and renames on areas with
- *   unique fields, checks nothing now collides (the only case that exports
- *   an area, because uniqueness is about every item). Any mismatch is drift:
- *   the caller marks the request stale, exactly as a changed plan hash did.
- * The fresh items replace each op's `previous` and are the before-snapshot.
- */
 import type { ConfigAreaKey } from "@openwork/types/den/config-blobs"
 import { parseConfigRef } from "@openwork/types/den/config-blobs"
 import type { ConfigArea, ConfigAreaContext, ConfigItem } from "../area.js"
 import { itemRev } from "./canonical.js"
 import type { ExecutionOp, ExecutionPlan } from "./plan.js"
 
-/** One read apply made, for tests and logs: `read` = only these ids, `export` = the whole area. */
 export type ApplyRead = { area: ConfigAreaKey; kind: "read" | "export"; ids: number }
 
-/** Only these items of the area (missing ids are absent). */
 export async function readItemsFor(area: ConfigArea, ctx: ConfigAreaContext, ids: readonly string[], reads?: ApplyRead[]): Promise<ConfigItem[]> {
   const unique = [...new Set(ids)]
   if (unique.length === 0) return []
@@ -33,21 +19,12 @@ export async function readItemsFor(area: ConfigArea, ctx: ConfigAreaContext, ids
 }
 
 export type WrittenItemsCheck = {
-  /** Why the plan no longer holds, one line per item. Empty: go ahead. */
   problems: string[]
-  /** The plan with each update's and delete's `previous` replaced by the item as read now. */
   execution: ExecutionPlan
-  /** The current state of every item an update or delete writes, per area: the before-snapshot. */
   before: Map<ConfigAreaKey, ConfigItem[]>
   reads: ApplyRead[]
 }
 
-/**
- * The area a resolved reference's target is re-read from. People references
- * are not re-checked: they resolve to members through the people lookup, and
- * re-reading them would mean reading every member; a removed member makes the
- * adapter's write fail instead, and the report says where.
- */
 function refTargetArea(ref: string): ConfigAreaKey | null {
   const parsed = parseConfigRef(ref)
   return parsed && parsed.area !== "people" ? parsed.area : null
@@ -63,7 +40,6 @@ export async function checkWrittenItems(execution: ExecutionPlan, areas: readonl
   const problems: string[] = []
   const label = (key: ConfigAreaKey) => areaByKey.get(key)?.label ?? key
 
-  // Ids to read per area: written items, and the targets references resolved to.
   const wanted = new Map<ConfigAreaKey, Set<string>>()
   const want = (key: ConfigAreaKey, id: string) => {
     const ids = wanted.get(key) ?? new Set<string>()
@@ -110,7 +86,6 @@ export async function checkWrittenItems(execution: ExecutionPlan, areas: readonl
       if (ref.resolution.kind !== "target") continue
       const key = refTargetArea(ref.ref)
       if (!key || !wanted.get(key)?.has(ref.resolution.id)) continue
-      // A reference to an item this run creates is "planned", not "target"; a delete in this run was refused at plan time.
       if (!current.has(`${key}\u0000${ref.resolution.id}`)) problems.push(`${label(op.area)} "${op.name}": ${ref.path} points at an item that no longer exists`)
     }
     ops.push(next)
@@ -120,7 +95,6 @@ export async function checkWrittenItems(execution: ExecutionPlan, areas: readonl
   return { problems, execution: { ...execution, ops }, before, reads }
 }
 
-/** Creates and renames on areas with unique fields: does anything on the target now hold the same value? */
 async function uniqueCollisions(ops: readonly ExecutionOp[], areaByKey: ReadonlyMap<ConfigAreaKey, ConfigArea>, ctx: ConfigAreaContext, reads: ApplyRead[]): Promise<string[]> {
   const problems: string[] = []
   const byArea = new Map<ConfigAreaKey, ExecutionOp[]>()

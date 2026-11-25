@@ -307,3 +307,18 @@ test("typed client forwards model selection and minted access; legacy turns and 
   assert.equal(requests.at(-1)?.init?.method, "GET")
   assert.equal(requests.at(-1)?.init?.body, undefined)
 })
+
+test("model access headers from Den reach every model call, and only the Workbot grant header is accepted", async () => {
+  const seen: Array<string | null> = []
+  const transport = async (_url: RequestInfo | URL, init?: RequestInit) => {
+    seen.push(new Headers(init?.headers).get("x-openwork-workbot-grant"))
+    return Response.json({ id: "resp_1", model: "member-model", output: [{ type: "message", content: [{ type: "output_text", text: "READY" }] }], usage: { input_tokens: 1, output_tokens: 1 } })
+  }
+  const modelAccess: HeadlessModelAccess = { ...access, protocol: "openai-responses", headers: { "x-openwork-workbot-grant": "signed-grant" } }
+  const adapter = createModelAdapter(modelAccess, { maxOutputTokens: 32, fetch: transport })
+  await adapter.complete({ system: "test", messages: [{ role: "user", text: "Hello" }], model: "member-model", apiKey: access.apiKey, tools: [], signal: new AbortController().signal })
+  assert.deepEqual(seen, ["signed-grant"])
+  const { headlessModelAccessSchema } = await import("../src/types.js")
+  const parsed = headlessModelAccessSchema.parse({ ...access, headers: { "x-openwork-workbot-grant": "g", authorization: "Bearer other" } })
+  assert.deepEqual(parsed.headers, { "x-openwork-workbot-grant": "g" })
+})

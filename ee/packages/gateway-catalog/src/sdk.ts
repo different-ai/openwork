@@ -15,10 +15,8 @@ export type ProtocolFamily =
   | "google_vertex_anthropic"
   | "bedrock"
   | "bedrock_mantle"
-  /** Claude on Microsoft Foundry: the Anthropic Messages API on `<resource>.services.ai.azure.com/anthropic`. */
   | "microsoft_foundry"
 
-// Bedrock requests are re-signed with SigV4 by the Gateway.
 export const GATEWAY_SDK_FAMILIES = {
   "@ai-sdk/anthropic": "anthropic",
   "@ai-sdk/openai": "openai",

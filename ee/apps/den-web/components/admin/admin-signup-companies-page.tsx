@@ -19,7 +19,6 @@ type State = (AdminResult<AdminSignupCompanies> & { query: string }) | { access:
 type Company = AdminSignupCompanies["companies"][number];
 const count = (value: number) => new Intl.NumberFormat().format(value);
 const PATH = "/admin/opportunities/companies";
-// The two saved views of the sales team's signup sheet.
 const VIEWS = [{ id: "active", label: "Active (30d)" }, { id: "all", label: "All companies" }] as const;
 
 export function AdminSignupCompaniesPage() {
@@ -52,7 +51,6 @@ export function AdminSignupCompaniesPage() {
       }, controller.signal).then(result => {
         if (controller.signal.aborted) return;
         if (result.access === "error") setError(result.message);
-        // Keep a verified snapshot only for a failed refresh of these filters.
         setState(current => result.access === "error" && current.access === "ready" && current.query === query ? current : { ...result, query });
       }).catch((reason: unknown) => {
         if (controller.signal.aborted) return;

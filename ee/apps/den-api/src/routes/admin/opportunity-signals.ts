@@ -3,8 +3,6 @@ import { AccountFollowUpTable, AuthUserTable, MemberTable, OrgSubscriptionTable,
 import { db } from "../../db.js"
 import { parseOrganizationPlan } from "../../entitlements.js"
 
-// A transparent heuristic, not an employer directory. A verified address on an
-// unlisted domain is a signal only; never merge organizations by email domain.
 export const PERSONAL_EMAIL_DOMAINS = [
   "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.uk", "yahoo.fr", "yahoo.de", "yahoo.co.jp", "ymail.com", "rocketmail.com",
   "outlook.com", "hotmail.com", "hotmail.co.uk", "hotmail.fr", "live.com", "live.co.uk", "live.fr", "msn.com",
@@ -13,11 +11,9 @@ export const PERSONAL_EMAIL_DOMAINS = [
   "mail.com", "email.com", "gmx.com", "gmx.net", "gmx.de", "web.de", "yandex.com", "yandex.ru", "ya.ru",
   "mail.ru", "inbox.ru", "bk.ru", "list.ru", "qq.com", "foxmail.com", "163.com", "126.com",
   "naver.com", "daum.net", "hanmail.net", "zoho.com", "rediffmail.com", "yopmail.com", "mailinator.com",
-  // Forwarding aliases: an address here says nothing about an employer.
   "mozmail.com", "duck.com", "privaterelay.appleid.com", "simplelogin.com", "passmail.net",
 ]
 
-/** The verified, non-personal email domain of an account, or null. */
 export function companyDomainSql() {
   const domain = sql<string>`lower(trim(substring_index(${AuthUserTable.email}, '@', -1)))`
   const personalDomains = sql.join(PERSONAL_EMAIL_DOMAINS.map((value) => sql`${value}`), sql`, `)
@@ -28,13 +24,11 @@ export function companyDomainSql() {
 
 type OrganizationIdColumn = SQL | typeof OrganizationTable.id | typeof MemberTable.organizationId
 
-/** 1 when the organization has a current active subscription. Trials are not paying. */
 export function payingSql(organizationId: OrganizationIdColumn, now: Date) {
   return sql<number>`exists(select 1 from ${OrgSubscriptionTable} where ${OrgSubscriptionTable.organization_id} = ${organizationId}
     and ${OrgSubscriptionTable.status} = 'active' and (${OrgSubscriptionTable.current_period_end} is null or ${OrgSubscriptionTable.current_period_end} >= ${now}))`
 }
 
-/** 1 when a platform admin recorded outreach, a reply or a meeting for the organization. */
 export function contactedSql(organizationId: OrganizationIdColumn) {
   return sql<number>`exists(select 1 from ${AccountFollowUpTable} where ${AccountFollowUpTable.organizationId} = ${organizationId}
     and (${AccountFollowUpTable.lastContactedAt} is not null or ${AccountFollowUpTable.stage} in ('contacted', 'engaged')))`
@@ -43,7 +37,6 @@ export function contactedSql(organizationId: OrganizationIdColumn) {
 type Billing = { plan: "free" | "team" | "enterprise", paying: boolean, modelsAddOn: boolean }
 type Outreach = { status: "not_contacted" | "contacted", lastContactedAt: string | null }
 
-/** Plan, paid status and recorded outreach for a bounded set of organizations. Never calls Stripe. */
 export async function readOrganizationSignals(ids: string[], now: Date) {
   const signals = new Map<string, { billing: Billing, outreach: Outreach }>()
   if (!ids.length) return signals

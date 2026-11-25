@@ -1,8 +1,3 @@
-/**
- * Every config-blob area, in CONFIG_AREA_KEYS order. The engine sorts them by
- * `dependsOn` itself. `scripts/check-config-blob-coverage.ts` checks that each
- * org-scoped table is owned by one of these or listed in `excluded.ts`.
- */
 import { CONFIG_AREA_KEYS, type ConfigAreaKey } from "@openwork/types/den/config-blobs"
 import type { ConfigArea } from "./area.js"
 import { aiGatewayByokArea } from "./areas/ai-gateway-byok.js"

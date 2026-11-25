@@ -1,8 +1,3 @@
-/**
- * TrueFoundry gateway provider requests and display helpers. Request bodies
- * mirror den-api's /v1/inference-providers/truefoundry schemas; the admin key
- * is write-only and never read back, and people's tokens never leave Den.
- */
 import type { GatewayTrueFoundryAttentionReason, GatewayTrueFoundryStatus, GatewayTrueFoundrySyncResult } from "@openwork/types/den/gateway";
 import { auditOperationHeaders, type AuditOperationContext } from "@openwork/types/den/audit";
 import { z } from "zod";
@@ -15,13 +10,11 @@ export const TRUEFOUNDRY_ACCESS_GROUP_NAME = "Gets a TrueFoundry key";
 export const TRUEFOUNDRY_TOO_MANY_TOKENS_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/truefoundry-too-many-tokens";
 
 export const CREATE_MISSING_USERS_LABEL = "Create missing users in TrueFoundry";
-// Spec wording, with "Virtual Account" replaced: the key OpenWork creates is a personal access token owned by the new user.
 export const CREATE_MISSING_USERS_DESCRIPTION = "If a user exists in OpenWork but not in TrueFoundry, create a new user in TrueFoundry and generate a new API key for them. Only default models will be available to the user until you configure their teams and access in TrueFoundry.";
 
 export const TRACK_USAGE_COSTS_LABEL = "Track usage costs in OpenWork";
 export const TRACK_USAGE_COSTS_DESCRIPTION = "Where possible, track the cost of user's usages inside OpenWork contributing to users configured limits and usage tracking. This will use the models default public pricing";
 
-/** The status row: what OpenWork does with spend for this provider. */
 export function trueFoundrySpendLabel(trackUsageCosts: boolean) {
   return trackUsageCosts ? "Tracked in OpenWork at public pricing, where a model has it" : "Not tracked, TrueFoundry budgets each person";
 }
@@ -48,7 +41,6 @@ export function buildTrueFoundryCreateBody(input: TrueFoundryCreateInput) {
   };
 }
 
-/** Client-side check before the server verifies the key with TrueFoundry. */
 export function trueFoundryCreateError(input: Pick<TrueFoundryCreateInput, "controlPlaneUrl" | "apiKey">): string | null {
   const address = input.controlPlaneUrl.trim();
   if (!address) return "Enter the address you open TrueFoundry at.";
@@ -110,10 +102,6 @@ export async function updateTrueFoundryProvider(providerId: string, body: { apiK
   return readResult(payload);
 }
 
-/**
- * Revokes every TrueFoundry token a person at the token limit holds, then creates a new OpenWork key.
- * Returns their new state, e.g. "active", or "token_limit" if TrueFoundry still refuses.
- */
 export async function resetTrueFoundryMemberTokens(providerId: string, memberId: string, auditContext?: AuditOperationContext) {
   const { response, payload } = await requestJson(`/v1/inference-providers/${encodeURIComponent(providerId)}/truefoundry/members/${encodeURIComponent(memberId)}/reset-tokens`, {
     method: "POST", headers: auditOperationHeaders(auditContext),
@@ -133,19 +121,16 @@ export function trueFoundrySyncSummary(sync: GatewayTrueFoundrySyncResult) {
   return `Synced ${parts.join(", ")}.`;
 }
 
-/** `openai-main/gpt-5.5` -> `openai-main`: the TrueFoundry provider account a model is served through. */
 export function trueFoundryModelAccount(modelId: string): string {
   const slash = modelId.indexOf("/");
   return slash > 0 ? modelId.slice(0, slash) : "TrueFoundry";
 }
 
-/** Picked models that TrueFoundry still lists, in the order it lists them. */
 export function trueFoundryPickedModels(status: Pick<GatewayTrueFoundryStatus, "availableModels" | "selectedModelIds">): string[] {
   const picked = new Set(status.selectedModelIds ?? status.availableModels.map((model) => model.id));
   return status.availableModels.filter((model) => picked.has(model.id)).map((model) => model.id);
 }
 
-/** Whether the admin's draft differs from what is saved. Order does not matter. */
 export function trueFoundryModelPickChanged(status: Pick<GatewayTrueFoundryStatus, "availableModels" | "selectedModelIds">, draft: { allowAll: boolean; modelIds: string[] }): boolean {
   if (draft.allowAll !== (status.selectedModelIds === null)) return true;
   if (draft.allowAll) return false;

@@ -45,10 +45,6 @@ export const samlResponsePolicyMiddleware: MiddlewareHandler = async (c, next) =
     return c.json({ error: "invalid_saml_configuration" }, 400)
   }
 
-  // Better Auth advertises the baseURL-derived ACS in SP metadata and in the
-  // AuthnRequest, so the IdP posts there. Providers registered while the
-  // stored callbackUrl pointed at the API origin must keep working, so accept
-  // either URL as the delivery target.
   const expectedAcsUrls = [...new Set([config.callbackUrl, getSsoAcsUrl(providerId)])]
   const result = validateSamlResponsePolicy({
     samlResponse,

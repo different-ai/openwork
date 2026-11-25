@@ -10,7 +10,6 @@ import {
 import { classifyOpenTarget, isOpenableFileTarget, openTargetFromUrl, type OpenTarget } from "./open-target";
 import { sessionFileCandidate } from "./path-reference-context";
 
-/** A file target for a path written in chat, cleaned up by the shared path reader. */
 export function openTargetFromLocalPath(
   value: string,
   options: { decode?: boolean; confidence?: number; reason?: string } = {},
@@ -51,17 +50,12 @@ export function isWorkspaceContainedArtifactTarget(target: OpenTarget) {
   return normalized.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
-/**
- * The absolute local path an explicit native open may use, never a URL or a
- * network share. `~/` expands only when the home folder is known.
- */
 export function localArtifactPath(root: string | null | undefined, value: string, homeDir?: string | null): string | null {
   const reference = parseLocalPathReference(value);
   if (!reference) return null;
   return resolveLocalPath(reference, { workspaceRoot: root, homeDir });
 }
 
-/** Compare locations only; the literal path handed to the desktop is never rewritten. */
 function isWorkspaceContainedPath(root: string | null | undefined, path: string): boolean {
   const base = root?.trim();
   if (!base) return false;
@@ -71,7 +65,6 @@ function isWorkspaceContainedPath(root: string | null | undefined, path: string)
     .replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase());
   const container = normalize(base);
   const candidate = normalize(path);
-  // A dot segment can leave the workspace after the prefix matches; never treat it as inside.
   if (candidate.split("/").some((segment) => /^\.{1,2}\s*$/.test(segment))) return false;
   if (!container) return candidate.startsWith("/");
   return candidate === container || candidate.startsWith(`${container}/`);
@@ -79,16 +72,6 @@ function isWorkspaceContainedPath(root: string | null | undefined, path: string)
 
 export type NativeFileAction = { path: string; action: "open" | "reveal" };
 
-/**
- * Decide what an explicit native action may do with a referenced path. Only files inside
- * the workspace are handed to their default application. Anything else is shown in the
- * file manager and never launched, so a referenced path cannot start a program.
- *
- * This is a string-level pre-check for menu affordances. The desktop process makes the
- * final decision on disk (`__openWorkspaceFile` / `__openWithApp`): it resolves symlinks
- * for both the workspace root and the file and launches only a real file that stays inside
- * the real workspace, revealing anything else instead.
- */
 export function nativeFileAction(
   root: string | null | undefined,
   value: string,
@@ -116,18 +99,13 @@ export async function resolveCollectibleOpenTarget(
   return response.items.find(isWorkspaceContainedArtifactTarget) ?? null;
 }
 
-/** Where a clicked file reference leads. */
 export type FileOpenPlan =
-  /** The workspace has this file; `target.value` is workspace-relative. */
   | { kind: "workspace"; target: OpenTarget }
-  /** A file on this computer outside what the workspace can show; hand it to the desktop. */
   | { kind: "native"; path: string; action: "open" | "reveal"; reference: LocalPathReference }
-  /** Nothing to open; say why in words a person understands. */
   | { kind: "unavailable"; message: string };
 
 export type FileOrigin = "local" | "remote" | "unknown";
 
-/** Origin comes from the session's owning runtime, never from the spelling of a path. */
 export function fileOriginForRuntime(input: { desktop: boolean; serverUrl?: string | null; sandboxBackend?: string | null }): FileOrigin {
   if (!input.serverUrl) return "unknown";
   try {
@@ -140,11 +118,6 @@ export function fileOriginForRuntime(input: { desktop: boolean; serverUrl?: stri
   }
 }
 
-/**
- * Copy a reference in its own machine's namespace, never expand a remote `~/` locally.
- * A relative reference the workspace has not verified has no known absolute location
- * yet; keep it as written instead of guessing a workspace-root path that is not there.
- */
 export function filePathForCopy(target: OpenTarget, context: { origin: FileOrigin; workspaceRoot?: string | null; homeDir?: string | null }): string {
   if (target.resolvedPath) return target.resolvedPath;
   if (context.origin !== "local") return target.value;
@@ -160,22 +133,13 @@ export function unavailableFileMessage(origin: FileOrigin): string {
 }
 
 export type FileOpenContext = {
-  /** Only a session owned by this computer's native runtime may use local file APIs. */
   origin: FileOrigin;
   workspaceRoot?: string | null;
   homeDir?: string | null;
-  /** Can this app hand files to the operating system (desktop)? */
   canOpenLocally: boolean;
-  /** Reveal in the file manager instead of opening. */
   reveal?: boolean;
-  /**
-   * Ask the workspace for the file, searching for it by name when the path
-   * does not exist as written. Absent when the workspace is not connected.
-   */
   findInWorkspace?: (target: OpenTarget, options?: { search: boolean }) => Promise<OpenTarget | null>;
-  /** Read-only existence/canonicalization on this computer; never called for remote origins. */
   findOnComputer?: (path: string) => Promise<string | null>;
-  /** File identities from this session's tool calls and verified transcript. */
   sessionTargets?: OpenTarget[];
 };
 
@@ -183,21 +147,8 @@ function quoted(path: string) {
   return `\u201c${path}\u201d`;
 }
 
-/**
- * Decide how to open a file reference from chat. Every chat surface (inline
- * code, Markdown links, file chips, tool rows) reaches this one decision:
- *
- * 1. Read the reference once (`~/`, `file://`, quotes, `:line[:col]`).
- * 2. Check exact directory-context and session-evidence candidates, followed by
- *    bounded workspace/conversation search for an unresolved relative name.
- * 3. Only for a local-origin session, canonicalize/check candidates on this
- *    computer. The desktop rechecks before opening/revealing the selected item.
- * 4. Otherwise give a calm unavailable/other-machine result for the caller's
- *    copy-path fallback, never hand the desktop a guessed or remote path.
- */
 export async function planFileOpen(target: OpenTarget, context: FileOpenContext): Promise<FileOpenPlan> {
   if (target.kind !== "file") return { kind: "unavailable", message: "This link is not a file." };
-  // Transcript verification is a snapshot, not a promise the file still exists.
   if (target.exists === true && !context.findInWorkspace) return { kind: "workspace", target };
 
   const reference = parseLocalPathReference(target.value);
@@ -205,7 +156,6 @@ export async function planFileOpen(target: OpenTarget, context: FileOpenContext)
     return { kind: "unavailable", message: `${quoted(target.name || target.value)} is not a file OpenWork can open.` };
   }
 
-  // A remote `~/` belongs to that runtime's account, not this computer's user.
   const homeDir = context.origin === "local" ? context.homeDir : null;
   const pathContext = { workspaceRoot: context.workspaceRoot, homeDir };
   const value = workspaceLookupValue(reference, pathContext);
@@ -225,8 +175,6 @@ export async function planFileOpen(target: OpenTarget, context: FileOpenContext)
       if (candidate && candidate.value !== target.value) candidates.push(candidate);
     }
     const evidence = sessionFileCandidate(reference, context.sessionTargets ?? []);
-    // The written directory is strongest evidence. Then try the written path,
-    // then a unique session identity; only afterwards do a bounded name search.
     if (candidates.length || evidence) candidates.push(lookup);
     if (evidence) candidates.push(evidence);
   }
@@ -239,15 +187,10 @@ export async function planFileOpen(target: OpenTarget, context: FileOpenContext)
         const found = await context.findInWorkspace(candidateLookup, { search });
         if (found) return { kind: "workspace", target: found };
       } catch (error) {
-        // A local server outage doesn't make an existing local file disappear.
-        // Remote and unknown origins must still stop without probing this disk.
         if (context.origin !== "local" || !context.findOnComputer) throw error;
       }
     }
     if (context.origin !== "local" || !context.canOpenLocally || !context.findOnComputer) return null;
-    // A conversation-relative identity cannot be reconstructed from the workspace
-    // root. If its owning resolver misses, only an exact known absolute path can
-    // be probed; never accidentally open a same-named workspace file.
     if (candidate.fileScope === "conversation" && !candidate.resolvedPath) return null;
     const absolute = resolveLocalPath(parsed, pathContext);
     if (!absolute) return null;
@@ -264,14 +207,10 @@ export async function planFileOpen(target: OpenTarget, context: FileOpenContext)
     const found = await find(lookup, !pinned);
     if (found) return found;
   } catch {
-    // An offline/expired connection isn't evidence that another file is the one
-    // the person meant. In particular, never fall through to local disk remotely.
     return notFound;
   }
 
   if (context.findOnComputer || pinned || !context.canOpenLocally || context.origin !== "local") return notFound;
-  // The workspace already looked for a relative name and has no such file;
-  // joining it to the workspace folder would only name a file that is not there.
   if (reference.anchor === "relative" && context.findInWorkspace) return notFound;
 
   const native = nativeFileAction(context.workspaceRoot, reference.path, { reveal: context.reveal, homeDir });

@@ -18,8 +18,6 @@ function companyScope(input: { activity: string; outreach: string; billing: stri
   return JSON.stringify([input.activity, input.outreach, input.billing, input.sort, input.search?.trim().toLowerCase() ?? ""])
 }
 
-// Grouped rows have no stable key to seek from, so the opaque cursor carries the
-// next position together with the filters it belongs to.
 const cursorSchema = z.string().min(1).max(1024).transform((value, context) => {
   let payload: unknown
   try { payload = /^[A-Za-z0-9_-]+$/.test(value) ? JSON.parse(Buffer.from(value, "base64url").toString("utf8")) : null } catch { payload = null }
@@ -42,11 +40,6 @@ const querySchema = z.object({
   path: ["cursor"], message: "Keep the cursor's filters and sort unchanged, and do not combine cursor with offset.",
 })
 
-/**
- * Signups grouped by verified company email domain across every organization
- * those people joined. A domain is a signal, not proof of employment; the
- * organizations themselves are never merged. No external enrichment.
- */
 export async function readAdminSignupCompanies(input: z.infer<typeof querySchema>, now = new Date()) {
   const request = normalizeAdminPageRequest({ ...input, offset: input.cursor ? String(input.cursor.position) : input.offset, limit: String(input.limit) })
   const from = new Date(now.getTime() - 30 * DAY)
@@ -54,8 +47,6 @@ export async function readAdminSignupCompanies(input: z.infer<typeof querySchema
   const people = db.$with("company_people").as(db.select({
     userId: sql<string>`${AuthUserTable.id}`.as("person_id"), domain: sql<string>`${domain}`.as("company_domain"),
     signedUpMs: sql<number>`unix_timestamp(${AuthUserTable.createdAt}) * 1000`.as("signed_up_ms"),
-    // Sessions are the latest sign-in still on record; expired sessions may be gone.
-    // Qualified by hand: a single-table CTE renders its columns without the table name.
     lastSignInMs: sql<number | null>`(select unix_timestamp(max(${sql.identifier("session")}.${sql.identifier("created_at")})) * 1000 from ${AuthSessionTable}
       where ${sql.identifier("session")}.${sql.identifier("user_id")} = ${sql.identifier("user")}.${sql.identifier("id")})`.as("last_sign_in_ms"),
   }).from(AuthUserTable).where(and(sql`${domain} is not null`, lte(AuthUserTable.createdAt, now))))
@@ -135,7 +126,6 @@ export async function readAdminSignupCompanies(input: z.infer<typeof querySchema
   }
 }
 
-/** The three organizations with the most people from each company domain. */
 async function readCompanyWorkspaces(domains: string[], now: Date) {
   const workspaces = new Map<string, { id: string, name: string, members: number }[]>()
   if (!domains.length) return workspaces

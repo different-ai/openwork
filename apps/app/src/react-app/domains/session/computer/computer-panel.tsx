@@ -18,7 +18,6 @@ type Interaction = "takeover" | "resume"
 const inputLabels: Record<string, string> = { move: "Moving", click: "Click", double_click: "Double click", triple_click: "Triple click", drag: "Dragging", scroll: "Scrolling", key: "Key press", type: "Typing", press: "Press", set_value: "Editing", enter_value: "Editing", focus: "Focus" }
 const pausedPhases = ["paused", "person_interacting", "ready_to_continue", "requery_required"]
 
-/** Full window, like the browser's full screen: Escape returns to the floating view. */
 function FullScreen({ children, onExit }: { children: ReactNode; onExit: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
   useLayoutEffect(() => {
@@ -45,7 +44,6 @@ function FullScreen({ children, onExit }: { children: ReactNode; onExit: () => v
   )
 }
 
-/** A watch surface. Only the explicit controls below can hand back control. */
 export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy, stopping, cleanupPending, stopError, onStop }: {
   sessionId: string
   slot: HTMLElement
@@ -71,7 +69,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
   const [cardSize, setCardSize] = useState({ width: 0, height: 0 })
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null)
   const [screenSize, setScreenSize] = useState({ width: 0, height: 0 })
-  // Starts in the top right corner, where picture in picture usually sits; clamped to the chat.
   const [position, setPosition] = useState({ x: Number.MAX_SAFE_INTEGER, y: 12 })
   const [dragging, setDragging] = useState(false)
   const [popout, setPopout] = useState<ComputerPopout | null>(null)
@@ -116,7 +113,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     monitor.current.wake()
   }
 
-  /** Moves the view into its own window. A drag past OpenWork's edge keeps it under the pointer. */
   function popOut(grab?: { x: number; y: number; screenX: number; screenY: number }) {
     if (monitor.current.popout) return
     const size = { width: 460, height: Math.max(260, Math.min(520, card.current?.offsetHeight ?? 360)) }
@@ -131,7 +127,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     setPopout(next)
     next.window.addEventListener("pagehide", () => { if (monitor.current.popout === next) popIn() })
     if (grab) {
-      // The press began in this window, so its moves keep arriving here until release.
       const follow = (event: PointerEvent) => { if (!next.window.closed) next.window.moveTo(event.screenX - grab.x, event.screenY - grab.y) }
       const end = () => { window.removeEventListener("pointermove", follow); window.removeEventListener("pointerup", end); window.removeEventListener("blur", end) }
       window.addEventListener("pointermove", follow)
@@ -143,7 +138,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     monitor.current.wake()
   }
 
-  /** Back into the chat; closing the window does the same. */
   function popIn() {
     const current = monitor.current.popout
     if (!current) return
@@ -174,7 +168,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     let again = false
     let timer = 0
     const shown = () => monitor.current.fullscreen || monitor.current.popout !== null || (slot.getClientRects().length > 0 && slot.clientWidth > 24 && slot.clientHeight > 24)
-    // A popped-out view keeps watching while OpenWork itself is hidden behind other apps.
     const viewDocument = () => monitor.current.popout?.window.document ?? document
     const visible = () => latest.current !== null && !monitor.current.minimized && viewDocument().visibilityState === "visible" && captureAllowed() && shown()
     async function poll() {
@@ -183,7 +176,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
       reading = true
       again = false
       try {
-        // Serialize visibility changes with the current read, including Strict Mode cleanup.
         await transport.current?.catch(() => null)
         if (disposed) return
         const revision = monitor.current.revision
@@ -205,8 +197,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
         const sameScope = scope.current === nextScope
         const working = watching && next.phase === "working"
         const uninterrupted = sameScope && working && monitor.current.working && latest.current?.phase === "working"
-        // Pauses, visibility gaps and target changes end the capture generation.
-        // Even a quick resume must wait for an image captured after that boundary.
         if (!sameScope || latest.current?.phase !== next.phase || monitor.current.working !== working) clearScreen()
         if (!sameScope) {
           const newSession = latest.current?.id !== next.id
@@ -254,7 +244,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
       monitor.current.wake = () => {}
       window.clearTimeout(timer)
       document.removeEventListener("visibilitychange", visibility)
-      // Never revoke on navigation. A final hidden heartbeat follows any outstanding read.
       transport.current = (transport.current ?? Promise.resolve(null)).catch(() => null)
         .then(() => desktopBridge.computerPresentation(sessionId, false)).catch(() => null)
     }
@@ -282,7 +271,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     const resize = new ResizeObserver(measure)
     resize.observe(slot)
     if (card.current) resize.observe(card.current)
-    // Elements in the popped-out window are observed from that window.
     const viewResize = popout && viewport ? new (popout.window as Window & typeof globalThis).ResizeObserver(measure) : null
     if (viewport) (viewResize ?? resize).observe(viewport)
     return () => { resize.disconnect(); viewResize?.disconnect() }
@@ -299,7 +287,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     if (action === "takeover" || action === "resume") clearScreen()
     try {
       await desktopBridge.computerInteract({ sessionId, id: current.id, action })
-      // A turn that ended while the person had control picks up again (see session-surface).
       if (action === "resume") useComputerStore.getState().markContinued(sessionId)
     } catch {
       if (mounted.current && scope.current === actionScope) {
@@ -444,9 +431,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     )
   }
 
-  // Picture in picture: the window itself, no frame or header. A status dot and the two
-  // controls a person may need at once (Take over or Continue, and Stop) stay on the picture;
-  // the app's name and the view's own tools show on hover or keyboard focus.
   const dot = <span aria-hidden className={cn("size-2 shrink-0 rounded-full", live ? "bg-green-9" : paused ? "bg-amber-9" : unavailable || stopPending ? "bg-red-9" : "bg-white/40")} />
   const toolButton = "rounded-full text-white/85 hover:bg-white/15 hover:text-white focus-visible:ring-white/40"
   const reveal = "opacity-0 transition-opacity duration-150 group-hover/pip:opacity-100 group-focus-within/pip:opacity-100"
@@ -463,7 +447,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     onPointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => {
       const current = drag.current
       if (!current || current.id !== event.pointerId) return
-      // Past OpenWork's own edge, the view leaves the chat as its own window.
       if (event.clientX < 0 || event.clientY < 0 || event.clientX > window.innerWidth || event.clientY > window.innerHeight) {
         popOut({ ...current.grab, screenX: event.screenX, screenY: event.screenY })
         return
@@ -531,7 +514,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
       </div> : <>
         <div className="relative">
           {screen}
-          {/* The whole picture moves the view; its own controls sit above it. */}
           <button
             ref={moveButton}
             type="button"

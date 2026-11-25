@@ -29,12 +29,6 @@ export function libraryAddKindLabel(kind: LibraryAddKind) {
   }
 }
 
-/**
- * `focusableWhenDisabled` keeps the reason tooltip reachable, but it renders
- * aria-disabled instead of the `disabled` attribute, so the Button's
- * `disabled:` styles never apply. Without this the control looked fully
- * enabled and silently ignored clicks.
- */
 const unavailableClassName = "data-disabled:cursor-not-allowed data-disabled:opacity-50 data-disabled:active:translate-y-0";
 
 export function LibraryAddControl(props: {

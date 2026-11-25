@@ -34,8 +34,6 @@ export function installerLatestReleaseAssetUrl(
   options: { releaseRepo?: string } = {},
 ) {
   const releaseRepo = options.releaseRepo ?? env.installerReleaseRepo
-  // GitHub latest only flips when publish-release un-drafts after release assets are ready,
-  // so this URL cannot 404 during a release window.
   return `https://github.com/${releaseRepo}/releases/latest/download/${encodeURIComponent(fileName)}`
 }
 
@@ -66,11 +64,6 @@ export function cloudDesktopReleaseAssetName(platform: string, releaseTag: strin
   return publicName?.replace(/^openwork-/, "openwork-cloud-") ?? null
 }
 
-/**
- * Resolves only an explicitly provisioned desktop artifact. The normal
- * internet-connected path redirects the browser to GitHub instead, so Den
- * never downloads or caches a release artifact on demand.
- */
 export async function resolveConfiguredInstallerArtifact(
   fileName: string,
 ): Promise<ConfiguredInstallerArtifact | null> {
@@ -84,7 +77,6 @@ export async function resolveConfiguredInstallerArtifact(
       return { filePath, fileName, size: artifact.size }
     }
   } catch {
-    // Missing or inaccessible artifacts are treated as unmounted.
   }
   return null
 }

@@ -6,7 +6,6 @@ import { dictationMeterSamples } from "./dictation-waveform"
 
 export type NativeDictationResult = { ok: true } | { ok: false; reason: "unavailable" | "not_focused" | "failed" }
 export type DictationPlatform = "macos" | "windows" | "mobile" | "unsupported"
-// Meter updates repaint only the waveform, not the editor and entire composer.
 function createMeter() {
   let levels: number[] = []
   const listeners = new Set<() => void>()
@@ -31,13 +30,8 @@ export function useNativeDictation(options: {
   selection(): { start: number; end: number }
   focusInput(): void
   startNative?: (signal: AbortSignal) => Promise<NativeDictationResult>
-  /** A recognizer the host runs itself (desktop speech helper); preferred over
-   * handing off to system dictation, which owns its own transcript. If it fails
-   * before it starts listening, system dictation is the fallback. */
   recognition?: BrowserSpeechConstructor
-  /** Tooltip naming who transcribes for `recognition`. */
   recognitionTitle?: string
-  /** On-device host recognition: meter audio and await final words on Send. */
   local?: boolean
 }) {
   const [platform, setPlatform] = useState<DictationPlatform>("unsupported")
@@ -50,8 +44,6 @@ export function useNativeDictation(options: {
   const session = useRef<ReturnType<typeof createBrowserDictation> | null>(null)
   const request = useRef<AbortController | null>(null)
   const generation = useRef(0)
-  // A recognizer can publish again between a React commit and its effects.
-  // Remember our unacknowledged drafts so an older echo is not a user edit.
   const publishedDrafts = useRef(new Set<string>())
   const currentOptions = useRef(options)
   currentOptions.current = options
@@ -93,8 +85,6 @@ export function useNativeDictation(options: {
       ? text ?? null : null
   }
   useEffect(() => {
-    // Edits outside the text input (chips, imported drafts, navigation) also
-    // fence recognition so a late interim result cannot overwrite them.
     if (!session.current) return
     if (publishedDrafts.current.delete(options.text)) {
       if (options.text === session.current.text()) publishedDrafts.current.clear()
@@ -118,9 +108,6 @@ export function useNativeDictation(options: {
     if (!Speech) return
     const id = ++generation.current
     publishedDrafts.current.clear()
-    // A host recognizer that fails before listening (permission, language,
-    // missing speech service) hands over to system dictation instead.
-    // A local-only session must not silently hand audio to system/online dictation.
     const fallback = Boolean(options.recognition) && nativeCapable && !options.local
     let listened = false
     let failed: string | null = null

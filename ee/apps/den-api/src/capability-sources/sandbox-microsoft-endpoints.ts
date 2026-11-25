@@ -4,19 +4,6 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { env } from "../env.js"
 
-/**
- * Where a sandbox organization's sample Microsoft 365 connector signs in and reads Graph: the sandbox's own
- * fictional workplace (evals/packages/open-workplace/src/workshop-microsoft.mjs), never Microsoft. Decided per
- * organization from what only Den sets, so every other organization and connector keeps Microsoft's endpoints:
- *
- * - the OAuth client carries SANDBOX_MICROSOFT_CLIENT_MARKER, which only sandbox setup writes (admins can change a
- *   client's ID, secret, tenant and features, never its other settings);
- * - the organization is an open sandbox, and the address is the workplace address a platform admin gave it;
- * - this is a cloud deployment.
- *
- * When any of these stops being true the marked connector is unavailable: Den refuses to sign in or call Graph with
- * it rather than sending a sample client or token to Microsoft.
- */
 export const SANDBOX_MICROSOFT_CLIENT_MARKER = "openWorkplaceSandbox"
 
 export type SandboxMicrosoftEndpoints =
@@ -27,7 +14,6 @@ export function isSandboxMicrosoftClient(extra: Record<string, unknown> | null |
   return extra?.[SANDBOX_MICROSOFT_CLIENT_MARKER] === true
 }
 
-/** The sign-in and Graph addresses a sandbox's workplace serves, from its root address. */
 export function sandboxMicrosoftAddresses(workplaceUrl: string) {
   const root = workplaceUrl.replace(/\/+$/, "")
   return {

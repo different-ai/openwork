@@ -71,7 +71,6 @@ function findOption(options: readonly AutoRouterModelOption[], ref: ModelRef): A
   return options.find((option) => sameModel(option, ref)) ?? null;
 }
 
-/** The Smart Router mark, the size of a provider's brand mark. */
 export function SmartRouterMark({ size = "md" }: { size?: "sm" | "md" }) {
   return (
     <span
@@ -115,10 +114,8 @@ function ModelRowEditor({ row, index, options, takenValues, taskOptions, reached
   row: RouterModelDraft;
   index: number;
   options: readonly AutoRouterModelOption[];
-  /** Models other rows already use. */
   takenValues: ReadonlySet<string>;
   taskOptions: readonly string[];
-  /** The people the router applies to; empty while it applies to nobody. */
   reached: readonly string[];
   directory: RouterDirectory;
   disabled: boolean;
@@ -201,7 +198,6 @@ function ModelRowEditor({ row, index, options, takenValues, taskOptions, reached
   );
 }
 
-/** Step one, or the details of a saved router: name, then models with their tasks. */
 function DetailsCards({ draft, setDraft, options, optionsPending, optionsError, knownTasks, reached, directory, disabled }: {
   draft: RouterDraft;
   setDraft: (update: (current: RouterDraft) => RouterDraft) => void;
@@ -215,7 +211,6 @@ function DetailsCards({ draft, setDraft, options, optionsPending, optionsError, 
 }) {
   const nameId = useId();
   const nextKey = useRef(0);
-  /** Tasks typed in this editor that aren't saved yet: offered on every row. */
   const [sessionTasks, setSessionTasks] = useState<string[]>([]);
   const taskOptions = useMemo(
     () => mergeTasks(knownTasks, sessionTasks, ...draft.models.map((row) => row.tasks)),
@@ -319,7 +314,6 @@ function WhoCanUseItCard({ access, onChange, directory, canShareWithEveryone, di
   );
 }
 
-/** Step two's view of the models: who can't use which. */
 function ModelAccessCard({ router, options, reached, directory }: {
   router: AutoRouter;
   options: readonly AutoRouterModelOption[];
@@ -371,13 +365,6 @@ function Steps({ step }: { step: 1 | 2 }) {
   );
 }
 
-/**
- * A Smart Router's page, shown like a provider's under AI Providers.
- * - No router id: step one of creating one (name, models, tasks). Continue
- *   creates it, applying to nobody, and opens step two.
- * - `step="access"`: step two, who it applies to.
- * - Otherwise: the router's details and who can use it, saved together.
- */
 export function AutoRouterScreen({ routerId, step }: { routerId?: string; step?: "access" }) {
   const navigation = useRouter();
   const { orgId: scopedOrgId, orgSlug, orgContext } = useOrgDashboard();
@@ -403,7 +390,6 @@ export function AutoRouterScreen({ routerId, step }: { routerId?: string; step?:
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [draft, setDraftState] = useState<RouterDraft>(() => routerToDraft(null, () => "row-0"));
   const [access, setAccess] = useState<AccessDraft>(EMPTY_ACCESS);
-  // Load the saved router into the editor once it arrives (and again if another one opens).
   if (router && loadedId !== router.id) {
     let index = 0;
     setLoadedId(router.id);
@@ -519,7 +505,6 @@ export function AutoRouterScreen({ routerId, step }: { routerId?: string; step?:
     }
   }
 
-  // Step one: a new router's name, models and tasks.
   if (!router) {
     return (
       <div className="pb-28" data-testid="auto-router-editor" data-step="details">
@@ -552,7 +537,6 @@ export function AutoRouterScreen({ routerId, step }: { routerId?: string; step?:
 
   const title = autoRouterModelName(router.name);
 
-  // Step two: who the new router applies to.
   if (step === "access") {
     return (
       <div className="pb-28" data-testid="auto-router-editor" data-step="access">
@@ -574,7 +558,6 @@ export function AutoRouterScreen({ routerId, step }: { routerId?: string; step?:
     );
   }
 
-  // A saved router: its details and who can use it, saved together.
   return (
     <div className="pb-28" data-testid="auto-router-editor" data-step="manage">
       {breadcrumb(title)}
@@ -621,7 +604,6 @@ export function AutoRouterScreen({ routerId, step }: { routerId?: string; step?:
   );
 }
 
-/** The "Add a Smart Router" button beside "Add a provider". Without the routing key it opens the setup steps instead. */
 export function AddSmartRouterButton({ missingKey }: { missingKey: boolean }) {
   const { orgSlug } = useOrgDashboard();
   const [setupOpen, setSetupOpen] = useState(false);

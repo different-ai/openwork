@@ -6,15 +6,9 @@ import {
   type ServerEvent,
   type ServerEventBus,
 } from "@modelcontextprotocol/server"
-import { onInventoryChanged } from "../inventory-writes.js"
 
-/**
- * Room for create_skill or update_skill with a skill's full supporting files:
- * up to 30 MiB, which base64 makes about 40 MiB. The SDK's default is 4 MiB.
- */
 export const AGENT_MCP_MAX_REQUEST_BYTES = 48 * 1024 * 1024
 
-/** The dual-era, sessionless HTTP entry used by the public agent MCP route. */
 export function createAgentMcpHttpHandler(
   serverForRequest: (request: Request) => McpServer,
   onerror?: (error: Error) => void,
@@ -28,31 +22,24 @@ export function createAgentMcpHttpHandler(
   })
 }
 
-/** Whose catalog a request or subscription stream belongs to. */
 export type AgentMcpAudience = {
   organizationId: string
   userId: string
-  /** The stream lists Connect's full tool view (connect-tool-view.ts). */
-  fullTools: boolean
 }
 
-export type AgentMcpMember = Pick<AgentMcpAudience, "organizationId" | "userId">
+export type AgentMcpMember = AgentMcpAudience
 
 export type ScopedAgentMcpHttpHandlers = {
-  /** Serve one request inside a stable, authenticated catalog audience. */
   fetch: (audience: AgentMcpAudience, request: Request, server: McpServer) => Promise<Response>
-  /** Publish only to subscription streams in the matching audience. */
   notify: {
     toolsChanged: (member: AgentMcpMember) => void
     resourcesChanged: (member: AgentMcpMember) => void
-    /** Every full-view stream in the organization: what its members may use changed. */
-    fullToolsChanged: (organizationId: string) => void
   }
   close: () => Promise<void>
 }
 
-type Listener = { memberKey: string; organizationId: string; fullTools: boolean }
-type PublishTarget = { memberKey: string } | { organizationId: string; fullToolsOnly: true }
+type Listener = { memberKey: string }
+type PublishTarget = { memberKey: string }
 
 function memberKey(member: AgentMcpMember): string {
   return `${member.organizationId}\0${member.userId}`
@@ -66,7 +53,7 @@ class ScopedAgentMcpEventBus implements ServerEventBus {
   constructor(private readonly onerror?: (error: Error) => void) {}
 
   run<T>(audience: AgentMcpAudience, callback: () => T): T {
-    return this.audience.run({ memberKey: memberKey(audience), organizationId: audience.organizationId, fullTools: audience.fullTools }, callback)
+    return this.audience.run({ memberKey: memberKey(audience) }, callback)
   }
 
   publishTo<T>(target: PublishTarget, callback: () => T): T {
@@ -78,10 +65,7 @@ class ScopedAgentMcpEventBus implements ServerEventBus {
     const target = this.target.getStore() ?? (current ? { memberKey: current.memberKey } : null)
     if (!target) return
     for (const [listener, audience] of this.listeners) {
-      const matches = "memberKey" in target
-        ? audience.memberKey === target.memberKey
-        : audience.organizationId === target.organizationId && audience.fullTools
-      if (!matches) continue
+      if (audience.memberKey !== target.memberKey) continue
       try {
         listener(event)
       } catch (error) {
@@ -106,25 +90,10 @@ class ScopedAgentMcpEventBus implements ServerEventBus {
     try {
       this.onerror?.(error instanceof Error ? error : new Error(String(error)))
     } catch {
-      // Error reporting must never alter subscription delivery.
     }
   }
 }
 
-/**
- * Keep the SDK's subscription bus isolated by authenticated catalog audience.
- *
- * One handler retains the SDK's global subscription bound and shutdown
- * semantics. Its event bus captures the authenticated audience when a listen
- * stream subscribes, then delivers a published catalog event only to listeners
- * captured in that same audience, or, for an organization-wide change, to the
- * organization's full-view listeners. Async-local scoping remains correct when
- * requests for different members execute concurrently.
- *
- * A request in this process that changed what an organization's members may
- * use (inventory-writes.ts) tells that organization's full-view streams their
- * tool list changed.
- */
 export function createScopedAgentMcpHttpHandlers(
   onerror?: (error: Error) => void,
 ): ScopedAgentMcpHttpHandlers {
@@ -148,22 +117,12 @@ export function createScopedAgentMcpHttpHandlers(
     resourcesChanged(member) {
       bus.publishTo({ memberKey: memberKey(member) }, () => handler.notify.resourcesChanged())
     },
-    fullToolsChanged(organizationId) {
-      bus.publishTo({ organizationId, fullToolsOnly: true }, () => handler.notify.toolsChanged())
-    },
   }
-  const stopInventoryChanges = onInventoryChanged((organizationIds) => {
-    for (const organizationId of organizationIds) notify.fullToolsChanged(organizationId)
-  })
-
   return {
     fetch(audience, request, server) {
       return bus.run(audience, () => requestServer.run(server, () => handler.fetch(request)))
     },
     notify,
-    async close() {
-      stopInventoryChanges()
-      await handler.close()
-    },
+    close: () => handler.close(),
   }
 }

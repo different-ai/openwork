@@ -97,7 +97,6 @@ type VaultEnvelope = {
   data: string;
 };
 
-/** Plaintext, non-secret projection of one stored connection (vault file v2). */
 type LocalManagedMcpIndexEntry = {
   id: string;
   workspaceId: string;
@@ -123,7 +122,6 @@ export type LocalManagedMcpVaultRecovery = {
   quarantinedTo: string;
 };
 
-/** Parsed on-disk vault file: v1 is a bare envelope, v2 adds the index. */
 type VaultFileState = {
   envelope: VaultEnvelope;
   index: Record<string, LocalManagedMcpIndexEntry> | null;
@@ -278,7 +276,6 @@ function readVaultIndex(value: unknown): Record<string, LocalManagedMcpIndexEntr
   return index;
 }
 
-/** Parse the vault file without decrypting. Accepts v1 (bare envelope) and v2. */
 async function readVaultFileState(config: ServerConfig): Promise<VaultFileState | null> {
   let raw: string;
   try {
@@ -410,7 +407,6 @@ function isManagedGatewayRuntimeEntry(entry: Record<string, unknown>): boolean {
     && entry.url.includes("/mcp/managed/");
 }
 
-/** Best effort: drop managed gateway runtime entries that lost their vault connection. */
 async function pruneOrphanedManagedRuntimeEntries(config: ServerConfig, vault: LocalManagedMcpVault): Promise<void> {
   for (const workspace of config.workspaces) {
     try {
@@ -428,12 +424,6 @@ async function pruneOrphanedManagedRuntimeEntries(config: ServerConfig, vault: L
   }
 }
 
-/**
- * The key resolved but the stored envelope no longer authenticates: OS secure
- * storage changed underneath the vault. Quarantine the unreadable file and
- * rebuild the vault from the plaintext index (v2) or empty (v1) so members can
- * reconnect instead of hitting raw crypto errors.
- */
 function backupTimestamp(date: Date): string {
   const parts = [
     date.getFullYear(),
@@ -464,7 +454,6 @@ async function recoverVaultLocked(config: ServerConfig, file: VaultFileState): P
   return { vault, lastRecovery };
 }
 
-/** Only call while holding the per-path vault queue: may quarantine and rewrite. */
 async function loadVaultLocked(config: ServerConfig): Promise<LoadedVault> {
   const file = await readVaultFileState(config);
   if (!file) return { vault: emptyVault(), lastRecovery: null };
@@ -836,11 +825,6 @@ export type LocalManagedMcpSafeConnectionList = {
   recovery: LocalManagedMcpVaultRecovery | null;
 };
 
-/**
- * Listing that never throws for secure-storage key or decrypt causes: a stale
- * key triggers quarantine-and-rebuild, and an unavailable key serves the
- * plaintext non-secret index read-only with `available: false`.
- */
 export async function listLocalManagedMcpConnectionsSafe(
   config: ServerConfig,
   workspaceId: string,
@@ -874,10 +858,6 @@ export type LocalManagedMcpVaultInspection = {
   recovery: LocalManagedMcpVaultRecovery | null;
 };
 
-/**
- * Passive vault visibility for diagnostics: reads only plaintext non-secret
- * fields plus key availability, never decrypts, and never throws.
- */
 export async function inspectLocalManagedMcpVault(config: ServerConfig): Promise<LocalManagedMcpVaultInspection> {
   let file: VaultFileState | null;
   try {
@@ -897,7 +877,6 @@ export async function getLocalManagedMcpConnection(config: ServerConfig, workspa
   return withVaultRead(config, (vault) => publicConnection(requireConnection(vault, workspaceId, name)));
 }
 
-/** Private App-host identity: a same-name gateway does not identify its current OAuth account. */
 export async function localManagedMcpAppIdentity(config: ServerConfig, workspaceId: string, name: string, url: unknown) {
   if (url !== runtimeConfig(config, workspaceId, name, true).url) return null;
   return withVaultRead(config, (vault) => {
@@ -1133,9 +1112,6 @@ async function markReconnectWhenCredentialIsGone(
       alreadyReconnectRequired: connection.status === "reconnect_required",
     };
   });
-  // A connection that already needs a reconnect keeps its original reason
-  // (e.g. the secure-storage recovery copy); later tool-discovery failures
-  // must not overwrite it. Every other status still records this error.
   if (!hasCredential && !alreadyReconnectRequired) {
     await updateConnectionStatus(config, workspaceId, name, "reconnect_required", error instanceof Error ? error.message : fallback);
   }

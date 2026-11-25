@@ -10,7 +10,6 @@ import { changesOverview, exportOverview, historyOverview } from "./config-blobs
 
 type QueryState<T> = { data: T | undefined; isPending: boolean; isError: boolean; error: Error | null };
 
-/** Settings › Config › Overview: one row per tab, with where it stands and a way in. */
 export function ConfigOverviewSection({ onOpenTab }: { onOpenTab: (tab: ConfigTab) => void }) {
   const { orgId } = useOrgDashboard();
   const areas = useConfigAreas(orgId);

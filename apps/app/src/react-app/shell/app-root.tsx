@@ -88,20 +88,6 @@ const subscribeToDenBootstrap = (onStoreChange: () => void) => {
   };
 };
 
-/**
- * Forced-signin gate ported from the Solid shell.
- *
- * When the desktop bootstrap config has `requireSignin: true` (always the case
- * for enterprise and cloud builds, and opt-in for public builds through
- * `desktop-bootstrap.json`), the UI is held at `/signin` until the user
- * authenticates with Den. This is a build property, not a desktop policy, so
- * it is independent of DESKTOP_POLICY_ENFORCEMENT_ENABLED.
- * When sign-in is NOT required, we
- * never let users land on `/signin` — redirect them to `/session` instead.
- *
- * While we're still checking the Den session AND sign-in is required, we
- * show startup progress without mounting transcript/settings behind the gate.
- */
 function DenSigninGate({ children }: DenSigninGateProps) {
   const denAuth = useDenAuth();
   const location = useLocation();
@@ -113,17 +99,12 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     readDenBootstrapSnapshot,
     readDenBootstrapSnapshot,
   );
-  // Enterprise and cloud builds always persist requireSignin: true; the
-  // bootstrap file can only raise it (apps/desktop/electron/workspace-store.mjs).
   const requireSignin = bootstrap.requireSignin;
   const path = location.pathname.toLowerCase();
   const onSignin = path === "/signin" || path.startsWith("/signin/");
   const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
   const hasPreparedBootstrap = Boolean(bootstrap.prepared);
   const routeInput = {
-    // Wait for the first auth check so we don't bounce the user between
-    // `/session` and `/signin` every navigation while we figure out if
-    // their cached token is still valid.
     authChecking: denAuth.status === "checking",
     isSignedIn: denAuth.isSignedIn,
     requireSignin,
@@ -165,8 +146,6 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     requireSignin,
   ]);
 
-  // After a fresh sign-in, returning members go straight to chat. Give org
-  // restoration a brief chance to settle before treating the user as new.
   useEffect(() => {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
       if (event.detail?.status === "error") {
@@ -184,17 +163,9 @@ function DenSigninGate({ children }: DenSigninGateProps) {
           || currentLocation.hash !== signInLocation.hash
         ) return;
         const target = readSignInReturnTarget();
-        // Onboarding can already have returned to the very same URL before
-        // this delayed check runs. Consuming the target is not a new sign-in
-        // without a target: never bounce that conversation to the session root.
         if (!shouldHandleSignInReturnAttempt(signInAttempt, target)) return;
         attempts++;
         const settings = readDenSettings();
-        // Desktop-initiated sign-in with the choice deliberately open: the org
-        // chooser decides (and returns to the recorded route when it
-        // finishes) — do not race it to /session. With an organization
-        // active, chat opens where sign-in started,
-        // otherwise on the session root.
         const route = resolvePostHandoffRoute({
           hasToken: Boolean(settings.authToken?.trim()),
           activeOrgId: settings.activeOrgId,
@@ -206,14 +177,11 @@ function DenSigninGate({ children }: DenSigninGateProps) {
             navigate(route.kind === "return" ? "/session" : route.path, { replace: true });
           }
         } else if (attempts < 10) {
-          // Session persistence should already be done, but retry briefly in
-          // case another consumer is still applying the handoff result.
           setTimeout(check, 500);
         } else if (settings.authToken?.trim()) {
           navigate(signedInRoute(settings.activeOrgId), { replace: true });
         }
       };
-      // First check after a short delay for the auth to settle
       setTimeout(check, 500);
     };
     window.addEventListener(denSessionUpdatedEvent, handler);
@@ -256,10 +224,6 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   );
 }
 
-/**
- * Control actions for cloud auth. Placed inside OpenworkControlProvider so
- * the actions are available on every route (including /welcome and /signin).
- */
 function DenAuthControlActions() {
   const denAuth = useDenAuth();
   const deviceLoginEnabled = useDeploymentFeature("remoteDesktopDeviceLogin");
@@ -271,7 +235,6 @@ function DenAuthControlActions() {
     isConfiguredDestination: isConfiguredDenDeviceDestination,
   }), []);
   useEffect(() => {
-    // Stop a pending configured-server flow when its deployment switch goes off.
     if (deviceLoginEnabled.enabled === false) deviceLoginControl.status();
   }, [deviceLoginControl, deviceLoginEnabled]);
 
@@ -297,8 +260,6 @@ function DenAuthControlActions() {
       const result = await exchangeHandoffAndSignIn(grant.trim(), {
         baseUrl: targetBaseUrl,
         apiBaseUrl,
-        // Automation surface: commit the exchange-reported org directly; a
-        // UI chooser would strand a headless driver.
         desktopInitiated: false,
         fallbackErrorMessage: "No token returned",
       });
@@ -415,10 +376,6 @@ function DenAuthControlActions() {
   return null;
 }
 
-/**
- * Control action for eval automation: inject brand theme (logo, icon, accent color)
- * via the dev-only desktop config bridge. Placed inside OpenworkControlProvider.
- */
 function BrandThemeControlActions() {
   const applyAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
@@ -483,11 +440,6 @@ function BrandThemeControlActions() {
 
 let appOpenedCaptured = false;
 
-/**
- * Analytics and the Cloud inventory prefetch mount above the activation gate.
- * An activation-required install holds them back until it is activated.
- * Desktop policy readiness is optional while enforcement is suspended.
- */
 function useOutboundEgressAllowed() {
   const bootstrap = useSyncExternalStore(
     subscribeToDenBootstrap,
@@ -507,7 +459,6 @@ export function AppRoot() {
   useMemberActivitySync(egressAllowed);
   useEngineRouting(egressAllowed);
 
-  // Module-level dedupe keeps StrictMode double-mounts from double-counting.
   useEffect(() => {
     if (!egressAllowed || appOpenedCaptured) return;
     appOpenedCaptured = true;
@@ -515,9 +466,6 @@ export function AppRoot() {
     captureAnalyticsEvent("app_opened", {});
   }, [egressAllowed]);
 
-  // Fetch what the organization shares with this member up front. Settings
-  // mounts cold every time the extensions panel opens, so without this the
-  // readiness groups wait on a Den round-trip the app could have done already.
   useEffect(() => {
     if (!egressAllowed) return;
     prefetchCloudInventory();
@@ -545,9 +493,7 @@ export function AppRoot() {
             <DenSigninGate>
               <OpenWorkWebAccessGate>
                 <CloudWorkspaceStatusProvider>
-                  {/* Settings unmounts the chat; computer use stays connected on every route. */}
                   {isElectronRuntime() ? <ComputerBridge /> : null}
-                  {/* This desktop keeps itself in its organization's devices list while that feature is on. */}
                   {isElectronRuntime() ? <DeviceReporter /> : null}
                   <Routes>
               <Route
@@ -659,8 +605,6 @@ export function AppRoot() {
                   </DevProfiler>
                 }
               />
-              {/* Default + fallback: land on the session view. Users open
-                  settings deliberately via the sidebar or command palette. */}
               <Route path="/" element={<Navigate to="/session" replace />} />
               <Route path="*" element={<Navigate to="/session" replace />} />
                   </Routes>
@@ -677,15 +621,6 @@ export function AppRoot() {
         </ShellConfigProvider>
         </DesktopUpdaterProvider>
       </DevProfiler>
-      {/*
-        DevProfilerOverlay sits OUTSIDE the AppRoot <Profiler> zone on
-        purpose. The overlay re-renders on every emit() to refresh its
-        table, and any commit inside a <Profiler> is recorded as a
-        commit on that zone. Mounting the overlay inside AppRoot would
-        inflate AppRoot's commit count by hundreds of overlay
-        self-renders for every real user-visible commit, masking the
-        true app-level signal.
-      */}
       <NewProvidersListener />
       <AutomationFailureNotifier />
       <LowStorageNotifier />

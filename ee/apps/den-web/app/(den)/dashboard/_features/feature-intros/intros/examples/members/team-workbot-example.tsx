@@ -5,7 +5,6 @@ import { ExampleProviderMark } from "../ai-gateway/example-parts";
 import { ExampleCaption, ExampleRow, ExampleRows } from "../example-parts";
 import { teamWorkbotExampleRows } from "./team-workbot-example-data";
 
-/** Team Workbot example: whether each team has Workbot, its name and the model it starts on, Everyone's or its own. */
 export function TeamWorkbotExample() {
   const step = useExampleStep(teamWorkbotExampleRows.length);
 

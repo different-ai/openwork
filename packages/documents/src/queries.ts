@@ -2,12 +2,6 @@ import type { QueryClient } from "@tanstack/react-query"
 import type { DocumentItem, DocumentsPage, DocumentsProvider } from "./index"
 import type { DocumentsEditor } from "./model"
 
-/**
- * How Documents caches what it reads, in one place so the browser, its editor tabs and a host warming them up all use
- * the same keys. Every key starts with the host's scope (organization and person): a cache is never shared across
- * identities.
- */
-
 /** A listing the person left stays on screen when they come back, while it refreshes behind it. */
 export const DOCUMENTS_LIST_GC_MS = 5 * 60_000
 /** A file read started on hover is kept this long for the click that usually follows; then it is dropped. */
@@ -40,10 +34,8 @@ export function prefetchRecentDocuments(client: QueryClient, input: { provider: 
       input.provider.list({ view: "recent", folderId: "root", query: "", cursor: pageParam || undefined, signal }),
     initialPageParam: "",
     gcTime: DOCUMENTS_LIST_GC_MS,
-    // A listing someone looked at within the last few seconds is current enough to show; the browser refreshes it anyway.
     staleTime: 5_000,
   }).catch(() => {
-    // A failed warm-up is not an error the person sees: opening Documents reads again and reports it there.
   })
 }
 

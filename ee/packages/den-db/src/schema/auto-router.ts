@@ -58,9 +58,7 @@ export const AutoRouterModelTable = mysqlTable(
     id: denTypeIdColumn("autoRouterModel", "id").notNull().primaryKey(),
     autoRouterId: denTypeIdColumn("autoRouter", "auto_router_id").notNull(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    /** The `ipr_…` AI Gateway provider. */
     gatewayProviderId: denTypeIdColumn("inferenceProvider", "gateway_provider_id").notNull(),
-    /** The catalog model id within the provider (not a member's `gwm_…` alias). */
     modelId: varchar("model_id", { length: 255 }).notNull(),
     position: int("position", { unsigned: true }).notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
@@ -83,7 +81,6 @@ export const AutoRouterTaskTable = mysqlTable(
     id: denTypeIdColumn("autoRouterTask", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     name: varchar("name", { length: 255 }).notNull(),
-    /** `autoRouterTaskKey(name)`: trimmed, spaces collapsed, lowercase. */
     nameKey: varchar("name_key", { length: 255 }).notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
@@ -117,9 +114,7 @@ export const AutoRouterReasoningTable = mysqlTable(
   "auto_router_reasoning",
   {
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    /** The tool call id the client echoes back. */
     toolCallId: varchar("tool_call_id", { length: 191 }).notNull(),
-    /** JSON, encrypted. */
     payload: encryptedMediumTextColumn("payload").notNull(),
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),

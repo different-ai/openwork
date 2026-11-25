@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { OwDotTicker } from "./dot-ticker";
 import { formatCloudWorkspaceElapsed } from "./cloud-workspace-status";
 
-/** One quiet, fixed-size status region. Timers must not re-announce the message. */
 export function WorkspaceStartupStatus(props: {
   message: string;
   detail?: string;
@@ -29,7 +28,6 @@ export function WorkspaceStartupStatus(props: {
   );
 }
 
-/** Auth and access checks share geometry; neither mounts protected content. */
 export function WebStartupScreen({ message }: { message: string }) {
   const [slow, setSlow] = useState(false);
   useEffect(() => {

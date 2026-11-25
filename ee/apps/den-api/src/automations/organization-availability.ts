@@ -8,9 +8,7 @@ import { env } from "../env.js"
 import { headlessRunnerConfig } from "../headless-runner/client.js"
 
 export type OrganizationAutomationAvailability = {
-  /** The organization's own choice; both true until an admin turns one off. */
   settings: OrganizationAutomationSettings
-  /** Whether this deployment can run Cloud Automations headlessly at all. */
   headlessRunnerConfigured: boolean
   desktop: boolean
   cloud: boolean
@@ -20,7 +18,6 @@ export function headlessAutomationsConfigured(source: Record<string, string | un
   return headlessRunnerConfig(source) !== null
 }
 
-/** What an organization may run now: its settings, deployment switches and, for Cloud, the headless runner. */
 export function automationAvailabilityFor(input: {
   metadata: unknown
   headlessRunnerConfigured: boolean

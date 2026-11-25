@@ -30,8 +30,6 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { attributeOAuthCallbackMember } from "../../audit/request-capture.js"
-import { DEN_MCP_OAUTH_RESOURCE } from "../../auth.js"
-import { connectionServerUrl } from "../../mcp/connection-server-tools.js"
 import { cache, type CachedOrgMember } from "../../cache.js"
 import { latestConfigObjectVersions } from "../../config-object-versions.js"
 import { db } from "../../db.js"
@@ -199,17 +197,8 @@ import type { VisibleReadiness } from "../../capability-sources/external-mcp-rea
 const connectionParamsSchema = idParamSchema("connectionId", "externalMcpConnection")
 const logger = appLogger.child({ component: "mcp_connections" })
 
-// The App-host gateway never exposes its bounded search/execute tools as apps.
 const PROXY_GATEWAY_TOOL_NAMES = new Set([SEARCH_CAPABILITIES_TOOL_NAME, EXECUTE_CAPABILITY_TOOL_NAME])
 
-/**
- * Mirrors the Desktop private App-host naming so Dashboard elements carry the
- * same reference shape desktop entries use (`connectMcpAppHostName` in
- * `apps/server/src/connect-mcp-server-catalog.ts` and `projectedMcpToolName`
- * in `apps/server/src/mcp-app-host.ts`). Connect launches resolve by
- * connection reference, so these names are display and reference data only;
- * drift cannot break a launch.
- */
 const CONNECT_MCP_APP_HOST_NAME_PREFIX = "openwork-app-host-connect-"
 
 export function connectMcpAppHostServerName(connectionId: string): string {
@@ -222,7 +211,6 @@ export function projectedMcpToolName(serverName: string, toolName: string): stri
   return `${sanitize(serverName)}_${sanitize(toolName)}`
 }
 
-/** Mirrors the App-host proxy's app-audience visibility rule. */
 export function mcpToolVisibleToApp(tool: { _meta?: unknown }): boolean {
   const meta = isRecord(tool._meta) ? tool._meta : {}
   const ui = isRecord(meta.ui) ? meta.ui : {}
@@ -232,12 +220,10 @@ export function mcpToolVisibleToApp(tool: { _meta?: unknown }): boolean {
     && ui.visibility.includes("app")
 }
 
-/** True when the launch tool declares required input, so a tile cannot start it with empty arguments. */
 export function mcpToolRequiresInput(tool: { inputSchema?: unknown }): boolean {
   return mcpToolRequiredInputKeys(tool).length > 0
 }
 
-/** The launch-input keys the tool's schema marks required, so an author can supply them and Den can validate. */
 export function mcpToolRequiredInputKeys(tool: { inputSchema?: unknown }): string[] {
   const schema: unknown = tool.inputSchema
   if (!isRecord(schema) || !Array.isArray(schema.required)) return []
@@ -246,8 +232,6 @@ export function mcpToolRequiredInputKeys(tool: { inputSchema?: unknown }): strin
 const MANUAL_MCP_TOOL_REQUEST_MAX_BYTES = 1024 * 1024
 const externalMcpDiscoveryFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
 
-// Smart-resolve probes several candidate endpoints concurrently, so each one
-// gets a tighter deadline than a single-URL discovery.
 const MCP_RESOLVE_PROBE_TIMEOUT_MS = 8_000
 
 const accessInputSchema = z.object({
@@ -269,8 +253,6 @@ const externalMcpUrlSchema = z.string().trim().url().max(2048).superRefine((valu
   try {
     url = new URL(value)
   } catch {
-    // The preceding URL refinement owns the user-facing parse error. Zod 4
-    // still executes superRefine after that failure, so never throw here.
     return
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
@@ -285,8 +267,6 @@ const externalMcpUrlSchema = z.string().trim().url().max(2048).superRefine((valu
   for (const message of externalMcpUrlCredentialProblems(value)) context.addIssue({ code: "custom", message })
 })
 
-// Bounds only; validateExternalMcpRequestHeaders enforces the exact rules
-// with plain-English messages that name the header.
 const requestHeaderNameSchema = z.string().trim().min(1).max(256)
 const requestHeaderValueSchema = z.string().min(1).max(8192)
 const requestHeadersInputSchema = z.array(z.object({
@@ -295,7 +275,6 @@ const requestHeadersInputSchema = z.array(z.object({
 })).max(EXTERNAL_MCP_REQUEST_HEADERS_LIMIT)
 const requestHeadersUpdateSchema = z.array(z.object({
   name: requestHeaderNameSchema,
-  /** Omitted keeps the stored value for the header with the same name (case-insensitive). */
   value: requestHeaderValueSchema.optional(),
 })).max(EXTERNAL_MCP_REQUEST_HEADERS_LIMIT)
 
@@ -403,7 +382,6 @@ const createExternalConnectionBodySchema = z.object({
   url: externalMcpUrlSchema,
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]).optional().default("shared"),
-  /** When true, granted members can reach this connection as a standard MCP server with its own tool catalog instead of only through search_capabilities/execute_capability. */
   exposeDirectly: z.boolean().optional().default(false),
   apiKey: z.string().trim().min(1).max(4096).optional(),
   apiKeyAuthScheme: z.enum(["bearer", "token"]).optional(),
@@ -418,7 +396,6 @@ const createExternalConnectionBodySchema = z.object({
   authorizationServerIssuer: z.string().trim().url().max(2048).nullable().optional(),
   requestedScopes: z.array(z.string().trim().min(1).max(255)).max(ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT).optional(),
   requestSelectedScopesOnly: z.boolean().optional().describe(REQUEST_SELECTED_SCOPES_ONLY_DESCRIPTION),
-  /** Who can USE the connection. Defaults to org-wide so the naive quick-add path matches expectations, but it's an explicit, editable choice. */
   access: accessInputSchema.optional().default({ orgWide: true, memberIds: [], teamIds: [] }),
 })
 
@@ -448,16 +425,13 @@ const updateConnectionBodySchema = z.object({
   url: externalMcpUrlSchema,
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
-  /** Omitted keeps the stored value. */
   exposeDirectly: z.boolean().optional(),
-  /** Omitted means preserve only when the connection identity is unchanged. Never returned by any read route. */
   apiKey: z.string().trim().min(1).max(4096).optional(),
   apiKeyAuthScheme: z.enum(["bearer", "token"]).optional(),
   requestHeaders: requestHeadersUpdateSchema.optional()
     .describe("Omitted keeps the stored headers. An array replaces them; an entry without value keeps the stored value of the header with that name. An empty array removes them all. Values are never returned."),
   oauthClient: z.object({
     clientId: z.string().trim().min(1).max(512),
-    /** Omitted preserves the secret only when both identity and client id are unchanged. */
     clientSecret: z.string().trim().min(1).max(4096).optional(),
     tokenEndpointAuthMethod: z.enum(["client_secret_basic", "client_secret_post"]).optional(),
   }).optional(),
@@ -547,27 +521,17 @@ const connectionResponseSchema = z.object({
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
   apiKeyAuthScheme: z.enum(["bearer", "token"]),
-  /** Names of the administrator-configured request headers. Values are never returned. */
   requestHeaderNames: z.array(z.string()),
-  /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
   exposeDirectly: z.boolean(),
-  /** scope=usable with the connectionMcpServers feature on: this connection's own MCP server, listing only its tools. */
-  mcpUrl: z.string().url().optional(),
   connected: z.boolean(),
   connectedAt: z.string().datetime().nullable(),
-  /** Safe creator display label for admin/manageable rows. */
   createdByName: z.string().nullable().optional(),
-  /** Present with createdByName: whether the calling member added this connection (and so may always edit or remove it). */
   createdByYou: z.boolean().optional(),
-  /** Present with createdByName: the org membership id of whoever added it, so "shared beyond its creator" can be told apart from "shared beyond you". */
   createdByOrgMembershipId: z.string().nullable().optional(),
-  /** Present with createdByName: whether the calling member may remove this connection right now (Remove any connection, or they added it). */
   canRemove: z.boolean().optional(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
-  /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
   connectedForMe: z.boolean(),
-  /** Present on native provider rows when the member's saved grant is missing currently selected scopes. */
   needsReconnect: z.boolean().optional(),
   credentialHealth: z.enum(["unknown", "ready", "reconnect_required"]).optional(),
   credentialHealthReason: z.enum([
@@ -578,28 +542,19 @@ const connectionResponseSchema = z.object({
   credentialHealthCheckedAt: z.string().datetime().nullable().optional(),
   issuerReviewRequired: z.boolean().optional(),
   reconnectActionOwner: z.enum(["member", "organization_admin"]).nullable().optional(),
-  /** Native provider feature ids whose scopes are missing from the member's saved grant. */
   missingFeatures: z.array(z.string()).optional(),
-  /** Native provider account label when the provider supplied one. Never a token. */
   externalAccountId: z.string().nullable().optional(),
-  /** Delegated scopes the calling member granted to a native provider. */
   grantedScopes: z.array(z.string()).optional(),
-  /** Tenant selected by the admin for tenant-scoped native providers. */
   tenantId: z.string().nullable().optional(),
-  /** Marketplace plugins whose declared MCP requirement is bound to this connection. Filtered to the caller's visible plugin names for scope=usable. */
   requiredBy: z.array(requiredBySchema),
-  /** Active plugin requirement bindings that own server/authentication identity. Derived server-side. */
   identityManagedBy: z.array(requiredBySchema).optional(),
-  /** Server-owned marketplace authentication policy; safe in both usable and manageable scopes. */
   requiredAuthType: z.enum(["oauth", "apikey", "none"]).nullable().optional(),
   authPolicyConfirmed: z.boolean().optional(),
   authTypeMismatch: z.boolean().optional(),
   oauthClientConfigured: z.boolean().optional(),
   oauthClientRequired: z.boolean().optional(),
   setupRequired: z.boolean().optional(),
-  /** Present only for scope=manageable (admin) listings. */
   access: accessSummarySchema.nullable(),
-  /** Public OAuth client id only. Client secrets and all other credentials are never returned. */
   oauthClientId: z.string().nullable().optional(),
   oauthClientHasSecret: z.boolean().optional().describe("Whether a client secret is configured. Only returned with explicit connection-settings view permission; never the secret itself."),
   manualOAuthEndpoints: manualOAuthEndpointsSchema.nullable().optional().describe("Only returned with explicit connection-settings view permission; omitted from usable member listings, including for the connection creator."),
@@ -618,7 +573,6 @@ const connectionDeleteByKeyResponseSchema = z.object({
   deleted: z.boolean(),
 }).meta({ ref: "ExternalMcpConnectionDeleteByKeyResponse" })
 
-/** An operation agents can discover and call through OpenWork Connect (src/mcp/policy.ts). */
 type AgentDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": true; "x-mcp-search-aliases": string[] }
 const describeAgentRoute = (options: AgentDescribeRouteOptions) => describeRoute(options)
 
@@ -628,10 +582,8 @@ const removalRequestBodySchema = z.object({
 }).strict().meta({ ref: "ExternalMcpConnectionRemovalRequestBody" })
 
 const removalRequestResponseSchema = z.object({
-  /** Nothing has been removed: the person confirms in OpenWork. */
   status: z.literal("confirmation_required"),
   connection: z.object({ id: z.string(), name: z.string(), url: z.string() }),
-  /** Plugins that lose this connection when it is removed. */
   requiredBy: z.array(requiredBySchema),
   handoff: z.object({
     action: z.literal("open_link"),
@@ -698,7 +650,6 @@ const connectionMcpAppSchema = z.object({
   title: z.string().nullable(),
   description: z.string().nullable(),
   requiresInput: z.boolean(),
-  /** Launch-input keys the tool's input schema marks required. Empty when the app launches with no input. */
   requiredInputKeys: z.array(z.string()),
   requiresApproval: z.boolean(),
 }).meta({ ref: "ExternalMcpConnectionMcpApp" })
@@ -763,7 +714,6 @@ const connectionToolRunResponseSchema = z.object({
 const connectionNotReadySchema = z.object({
   error: z.literal("connection_not_ready"),
   message: z.string(),
-  // The same report search and execute return, so a client can show its connection card.
   connectionStatus: openworkCloudMcpConnectionActionSchema.extend({
     message: z.string(),
     action: openworkCloudMcpConnectionActionSchema.shape.action.extend({
@@ -787,18 +737,10 @@ const connectionToolRunForbiddenSchema = z.union([
 
 const connectionCreatedResponseSchema = connectionResponseSchema.extend({
   links: z.object({
-    /** Where members connect their own account for per_member connections. Share this with the team. */
     yourConnections: z.string(),
-    /**
-     * Opens a page where the person signs in to this connection with one
-     * click. Hand it to the user when the host cannot render a connection
-     * card (for example a terminal agent).
-     */
     signIn: z.string().describe("Browser link where the person signs in to this connection. Give it to the user when you cannot show a sign-in card."),
-    /** The exact OAuth redirect URL to whitelist in pre-registered provider apps. */
     oauthCallback: z.string(),
   }),
-  /** Set for a shared API-key connection created without its key; a person enters it in OpenWork. */
   credentialPrompt: credentialPromptSchema.optional(),
   nextStep: z.string().optional(),
 }).meta({ ref: "ExternalMcpConnectionCreatedResponse" })
@@ -808,19 +750,11 @@ const connectionUpdatedResponseSchema = connectionResponseSchema.extend({
   identityManagedBy: z.array(requiredBySchema),
   identityChanged: z.boolean(),
   reconnectionRequired: z.boolean(),
-  /** Set while the connection still waits for its shared key; a person enters it in OpenWork. */
   credentialPrompt: credentialPromptSchema.optional(),
   nextStep: z.string().optional(),
 }).meta({ ref: "ExternalMcpConnectionUpdatedResponse" })
 
 const credentialPromptRequestBodySchema = z.object({
-  /**
-   * shared: the organization's one key (owners and admins). personal: the
-   * caller's own key, for a connection where each person uses their own.
-   * Defaults to the connection's current mode. shared on a personal-key
-   * connection asks an admin to switch it; nothing changes until they save a
-   * working key.
-   */
   scope: z.enum(["shared", "personal"]).optional(),
 }).strict()
 
@@ -853,20 +787,16 @@ export function isAgentOAuthClientConnection(input: { oauthClient?: unknown; ses
 }
 
 const listConnectionsQuerySchema = z.object({
-  /** usable (default): connections the calling member has been granted. manageable: every org connection, admin-only. */
   scope: z.enum(["usable", "manageable"]).optional().default("usable"),
 })
 
 const resolveConnectionBodySchema = z.object({
-  /** Free-form: a full URL, a bare host, or a product name like "vercel". */
   query: z.string().min(1).max(MAX_RESOLVE_QUERY_LENGTH),
 }).meta({ ref: "ExternalMcpResolveInput" })
 
 const resolveConnectionResponseSchema = z.object({
   resolution: z.enum(["preset", "discovered", "not_found"]),
-  /** Candidate endpoint URLs that were probed, in preference order. */
   attempted: z.array(z.string()),
-  /** Why the query produced no candidates (only for not_found). */
   reason: z.string().optional(),
   preset: externalMcpPresetResponseSchema.optional(),
   match: z.object({
@@ -958,14 +888,11 @@ const connectionValidationFailedSchema = z.object({
 
 function isConnectionConnected(row: ExternalMcpConnectionRow): boolean {
   if (row.credentialMode === "per_member") {
-    // A per_member connection is "published" once created; individual
-    // members connect their own accounts (connectedForMe).
     return true
   }
   return Boolean(row.accessToken || row.apiKey || (row.authType === "none" && row.connectedAt))
 }
 
-/** Whether any member holds a token for each connection, and the latest connection time among them. */
 async function connectedAccountStatesForConnections(input: {
   organizationId: DenTypeId<"organization">
   providerIds: Array<DenTypeId<"externalMcpConnection">>
@@ -1043,19 +970,13 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
     reason = READINESS_FAILURE_REASONS[failure]
   } else {
     try {
-      // A complete initialize + tools/list, using the normal guarded transport and
-      // Den-managed credential. No tools are executed; an empty catalog is valid.
       await listExternalMcpTools(connection, await callbackRedirectUri(connection), credential.member, requestId, createExternalMcpLifecycleDeadline(10_000), 10_000)
       status = "ready"
     } catch (error) {
       const diagnostic = externalMcpDiagnosticForResponse(error, requestId, "MCP_TOOL_DISCOVERY")
       failure = readinessFailureForDiagnostic(diagnostic)
-      // A known provider setup step gets its own server-written direction;
-      // every other failure keeps a fixed reason.
       failedFields = failedReadinessFields(diagnostic, failure)
       reason = failedFields.reason
-      // Provider text can repeat a just-entered key as plain prose; heuristic
-      // redaction is not a boundary, so keep only server-owned identifiers.
       logger.warn("external_mcp_readiness_check_failed", {
         connection_id: connection.id,
         request_id: requestId,
@@ -1065,8 +986,6 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
       })
     }
   }
-  // Never turn a probe of an old key or endpoint into Ready for its replacement.
-  // primary: a check that runs right after a save must compare against that save.
   const current = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id }, db.$primary)
   const currentAccount = connection.credentialMode === "per_member" ? await getConnectedAccount({
     organizationId: connection.organizationId, orgMembershipId: memberId, providerId: connection.id,
@@ -1080,7 +999,6 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
   const checkedAt = new Date().toISOString()
   const previous = visibleReadiness(connection.credentialMode === "per_member" ? account?.readinessCheck ?? null : connection.readinessCheck, fingerprint)
   const lastSuccessfulAt = status === "ready" ? checkedAt : previous?.lastSuccessfulAt ?? null
-  // failedFields carries the same failure and reason, plus the diagnostic reference.
   const check: ExternalMcpReadinessCheck = { status, checkedAt, lastSuccessfulAt, reason, failure, ...failedFields, fingerprint }
   await saveReadinessCheck(connection, memberId, check)
   return visibleReadiness(check, fingerprint) ?? { status, checkedAt, lastSuccessfulAt, reason, failure }
@@ -1088,13 +1006,6 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
 
 const READINESS_CHECK_CONCURRENCY = 4
 
-/**
- * Brings connectors with no stored status up to date for an admin's list:
- * first copies any member's still-valid Ready check onto per-member
- * connectors (database only), then probes the rest that the caller can
- * check (a shared credential, or the caller's own sign-in), a few at a time.
- * Connectors nobody can check yet are left as not checked.
- */
 async function refreshUncheckedReadiness(connections: ExternalMcpConnectionRow[], memberId: DenTypeId<"member">, requestId: string) {
   const unchecked = connections.filter((connection) => connection.kind === "external_mcp" && !storedOrganizationReadiness(connection))
   const promoted = await promoteMemberReadiness(unchecked)
@@ -1102,7 +1013,6 @@ async function refreshUncheckedReadiness(connections: ExternalMcpConnectionRow[]
   for (const connection of unchecked) {
     if (promoted.has(connection.id)) continue
     if (connection.credentialMode === "per_member") {
-      // The caller's own still-valid check (Ready was already promoted above) already answers for them.
       const account = await getConnectedAccount({ organizationId: connection.organizationId, orgMembershipId: memberId, providerId: connection.id })
       if (visibleReadiness(account?.readinessCheck ?? null, readinessFingerprint(connection, account))) continue
     }
@@ -1116,7 +1026,6 @@ async function refreshUncheckedReadiness(connections: ExternalMcpConnectionRow[]
         await checkConnectionReadiness(connection, memberId, requestId)
         checked.add(connection.id)
       } catch (error) {
-        // One connector failing to record leaves it not checked; the rest still finish.
         logger.warn("external_mcp_readiness_refresh_failed", { connection_id: connection.id, request_id: requestId, error: error instanceof Error ? error.name : "unknown" })
       }
     }
@@ -1169,7 +1078,6 @@ function tokenEndpointAuthMethod(value: unknown): "client_secret_basic" | "clien
   return value === "client_secret_basic" || value === "client_secret_post" ? value : undefined
 }
 
-/** The organization's members, for naming who created or edited something (Redis-cached). */
 function organizationMembers(context: PluginArchActorContext["organizationContext"]) {
   return cache.org.members(context.organization.id)
 }
@@ -1179,10 +1087,6 @@ function resolveCreatorName(members: readonly CachedOrgMember[], memberId: strin
   return member?.user.name.trim() || member?.user.email || null
 }
 
-/**
- * Display names only — never an email fallback: this label reaches non-admin
- * members through the tools endpoint and agent policy_blocked errors.
- */
 function resolvePolicyEditorLabel(members: readonly CachedOrgMember[], memberId: string): string | null {
   const member = members.find((entry) => entry.id === memberId)
   return member?.user.name.trim() || null
@@ -1378,13 +1282,8 @@ type ConnectionResponseReads = {
   oauthClients: ReadonlyMap<string, OrgOAuthClientRow | null>
 }
 
-/**
- * What toConnectionResponse reads for these rows, one query per table for the
- * whole list. `includeAccess` must match the option each row is rendered with.
- */
 async function readConnectionResponses(input: {
   callerOrgMembershipId: DenTypeId<"member">
-  /** Read grants and OAuth clients from the primary: the caller just wrote them. */
   fresh?: boolean
   includeAccess: (row: ExternalMcpConnectionRow) => boolean
   organizationId: DenTypeId<"organization">
@@ -1417,7 +1316,6 @@ async function toConnectionResponse(
   row: ExternalMcpConnectionRow,
   options: {
     callerOrgMembershipId: DenTypeId<"member">
-    /** The caller holds `connections.delete`. Creators may always remove their own connections. */
     callerCanRemoveAnyConnection?: boolean
     createdByName?: string | null
     includeAccess: boolean
@@ -1425,9 +1323,7 @@ async function toConnectionResponse(
     identityManagedBy: ConnectionRequiredBy[]
     requiredBy: ConnectionRequiredBy[]
     requiredAuthTypes: Set<"apikey" | "none" | "oauth">
-    /** Reads shared by a whole list; a single connection reads its own. */
     reads?: ConnectionResponseReads
-    /** The caller just wrote this connection's grants or OAuth client. */
     fresh?: boolean
   },
 ) {
@@ -1513,13 +1409,7 @@ async function toConnectionResponse(
     apiKeyAuthScheme: row.apiKeyAuthScheme,
     requestHeaderNames: row.kind === "external_mcp" ? externalMcpRequestHeaderNames(row.requestHeaders) : [],
     exposeDirectly: row.exposeDirectly,
-    // Which service a native connector fronts ("google-workspace"), so a
-    // member's card can say what they would be signing in to. Null for
-    // external MCP rows, whose url already names the service.
     nativeProviderKey: row.kind === "native_provider" ? row.nativeProviderKey : null,
-    // The caller's own connected identity (their email for Google), so the
-    // card can say WHICH account is signed in — the whole point of holding
-    // more than one connector for the same service.
     externalAccountId: callerExternalAccountId,
     connected,
     connectedAt: connectedAt ? connectedAt.toISOString() : null,
@@ -1590,11 +1480,9 @@ export type MemberUsableConnectionFacts = {
   setupRequired?: boolean
   issuerReviewRequired?: boolean
   reconnectActionOwner?: string | null
-  /** The caller's own last check, or why their last sign-in did not connect. External MCP rows only. */
   readiness?: VisibleReadiness | null
 }
 
-/** Callers holding the same request context share one read (the library's loaders call it concurrently). */
 export function listMemberUsableConnectionFacts(input: {
   context: PluginArchActorContext
 }): Promise<MemberUsableConnectionFacts[]> {
@@ -1612,7 +1500,6 @@ async function loadMemberUsableConnectionFacts(input: {
     orgMembershipId: member.id,
     teamIds,
   })
-  // The member who added a connection manages who can use it.
   const includeAccess = (row: ExternalMcpConnectionRow) => row.createdByOrgMembershipId === member.id
   const [provenance, members, reads, nativeEntries] = await Promise.all([
     requiredByForConnections({ context: input.context, includeAllPluginNames: false, rows }),
@@ -1652,9 +1539,7 @@ async function handleExternalMcpOAuthCallback(input: {
   request: Request
   requestId: string
   scopedConnectionId?: string
-  /** The OpenWork user signed in to the browser that received the provider's reply, if any. */
   sessionUserId: string | null
-  /** Audit attribution once the signed state, connection and member are verified; a Response (503) aborts. */
   attribute?: (owner: { organizationId: string; memberId: string; userId: string | null }) => Promise<Response | null>
 }): Promise<Response> {
   const url = new URL(input.request.url)
@@ -1671,9 +1556,6 @@ async function handleExternalMcpOAuthCallback(input: {
   const completionPage = (result: Parameters<typeof connectCallbackPage>[0]) => connectCallbackPage(result, workbotCallbackReturn(statePayload.workbotReturn, statePayload.providerId))
   const isScopedRoute = input.scopedConnectionId !== undefined
   const callbackMode = statePayload.version === 2 ? statePayload.callbackMode : "legacy-v1"
-  // Version-two transactions can use either callback, but the route and the
-  // signed callback mode must agree. Version-one transactions remain bound to
-  // the legacy runtime and per-connection compatibility route.
   if (!isScopedRoute && (statePayload.version !== 2 || callbackMode !== "shared-v1")) {
     return invalidMcpOAuthCallback("This authorization callback must use the shared callback selected when authorization started.")
   }
@@ -1691,8 +1573,6 @@ async function handleExternalMcpOAuthCallback(input: {
     return invalidMcpOAuthCallback("Invalid or expired state.")
   }
   const [connection, starter] = await Promise.all([
-    // primary: the provider can redirect back instantly, before a replica has
-    // the verifier and configuration the authorization start just saved.
     getExternalMcpConnection({
       organizationId: statePayload.organizationId,
       connectionId,
@@ -1705,8 +1585,6 @@ async function handleExternalMcpOAuthCallback(input: {
   if (connection.kind !== "external_mcp") {
     return invalidMcpOAuthCallback("Native provider connectors do not use the external MCP OAuth callback.")
   }
-  // Signed state names who started this connection, not who approved it at the
-  // provider. Nothing is exchanged, stored or recorded until the browser agrees.
   const code = url.searchParams.get("code")
   const starterCheck = checkOAuthCallbackStarter({
     starterUserId: starter.userId,
@@ -1739,7 +1617,6 @@ async function handleExternalMcpOAuthCallback(input: {
   }
   const auditBlocked = await input.attribute?.({ organizationId: statePayload.organizationId, memberId: starter.memberId, userId: starter.userId })
   if (auditBlocked) return auditBlocked
-  // The completion page never tells the opener why; the apps read this instead.
   const recordConnectFailure = async (diagnostic: ExternalMcpDiagnostic) => {
     try {
       const current = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id }, db.$primary)
@@ -1812,8 +1689,6 @@ async function handleExternalMcpOAuthCallback(input: {
               ? "pinned-transaction"
               : "response-issuer",
       })
-      // Preserve the isolated-callback defense for providers whose unadvertised
-      // issuer was explicitly ignored; otherwise pass the validated value to the SDK.
       validatedResponseIssuer = validation.ignoredResponseIssuer === undefined ? responseIssuer : undefined
       if (validation.ignoredResponseIssuer !== undefined) {
         logger.warn("external_mcp_connect_callback_untrusted_issuer_ignored", {
@@ -1921,8 +1796,6 @@ async function handleExternalMcpOAuthCallback(input: {
       ...(fixLink ? { fixLink } : {}),
     }), 400)
   }
-  // Re-grants invalidate earlier checks. Ordinary SDK refresh writes never
-  // change this separate grant binding.
   await rotateReadinessCredentialBinding(connection, statePayload.orgMembershipId)
   const refreshedConnection = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id }, db.$primary)
   const readiness = refreshedConnection ? await checkConnectionReadiness(refreshedConnection, statePayload.orgMembershipId, input.requestId) : null
@@ -1944,23 +1817,12 @@ export type McpConnectionOrganizationContext = NonNullable<OrgRouteVariables["or
 export type CreateExternalConnectionBody = z.infer<typeof createExternalConnectionBodySchema>
 type ConnectionAccessInput = z.infer<typeof accessInputSchema>
 
-/**
- * Whether the caller of this request holds `key`. Resolved once per request
- * (shared with orgPermissionRoute / hasPermission). No recent sign-in check:
- * the handlers here keep their own freshness rules.
- */
 async function callerHasPermission(payload: McpConnectionOrganizationContext, key: PermissionKey): Promise<boolean> {
   return (await memberPermissionsForOrganizationContext(payload)).has(key)
 }
 
 const ORG_WIDE_SHARE_DENIED_MESSAGE = "You can't make a connection available to everyone in the organization. Choose specific people or teams instead."
 
-/**
- * Org-wide access reaches every member, so it needs `sharing.share_org_wide`
- * on its own, whatever else the caller may do (Manage connections, Edit any
- * connection). Keeping an already org-wide connection org-wide while editing
- * it shares nothing new. Returns a 403 response, or null when allowed.
- */
 async function orgWideShareDenial(
   c: McpConnectionResponseContext,
   payload: McpConnectionOrganizationContext,
@@ -1979,12 +1841,6 @@ async function orgWideShareDenial(
   return c.json(denied, 403, permissionFailureHeaders(denied))
 }
 
-/**
- * Members add connectors for themselves from My Library. They can only add a
- * server that signs each person in with their own account (or needs no
- * sign-in), never an organization secret, and never for everyone unless they
- * may share with everyone.
- */
 function memberConnectionCreateDenial(body: z.infer<typeof createConnectionBodySchema>, options: { canShareOrgWide: boolean }): string | null {
   if (body.kind === "native_provider") return "Only workspace owners and admins can set up this service."
   if (body.externalKey) return "Only workspace owners and admins can add connections with a stable key."
@@ -1996,7 +1852,6 @@ function memberConnectionCreateDenial(body: z.infer<typeof createConnectionBodyS
   return null
 }
 
-/** A member-managed connection always keeps its creator, and never reaches everyone. */
 function memberManagedAccess(access: ConnectionAccessInput, creatorId: string): ConnectionAccessInput {
   return {
     orgWide: false,
@@ -2016,16 +1871,11 @@ export async function createExternalConnectionResponse(
   sessionId: string | null | undefined,
   requestId: string,
   apiKeyCaller = false,
-  /** `preferredId`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
   options: { preferredId?: ExternalMcpConnectionRow["id"] } = {},
 ): Promise<Response> {
-  // Secrets must not travel through chat transcripts: when the caller is
-  // the agent (internal MCP principal), refuse API-key connections.
   if (isAgentOAuthClientConnection({ oauthClient: body.oauthClient, sessionId })) {
     return c.json({ error: "invalid_request", message: "OAuth client credentials cannot be set from the agent. Add them in the OpenWork Cloud dashboard under Extensions." }, 400)
   }
-  // Entering a key is human-only for agents and API keys alike: they create
-  // the connection without it and a person adds it.
   const machineCaller = sessionId === "mcp_internal" || apiKeyCaller
   if (machineCaller && body.apiKey !== undefined) {
     return c.json({ error: "secure_entry_required", message: "Do not send keys through the agent or an API key. Create the connection without apiKey; the person adds it in a private field in OpenWork." }, 400)
@@ -2054,8 +1904,6 @@ export async function createExternalConnectionResponse(
     return c.json({ error: "invalid_request", message: "Individual accounts require OAuth or a personal API key enrolled by each member. Do not supply a shared key." }, 400)
   }
   if (!env.allowPrivateMcpUrls) {
-    // Fail fast with a clear message; the guarded fetch inside the MCP
-    // client re-checks at request time anyway (DNS can change later).
     try {
       await assertPublicUrl(body.url)
     } catch (error) {
@@ -2137,17 +1985,12 @@ export async function createExternalConnectionResponse(
   }
 
   if (body.authType !== "oauth" && body.credentialMode === "shared" && !awaitingSharedKey) {
-    // No OAuth dance needed — validate the server is real and reachable now.
     try {
       await connectExternalMcp(created, await callbackRedirectUri(created), undefined, undefined, requestId)
-      // OAuth records a successful connection while persisting tokens.
-      // A no-auth server has no token write, so retain the successful
-      // initialize probe explicitly for readiness and catalog discovery.
       if (body.authType === "none") {
         await markExternalMcpConnectionConnected(created.id)
       }
     } catch (error) {
-      // Failed creation must not leave a saved API key looking ready or reserve its external key.
       await deleteExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id })
       const diagnostic = externalMcpDiagnosticForResponse(error, requestId, "MCP_INITIALIZE")
       logger.error("external_mcp_connection_validation_failed", {
@@ -2164,7 +2007,6 @@ export async function createExternalConnectionResponse(
     }
   }
 
-  // primary: reads back the connection created and checked above.
   let refreshed = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id }, db.$primary)
   if (refreshed && body.authType !== "oauth" && body.credentialMode === "shared" && !awaitingSharedKey) {
     await checkConnectionReadiness(refreshed, payload.currentMember.id, requestId)
@@ -2181,8 +2023,6 @@ export async function createExternalConnectionResponse(
     identityManagedBy: [],
     requiredAuthTypes: new Set(),
   })
-  // The classical handoff: whoever created this (human or agent) gets
-  // the link where members connect their own account, ready to share.
   const responseBody = {
     ...response,
     links: memberConnectLinks(refreshed ?? created),
@@ -2220,7 +2060,6 @@ export async function replaceExternalConnectionResponse(
         : undefined),
   })
   const storedRequestSelectedScopesOnly = connection.authType === "oauth" && connection.oauthConfiguration?.requestSelectedScopesOnly === true
-  // Omitted keeps the stored choice while the identity is unchanged and there are still scopes for it to apply to.
   const requestSelectedScopesOnly = body.authType === "oauth"
     && (body.requestSelectedScopesOnly
       ?? (!identityChanged && storedRequestSelectedScopesOnly && oauthConfigurationDefaults.requestedScopes.length > 0))
@@ -2349,9 +2188,6 @@ export async function replaceExternalConnectionResponse(
   const apiKey = body.authType === "apikey"
     ? body.apiKey ?? (!identityChanged && connection.authType === "apikey" ? connection.apiKey : null)
     : null
-  // A connection still waiting for its shared key keeps waiting: its other
-  // settings apply and a person is asked for the key, so a stable-key upsert
-  // never strands it or creates a second connection.
   const awaitingSharedKey = body.authType === "apikey" && body.credentialMode === "shared" && !apiKey
     && connection.authType === "apikey" && connection.credentialMode === "shared" && !connection.apiKey
   if (body.authType === "apikey" && body.credentialMode === "shared" && !apiKey && !awaitingSharedKey) {
@@ -2373,8 +2209,6 @@ export async function replaceExternalConnectionResponse(
     }
   }
 
-  // Name/access/tool-policy edits must not probe an existing connection. Recheck
-  // only a changed automatic OAuth identity; manual settings were validated above.
   const oauthClientChanged = body.oauthClient !== undefined && (
     body.oauthClient.clientId !== existingOAuthClient?.clientId
     || (body.oauthClient.clientSecret !== undefined && body.oauthClient.clientSecret !== existingOAuthClient?.clientSecret)
@@ -2521,12 +2355,6 @@ export async function replaceExternalConnectionResponse(
   })
 }
 
-/**
- * Replaces each person's own key with one shared key, from the private field
- * in chat. The connection keeps its ID and access. Nothing is written unless
- * the key works and the connection is still exactly as the card showed it, so
- * a cancelled, rejected or stale card leaves the previous setup working.
- */
 async function switchToSharedApiKey(
   c: McpConnectionResponseContext,
   payload: McpConnectionOrganizationContext,
@@ -2546,7 +2374,6 @@ async function switchToSharedApiKey(
   try {
     await connectExternalMcp(proposed, await callbackRedirectUri(proposed), undefined, undefined, requestId)
   } catch (error) {
-    // Provider text is never echoed or logged: it can repeat the key.
     logger.warn("external_mcp_shared_key_rejected", { connection_id: connectionId, request_id: requestId })
     const diagnostic = externalMcpDiagnosticForResponse(error, requestId, "MCP_INITIALIZE")
     const rejected = diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403
@@ -2565,7 +2392,6 @@ async function switchToSharedApiKey(
     credentialMode: "shared",
     apiKey,
     apiKeyAuthScheme: connection.apiKeyAuthScheme,
-    // primary: this full-replace update must keep the latest access, not a lagging copy.
     access: directAccessInput(await listDirectExternalMcpConnectionAccess({ organizationId: payload.organization.id, connectionId }, db.$primary)),
     updatedByOrgMembershipId: payload.currentMember.id,
     ...(canUpdateAnyConnection ? {} : { createdByOrgMembershipId: payload.currentMember.id }),
@@ -2582,14 +2408,12 @@ async function switchToSharedApiKey(
   return c.json({ ok: true, connectionId, readiness: { status: readiness.status, checkedAt: readiness.checkedAt } })
 }
 
-/** A person may keep their own key only on a connection granted to them directly, to a team of theirs, or to everyone. */
 async function memberMayEnterOwnApiKey(payload: McpConnectionOrganizationContext, connectionId: ExternalMcpConnectionRow["id"], teams: MemberTeamSummary[]): Promise<boolean> {
   const directGrants = await listDirectExternalMcpConnectionAccess({ organizationId: payload.organization.id, connectionId })
   if (!directGrants.some((grant) => grant.orgWide || grant.orgMembershipId === payload.currentMember.id || teams.some((team) => team.id === grant.teamId))) return false
   return memberCanUseExternalMcpConnection({ connectionId, orgMembershipId: payload.currentMember.id, teamIds: teams.map((team) => team.id) })
 }
 
-/** The connection's own access list (not a plugin's), in the shape an update keeps. */
 function directAccessInput(grants: Awaited<ReturnType<typeof listDirectExternalMcpConnectionAccess>>) {
   return {
     orgWide: grants.some((grant) => grant.orgWide),
@@ -2603,8 +2427,6 @@ export async function deleteExternalConnection(
   payload: McpConnectionOrganizationContext,
   connection: ExternalMcpConnectionRow,
 ): Promise<{ deleted: boolean; response?: Response }> {
-  // Callers already require a recent sign-in from every session caller, so the
-  // sensitive key's own freshness rule is met here.
   const canDeleteAnyConnection = await callerHasPermission(payload, "connections.delete")
   if (!canDeleteAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
     return {
@@ -2631,13 +2453,6 @@ export async function deleteExternalConnection(
 
 export type CreateNativeProviderConnectionBody = z.infer<typeof createNativeProviderConnectionBodySchema>
 
-/**
- * The native-provider branch of POST /v1/mcp-connections, callable outside a
- * request (config-blob imports). The dashboard always shares a new built-in
- * connection with the whole organization; an import recreates the access the
- * source had (`access`), keeps its stable key (`externalKey`) and tenant
- * (`tenantId`), and may reuse its id (`preferredId`).
- */
 export async function createNativeProviderConnectionResponse(
   c: McpConnectionResponseContext,
   payload: McpConnectionOrganizationContext,
@@ -2713,24 +2528,6 @@ export async function createNativeProviderConnectionResponse(
   return c.json({ ...response, links: memberConnectLinks(created) })
 }
 
-/**
- * "Add any MCP server" — org-level External MCP Connections. Unlike
- * oauth-providers.ts (one registry entry per native provider we implement
- * ourselves), any org admin can register a connection here by URL; the real
- * OAuth dance (RFC 9728 discovery + dynamic client registration + PKCE) is
- * driven by the MCP SDK itself (capability-sources/external-mcp-client.ts),
- * not a fixed registry entry, since third-party MCP servers don't have a
- * pre-shared client id the way Google Workspace does.
- *
- * Connect/OAuth routes and the dashboard's edit and DELETE routes are tagged
- * Authentication (blocked from the agent-facing MCP surface, same treatment as
- * oauth-providers.ts) — an agent should never drive the OAuth handshake for a
- * connection itself. List/status/presets are tagged Capability Sources so a
- * harness can see what's connected. Agents prepare removing a connection with
- * POST /v1/mcp-connections/:connectionId/removal-request
- * (requestMcpConnectionRemoval); the person
- * confirms it in Den, through the DELETE route agents cannot call.
- */
 export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVariables & RequestIdVariables }>(app: Hono<T>) {
   app.get(
     "/oauth/client-metadata.json",
@@ -2781,7 +2578,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       try {
         const result = await discoverConnectionRequirements({
           serverUrl: url,
-          // Only requests to the MCP URL itself carry the headers.
           fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, url, discoveryHeaders.headers),
         })
         return c.json(requirementsForCaller(result, await hasPermission(c, "connections.view")))
@@ -2848,17 +2644,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         502: jsonResponse("Live OAuth discovery failed.", requirementsDiscoveryFailedSchema),
       },
     }),
-    // Issuer review is deliberately an admin action (Manage connections, an Admin default), not
-    // owner-only: it was admin-only before Permissions and only re-trusts an issuer the resource
-    // itself advertises. connections.manage is not sensitive, so confirming checks the recent
-    // sign-in explicitly below.
     orgPermissionRoute("connections.manage"),
     paramValidator(connectionParamsSchema),
     jsonValidator(issuerReviewBodySchema),
     async (c) => {
       if (c.req.valid("json").action === "confirm") {
-        // The recent sign-in check treats API keys as fresh, so deny them outright: confirming
-        // re-trusts an issuer and needs an interactive, recently signed-in admin. Preview stays open.
         if (c.get("apiKey")) {
           return c.json({ error: "forbidden", message: "Confirm an issuer from the dashboard; API keys can't do this." }, 403)
         }
@@ -3004,8 +2794,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           })
           return { url: candidateUrl, discovery }
         } catch {
-          // A candidate that cannot even be fetched (guard rejection, bad
-          // URL) simply loses to the other candidates.
           return null
         }
       }))
@@ -3074,7 +2862,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             callerCanRemoveAnyConnection: canRemoveAnyConnection,
             createdByName: resolveCreatorName(members, row.createdByOrgMembershipId),
             includeAccess: true,
-            includeManualOAuthEndpoints: true, // This branch requires connections.view above.
+            includeManualOAuthEndpoints: true,
             requiredBy: provenance.requiredBy.get(row.id) ?? [],
             identityManagedBy: provenance.identityManagedBy.get(row.id) ?? [],
             requiredAuthTypes: provenance.requiredAuthTypes.get(row.id) ?? new Set(),
@@ -3084,8 +2872,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
 
       const connections = await listMemberUsableConnectionFacts({ context })
-      if (!payload.features.connectionMcpServers) return c.json({ connections })
-      return c.json({ connections: connections.map((connection) => ({ ...connection, mcpUrl: connectionServerUrl(DEN_MCP_OAUTH_RESOURCE, connection.id) })) })
+      return c.json({ connections })
     },
   )
 
@@ -3539,10 +3326,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
   app.post(
     "/v1/mcp-connections",
     describeRoute({
-      // Tagged Capability Sources (not Authentication) on purpose: this is
-      // plain admin CRUD with no secrets for oauth/none connections, so an
-      // org admin can publish connections from chat. The OAuth plumbing
-      // (connect/start, callbacks, client secrets) stays agent-blocked.
       tags: ["Capability Sources"],
       summary: "Register a new External MCP Connection for the org",
       description: "Owners and admins can register any server. Other members can add one for themselves: an OAuth server where each person signs in (credentialMode per_member) or a server with no sign-in, shared with specific members or teams but never org-wide; the caller is always kept in its access. Registers a third-party MCP server by name + URL and grants access (org-wide, teams, or members). Use GET /v1/mcp-connections/presets for known server URLs (Notion, Linear, Stripe, Sentry, Slack, Context7). For credentialMode per_member, each member connects their own account afterwards — give the user links.signIn (a one-click browser sign-in page for this connection) when you cannot show a sign-in card, and share links.yourConnections so teammates know where to sign in. For servers with pre-registered OAuth apps, whitelist links.oauthCallback. API-key and OAuth-client credentials cannot be created through the agent surface; use the dashboard.",
@@ -3764,8 +3547,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
   app.put(
     "/v1/mcp-connections/:connectionId/access",
     describeRoute({
-      // Capability Sources (not Authentication): pure grant management, no
-      // credentials involved — lets an admin reshape access from chat.
       tags: ["Capability Sources"],
       summary: "Replace who can use an External MCP Connection",
       description: "Owners, admins, and the member who added the connection. Full-replace semantics: send the complete desired access set (orgWide, or memberIds + teamIds). Team and member ids come from GET /v1/org. A non-admin creator cannot grant org-wide access and always keeps their own access.",
@@ -3868,13 +3649,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     },
   )
 
-  // The agent-facing way to remove a connection (the connector itself, not
-  // anything in the provider). The agent only prepares the removal: it names
-  // the exact connection and surfaces blockers, and gets a link. Nothing is
-  // deleted until the person opens it and confirms in Den, signed in, through
-  // the dashboard DELETE that agents cannot call. A value the agent sends can
-  // therefore never authorize a deletion by itself.
-  // Offered only to a person's agent, not unattended Workflow, Automation or App capability calls.
   app.post(
     "/v1/mcp-connections/:connectionId/removal-request",
     describeAgentRoute({
@@ -3980,9 +3754,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     },
   )
 
-  // Asks the person, not the agent, for an existing connection's key. It
-  // changes nothing: the private field in OpenWork saves through the hidden,
-  // human-only credential routes below, which check every permission again.
   app.post(
     "/v1/mcp-connections/:connectionId/credential-prompt",
     describeRoute({
@@ -4044,11 +3815,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     },
   )
 
-  // Same shape as PUT /v1/llm-providers/:id/my-credential: a write-only
-  // credential for the calling member. Hidden from the OpenAPI contract so it
-  // can never become an agent capability: personal secrets belong only in the
-  // member form, never an MCP tool argument or chat transcript. Removal reuses
-  // POST /disconnect-my-account.
   app.put(
     "/v1/mcp-connections/:connectionId/my-credential",
     describeRoute({ hide: true }),
@@ -4061,7 +3827,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       if (!session || session.id === "mcp_internal" || c.get("apiKey")) {
         return c.json({ error: "forbidden", message: "Use the personal API-key form in Your Connections." }, 403)
       }
-      // Parse locally so validation diagnostics cannot echo submitted values.
       const parsed = z.object({ apiKey: z.string().refine(validMemberApiKey) }).strict().safeParse(await c.req.json().catch(() => null))
       if (!parsed.success) return c.json({ error: "invalid_request", message: "Enter only your API key, without a prefix, spaces or control characters." }, 400)
       const payload = c.get("organizationContext")
@@ -4085,10 +3850,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     },
   )
 
-  // The private field in OpenWork chat saves an organization connection's
-  // shared key here. Hidden from the contract and refused for agents and API
-  // keys: only a signed-in person with Manage connections enters it. It changes
-  // nothing but the key, so the key only reaches the server already saved.
   app.put(
     "/v1/mcp-connections/:connectionId/shared-credential",
     describeRoute({ hide: true }),
@@ -4101,10 +3862,8 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       if (!session || session.id === "mcp_internal" || c.get("apiKey")) {
         return c.json({ error: "forbidden", message: "Only a person signed in to OpenWork can enter this key." }, 403)
       }
-      // Parse locally so validation diagnostics cannot echo submitted values.
       const parsed = z.object({
         apiKey: z.string().refine(validMemberApiKey),
-        /** Present only when this key replaces each person's own key: the connection as the card showed it. */
         expectedUpdatedAt: z.string().datetime().optional(),
       }).strict().safeParse(await c.req.json().catch(() => null))
       if (!parsed.success) return c.json({ error: "invalid_request", message: "Enter only the API key, without a prefix, spaces or control characters." }, 400)
@@ -4125,7 +3884,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       try {
         await connectExternalMcp(saved.connection, await callbackRedirectUri(saved.connection), undefined, undefined, requestId)
       } catch (error) {
-        // A rejected key is not kept, and provider text is never echoed: it can repeat the key.
         await setExternalMcpSharedApiKey({ organizationId: payload.organization.id, connectionId, apiKey: saved.previousApiKey })
         logger.warn("external_mcp_shared_key_rejected", { connection_id: connectionId, request_id: requestId })
         const diagnostic = externalMcpDiagnosticForResponse(error, requestId, "MCP_INITIALIZE")
@@ -4206,15 +3964,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const callerIsAdmin = await hasPermission(c, "connections.manage")
       const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
       if (connection.credentialMode === "shared") {
-        // Connecting a shared credential IS the org-level integration setup —
-        // admin-only, like creating the connection itself. Before Permissions this was
-        // ensureOrganizationAdminRole, which never required a recent sign-in, and
-        // connections.manage is not sensitive, so neither does this.
         const permission = await requirePermission(c, "connections.manage")
         if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
       } else {
-        // Per-member: any member GRANTED the connection may connect their own
-        // account (that is the whole point); admins may too.
         const canUse = await memberCanUseExternalMcpConnection({
           connectionId: externalMcpConnectionId,
           orgMembershipId: payload.currentMember.id,
@@ -4255,21 +4007,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
 
       let issuerRepairRequiresAdmin = false
       try {
-        // Our own signed state token identifies which connection AND which
-        // member this is for once the external server redirects back. It MUST
-        // travel as the standard OAuth `state` param — a custom param would
-        // simply be dropped, since only `state` is guaranteed to round-trip on
-        // any spec-compliant authorization server (see ExternalMcpOAuthProvider.state()).
-        // New rows store shared-v1. Existing rows keep legacy-v1 so reconnects
-        // continue using the callback already registered with the provider.
         const member = connection.credentialMode === "per_member"
           ? { orgMembershipId: payload.currentMember.id }
           : undefined
         if (connection.oauthConfiguration?.callbackMode !== "shared-v1") {
-          // Rows isolated in July kept their admin-registered client, whose
-          // recorded shared redirect is what the provider still receives.
-          // Sign the mode that redirect actually uses, or the shared callback
-          // route rejects the transaction after provider consent.
           const adopted = await adoptRegisteredSharedExternalMcpOAuthCallback({
             organizationId: payload.organization.id,
             connectionId: externalMcpConnectionId,
@@ -4320,7 +4061,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           } catch (error) {
             const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "AUTH_CLIENT_REGISTRATION")
             if (diagnostic.code !== "MCP_OAUTH_CONFIGURATION_CHANGED") throw error
-            // primary: re-reads the configuration the failed start just saved.
             const refreshed = await getExternalMcpConnection({
               organizationId: payload.organization.id,
               connectionId: externalMcpConnectionId,
@@ -4404,7 +4144,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           started = await beginAuthorizationWithConfigurationRefresh(connection)
         }
         if (started.result.status === "needs_auth" && connection.oauthConfiguration?.callbackMode === "shared-v1") {
-          // primary: reads the discovery the authorization start just saved.
           const discovered = await getExternalMcpConnection({
             organizationId: payload.organization.id,
             connectionId: externalMcpConnectionId,
@@ -4431,7 +4170,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         }
 
         const { result } = started
-        // Client registration happens before an authorize URL exists, so either result shows how it went.
         observeSignInRegistration({ connection, reference: c.get("requestId") })
         if (result.status === "connected") {
           return c.json({ status: "connected" as const, authorizeUrl: null })
@@ -4473,8 +4211,6 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             diagnostic,
           }, 409)
         }
-        // Some edges replace origin 502/504 responses with CORS-less error pages.
-        // HTTP 424 passes through so a browser on another origin can read the diagnostic.
         return c.json({
           error: "oauth_handshake_failed",
           message: `Could not connect "${connection.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.`,

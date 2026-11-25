@@ -30,7 +30,6 @@ const LABEL = "mt-3 block text-[12px] font-medium text-gray-700";
 const INVALID = "border-red-300 ring-2 ring-red-100";
 
 export function CustomProviderWizardScreen({ embedded = false }: { embedded?: boolean }) {
-  // One store per visit: in memory only, gone when the admin leaves the page.
   const [store] = useState(() => createWizardStore());
   return <Wizard store={store} embedded={embedded} />;
 }
@@ -110,9 +109,7 @@ function Wizard({ store, embedded }: { store: WizardStore; embedded: boolean }) 
     }
   }
 
-  // Step 2 fetches once per connection; going back and forth with the same URL and key keeps the result.
   useEffect(() => {
-    // A failed fetch for this same connection waits for "Try again" instead of looping.
     const failedHere = state.discovery.state === "error" && state.discovery.connection === connection;
     if (state.step !== 2 || !discoveryNeeded || discoveryLoading || failedHere) return;
     void discover();

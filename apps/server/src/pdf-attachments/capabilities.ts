@@ -1,42 +1,17 @@
-/**
- * What the current model can take as input, read from the engine's provider
- * catalog. Both catalog shapes the OpenCode SDK has shipped are understood:
- * `capabilities.input.{pdf,image}` and the older `modalities.input` list.
- *
- * Unknown models are treated as text-only. That is the safe direction: text
- * always works, while an unsupported PDF or image part fails the whole request
- * at the provider.
- */
 export type ModelInputSupport = {
   pdf: boolean;
   image: boolean;
-  /** false when the model was not found in the catalog. */
   known: boolean;
-  /** AI SDK package serving the model, when the catalog says. */
   npm: string | null;
-  /** Context window in tokens, when the catalog says. */
   contextTokens: number | null;
 };
 
-/**
- * When a PDF-capable model should still get the derived form instead of the
- * PDF itself. A PDF sent natively rides inline as base64 in every step of the
- * loop and is tokenized page by page, so past a point it costs more than it
- * gives: it can exceed the provider's request size, dominate the context
- * window, or re-upload tens of megabytes per tool call.
- */
 export type NativePdfPolicy = {
-  /** Provider ceiling for one request body; PDFs count at their base64 size. */
   requestBytes: number;
-  /** Bytes kept free for the rest of the request (prompt, tools, history). */
   requestHeadroomBytes: number;
-  /** Provider cap on PDF pages per request. */
   maxPages: number;
-  /** Raw size above which native input is not worth re-uploading every step. */
   maxRawBytes: number;
-  /** Share of the context window that natively-sent PDFs may take in one step. */
   contextShare: number;
-  /** Rough provider tokenization of one native PDF page (text plus page image). */
   tokensPerPage: number;
 };
 
@@ -54,14 +29,6 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-/**
- * Native-input policy per provider package, from the providers' own documented
- * limits with conservative defaults elsewhere:
- * - Anthropic: 32 MB per request; 100 pages, or 600 when the context window is
- *   at least 1M tokens; about 2,300 tokens per page (text plus page image).
- * - OpenAI: text plus page images per page; 50 MB per request (kept at 32 MB).
- * - Gemini: 50 MB / 1,000 pages via the Files API, 20 MB inline; 258 tokens per page.
- */
 export function nativePdfPolicy(npm: string | null, contextTokens: number | null = null): NativePdfPolicy {
   const base: NativePdfPolicy = {
     requestBytes: 32 * MIB,
@@ -73,13 +40,11 @@ export function nativePdfPolicy(npm: string | null, contextTokens: number | null
   };
   if (npm === "@ai-sdk/google" || npm === "@ai-sdk/google-vertex") return { ...base, requestBytes: 20 * MIB, maxPages: 1000, tokensPerPage: 258 };
   if (npm === "@ai-sdk/anthropic" || npm === "@ai-sdk/google-vertex/anthropic" || npm === "@ai-sdk/amazon-bedrock") {
-    // Anthropic's own example: about 7,000 tokens for a 3-page PDF with text and page images.
     return { ...base, tokensPerPage: 2_300, maxPages: contextTokens !== null && contextTokens >= 1_000_000 ? 600 : 100 };
   }
   return base;
 }
 
-/** Bytes a binary occupies once base64-encoded into a request body. */
 export function encodedSize(rawBytes: number): number {
   return Math.ceil(rawBytes / 3) * 4;
 }
@@ -142,10 +107,6 @@ export type InputSupportResolver = {
   resolve(providerID: string, modelID: string): Promise<ModelInputSupport>;
 };
 
-/**
- * Caches the provider catalog so the per-step transform stays cheap. A failed
- * catalog read yields text-only handling and is retried shortly after.
- */
 export function createInputSupportResolver(listProviders: () => Promise<unknown>, now: () => number = Date.now): InputSupportResolver {
   let catalog: { value: unknown; expiresAt: number } | null = null;
   let loading: Promise<unknown> | null = null;

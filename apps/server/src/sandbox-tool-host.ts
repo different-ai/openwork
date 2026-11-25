@@ -9,7 +9,6 @@ export const SANDBOX_OUTPUT_BYTES = 32_000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-/** Guest POSIX paths only. Never resolve these against a host directory. */
 export function sandboxGuestPath(value: string): string {
   if (!value.startsWith("/") || value.includes("\\") || /[\u0000-\u001f\u007f]/u.test(value)
     || value.length > 1024 || value.split("/").some(part => part === "." || part === "..")
@@ -29,7 +28,6 @@ function validateFilePath(value: { path?: string; filePath?: string }, context: 
   if (value.path && value.filePath && value.path !== value.filePath) context.addIssue({ code: "custom", message: "path and filePath must agree." });
 }
 
-/** Small, flat schemas remain safe for grammar-constrained model providers. */
 export const sandboxToolSchemas = {
   shell: z.object({ command: text.min(1), cwd: path.optional(), timeoutMs: timeout }).strict(),
   read: z.object({ ...filePath, offset: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(), limit: z.number().int().min(1).max(2000).optional() }).strict().superRefine(validateFilePath),
@@ -50,7 +48,6 @@ export type SandboxToolCall = { sessionID: string; signal: AbortSignal; id?: str
 export type SandboxToolResult = { content: { type: "text"; text: string }[]; metadata: { sandbox: true; truncated: boolean; exitCode?: number } };
 export type SandboxToolHostDependencies = {
   provider: SandboxProvider;
-  /** Trusted session ownership/lifecycle belongs to the caller, not model input. */
   acquire(): Promise<SandboxHandle>;
   cwd: string;
 };
@@ -59,8 +56,6 @@ function quote(value: string): string { return `'${value.replace(/'/g, `'"'"'`)}
 function bounded(output: string, exitCode?: number): SandboxToolResult {
   const bytes = encoder.encode(output);
   const truncated = bytes.byteLength > SANDBOX_OUTPUT_BYTES;
-  // The non-fatal decoder drops no bytes except the bounded suffix; a split UTF-8
-  // sequence can become a replacement character but never leaks extra output.
   const value = truncated ? new TextDecoder().decode(bytes.subarray(0, SANDBOX_OUTPUT_BYTES - 64)) + "\n[Sandbox output truncated]" : output;
   return { content: [{ type: "text", text: value }], metadata: { sandbox: true, truncated, ...(exitCode === undefined ? {} : { exitCode }) } };
 }
@@ -70,7 +65,6 @@ function selectedPath(input: { path?: string; filePath?: string }): string {
   return sandboxGuestPath(value);
 }
 
-/** All effects use provider blocks. Missing blocks fail closed; there is no host exec/fs fallback. */
 export function createSandboxToolHost(dependencies: SandboxToolHostDependencies) {
   const { provider } = dependencies;
   const cwd = sandboxGuestPath(dependencies.cwd);
@@ -80,7 +74,6 @@ export function createSandboxToolHost(dependencies: SandboxToolHostDependencies)
       call.signal.throwIfAborted();
       const serialized = JSON.stringify(input);
       if (!serialized || encoder.encode(serialized).byteLength > MAX_INPUT_BYTES) throw new Error("Sandbox tool input is too large.");
-      // Validate before acquiring compute; a malformed call must not boot a VM.
       const parsed = sandboxToolSchemas[name].parse(input);
       const run = provider.blocks?.run;
       const files = provider.blocks?.files;
@@ -108,7 +101,6 @@ export function createSandboxToolHost(dependencies: SandboxToolHostDependencies)
         await files.write(handle, guestPath, bytes, opts);
       };
       let result: SandboxToolResult;
-      // Parsing per branch preserves precise types without casts or unchecked unions.
       if (name === "shell") {
         const args = sandboxToolSchemas.shell.parse(parsed);
         if (!run) throw new Error("Sandbox run unavailable.");

@@ -1,13 +1,5 @@
 import type { AdminRunnerFleet } from "@openwork/types/den/admin-runner-fleet"
 
-/**
- * The fleet as a live event stream: a `fleet` event with the whole reading on connect and then every few seconds.
- * A stream ends itself after `maxAgeMs` with an `end` event, so a watcher reconnects and is authorized again; a
- * reading that fails sends `unavailable` and the stream carries on.
- *
- * The age is kept under the web app's proxy deadline for one browser request (175 s), so a stream read through it
- * ends cleanly here instead of being cut there.
- */
 export const RUNNER_FLEET_EVENT_INTERVAL_MS = 5_000
 export const RUNNER_FLEET_EVENT_MAX_AGE_MS = 150_000
 
@@ -49,12 +41,10 @@ export function runnerFleetEvents(input: {
     try {
       stream?.close()
     } catch {
-      // Already closed by the client.
     }
   }
   const emit = (value: string) => {
     if (!stream || stopped) return
-    // A watcher that stopped reading must not grow a queue forever.
     if (stream.desiredSize !== null && stream.desiredSize <= 0) return close()
     stream.enqueue(encoder.encode(value))
   }

@@ -1,12 +1,6 @@
 import { t } from "@/i18n"
 import { ComposerSendButton } from "../surface/composer/composer-send-button"
 
-/**
- * The follow-up box for a task on another computer, in the chat composer's
- * shape (DESIGN.md T5): one round send/stop button and the computer as a
- * quiet text pill. Enter sends, Shift+Enter adds a line. While the task runs
- * the button stops it and Enter still sends a follow-up, like the chat.
- */
 export function RemoteFollowUpComposer({
   draft,
   onDraftChange,
@@ -24,19 +18,15 @@ export function RemoteFollowUpComposer({
   onDraftChange: (draft: string) => void
   onSend: () => void
   onStop: () => void
-  /** Where the task runs, shown as a plain pill. */
   computer: string
   running: boolean
-  /** No session yet: nothing to follow up on. */
   disabled: boolean
   sending: boolean
   stopping: boolean
   error: string | null
-  /** Focus the box on open, where the person just chose to open the task. */
   autoFocus?: boolean
 }) {
   const canSend = !disabled && !sending && Boolean(draft.trim())
-  // Same as the chat composer: while busy the one button stops, Enter still sends.
   const showStop = running
 
   return (

@@ -21,9 +21,6 @@ interface InventoryHub {
   readonly join: (options: SharedSubscriptionOptions) => Promise<void>
 }
 
-// OpenCode creates one plugin instance per Location, including separate ESM
-// graphs. Expose only an immutable capability, never the registry or callbacks
-// that resolve Den credentials. All credential-bearing state stays in a closure.
 declare global {
   var __openworkInventorySubscriptions: InventoryHub | undefined
 }
@@ -59,8 +56,6 @@ function joinSharedInventory(shared: Map<string, SharedSubscription>, options: S
       retryMs: options.retryMs,
       signal: current.controller.signal,
       session: async () => {
-        // Never retain the first Location as owner after it unloads, nor send a
-        // changed account's credential to the old account's listeners.
         for (const listener of current.listeners.values()) {
           if (listener.signal.aborted) continue
           const session = await listener.session().catch(() => null)
@@ -90,13 +85,9 @@ function joinSharedInventory(shared: Map<string, SharedSubscription>, options: S
         }
       },
     })
-    // Keep a terminal (feature-disabled) subscription until its last consumer
-    // leaves. New Locations must not reopen the killed stream for this session.
   } else {
     queueMicrotask(() => {
       if (options.signal.aborted) return
-      // A Location joining during revocation must not reuse cached authority or
-      // reopen the shared connection to bypass its retry backoff.
       if (current.denied === "organization") (options.revoked ?? options.unauthorized)?.()
       else if (current.denied === "session") options.unauthorized?.()
       else if (current.received) options.changed()
@@ -108,9 +99,6 @@ function joinSharedInventory(shared: Map<string, SharedSubscription>, options: S
 function createInventoryHub(): InventoryHub {
   const shared = new Map<string, SharedSubscription>()
   const join = (options: SharedSubscriptionOptions) => joinSharedInventory(shared, options)
-  // A caller may join only with its own identity and release only through its
-  // own AbortSignal. No lookup-by-hash, callback access, or registry mutation is
-  // available, and a joining fetcher never replaces an existing stream's owner.
   return Object.freeze({ join: Object.freeze(join) })
 }
 
@@ -140,7 +128,6 @@ export class SseParser {
 
   push(text: string) {
     this.buffer += text
-    // Bound untrusted/incorrect responses, including streams with no line breaks.
     if (this.buffer.length > 1024 * 1024) throw new Error("SSE frame too large")
     while (true) {
       const match = /[\r\n]/.exec(this.buffer)
@@ -171,16 +158,13 @@ interface SubscriptionOptions {
   fetch: Fetch
   session: () => Promise<DenSession | null>
   changed: () => void
-  /** Invalid session: terminal until the credential changes. */
   unauthorized?: () => void
-  /** Organization access lost: fence/cache-clear, but retain identity and stream for regrant. */
   revoked?: () => void
   signal: AbortSignal
   heartbeatMs?: number
   retryMs?: number
 }
 
-/** Read Den's actual JSON error contract, without trusting unbounded error bodies. */
 async function organizationNotFound(response: Response, signal: AbortSignal): Promise<boolean> {
   if (!response.body) return false
   const reader = response.body.getReader()
@@ -228,7 +212,7 @@ export function subscribeInventory(options: SubscriptionOptions): Promise<void> 
         const session = await options.session()
         if (!session || signal.aborted) return
         if (!isAllowedApiBaseUrl(session.apiBaseUrl)) return
-        touch() // Also bounds a server that never sends response headers.
+        touch()
         const response = await options.fetch(`${normalizeBaseUrl(session.apiBaseUrl)}${INVENTORY_EVENTS_PATH}`, {
           headers: {
             accept: "text/event-stream",
@@ -238,9 +222,6 @@ export function subscribeInventory(options: SubscriptionOptions): Promise<void> 
           redirect: "error",
           signal,
         })
-        // Membership middleware runs before the feature guard and also returns
-        // 404. Only its explicit JSON contract revokes authority; feature_disabled
-        // and unknown/unsupported 404s retain the snapshot and stay terminal.
         if (response.status === 404) {
           if (!await organizationNotFound(response, signal)) return
           if (signal.aborted) return
@@ -264,7 +245,6 @@ export function subscribeInventory(options: SubscriptionOptions): Promise<void> 
           await response.body?.cancel()
           throw new Error("Inventory subscription unavailable")
         }
-        // Reconnects always reconcile, even if the server's first event is lost.
         options.changed()
         const parser = new SseParser(({ event }) => {
           if (event === "inventory.changed") options.changed()
@@ -287,7 +267,6 @@ export function subscribeInventory(options: SubscriptionOptions): Promise<void> 
           reader.releaseLock()
         }
       } catch {
-        // No response bodies/URLs/tokens in logs; transient failures retry below.
       } finally {
         clearTimeout(watchdog)
         connection.abort()

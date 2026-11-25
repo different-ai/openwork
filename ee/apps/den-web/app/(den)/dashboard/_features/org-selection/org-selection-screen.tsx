@@ -41,7 +41,6 @@ function useReducedMotion() {
 
 export type OrgSelectionScreenProps = {
   orgs: DenOrgSummary[];
-  /** Disables org rows while a switch is already in flight. */
   pending: boolean;
   errorMessage: string | null;
   onPick: (slug: string) => void;
@@ -90,11 +89,6 @@ function ScreenActions({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
-/**
- * Organization picker after Den sign-in.
- * Layout mirrors the desktop OpenWork forced sign-in / welcome card:
- * dither field + centered branded card + left-aligned headline + full-width actions.
- */
 export function OrgSelectionScreen({ orgs, pending, errorMessage, onPick, onSignOut }: OrgSelectionScreenProps) {
   const {
     query,

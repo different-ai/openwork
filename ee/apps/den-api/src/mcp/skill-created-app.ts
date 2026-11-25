@@ -59,7 +59,6 @@ const skillFilesInputSchema = z.array(z.object({
   base64: z.string().max(Math.ceil(SKILL_FILE_MAX_BYTES / 3) * 4 + 64).optional().describe("The complete contents of any file, base64-encoded: use it for images, fonts, office templates and other binary files."),
 })).max(SKILL_FILES_MAX_COUNT)
 
-/** One supporting file as an agent sends it: text, or base64 for any file. Den checks that exactly one is set. */
 export type SkillFileInput = z.infer<typeof skillFilesInputSchema>[number]
 
 export function registerAgentSkillTools(input: {

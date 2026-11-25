@@ -4,13 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { workbotHost } from "./host";
 
-/**
- * An App built in OpenWork, running in the panel beside the chat. Workbot's server opens the App from
- * its own MCP server as the person and hands back its page; this component puts the page in an opaque-origin frame
- * and answers the frame's MCP Apps requests. The App's tools run through the server, as the person. The App never
- * gets this page's origin, sign-in or conversation.
- */
-
 const openedSchema = z.object({ html: z.string().min(1), result: z.unknown() });
 const calledSchema = z.object({ result: z.unknown() });
 const requestSchema = z.object({
@@ -25,7 +18,6 @@ const linkSchema = z.object({ url: z.string() });
 type AppRequest = z.infer<typeof requestSchema>;
 type Opened = z.infer<typeof openedSchema>;
 
-/** Opens the App as the person: its page, and what opening it answered. */
 async function openApp(appId: string): Promise<Opened> {
   const { response, payload } = await workbotHost().requestJson(`/v1/workbot/apps/${encodeURIComponent(appId)}/open`, { method: "POST", body: "{}" }, 45_000);
   const opened = openedSchema.safeParse(payload);
@@ -33,7 +25,6 @@ async function openApp(appId: string): Promise<Opened> {
   return opened.data;
 }
 
-/** One of the App's own tools, for its page. */
 async function callAppTool(appId: string, name: string, args: Record<string, unknown>): Promise<unknown> {
   const { response, payload } = await workbotHost().requestJson(`/v1/workbot/apps/${encodeURIComponent(appId)}/call`, { method: "POST", body: JSON.stringify({ name, arguments: args }) }, 45_000);
   const called = calledSchema.safeParse(payload);
@@ -87,7 +78,6 @@ export async function answerAppRequest(
     case "ping":
       return send.reply({});
     default:
-      // Notifications (no id) need no answer; anything else Workbot does not offer an App.
       if (request.id !== undefined) send.refuse("Workbot does not support that request.");
   }
 }
@@ -108,7 +98,6 @@ export function OpenWorkApp({ appId, title }: { appId: string; title: string }) 
 
   const onMessage = useCallback((event: MessageEvent) => {
     const target = frame.current?.contentWindow;
-    // Only the App's own frame is answered; its origin is opaque, so the source window is what identifies it.
     if (!opened || !target || event.source !== target) return;
     const request = requestSchema.safeParse(event.data);
     if (!request.success) return;
@@ -155,6 +144,5 @@ export function OpenWorkApp({ appId, title }: { appId: string; title: string }) 
       </div>
     );
   }
-  // The App's code runs only in an opaque-origin frame: scripts and forms, never this page's origin.
   return <iframe ref={frame} srcDoc={opened.html} sandbox="allow-scripts allow-forms" title={title} className="block min-h-0 w-full flex-1 border-0 bg-white" data-workbot-app-frame />;
 }

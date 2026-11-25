@@ -18,7 +18,6 @@ const CHOICES: { value: LibraryAddChoice; title: string; description: string; ic
 
 const CONNECTOR_LOGOS = ["Slack", "Notion", "Microsoft 365", "Linear"];
 
-/** Brand tiles that say "connectors" without a word of explanation. */
 export function ConnectorLogoStrip({ size = "xs" }: { size?: "xs" | "md" }) {
   return (
     <span className={`flex items-center ${size === "md" ? "gap-2" : "gap-1.5"}`} aria-hidden>

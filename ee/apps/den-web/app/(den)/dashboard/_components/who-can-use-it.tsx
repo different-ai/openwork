@@ -7,11 +7,6 @@ import { permissionLockReason, type DenOrgMember, type DenOrgTeam } from "../../
 import { AccessRow as Row, AddPicker, Avatar, IconTile, RemoveButton } from "./access-rows";
 import { type AccessDraft, peopleLabel } from "./access-summary";
 
-/**
- * The one Who can use it block. It edits a draft; each surface decides when
- * to save (a Share page saves on its footer button, Manage pages save on add
- * and remove).
- */
 export function WhoCanUseIt({
   value,
   onChange,

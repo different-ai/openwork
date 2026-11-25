@@ -24,11 +24,8 @@ export const awsNetworkSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("existing"),
     vpcId: z.string().trim().regex(/^vpc-[0-9a-f]{8,17}$/, "Enter a VPC ID such as vpc-0abc12345."),
-    /** Private subnets with outbound internet (NAT) for services and the database. */
     serviceSubnetIds: subnetIdsSchema("private"),
-    /** Public subnets for the internet-facing load balancer. */
     loadBalancerSubnetIds: subnetIdsSchema("public"),
-    /** Empty creates an ECS cluster for this deployment. */
     ecsClusterArn: z.string().trim().max(300).optional(),
   }).strict(),
 ])
@@ -159,7 +156,7 @@ export function awsPortalBase(value: string) {
   return `https://${url.hostname}${path || (classic ? "/start" : "")}`
 }
 
-export const gcpRegionSchema = z.enum(["us-central1", "us-east1", "us-east4", "us-west1", "us-west2", "europe-west1", "europe-west2", "europe-west3", "asia-southeast1", "australia-southeast1"])
+export const gcpRegionSchema = z.enum(["us-central1", "us-east1", "us-east4", "us-west1", "us-west2", "europe-west1", "europe-west2", "europe-west3", "asia-east2", "asia-southeast1", "australia-southeast1"])
 export const gcpTargetSchema = z.object({
   projectId: z.string().trim().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/, "Enter a Google Cloud project ID."),
   projectNumber: z.string().regex(/^\d{1,20}$/, "Enter the numeric Google Cloud project number."),
@@ -185,7 +182,6 @@ export const managedDeploymentInputSchema = z.discriminatedUnion("provider", [
 ])
 export type ManagedDeploymentInput = z.infer<typeof managedDeploymentInputSchema>
 
-// ---- Installation milestones (identical for every cloud) ----
 export const deploymentStepSchema = z.enum([
   "runner_connected", "release_verified", "account_verified", "infrastructure_applied", "services_ready", "health_verified",
 ])
@@ -203,7 +199,6 @@ export const deploymentEventInputSchema = z.object({
 export const deploymentEventSchema = deploymentEventInputSchema.extend({ receivedAt: z.string().datetime() })
 export type DeploymentEventInput = z.infer<typeof deploymentEventInputSchema>
 
-// ---- Health reports (identical for every cloud) ----
 export const healthCheckIdSchema = z.enum([
   "api_health", "database_ready", "web_available", "services_running", "load_balancer_targets",
   "database_instance", "database_storage", "database_backups", "certificate",
@@ -224,8 +219,6 @@ export const healthCheckSchema = z.object({
 }).strict()
 export const versionSchema = z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/).max(80)
 export const healthReportSchema = z.object({
-  // A fresh nonce gives Google metadata tokens a unique exact-body audience even
-  // when successive health snapshots are identical. AWS reports stay compatible.
   nonce: z.string().regex(/^[a-f0-9]{32}$/).optional(),
   version: versionSchema.optional(),
   checks: z.array(healthCheckSchema).min(1).max(20)
@@ -242,7 +235,6 @@ export const deploymentHealthSchema = z.object({
   checks: z.array(healthCheckSchema),
 })
 
-// ---- Configuration changes after installation (AWS, same installer version) ----
 export const deploymentConfigurationFieldSchema = z.enum([
   "name", "domainName", "ownerEmail",
   "target.accountId", "target.region", "target.route53ZoneId", "target.network", "target.runtimeProfile",
@@ -255,7 +247,6 @@ export type DeploymentConfigurationField = z.infer<typeof deploymentConfiguratio
 export const deploymentConfigurationEffectSchema = z.enum(["saved_immediately", "restarts_den", "restarts_runner", "adds_gateway_runtime"])
 export const deploymentConfigurationChangeSchema = z.object({
   field: deploymentConfigurationFieldSchema,
-  /** Raw values. Secret ARNs are references, never secret values. */
   before: z.string().nullable(),
   after: z.string().nullable(),
   effect: deploymentConfigurationEffectSchema,
@@ -263,7 +254,6 @@ export const deploymentConfigurationChangeSchema = z.object({
 export type DeploymentConfigurationChange = z.infer<typeof deploymentConfigurationChangeSchema>
 export const deploymentConfigurationChangeInputSchema = z.object({
   expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
-  /** The complete document, so a fixed field is refused by name. An omitted runtimeProfile keeps the recorded one. */
   configuration: awsManagedDeploymentInputSchema,
 }).strict()
 /** Stored on a configure run. Targets are in storage form. */
@@ -271,38 +261,26 @@ export const deploymentConfigurationChangeRecordSchema = z.object({
   version: z.literal(1),
   requestedBy: z.object({ memberId: z.string(), userId: z.string() }).strict(),
   baseRunId: z.string().uuid(),
-  /** The active run to return to if the change is withdrawn. */
   restoresRunId: z.string().uuid(),
   previous: z.object({ ownerEmail: z.string(), target: z.record(z.string(), z.unknown()) }).strict(),
   requested: z.object({ ownerEmail: z.string(), target: z.record(z.string(), z.unknown()) }).strict(),
-  /** Never contains `name`: a rename is saved at once, without a run. */
   changes: z.array(deploymentConfigurationChangeSchema),
 }).strict()
 export const deploymentConfigurationLockSchema = z.enum(["aws_only", "not_installed", "run_in_progress", "unfinished_run", "installer_unknown", "installer_unavailable"])
 export const deploymentConfigurationViewSchema = z.object({
   revision: z.string().regex(/^[a-f0-9]{64}$/),
-  /** Null when the configuration can be changed now. */
   lock: deploymentConfigurationLockSchema.nullable(),
-  /** The installed installer is the published one, so the gateway runtime can be turned on. */
   gatewayAvailable: z.boolean(),
   change: z.object({
     runId: z.string().uuid(),
-    /**
-     * `applying` from the moment the approval command confirms the change with OpenWork
-     * (the run still awaits enrollment and `run.lastSeenAt` is that moment), and for as
-     * long as no final report arrives: a passed deadline (`run.expired`) does not end it,
-     * because it says nothing about what AWS did.
-     */
     state: z.enum(["awaiting_approval", "applying", "failed", "expired"]),
     requestedAt: z.string().datetime(),
     expiresAt: z.string().datetime(),
     changes: z.array(deploymentConfigurationChangeSchema),
-    /** A valid request `configuration`, to edit the change or try it again. */
     requested: awsManagedDeploymentInputSchema,
   }).nullable(),
 })
 
-// ---- API views ----
 export const deploymentRunSchema = z.object({
   id: z.string().uuid(),
   kind: deploymentRunKindSchema,
@@ -329,7 +307,6 @@ const managedDeploymentViewSchema = z.object({
   updateAvailable: z.boolean(),
   health: deploymentHealthSchema,
   run: deploymentRunSchema.nullable(),
-  /** Present only when the caller can change the configuration after installation. */
   configuration: deploymentConfigurationViewSchema.optional(),
 })
 export const managedDeploymentSchema = z.discriminatedUnion("provider", [
@@ -339,29 +316,18 @@ export const managedDeploymentSchema = z.discriminatedUnion("provider", [
 export const managedDeploymentListSchema = z.object({ deployments: z.array(managedDeploymentSchema) })
 export const managedDeploymentLaunchInputSchema = z.object({
   kind: deploymentLaunchKindSchema.default("install"),
-  /** Reconfigure the AWS runtime only with a newer, customer-approved installer. */
   runtimeProfile: awsRuntimeProfileSchema.optional(),
   assistants: awsAssistantsSchema.optional(),
 }).strict().superRefine((input, context) => {
   if ((input.assistants || input.runtimeProfile) && input.kind !== "update") context.addIssue({ code: "custom", path: ["runtimeProfile"], message: "Change the runtime profile or computers with a version-increasing Update, not Install or Retry." })
 })
-/** The same console destination without the access portal; absent in older API responses. */
 const directConsoleUrlSchema = z.string().url().nullable().optional()
 const cloudShellHandoffSchema = z.object({ action: z.literal("run_in_cloud_shell"), url: z.string().url(), directUrl: directConsoleUrlSchema, command: z.string(), instructions: z.string() })
 export const managedDeploymentLaunchSchema = z.object({
   deployment: managedDeploymentSchema,
   kind: deploymentRunKindSchema,
-  /** Opens the provider console to approve a new installer. Null when the customer runs `command`. */
   approvalUrl: z.string().url().nullable(),
-  /** Account-checked command for the customer's cloud shell, updating the existing installer. */
   command: z.string().nullable(),
-  /**
-   * The one step the person takes in their own cloud, for agents and other API
-   * clients: approve at `url` (open_link), or open the cloud shell at `url` and
-   * run `command` (run_in_cloud_shell). OpenWork never runs it for them.
-   * The API always sends it; optional only so a Den web build deployed before
-   * the API keeps parsing launches. Make it required once both have shipped.
-   */
   handoff: z.discriminatedUnion("action", [
     z.object({ action: z.literal("open_link"), url: z.string().url(), directUrl: directConsoleUrlSchema, command: z.null(), instructions: z.string() }),
     cloudShellHandoffSchema,
@@ -383,9 +349,7 @@ export const deploymentApprovalCheckInputSchema = z.object({ challenge: z.string
 export const deploymentApprovalCheckResultSchema = z.object({ ok: z.literal(true), expiresAt: z.string().datetime() })
 export const deploymentConfigurationErrorSchema = z.object({ error: z.string(), message: z.string().optional(), field: deploymentConfigurationFieldSchema.optional() })
 export const managedDeploymentConfigurationSchema = z.object({
-  /** Requires both managed deployment features for this caller. */
   assistantsAvailable: z.boolean().default(false),
-  /** The organization's saved AWS sign-in. When set, every AWS link opens through it. */
   awsSignIn: awsSignInSchema.nullable().default(null),
   providers: z.array(z.object({
     provider: managedDeploymentProviderSchema,

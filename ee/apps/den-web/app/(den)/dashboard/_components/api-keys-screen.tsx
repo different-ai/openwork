@@ -77,10 +77,8 @@ export function ApiKeysScreen() {
     const [createdKey, setCreatedKey] = useState<string | null>(null);
     const [createdKeyName, setCreatedKeyName] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
-    /** The list for this organization has loaded at least once (feature intro facts). */
     const [loadedOrgId, setLoadedOrgId] = useState<string | null>(null);
     const searchParams = useSearchParams();
-    // Config token areas are optional (left out if they fail to load).
     const configAreasQuery = useConfigAreas(orgId, Boolean(orgContext));
     const configAreas = configAreasQuery.data ? configAreasQuery.data.areas : null;
 
@@ -316,14 +314,11 @@ export function ApiKeysScreen() {
         }
     }
 
-    // Feature intro: full screen while the organization has no keys, until the
-    // Issue a new key form is open or a new key is on screen (DESIGN.md I1, I2).
     const intro = useFeatureIntro(
         "api-keys",
         access.canViewApiKeys && loadedOrgId === orgId && orgId && !error ? { apiKeys: apiKeys.length } : null,
     );
 
-    // Feature intro action (DESIGN.md I5): ?new=1 opens the Issue a new key form once, then leaves the address.
     const newRequested = searchParams.get("new") === "1";
     useEffect(() => {
         if (!orgContext || !newRequested) return;

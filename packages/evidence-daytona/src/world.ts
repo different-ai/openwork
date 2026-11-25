@@ -10,23 +10,14 @@ import { boundedDiagnostic, failureLayer, inspectGuest, safeExternalResponse } f
 export { EVIDENCE_KIND };
 const ROOT = "/opt/openwork-preview";
 const ACCESS_FILE = `${ROOT}/access.json`;
-/** Access to a test world expires after this long. */
 const WORLD_MINUTES = 60;
-/**
- * Daytona stops a sandbox after this many idle minutes and deletes it as soon as
- * it stops, so a world is reclaimed even if the runner dies. The hourly cleanup
- * is the backstop.
- */
 const IDLE_STOP_MINUTES = 30;
 
 export interface DaytonaEvidenceSession {
   id: string;
   sourceSha: string;
-  /** Reviewer viewer (noVNC + controls), behind the access cookie and the Daytona token. */
   viewer: { url: string; previewToken: string };
-  /** Chrome's remote-control port, for the runner only. */
   cdp: { url: string; previewToken: string };
-  /** `__Host-openwork-preview=<token>`: the in-VM gateway's access cookie. */
   cookie: string;
   expiresAt: string;
 }
@@ -37,7 +28,6 @@ export interface CdpWaitOptions {
   pauseMs?: number;
   diagnostic?: (summary: string) => Promise<void>;
   diagnosticTimeoutMs?: number;
-  /** Known credentials to suppress even if echoed as an otherwise valid trace ID. */
   secrets?: readonly string[];
 }
 
@@ -60,18 +50,14 @@ export async function launchDaytonaEvidenceWorld(template: DaytonaEvidenceLaunch
     }
     diagnosticSandbox = sandbox;
     if ("sandbox" in template && (await api.readFile(sandbox, `${ROOT}/built-from-sha`))?.trim() !== sourceSha) throw new Error("Prepared world source mismatch");
-    // A template may serve several commits whose VM-side files are identical.
     if ((await api.readFile(sandbox, `${ROOT}/evidence-ready`))?.trim() !== "web-v1"
       || (await api.readFile(sandbox, `${ROOT}/runtime-fingerprint`))?.trim() !== template.runtimeFingerprint) throw new Error("Evidence world source mismatch");
-    // The preview proxy dials localhost inside the VM; a boot with an empty /etc/hosts answers 502 on every
-    // port. Best effort and bounded: saved layers are already repaired, and the CDP wait reports any failure.
     await Promise.race([api.exec(sandbox, LOCALHOST_RECIPE, 15).catch(() => undefined), delay(20_000, undefined, { ref: false })]).catch(() => undefined);
     const [viewer, cdp] = await Promise.all([api.previewUrl(sandbox.id, 8080), api.previewUrl(sandbox.id, 8081)]);
     credentials.add(viewer.token); credentials.add(cdp.token);
     const token = randomBytes(32).toString("base64url");
     credentials.add(token);
     const expiresAt = new Date(Date.now() + WORLD_MINUTES * 60_000).toISOString();
-    // No origins: each gateway forwards to its one pinned service (see GATEWAY_UNITS).
     await api.writeFile(sandbox, ACCESS_FILE, JSON.stringify({ sandboxId: sandbox.id, sourceSha, token, expiresAt }), 0o600);
     const session: DaytonaEvidenceSession = { id: sandbox.id, sourceSha, cookie: `__Host-openwork-preview=${token}`, expiresAt,
       viewer: { url: viewer.url, previewToken: viewer.token }, cdp: { url: cdp.url, previewToken: cdp.token } };
@@ -79,8 +65,6 @@ export async function launchDaytonaEvidenceWorld(template: DaytonaEvidenceLaunch
     return session;
   } catch (error) {
     if (!owned) throw error;
-    // Persist the safe external facts before a toolbox call can stall. This
-    // synchronous fallback also survives failure of a caller's diagnostic sink.
     const external = error instanceof CdpReadinessError ? error.history : [];
     const publicResource = (value: string | undefined, pattern: RegExp) => value && pattern.test(value)
       && ![...credentials].some((secret) => secret.length > 0 && value.toLowerCase().includes(secret.toLowerCase())) ? value : undefined;
@@ -88,9 +72,7 @@ export async function launchDaytonaEvidenceWorld(template: DaytonaEvidenceLaunch
       sandboxId: publicResource(created.id, /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/),
       parentSnapshot: publicResource(diagnosticSandbox.snapshot, /^ow-dy-evidence-(?:image|web)-v1-[a-f0-9]{40}$/) };
     try { console.error(JSON.stringify({ stage: "daytona-evidence-external", ...context, external })); }
-    catch { /* A broken log sink must not mask the original failure or skip teardown. */ }
-    // Collect while the owned VM still exists. Never publish the error text,
-    // URLs, access file, service environment, or unfiltered guest logs.
+    catch {}
     await boundedDiagnostic(async () => {
       const health = await inspectGuest(api, diagnosticSandbox).catch(() => undefined);
       const status = external.at(-1)?.status ?? 0;
@@ -146,7 +128,7 @@ export async function waitForCdp(session: DaytonaEvidenceSession, options: CdpWa
           const version: unknown = JSON.parse(body);
           if (typeof version === "object" && version !== null && "Browser" in version && "webSocketDebuggerUrl" in version
             && typeof version.Browser === "string" && typeof version.webSocketDebuggerUrl === "string") return;
-        } catch { /* A 200 HTML/error page is not a live CDP endpoint. */ }
+        } catch {}
       }
     } catch { history.push(safeExternalResponse(0, new Headers(), "")); }
     if (history.length > 8) history.shift();

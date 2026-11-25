@@ -54,17 +54,9 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * `updated_at` as a JS-safe number. node:sqlite's DatabaseSync throws a
- * RangeError for INTEGERs beyond Number.MAX_SAFE_INTEGER, which would make a
- * single corrupt timestamp take the whole runtime DB down (and the desktop
- * server with it). Out-of-range or non-integer values read as 0, so the row is
- * treated as oldest and the next write replaces it with a real timestamp.
- */
 export const SAFE_UPDATED_AT_SQL =
   "CASE WHEN typeof(updated_at) = 'integer' AND updated_at BETWEEN 0 AND 9007199254740991 THEN updated_at ELSE 0 END";
 
-/** Raw `updated_at` as text when it is not a JS-safe integer, otherwise NULL. */
 export const UNSAFE_UPDATED_AT_RAW_SQL =
   "CASE WHEN typeof(updated_at) = 'integer' AND updated_at BETWEEN 0 AND 9007199254740991 THEN NULL ELSE CAST(updated_at AS TEXT) END";
 
@@ -237,14 +229,6 @@ async function workspaceKvDb(path: string, config: WorkspaceKvTableConfig): Prom
   return db;
 }
 
-/**
- * Reads must never materialize the runtime DB. A fresh install reads stores
- * before anything is written (startup provider-auth sync is one), and opening
- * with create:true would grow the state directory and an empty SQLite file
- * just to learn there is nothing stored. A missing file reads like an empty
- * one. An already-open connection still wins: a write in flight has the file
- * on the way even when it is not on disk yet.
- */
 async function readableWorkspaceKvDb(
   path: string,
   config: WorkspaceKvTableConfig,
@@ -280,7 +264,6 @@ export function createWorkspaceKvStore<T>(options: WorkspaceKvStoreOptions<T>) {
     get: async (serverConfig: ServerConfig, workspaceId: string): Promise<T | undefined> => {
       return (await getRow(serverConfig, workspaceId))?.value;
     },
-    /** Reads existing state without initializing the DB, table, or shared write cache. */
     getExisting: async (serverConfig: ServerConfig, workspaceId: string): Promise<T | undefined> => {
       const path = runtimeDbPath(serverConfig);
       try {

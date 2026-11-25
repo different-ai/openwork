@@ -7,10 +7,6 @@ import { readOpenWorkKey, type InferenceAuthEnv } from "./inference-auth.js"
 type MemberKey = Extract<ActiveGatewayKey, { source: "member" }>
 type ApiKey = Extract<ActiveGatewayKey, { source: "api_key" }>
 
-/**
- * A Gateway caller: always a member, through either the key OpenWork issued to their own apps
- * (`keySource: "member"`, a gky_ id) or a key they created for 3rd party tools (`"api_key"`, a gak_ id).
- */
 export type GatewayContext = {
   kind: "gateway"
   organizationId: ActiveGatewayKey["organization_id"]

@@ -33,7 +33,6 @@ import {
 import { ItemUsageDetail, PersonUsageDetail, UsageItemLead, UsageLanes, UsageListHeader, UsageRowsLoading, usageLead, type UsageHref } from "./library-usage-detail";
 import { useLibraryUsage, useLibraryUsageAvailable } from "./use-library-usage";
 
-/** A row opens the item's usage: who uses it and how often; that page links to where it is managed. */
 function UsageRow({ kind, row, now, tracksFailures, usageHref }: { kind: LibraryUsageKind; row: LibraryUsageRow; now: number; tracksFailures: boolean; usageHref: UsageHref }) {
   return <div role="presentation" data-testid="library-usage-row" data-item={row.name} data-analytics-row>
     <ListRow lead={<UsageItemLead kind={kind} name={row.name} />} name={row.name} secondLine={row.detail} href={usageHref({ item: row.id, member: null })}
@@ -41,7 +40,6 @@ function UsageRow({ kind, row, now, tracksFailures, usageHref }: { kind: Library
   </div>;
 }
 
-/** Skeleton in the destination's layout: the same number of stat cards, then its list. */
 function UsageLoading({ cards = 4 }: { cards?: number }) {
   return (
     <>
@@ -83,13 +81,11 @@ export function LibraryUsageScreen() {
   function setParam(key: "view" | "days", value: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.set(key, value);
-    // An item belongs to one kind; switching kinds goes back to its list.
     if (key === "view") params.delete("item");
     router.replace(`?${params.toString()}`, { scroll: false });
     if (key === "view") { setFilter("all"); setName(""); }
   }
 
-  /** Drill-down links keep the kind and range, so Back returns to the same list. */
   const usageHref: UsageHref = (change) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("view", kind);
@@ -108,8 +104,6 @@ export function LibraryUsageScreen() {
   const since = report ? countingSinceLabel(report, now) : null;
   const nothingRecorded = report ? !report.trackingSince && report.items.every((row) => row.uses === 0) : false;
   const focusedItem = report && focus && "itemId" in focus ? report.items.find((row) => row.id === focus.itemId) ?? null : null;
-  // Feature intro: the list view gets a box in place of "No {kind} yet" and a banner
-  // instead of "No usage yet". Drill-downs (one item or person) never show it.
   const intro = useFeatureIntro("analytics.library", focus ? null : libraryUsageIntroFacts(kind, report));
   const introBanner = intro.size === "banner";
 

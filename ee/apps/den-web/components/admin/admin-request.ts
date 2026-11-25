@@ -2,17 +2,12 @@ import { denApiCredentials, denBrowserEndpoint } from "../../app/(den)/_lib/den-
 
 const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 
-/**
- * Keeps password-login bearer credentials alongside the web-host session
- * cookie; the same-origin browser proxy forwards both to Den API.
- */
 export function withStoredBearer(headers: Record<string, string>): Record<string, string> {
   if (typeof window === "undefined") return headers;
   try {
     const token = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)?.trim();
     return token ? { ...headers, Authorization: `Bearer ${token}` } : headers;
   } catch {
-    // Cookie sign-in still works when browser storage is unavailable.
     return headers;
   }
 }
@@ -42,7 +37,6 @@ const FORBIDDEN_MESSAGES: Record<string, string> = {
   admin_email_required: "This account has no email address to check against the admin allowlist.",
 };
 
-/** Why Den refused an admin request with 403: the reason for its error code, else its own message. */
 export function adminForbiddenMessage(payload: unknown): string {
   const code = responseCode(payload);
   if (code && Object.hasOwn(FORBIDDEN_MESSAGES, code)) return FORBIDDEN_MESSAGES[code];
@@ -50,7 +44,6 @@ export function adminForbiddenMessage(payload: unknown): string {
   return "This account cannot open this admin page.";
 }
 
-/** Email of the signed-in account, so an access screen can say which account was refused. Null when unknown. */
 export async function requestSignedInEmail(signal?: AbortSignal): Promise<string | null> {
   try {
     const endpoint = denBrowserEndpoint("/v1/me");
@@ -71,7 +64,6 @@ export async function requestSignedInEmail(signal?: AbortSignal): Promise<string
   }
 }
 
-/** GET an admin endpoint and map the response to the access states every admin page shows. */
 export async function requestAdmin<T>(path: string, parse: (payload: unknown) => T | null, signal?: AbortSignal): Promise<AdminResult<T>> {
   const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
@@ -91,8 +83,7 @@ export async function requestAdmin<T>(path: string, parse: (payload: unknown) =>
   return data === null ? { access: "error", message: "The server returned data this page does not understand." } : { access: "ready", data };
 }
 
-/** PUT/POST JSON to an admin endpoint; returns the parsed payload or the server's error message. */
-export async function sendAdmin(path: string, method: "PUT" | "POST" | "PATCH", body?: unknown, signal?: AbortSignal): Promise<{ ok: true; payload: unknown } | { ok: false; message: string; status: number; code?: string; retryAfterSeconds?: number }> {
+export async function sendAdmin(path: string, method: "PUT" | "POST" | "PATCH" | "DELETE", body?: unknown, signal?: AbortSignal): Promise<{ ok: true; payload: unknown } | { ok: false; message: string; status: number; code?: string; retryAfterSeconds?: number }> {
   const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method,

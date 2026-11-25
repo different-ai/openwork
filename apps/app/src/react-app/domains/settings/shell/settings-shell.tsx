@@ -50,8 +50,6 @@ export type SettingsShellProps = SettingsPageFrameProps & {
   modalSlot?: React.ReactNode;
   footer?: React.ReactNode;
   compact?: boolean;
-  /** Offers find on the open page: Cmd/Ctrl+F and a button in the header. */
-  findEnabled?: boolean;
 };
 
 export function SettingsShell(props: SettingsShellProps) {
@@ -59,11 +57,9 @@ export function SettingsShell(props: SettingsShellProps) {
   const shellRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const find = useSettingsFind({
-    enabled: props.findEnabled === true,
     scopeRef: shellRef,
     besideChat: props.compact === true,
   });
-  // The bar floats over the page it searches and is not part of it.
   const page = (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={pageRef} className="contents">
@@ -91,7 +87,7 @@ export function SettingsShell(props: SettingsShellProps) {
             />
           </div>
           <div className="flex shrink-0 items-center gap-1 mac:titlebar-no-drag">
-            {find.enabled ? <SettingsFindButton onOpen={find.openFind} /> : null}
+            <SettingsFindButton onOpen={find.openFind} />
             <Button
               variant="ghost"
               type="button"
@@ -154,7 +150,7 @@ export function SettingsShell(props: SettingsShellProps) {
                 ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-1.5 text-gray-10 titlebar-no-drag">
-                {find.enabled ? <SettingsFindButton onOpen={find.openFind} /> : null}
+                <SettingsFindButton onOpen={find.openFind} />
                 <DesktopUpdateButton />
                 <NotificationBell />
                 <Button

@@ -121,7 +121,6 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
   const downloadConfig = useConfigDownload(orgId);
   const saveDecisions = useSaveConfigDecisions(orgId, request.id);
   const saveInputs = useSaveConfigInputs(orgId, request.id);
-  // The chosen step belongs to the status it was chosen in: once a request moves on (applied, say), it opens on its default step again.
   const [chosenStep, setChosenStep] = useState<{ status: ConfigChangeRequestSummary["status"]; step: ConfigStep } | null>(null);
   const step = chosenStep?.status === request.status ? chosenStep.step : null;
   const setStep = (next: ConfigStep) => setChosenStep({ status: request.status, step: next });
@@ -135,18 +134,15 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
     ? step
     : (editable ? steps.find((entry) => entry.open > 0)?.step : undefined) ?? "review";
   const destructive = useMemo(() => destructiveEntries(plan), [plan]);
-  // Approving confirmed the removals; past review they show as ticked.
   const shownConfirmed = useMemo(
     () => request.status === "needs_review" ? confirmed : new Set(destructive.map((entry) => destructiveKey(entry.area, entry.item))),
     [request.status, confirmed, destructive],
   );
   const unconfirmed = destructive.filter((entry) => !shownConfirmed.has(destructiveKey(entry.area, entry.item))).length;
   const blocking = plan?.summary.blocking ?? request.summary?.blocking ?? 0;
-  // Self-hosted servers with an operator allowlist can read secrets from environment variables.
   const allowEnvSecrets = areas.data?.allowEnvSecrets ?? false;
 
   function updateDecisions(next: ConfigDecisions) {
-    // Stay on the step being worked on; don't jump ahead when its last decision is made.
     setStep(activeStep);
     setError(null);
     saveDecisions.mutate(next, { onError: (cause) => setError(cause.message) });
@@ -189,7 +185,6 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
   const menu: ItemMenuEntry[] = [
     ...(request.appliedAt || request.status === "failed" ? [{ label: "Download what it replaced", onSelect: downloadSnapshot }] : []),
     ...(CANCELLABLE.includes(request.status) ? [{
-      // "Withdraw", not "Cancel": the dialog's own dismiss button is already called Cancel.
       label: "Withdraw change",
       destructive: true,
       onSelect: async () => { await action.mutateAsync({ action: "cancel" }); },
@@ -214,7 +209,6 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
     ...(plan?.areas ?? []).map((entry): [ConfigAreaKey, string] => [entry.area, entry.label]),
   ]);
   const areaLabel = (key: ConfigAreaKey) => areaLabels.get(key) ?? key;
-  // The newest run's failure box already explains its failure; don't repeat it in a banner above.
   const latestFailure = runs[0] ? runFailure(runs[0], areaLabel) : null;
   const errors = latestFailure ? request.errors.filter((entry) => !entry.includes(latestFailure.message)) : request.errors;
   const { cantUndo, rest: otherIssues } = splitRestoreIssues(requestIssues(plan));
@@ -232,7 +226,6 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
   return (
     <>
       <header className="flex flex-col gap-2">
-        {/* Long titles wrap beside the actions, which stay top-right. */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pt-1">
             <h1 className="min-w-0 break-words text-[20px] font-semibold leading-7 tracking-[-0.3px] text-gray-950">{changeRequestTitle(request)}</h1>

@@ -12,12 +12,6 @@ function parseHttpUrl(value: string): URL | null {
   }
 }
 
-/**
- * A Den web invite: an http(s) link whose path ends at /join-org carrying an
- * `invite` token (e.g. https://den.example.com/join-org?invite=…). The invite is
- * accepted in the browser, so the desktop app points itself at the link's
- * origin and re-opens the link there.
- */
 export function parseInviteLinkInput(value: string): ParsedInviteLink | null {
   const url = parseHttpUrl(value);
   if (!url) return null;
@@ -27,11 +21,6 @@ export function parseInviteLinkInput(value: string): ParsedInviteLink | null {
   return { url: url.toString(), origin: url.origin, host: url.host };
 }
 
-/**
- * A plain organization server or workspace URL. The explicit http(s) scheme
- * requirement mirrors normalizeDenBaseUrl, so raw sign-in grants and
- * openwork:// deep links never classify as server URLs.
- */
 export function parseServerUrlInput(value: string): ParsedServerUrl | null {
   const url = parseHttpUrl(value);
   if (!url) return null;

@@ -12,7 +12,6 @@ import { collaboraWorkspaceUrl, useCollaboraController } from "./collabora-contr
 import { DocumentToolbar } from "./document-toolbar"
 import { UnsavedChangesDialog } from "./unsaved-dialog"
 
-/** Den reports `office_starting` while the person's own editor is waking. */
 function editorStarting(error: unknown): error is Error & { code: string } {
   return error instanceof Error && "code" in error && error.code === "office_starting"
 }
@@ -40,15 +39,12 @@ export function OfficeEditorTab({ item, editor, enabled, active, scope, toolbarH
   const pending = useRef<{ resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>(undefined)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; if (pending.current) { clearTimeout(pending.current.timer); pending.current.reject(new Error("The editor was closed.")); pending.current = undefined } } }, [])
-  // A per-person editor may still be starting; keep retrying for about two minutes.
   const query = useQuery({ queryKey: ["documents", ...scope, "office", item.id], queryFn: ({ signal }) => editor.open(item.id, signal), enabled: enabled && editingEnabled && active, retry: (count, failure) => count < 24 && editorStarting(failure), retryDelay: 5_000, gcTime: 0, staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false })
   const session = query.data
   useEffect(() => { onReadyChange(ready); return () => onReadyChange(false) }, [ready, onReadyChange])
   const startingMessage = !session && !query.isError && editorStarting(query.failureReason) ? query.failureReason.message : undefined
   accessCheck.current = async () => {
     if (session) { await editor.status(item.id, session.id); return }
-    // An initial open may have failed during auth. Rechecking must establish the
-    // missing session explicitly, not deadlock every other retained document.
     const result = await query.refetch({ throwOnError: true })
     if (!result.data) throw new Error("The document hasn't opened yet.")
   }
@@ -60,8 +56,6 @@ export function OfficeEditorTab({ item, editor, enabled, active, scope, toolbarH
     return () => { closeTimer.current = setTimeout(() => { void editor.close(item.id, session.id).catch(() => {}) }, 0) }
   }, [editor, item.id, session])
   useEffect(() => { onDirtyChange?.(item.id, dirty); return () => onDirtyChange?.(item.id, false) }, [dirty, item.id, onDirtyChange])
-  // Leaving the page never unmounts the editor, so release an unedited session here. A
-  // session with unsaved edits stays open, and reopening the file returns to those edits.
   useEffect(() => {
     if (!session || dirty) return
     const leave = (event: PageTransitionEvent) => { if (!event.persisted) void editor.close(item.id, session.id, { keepalive: true }).catch(() => {}) }
@@ -73,9 +67,6 @@ export function OfficeEditorTab({ item, editor, enabled, active, scope, toolbarH
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = "" }
     window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn)
   }, [dirty])
-  // The engine paints an empty frame, then an empty document, before the file
-  // arrives. Keep the opening skeleton over it until the document has loaded,
-  // or long enough that the engine's own progress is better than waiting.
   const [loadingTooLong, setLoadingTooLong] = useState(false)
   useEffect(() => {
     setLoadingTooLong(false)
@@ -106,7 +97,6 @@ export function OfficeEditorTab({ item, editor, enabled, active, scope, toolbarH
       }
     }
     window.addEventListener("message", receive)
-    // Credentials are POSTed into the trusted editor frame, never included in its URL.
     form.current?.submit()
     return () => window.removeEventListener("message", receive)
   }, [session])
@@ -124,8 +114,6 @@ export function OfficeEditorTab({ item, editor, enabled, active, scope, toolbarH
         pending.current = { resolve, reject, timer }
         frame.current?.contentWindow?.postMessage(JSON.stringify({ MessageId: "Action_Save", SendTime: Date.now(), Values: { DontTerminateEdit: true, DontSaveIfUnmodified: false, Notify: true, ExtendedData: saveRequestId } }), new URL(session.serverUrl).origin)
       })
-      // The engine's local save acknowledgement can precede its WOPI upload.
-      // A forced snapshot must arrive before committing, even after an autosave.
       let status = await editor.status(item.id, session.id)
       const until = Date.now() + 20_000
       while (status.saveRequestId !== saveRequestId && Date.now() < until && mounted.current) {

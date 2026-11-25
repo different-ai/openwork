@@ -25,8 +25,6 @@ export function NativeDictationControl({ dictation, disabled, text }: {
   </div>;
 }
 
-// Keep the main button mounted, so Stop returns to Mic without moving focus.
-// Visual transitions never delay capture, cancellation, or submission.
 function LocalDictationControl({ dictation, disabled }: {
   dictation: ReturnType<typeof useNativeDictation>;
   disabled?: boolean;
@@ -41,7 +39,6 @@ function LocalDictationControl({ dictation, disabled }: {
       button.current?.focus();
     }
   }, [recording]);
-  // Retain the outgoing phase during collapse instead of flashing "Listening".
   const phase = useRef<{ listening: boolean; preparing: boolean; installing: boolean; progress: number | null; status: string }>({
     listening: false, preparing: false, installing: false, progress: null, status: "Starting dictation",
   });

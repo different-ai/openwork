@@ -331,10 +331,8 @@ function GatewayLimitForm({ orgId, orgSlug, policy, target, teams, members }: Ed
   );
 }
 
-/** Which provider the limit governs: every provider without its own limit (default), or one provider. */
 function ProviderCard({ orgId, headingId, value, onChange, removedProviderId = null }: {
   orgId: string; headingId: string; value: string | null; onChange: (value: string | null) => void;
-  /** The saved provider was deleted; the limit applies to nothing until another is chosen. */
   removedProviderId?: string | null;
 }) {
   const removed = Boolean(value) && value === removedProviderId;

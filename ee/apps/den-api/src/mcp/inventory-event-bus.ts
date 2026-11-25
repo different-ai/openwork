@@ -2,25 +2,10 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import type { ServerEvent, ServerEventBus } from "@modelcontextprotocol/server"
 import { onInventoryChanged } from "../inventory-writes.js"
 
-/** An organization's inventory revision, or null when there is no shared revision (no Redis). */
 export type InventoryRevision = (organizationId: string) => Promise<string | null>
 
-/** How often an open change subscription checks its organization's inventory revision. */
 export const INVENTORY_REVISION_POLL_MS = 30_000
 
-/**
- * Change subscriptions (`subscriptions/listen`) for MCP servers whose lists
- * follow an organization's inventory: connections, tool policy, grants and
- * member credentials. A stream belongs to the organization of the request that
- * opened it, and every change in that organization tells its streams to list
- * again.
- *
- * A request on this replica that changed the inventory (inventory-writes.ts)
- * is delivered at once. Changes made on other replicas are found by checking
- * the organization's shared inventory revision while one of its streams is
- * open; without Redis there is no shared revision, and clients rely on the
- * list's cache hint.
- */
 export class InventoryEventBus implements ServerEventBus {
   private readonly organization = new AsyncLocalStorage<string>()
   private readonly listeners = new Map<(event: ServerEvent) => void, string>()
@@ -30,7 +15,6 @@ export class InventoryEventBus implements ServerEventBus {
   constructor(private readonly options: {
     revision: InventoryRevision
     pollMs?: number
-    /** What an inventory change tells a stream. */
     events: readonly ServerEvent[]
     onerror?: (error: unknown) => void
   }) {
@@ -39,7 +23,6 @@ export class InventoryEventBus implements ServerEventBus {
         const watch = this.watches.get(organizationId)
         if (!watch) continue
         this.changed(organizationId)
-        // The same change bumps the shared revision: take it in now so the next check does not announce it again.
         void watch.check(false)
       }
     })

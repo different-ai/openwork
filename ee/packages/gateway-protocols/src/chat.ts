@@ -1,6 +1,3 @@
-// OpenAI Chat Completions helpers for Auto requests. Desktops send Auto as an
-// OpenAI-compatible chat request; these read the prompt from it and prepare
-// it for an OpenAI-protocol upstream.
 import { createHash } from "node:crypto"
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import type { AutoTranslator } from "@openwork-ee/gateway-protocols/protocol"
@@ -23,13 +20,9 @@ function messages(body: JsonObject): JsonObject[] {
 }
 
 export type AutoPrompt = {
-  /** The latest user message's text. */
   prompt: string
-  /** A short excerpt of the conversation before it, or null. */
   context: string | null
-  /** True when the last message is not the user's: a tool result or an assistant prefill. */
   continuation: boolean
-  /** Stable for every request of one turn. */
   turnFingerprint: string
 }
 
@@ -63,14 +56,12 @@ export function readAutoPrompt(body: JsonObject): AutoPrompt {
   }
 }
 
-/** Fields a client may send that select reasoning; Auto replaces them with the chosen level. */
 const CLIENT_REASONING_FIELDS = ["reasoning_effort", "reasoning", "thinking", "reasoningEffort", "output_config"]
 
 /** The Auto request prepared for an OpenAI Chat Completions upstream. */
 export function toOpenAiChatBody(body: JsonObject, input: {
   model: string
   thinkingLevel: AutoRouterThinkingLevel
-  /** OpenRouter takes `reasoning.effort`; other OpenAI-compatible APIs take `reasoning_effort`. */
   reasoningStyle: "reasoning_effort" | "openrouter" | "none"
 }): JsonObject {
   const next: JsonObject = { ...body, model: input.model }
@@ -86,7 +77,6 @@ export type AutoRouteInfo = {
   model: string
   thinking: AutoRouterThinkingLevel
   reason: string
-  /** The model's display name from the organization's catalog, for example `Claude Haiku 5.5`. */
   name?: string
 }
 

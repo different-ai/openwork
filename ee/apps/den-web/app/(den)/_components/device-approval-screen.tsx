@@ -41,14 +41,12 @@ const CLIENT_NAMES: Record<string, string> = {
   "openwork-desktop-device": "OpenWork Desktop",
 };
 
-/** The command the person ran, echoed in the terminal illustration. */
 const CLIENT_COMMANDS: Record<string, string> = {
   "openwork-cli": "openwork-bootstrap login",
   "openwork-opencode-plugin": "opencode auth login openwork",
   "openwork-desktop-device": "openwork login",
 };
 
-/** Where the person goes back to once the code is decided. */
 const CLIENT_RETURN_PLACES: Record<string, string> = {
   "openwork-opencode-plugin": "OpenCode",
   "openwork-desktop-device": "the OpenWork app on that computer",
@@ -69,7 +67,6 @@ function parseOrganizations(payload: unknown): Organization[] {
   return orgs;
 }
 
-/** Display form of a user code: ABCD-EFGH. */
 function formatUserCode(value: string): string {
   const clean = value.replace(/[\s-]/g, "").toUpperCase();
   return clean.length === 8 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean;
@@ -119,7 +116,6 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
       }
       const clientId = readClientId(lookup.payload);
       if (clientId === "openwork-desktop-device") {
-        // UX only: Den authoritatively gates start, approval and redemption.
         const enabled = await fetchDeploymentFeatureEnabled("remoteDesktopDeviceLogin");
         if (cancelled) return;
         if (!enabled) {
@@ -142,7 +138,6 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
   }, [user?.id, userCode]);
 
   const selectedOrg = useMemo(() => orgs?.find((org) => org.id === organizationId) ?? null, [orgs, organizationId]);
-  // Only a known client may send the browser back, and only to a page on this machine.
   const returnUrl = useMemo(() => deviceReturnUrl(returnTo, clientId), [returnTo, clientId]);
   const command = (clientId && CLIENT_COMMANDS[clientId]) || "openwork-bootstrap login";
   const returnPlace = (clientId && CLIENT_RETURN_PLACES[clientId]) || "your terminal";
@@ -171,7 +166,6 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
       return;
     }
     setCodeState(decision === "approve" ? { kind: "approved" } : { kind: "denied" });
-    // The person asked for this by deciding; the page they return to says what happened.
     if (returnUrl) window.location.assign(deviceReturnTarget(returnUrl, decision === "approve" ? "approved" : "denied"));
   }
 

@@ -68,7 +68,6 @@ async function slideParts(bytes: Uint8Array, entries: Map<string, ZipEntry>): Pr
     return [...entries.keys()].filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }
-  // Slide filenames are not renumbered when someone reorders a deck.
   const rels = relationshipTargets(await readZipTextEntry(bytes, entries, "ppt/_rels/presentation.xml.rels"), "ppt");
   const list = elements(parse(manifest), "sldIdLst").next().value;
   if (!list) return [];

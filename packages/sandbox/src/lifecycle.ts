@@ -18,7 +18,6 @@ export function withBlocks<K extends keyof SandboxBlocks>(provider: SandboxProvi
   for (const key of keys) {
     if (!blocks[key]) throw new SandboxError({ providerId: provider.id, code: "invalid_state", retryable: false, message: `${job} requires ${key}; ${provider.id} does not provide it` })
   }
-  // Runtime validation above proves all requested properties are present.
   return blocks as Required<Pick<SandboxBlocks, K>>
 }
 
@@ -31,7 +30,7 @@ export async function ensure(provider: SandboxProvider, spec: SandboxSpec, opts:
   } catch (error) {
     if (!isSandboxError(error) || error.code !== "conflict") throw error
     const adopted = await provider.find({ idempotencyKey: spec.idempotencyKey, labels: spec.labels })
-    if (!adopted) throw error // caller may retry ensure after visibility settles; never repeat create blindly
+    if (!adopted) throw error
     return adopted
   }
 }
@@ -64,6 +63,5 @@ export async function destroyScope(provider: SandboxProvider, scope: string, opt
       else failed.push({ handle, error })
     }
   }
-  // This destroys compute only. Persistent volumes/snapshots have separate owners.
   return { deleted, failed }
 }

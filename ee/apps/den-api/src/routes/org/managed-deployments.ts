@@ -28,6 +28,7 @@ import { checkFixedWindowRateLimit, checkRateLimit } from "../../utils/rate-limi
 import type { OrgRouteVariables } from "./shared.js"
 
 const PATH = "/v1/managed-deployments"
+const GOOGLE_CLOUD_FEATURE = "managedGoogleCloudDeployments" as const
 export const RUN_LIFETIME_MS = 3 * 60 * 60 * 1000
 const MAX_HEARTBEAT_BYTES = 16_384
 export const deploymentParam = z.object({ deploymentId: z.string().uuid() })
@@ -36,9 +37,6 @@ const acceptedSchema = z.object({ ok: z.literal(true) })
 const enrollmentResponseSchema = z.object({ token: z.string(), expiresAt: z.string().datetime() })
 const errorSchema = z.object({ error: z.string() })
 
-// Agents may read readiness and status, record a deployment and prepare its
-// cloud handoff. They never remove records or call installer/health endpoints.
-// Generated operation ids (and SDK method names) are unchanged.
 type McpExposure = { mcp: boolean }
 
 type ManagedDeploymentRouteOptions = DescribeRouteOptions & { "x-mcp": boolean }
@@ -88,8 +86,6 @@ export function launchDetails(row: DeploymentRow, run: RunRow, signIn: AwsSignIn
   const launch: AwsLaunch = {
     ...common, target: awsTarget(row), includeAssistantParameters: Object.hasOwn(row.target, "assistants"),
     includeRuntimeProfileParameter: Object.hasOwn(row.target, "runtimeProfile"),
-    // A configuration change re-runs the installed template, which may predate network choice; a record
-    // stored without `network` was created then. Install, Retry and Update use the published template.
     ...(run.kind === "configure" ? { approvalCheck: true, includeNetworkParameters: Object.hasOwn(row.target, "network") } : {}),
   }
   if (run.kind === "install") {
@@ -123,7 +119,6 @@ function gcpCloudShellUrl(projectId: string) {
   return `https://console.cloud.google.com/?project=${encodeURIComponent(projectId)}&cloudshell=true`
 }
 
-/** The organization's saved AWS sign-in, or null when none is saved or the guided approval is off for it. */
 export async function awsSignInFor(org: { organization: { id: DeploymentRow["org_id"] }; currentMember: { userId: string } }, database: typeof db | typeof db.$primary = db): Promise<AwsSignIn | null> {
   if (!await organizationFeatureEnabled(org.organization.id, "managedDeploymentAwsSignIn", { userId: org.currentMember.userId })) return null
   const [row] = await database.select().from(ManagedDeploymentAwsSignInTable).where(eq(ManagedDeploymentAwsSignInTable.org_id, org.organization.id)).limit(1)
@@ -132,12 +127,10 @@ export async function awsSignInFor(org: { organization: { id: DeploymentRow["org
   return saved.success ? saved.data : null
 }
 
-/** `configuration` adds each deployment's configuration block, for callers who can change it after installation. */
 async function deploymentViews(rows: DeploymentRow[], signIn: AwsSignIn | null, now = new Date(), database: typeof db | typeof db.$primary = db, options: { configuration?: boolean } = {}): Promise<ManagedDeployment[]> {
   if (!rows.length) return []
   const runIds = rows.flatMap((row) => row.active_run_id ? [row.active_run_id] : [])
   const runs = runIds.length ? await database.select().from(ManagedDeploymentRunTable).where(inArray(ManagedDeploymentRunTable.id, runIds)) : []
-  // What can change depends on the deployment's whole run history, not only its active run.
   const history = options.configuration ? await database.select().from(ManagedDeploymentRunTable).where(inArray(ManagedDeploymentRunTable.deployment_id, rows.map((row) => row.id))) : null
   const events = runIds.length ? await database.select().from(ManagedDeploymentEventTable).where(inArray(ManagedDeploymentEventTable.run_id, runIds)).orderBy(asc(ManagedDeploymentEventTable.sequence)) : []
   const health = await database.select().from(ManagedDeploymentHealthTable).where(inArray(ManagedDeploymentHealthTable.deployment_id, rows.map((row) => row.id)))
@@ -169,7 +162,6 @@ async function deploymentViews(rows: DeploymentRow[], signIn: AwsSignIn | null, 
   })
 }
 
-/** `primary` when the caller just wrote the deployment's run. */
 export async function oneView(row: DeploymentRow, signIn: AwsSignIn | null = null, options: { primary?: boolean; configuration?: boolean } = {}) {
   const [view] = await deploymentViews([row], signIn, new Date(), options.primary ? db.$primary : db, { configuration: options.configuration })
   if (!view) throw new Error("deployment view missing")
@@ -190,7 +182,8 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
     orgPermissionRoute("deployments.view"), requireFeature("managedDeployments"), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
-      const [aws, gcp] = await Promise.all([effectiveInstallerReadiness("aws"), effectiveInstallerReadiness("gcp")])
+      const [aws, gcpEnabled] = await Promise.all([effectiveInstallerReadiness("aws"), organizationFeatureEnabled(org.organization.id, GOOGLE_CLOUD_FEATURE)])
+      const gcp = gcpEnabled ? await effectiveInstallerReadiness("gcp") : { provider: "gcp", available: false, version: null, reason: "feature_disabled" }
       return c.json(managedDeploymentConfigurationSchema.parse({
         providers: [
           aws,
@@ -228,10 +221,14 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const body = c.req.valid("json")
-      if (!await effectiveInstallerRelease(body.provider)) return c.json({ error: "release_not_configured" }, 503)
+      if (body.provider === "aws" && !await effectiveInstallerRelease("aws")) return c.json({ error: "release_not_configured" }, 503)
       const id = randomUUID()
       const created = await db.transaction(async (tx) => {
         if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share", userId: org.currentMember.userId })) return launchError("feature_disabled", 404)
+        if (body.provider === "gcp") {
+          if (!await organizationFeatureEnabled(org.organization.id, GOOGLE_CLOUD_FEATURE, { database: tx, lock: "share" })) return launchError("feature_disabled", 404)
+          if (!await effectiveInstallerRelease("gcp")) return { error: "release_not_configured", status: 503 } as const
+        }
         let target: Record<string, unknown> = body.target
         if (body.provider === "aws") {
           const available = await organizationFeatureEnabled(org.organization.id, "managedDeploymentAssistants", { database: tx, lock: "share", userId: org.currentMember.userId })
@@ -253,7 +250,6 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         return { created: true }
       })
       if ("error" in created) return c.json({ error: created.error }, created.status)
-      // Primary: reads back the row inserted above.
       const [row] = await db.$primary.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, id)).limit(1)
       if (!row) return c.json({ error: "deployment_not_found" }, 404)
       if (row.provider === "aws" && awsTarget(row).runtimeProfile === "gateway") markFeaturesUsed({ organizationId: org.organization.id, memberId: org.currentMember.id, keys: ["managedDeploymentAssistants"] })
@@ -269,8 +265,6 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const [row] = await tx.select().from(ManagedDeploymentTable).where(and(eq(ManagedDeploymentTable.id, id), eq(ManagedDeploymentTable.org_id, org.organization.id))).limit(1).for("update")
         if (!row) return "missing"
         const runs = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.deployment_id, id))
-        // Anything that reached the customer's cloud stays tracked; removing it would hide
-        // billable resources. Only never-approved records can be removed.
         if (row.installed_version || runs.some((run) => run.state !== "awaiting_approval")) return "installed"
         await tx.delete(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.deployment_id, id))
         await tx.delete(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, id))
@@ -292,6 +286,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const [row] = await tx.select().from(ManagedDeploymentTable).where(and(eq(ManagedDeploymentTable.id, id), eq(ManagedDeploymentTable.org_id, org.organization.id))).limit(1).for("update")
         if (!row) return { error: "deployment_not_found", status: 404 } as const
         if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share", userId: org.currentMember.userId })) return { error: "feature_disabled", status: 404 } as const
+        if (row.provider === "gcp" && !await organizationFeatureEnabled(row.org_id, GOOGLE_CLOUD_FEATURE, { database: tx, lock: "share" })) return launchError("feature_disabled", 404)
         if ((assistants || runtimeProfile) && row.provider !== "aws") return launchError("assistants_aws_only", 400)
         const storedTarget = row.provider === "aws" ? awsTarget(row) : null
         const changedTarget = storedTarget && (assistants || runtimeProfile) ? awsTargetSchema.safeParse({
@@ -304,14 +299,11 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const release = await releaseFor(row)
         if (!release) return { error: "release_not_configured", status: 503 } as const
         const [active] = row.active_run_id ? await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, row.active_run_id)).limit(1) : []
-        // A configuration change AWS may be applying holds the deployment whatever its deadline says.
         const live = active && (heldByCloud(active) || (active.expires_at > now && (active.state === "awaiting_approval" || active.state === "provisioning")))
         if (live && runtimeProfile && storedTarget && runtimeProfile !== storedTarget.runtimeProfile) return launchError("deployment_settings_frozen", 409)
         if (changedTarget && !changedTarget.success) return launchError("invalid_runtime_settings", 400)
-        // The target is frozen for the whole live run, including its approval URL.
         if (live && runtimeSettingsChanged) return launchError("deployment_settings_frozen", 409)
         if (runtimeSettingsChanged && target?.runtimeProfile === "legacy") return launchError("gateway_profile_required", 400)
-        // Reopening a prepared approval returns the same run (no duplicates).
         if (live && active.state === "awaiting_approval" && active.kind === kind) return { row, run: active }
         if (live) return { error: "deployment_run_in_progress", status: 409 } as const
         const everStarted = Boolean(row.installed_version) || Boolean(active && active.state !== "awaiting_approval")
@@ -330,8 +322,6 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
           bundle_sha256: release.bundleSha256, api_origin: release.apiOrigin, challenge: randomBytes(32).toString("hex"),
           state: "awaiting_approval", expires_at: new Date(now.getTime() + RUN_LIFETIME_MS),
         })
-        // One row lock and transaction bind the target to this run. No settings-only
-        // write can change what an already-issued customer approval will install.
         const nextTarget = runtimeSettingsChanged && changedTarget?.success ? changedTarget.data : row.target
         await tx.update(ManagedDeploymentTable).set({ active_run_id: runId, target: nextTarget }).where(eq(ManagedDeploymentTable.id, id))
         const [run] = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1)
@@ -340,7 +330,6 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       })
       if ("error" in result) return c.json({ error: result.error }, result.status)
       if (runtimeProfile || assistants || (result.row.provider === "aws" && (awsTarget(result.row).runtimeProfile === "gateway" || assistantsEnabled(awsTarget(result.row).assistants)))) markFeaturesUsed({ organizationId: org.organization.id, memberId: org.currentMember.id, keys: ["managedDeploymentAssistants"] })
-      // Primary: an admin who just saved the sign-in prepares the approval next.
       const signIn = await awsSignInFor(org, db.$primary)
       return c.json(managedDeploymentLaunchSchema.parse({
         deployment: await oneView(result.row, signIn, { primary: true, configuration: org.features.managedDeploymentConfigUpdates }), kind: result.run.kind,
@@ -349,11 +338,6 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       }))
     })
 
-  // ---- Customer-side installer and health agent (no user session) ----
-  // These accept only identities the cloud verifies for this exact deployment. They
-  // keep working when the feature is turned off so in-flight installs finish
-  // and existing installations keep reporting; nothing new can be launched.
-
   app.post(`${PATH}/:deploymentId/runs/:runId/enroll`, operation("Enroll a customer-side installer run", "Called by the installer in the customer's cloud. Verifies its signed cloud identity and run challenge, then issues a single-use run token.", enrollmentResponseSchema, { mcp: false }, []),
     tokenRoute, paramValidator(runParam), jsonValidator(z.union([awsEnrollmentSchema, gcpEnrollmentSchema])), async (c) => {
       const { deploymentId, runId } = c.req.valid("param")
@@ -361,6 +345,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const [run] = await db.select().from(ManagedDeploymentRunTable).where(and(eq(ManagedDeploymentRunTable.id, runId), eq(ManagedDeploymentRunTable.deployment_id, deploymentId))).limit(1)
       if (!row || !run || row.active_run_id !== run.id || (row.provider !== "aws" && row.provider !== "gcp")) return c.json({ error: "deployment_not_found" }, 404)
       if (run.state !== "awaiting_approval" || run.expires_at < new Date()) return c.json({ error: "deployment_run_conflict" }, 409)
+      if (row.provider === "gcp" && !await organizationFeatureEnabled(row.org_id, GOOGLE_CLOUD_FEATURE)) return c.json({ error: "feature_disabled" }, 404)
       const retryAfter = await checkRateLimit(`managed-enroll:${runId}`, 10, 60_000, Date.now())
       if (retryAfter !== null) {
         c.header("Retry-After", String(retryAfter))
@@ -386,21 +371,18 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         if (!deployment || deployment.active_run_id !== runId) return null
         const [current] = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1).for("update")
         if (!current || current.state !== "awaiting_approval" || current.expires_at < new Date()) return null
-        // The kill switch reaches a change whose command was run without its approval check: it is
-        // withdrawn before the installer downloads anything. A change the check confirmed was approved
-        // while the feature was on and its stack may already be updated, so it finishes like one that enrolled.
+        if (deployment.provider === "gcp" && !await organizationFeatureEnabled(deployment.org_id, GOOGLE_CLOUD_FEATURE, { database: tx, lock: "share" })) return "feature_disabled" as const
         if (current.kind === "configure" && !approvalClaimed(current) && !await organizationFeatureEnabled(deployment.org_id, "managedDeploymentConfigUpdates", { database: tx, lock: "share", userId: configurationChangeRecord(current).requestedBy.userId })) {
           await withdrawConfigurationChange(tx, deployment, current)
           return null
         }
         const enrolledAt = new Date()
-        // An approved change gets the whole execution lifetime from here, however long the approval waited.
-        const expiresAt = current.kind === "configure" ? new Date(enrolledAt.getTime() + RUN_LIFETIME_MS) : current.expires_at
-        await tx.update(ManagedDeploymentRunTable).set({ state: "provisioning", token_hash: hashToken(token), last_seen_at: enrolledAt, expires_at: expiresAt }).where(eq(ManagedDeploymentRunTable.id, runId))
-        // Read back: the deadline the installer is told is the one stored.
+        const fullLifetimeFromEnrollment = new Date(enrolledAt.getTime() + RUN_LIFETIME_MS)
+        await tx.update(ManagedDeploymentRunTable).set({ state: "provisioning", token_hash: hashToken(token), last_seen_at: enrolledAt, expires_at: fullLifetimeFromEnrollment }).where(eq(ManagedDeploymentRunTable.id, runId))
         const [stored] = await tx.select({ expiresAt: ManagedDeploymentRunTable.expires_at }).from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1)
         return stored ?? null
       })
+      if (enrolled === "feature_disabled") return c.json({ error: "feature_disabled" }, 404)
       if (!enrolled) return c.json({ error: "deployment_run_conflict" }, 409)
       c.header("Cache-Control", "no-store")
       return c.json({ token, expiresAt: enrolled.expiresAt.toISOString() })
@@ -411,7 +393,6 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const { deploymentId, runId } = c.req.valid("param")
       const token = bearerToken(c.req.header("authorization"))
       if (!token) return c.json({ error: "unauthorized" }, 401)
-      // Primary: the installer reports its first milestone right after enrolling set the token.
       const [row] = await db.$primary.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1)
       if (!row || row.active_run_id !== runId) return c.json({ error: "deployment_not_found" }, 404)
       const [credential] = await db.$primary.select().from(ManagedDeploymentRunTable).where(and(eq(ManagedDeploymentRunTable.id, runId), eq(ManagedDeploymentRunTable.deployment_id, deploymentId))).limit(1)
@@ -420,8 +401,6 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       if (!audited.ok) return audited.response
       const body = c.req.valid("json")
       const outcome = await db.transaction(async (tx) => {
-        // Deployment, then run: the order launches, configuration changes and enrollment lock in. A run
-        // superseded or withdrawn since the read above records nothing and never marks anything installed.
         const [deployment] = await tx.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1).for("update")
         if (!deployment || deployment.active_run_id !== runId) return "unauthorized"
         const [run] = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1).for("update")
@@ -433,7 +412,6 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const ready = body.outcome === "succeeded" && body.step === "health_verified"
         await tx.insert(ManagedDeploymentEventTable).values({ id: randomUUID(), run_id: runId, sequence: body.sequence, step: body.step, outcome: body.outcome, error_code: body.errorCode ?? null, received_at: now })
         await tx.update(ManagedDeploymentRunTable).set({ last_sequence: body.sequence, last_seen_at: now, state: body.outcome === "failed" ? "failed" : ready ? "ready" : "provisioning" }).where(eq(ManagedDeploymentRunTable.id, runId))
-        // A configuration change is recorded only here, once the customer-approved run has verified health.
         if (ready) await tx.update(ManagedDeploymentTable).set({ installed_version: run.version, ...(run.kind === "configure" ? appliedConfiguration(run) : {}) }).where(eq(ManagedDeploymentTable.id, deploymentId))
         return "ok"
       })
@@ -468,7 +446,6 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const digest = createHash("sha256").update(raw).digest("hex")
       let signedAt: Date
       try {
-        // The proof binds the signature to this deployment and this exact body.
         if (row.provider === "gcp") {
           const [run] = row.active_run_id ? await db.select().from(ManagedDeploymentRunTable).where(and(eq(ManagedDeploymentRunTable.id, row.active_run_id), eq(ManagedDeploymentRunTable.deployment_id, deploymentId))).limit(1) : []
           if (!run) throw new Error("identity_invalid")
@@ -486,11 +463,9 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const audited = await attributeAuditRequest(c, { organizationId: row.org_id, ...auditServiceAttribution("managed-deployment", deploymentId) })
       if (!audited.ok) return audited.response
       const stored = await db.transaction(async (tx) => {
-        // Serialize even the first report: a health row does not exist to lock yet.
         const [deployment] = await tx.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1).for("update")
         if (!deployment) return false
         const [previous] = await tx.select().from(ManagedDeploymentHealthTable).where(eq(ManagedDeploymentHealthTable.deployment_id, deploymentId)).limit(1).for("update")
-        // Reject replays and out-of-order reports.
         if (previous && previous.signed_at >= signedAt) return false
         const values = { version: report.data.version ?? null, checks: report.data.checks, reported_at: new Date(), signed_at: signedAt }
         if (previous) await tx.update(ManagedDeploymentHealthTable).set(values).where(eq(ManagedDeploymentHealthTable.deployment_id, deploymentId))

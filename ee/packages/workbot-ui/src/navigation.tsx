@@ -1,7 +1,7 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { CalendarDays, FileText, Lock, MessageCircle, MonitorSmartphone, PanelLeft, Plus, Search, X } from "lucide-react";
+import { CalendarDays, FileText, Lock, MessageCircle, PanelLeft, Plus, Search, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { AccountAvatar } from "./account-menu";
 import { chatTitle, sinceLabel } from "./chats";
@@ -20,23 +20,13 @@ export type NavigationProps = {
   loading: boolean;
   failed: boolean;
   onRetry(): void;
-  /** Read the list again when a phone drawer opens; cached chats stay visible while refreshing. */
   onOpen?(): void;
-  /** Omit where side chats are unavailable. New chats use the same callback. */
   onOpenChat?: (chat: string | null) => void;
   drafts: boolean;
-  /** The real search trigger/palette. Mount only one navigation variant at a time. */
   search?: ReactNode;
-  /** Optional callback alternative when the palette is mounted separately by the screen. */
   onSearch?: () => void;
-  /** An account trigger, not a second menu wrapped around an avatar. */
   account?: ReactNode;
-  /**
-   * With `profileNav`: the navigation lists only full pages; the logo (and on a phone, a row with Workbot's name)
-   * opens Workbot's profile, where Files and Apps live as tabs.
-   */
   onProfile: () => void;
-  /** Workbot's name for the phone row that opens its profile. */
   assistantName?: string;
 };
 
@@ -49,7 +39,6 @@ type Destination = { label: string; icon: typeof MessageCircle; selected?: boole
 function destinations(props: NavigationProps, rail = false): Destination[] {
   const host = workbotHost();
   return [
-    // The desktop rail goes back to the chat you were in; the list beside it picks Main chat or a side chat.
     rail ? { label: "Chats", icon: MessageCircle, selected: props.page === "home", onClick: () => props.onPage("home") } : {
       label: "Main chat", icon: MessageCircle, selected: props.page === "home" && props.currentChat === null,
       disabled: props.currentChat !== null && (props.drafts || !props.onOpenChat),
@@ -63,8 +52,6 @@ function destinations(props: NavigationProps, rail = false): Destination[] {
     },
     ...(host.documents === true ? [{ label: "Documents", icon: FileText, selected: props.page === "documents", onClick: () => props.onPage("documents") }] : []),
     ...(host.calendar === true ? [{ label: "Calendar", icon: CalendarDays, selected: props.page === "calendar", onClick: () => props.onPage("calendar") }] : []),
-    // The computers the person can reach, where Devices is on. Workbot's own computer still opens from the chat.
-    ...(!(host.profileComputers === true) ? [{ label: "Devices", icon: MonitorSmartphone, selected: props.page === "devices", onClick: () => props.onPage("devices") }] : []),
   ];
 }
 
@@ -78,8 +65,7 @@ function NewChatButton({ props, onDone, compact = false }: { props: NavigationPr
   }}><Plus size={16} strokeWidth={1.5} aria-hidden />{!compact && "New side chat"}</button>;
 }
 
-/** The local filter lives at the top of desktop navigation or in the phone's bottom toolbar. */
-function ChatFilter({ value, onChange, quiet = false }: { value: string; onChange(value: string): void; /** Calm sidebar: a plain line of text that only gains an edge when used. */ quiet?: boolean }) {
+function ChatFilter({ value, onChange, quiet = false }: { value: string; onChange(value: string): void; quiet?: boolean }) {
   return <label className={`flex min-w-0 flex-1 items-center gap-2 text-[var(--wb-muted)] focus-within:shadow-[var(--wb-focus)] ${quiet ? "h-8 rounded-lg px-3 transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-within:bg-[var(--wb-surface)]" : "h-9 rounded-full bg-[var(--wb-chip)] px-3"}`}>
     <Search size={15} strokeWidth={1.5} aria-hidden className="shrink-0" />
     <input type="search" aria-label="Search side chats" placeholder="Find a chat" value={value} onChange={event => onChange(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[length:var(--wb-nav-font-size,13px)] text-[var(--wb-text)] placeholder:text-[var(--wb-muted)] focus:outline-none" />
@@ -130,8 +116,6 @@ function Account({ account }: { account?: ReactNode }) {
 export function DesktopNavigation(props: NavigationProps) {
   const [filter, setFilter] = useState("");
   const chatView = props.page === "home";
-  // Calm look: on every page, one quiet labelled column replaces the icon rail and the list next to it, so the
-  // sidebar stays put when the person moves between Chats, Documents and Calendar.
   if (calmChat()) {
     const assistant = props.assistantName ?? "Workbot";
     const page = "flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] aria-[current=page]:bg-[var(--wb-surface)] aria-[current=page]:font-medium aria-[current=page]:text-[var(--wb-text)] aria-[current=page]:shadow-[0_0_0_1px_var(--wb-ring)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";

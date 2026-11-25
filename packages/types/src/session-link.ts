@@ -19,7 +19,6 @@ export type SessionLinkKind = (typeof SESSION_LINK_KINDS)[number]
 
 export type SessionLink = {
   kind: SessionLinkKind
-  /** The session this one was started from. */
   parentID: string
 }
 

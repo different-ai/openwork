@@ -1,14 +1,11 @@
 import { OUTREACH_PLAYS, type AdminOutreach, type OutreachItem, type OutreachPlay } from "@openwork/types/den/admin-organization"
 
 const DAY = 86_400_000
-/** Activity is counted over this many days; an account contacted this recently waits instead of being listed again. */
 export const OUTREACH_WINDOW_DAYS = 14
 export const FREE_LIMIT_DAYS = 7
 export const CANCELED_DAYS = 30
-/** How far back "used to run tasks" looks, and how long results of recorded contacts are counted. */
 export const HISTORY_DAYS = 60
 export const RESULT_DAYS = 30
-/** A lapsed account must have run tasks on this many days before it went quiet. */
 const REGULAR_DAYS = 3
 const PER_PLAY = 50
 
@@ -17,15 +14,10 @@ type Billing = OutreachItem["billing"]
 
 export type OutreachPerson = {
   userId: string, name: string | null, email: string, role: string,
-  /** UTC days in the window on which this person ran a task. */
   activeDays: number,
-  /** Verified, non-personal email domain, or null. */
   companyDomain: string | null,
-  /** Times this person reached the free model limit in the last week. */
   limitHits: number,
-  /** Days with a task between the start of history and the start of the window. */
   beforeDays: number,
-  /** Tasks started and failed in that earlier period. */
   startedBefore: number, failedBefore: number,
   lastActiveAt: Date | null, lastLimitAt: Date | null,
 }
@@ -38,11 +30,9 @@ export type OutreachSubscription = {
 export type OutreachFacts = {
   id: string, name: string, plan: Billing["plan"], members: number, seatLimit: number,
   people: OutreachPerson[], subscriptions: OutreachSubscription[], followUp: FollowUp | null,
-  /** UTC days (YYYY-MM-DD) with a task, loaded only for accounts with a recorded contact. */
   activeDates: string[],
 }
 
-/** People at one verified company domain who ran tasks in the window from separate workspaces. */
 export type CompanyCluster = { domain: string, users: number, organizations: number, homeOrganizationId: string, others: OutreachPerson[] }
 
 const PRODUCT: Record<OutreachSubscription["type"], string> = { seat: "Team plan", inference: "Models add-on", web: "OpenWork Web", enterprise: "Enterprise plan" }
@@ -54,11 +44,9 @@ const byActivity = (a: OutreachPerson, b: OutreachPerson) => b.activeDays - a.ac
 
 type Reason = { play: OutreachPlay, text: string, endsAt: Date | null, company: string | null, contact: OutreachPerson | null, others: OutreachPerson[], weight?: number }
 
-/** Every reason to write to one account, strongest first. Plain rules over dated facts; no score. */
 export function reasonsFor(facts: OutreachFacts, cluster: CompanyCluster | null, now: Date): Reason[] {
   const active = facts.people.filter(person => person.activeDays > 0).sort(byActivity)
   const owner = facts.people.find(isOwner) ?? facts.people.find(person => person.role.includes("admin")) ?? null
-  // Money questions go to whoever owns the workspace; usage questions to whoever uses it most.
   const payer = owner ?? active[0] ?? facts.people[0] ?? null
   const user = active[0] ?? owner ?? facts.people[0] ?? null
   const rest = (contact: OutreachPerson | null) => [...active, ...facts.people.filter(person => person.activeDays === 0 && isOwner(person))]
@@ -125,7 +113,6 @@ export function reasonsFor(facts: OutreachFacts, cluster: CompanyCluster | null,
     const started = earlier.reduce((sum, person) => sum + person.startedBefore, 0)
     const failed = earlier.reduce((sum, person) => sum + person.failedBefore, 0)
     const limitAt = Math.max(0, ...facts.people.map(person => person.lastLimitAt?.getTime() ?? 0))
-    // The most recently lapsed come first: they are the likeliest to come back.
     const lapsed = (play: OutreachPlay, text: string) => reasons.push({
       play, text, endsAt: null, company: null, contact: champion, others: rest(champion), weight: earlier.length * 100 + champion.beforeDays - ago * 3,
     })
@@ -138,7 +125,6 @@ export function reasonsFor(facts: OutreachFacts, cluster: CompanyCluster | null,
 }
 
 const utcDay = (value: Date) => value.toISOString().slice(0, 10)
-/** Whether an account was quiet when it was contacted, and the first day someone ran a task afterwards. */
 export function contactResult(facts: Pick<OutreachFacts, "activeDates">, contacted: Date) {
   const on = utcDay(contacted), from = utcDay(new Date(contacted.getTime() - OUTREACH_WINDOW_DAYS * DAY))
   const after = facts.activeDates.filter(date => date > on).sort()[0]
@@ -150,11 +136,6 @@ function billingOf(facts: OutreachFacts): Billing {
   return { plan: facts.plan, paying: live.some(subscription => subscription.status === "active"), modelsAddOn: live.some(subscription => subscription.type === "inference") }
 }
 
-/**
- * The list a person works through: one row per account, under its strongest reason,
- * with the person to write to. Dismissed and closed accounts are left out, and an
- * account written to in the last two weeks waits for its follow-up date instead.
- */
 export function buildOutreach(all: OutreachFacts[], clusters: CompanyCluster[], now: Date): Pick<AdminOutreach, "items" | "totals" | "waiting" | "hidden" | "results"> {
   const clusterOf = new Map(clusters.map(cluster => [cluster.homeOrganizationId, cluster]))
   const ranked: { item: OutreachItem, weight: number }[] = []
@@ -186,7 +167,6 @@ export function buildOutreach(all: OutreachFacts[], clusters: CompanyCluster[], 
     const lastActive = Math.max(0, ...facts.people.map(person => person.lastActiveAt?.getTime() ?? 0))
     const strip = ({ userId, name, email, role, activeDays }: OutreachPerson) => ({ userId, name, email, role, activeDays })
     ranked.push({
-      // Within a reason: more people using it first, then a work address, then how often the contact uses it.
       weight: first.weight ?? (first.play === "company" ? clusterOf.get(facts.id)?.users ?? 0 : active) * 100 + (first.contact?.companyDomain ? 50 : 0) + (first.contact?.activeDays ?? 0),
       item: {
         organizationId: facts.id, organizationName: facts.name, play: first.play, reason: first.text,
@@ -211,7 +191,6 @@ export function buildOutreach(all: OutreachFacts[], clusters: CompanyCluster[], 
 type ActivityRow = { organizationId: string, userId: string, activeDays: number, companyDomain: string | null }
 export type ClusterSeed = Omit<CompanyCluster, "others"> & { others: { organizationId: string, userId: string }[] }
 
-/** Company domains with people running tasks from at least two workspaces. The busiest person's workspace is the one listed. */
 export function companyClusters(rows: ActivityRow[]): ClusterSeed[] {
   const byDomain = new Map<string, ActivityRow[]>()
   for (const row of rows) {

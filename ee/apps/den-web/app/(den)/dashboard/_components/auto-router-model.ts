@@ -13,11 +13,6 @@ import {
 import type { DenOrgMember, DenOrgTeam } from "../../_lib/den-org";
 import { accessNames, joinNames, type AccessDraft } from "./access-summary";
 
-/**
- * Pure logic for the Smart Model Router editor: who a router reaches, who
- * can't use one of its models, and how typed tasks are merged and saved.
- */
-
 export type RouterDirectory = {
   members: readonly Pick<DenOrgMember, "id" | "userId" | "user">[];
   teams: readonly Pick<DenOrgTeam, "id" | "name" | "memberIds">[];
@@ -25,7 +20,6 @@ export type RouterDirectory = {
 
 export type ModelRef = { providerId: string; modelId: string };
 
-/** One model row while editing; `pending` is task text typed but not yet added. */
 export type RouterModelDraft = {
   key: string;
   model: ModelRef | null;
@@ -33,7 +27,6 @@ export type RouterModelDraft = {
   pending: string;
 };
 
-/** Step one of a router: its name and models. Who it applies to is step two. */
 export type RouterDraft = {
   name: string;
   models: RouterModelDraft[];
@@ -55,7 +48,6 @@ export function accessToAssignment(access: AccessDraft): AutoRouterAssignment {
   return { everyone: access.orgWide, memberIds: [...access.memberIds], teamIds: [...access.teamIds] };
 }
 
-/** Joined people only: pending invites can't use a model yet, so they never count as reached. */
 function joinedMemberIds(directory: RouterDirectory): Set<string> {
   return new Set(directory.members.filter((member) => member.userId).map((member) => member.id));
 }
@@ -64,7 +56,6 @@ function teamMemberIds(teamIds: readonly string[], directory: RouterDirectory): 
   return teamIds.flatMap((teamId) => directory.teams.find((team) => team.id === teamId)?.memberIds ?? []);
 }
 
-/** Everyone an assignment reaches, each person once, in directory order. */
 export function reachedMemberIds(assignment: AutoRouterAssignment, directory: RouterDirectory): string[] {
   const joined = joinedMemberIds(directory);
   const reached = assignment.everyone
@@ -73,7 +64,6 @@ export function reachedMemberIds(assignment: AutoRouterAssignment, directory: Ro
   return directory.members.filter((member) => reached.has(member.id)).map((member) => member.id);
 }
 
-/** Of the people a router reaches, those the AI Gateway doesn't let use this model. */
 export function membersWithoutAccess(access: AutoRouterModelAccess, reached: readonly string[], directory: RouterDirectory): string[] {
   if (access.everyone) return [];
   const allowed = new Set([...access.memberIds, ...teamMemberIds(access.teamIds, directory)]);
@@ -85,7 +75,6 @@ function memberName(id: string, directory: RouterDirectory): string {
   return member ? member.user.name || member.user.email : "Someone";
 }
 
-/** "Maya, Sam and 4 more don't have access to this model." */
 export function accessGapSentence(memberIds: readonly string[], directory: RouterDirectory, max = 3): string {
   const names = memberIds.map((id) => memberName(id, directory));
   if (names.length === 0) return "";
@@ -93,23 +82,19 @@ export function accessGapSentence(memberIds: readonly string[], directory: Route
   return `${list} ${names.length === 1 ? "doesn't" : "don't"} have access to this model.`;
 }
 
-/** Whether a router applies to anyone yet. */
 export function assignmentIsEmpty(assignment: AutoRouterAssignment): boolean {
   return !assignment.everyone && assignment.teamIds.length === 0 && assignment.memberIds.length === 0;
 }
 
-/** The list row's audience: "Everyone", "Engineering and Maya", or "Nobody yet". */
 export function assignmentSummary(assignment: AutoRouterAssignment, directory: RouterDirectory): string {
   if (assignment.everyone) return "Everyone";
   const draft = assignmentToAccess(assignment);
-  // Teams first: they usually describe the audience better than a list of people.
   const people = accessNames({ ...draft, teamIds: [] }, directory, null);
   const teams = accessNames({ ...draft, memberIds: [] }, directory, null);
   const names = [...teams, ...people];
   return names.length === 0 ? "Nobody yet" : joinNames(names);
 }
 
-/** Task names, each once by key, keeping the first spelling seen. */
 export function mergeTasks(...lists: readonly (readonly string[])[]): string[] {
   const seen = new Set<string>();
   const merged: string[] = [];
@@ -125,10 +110,6 @@ export function mergeTasks(...lists: readonly (readonly string[])[]): string[] {
   return merged;
 }
 
-/**
- * Adds a typed task to a model's tasks. Uses the organization's spelling when
- * the task already exists, ignores duplicates, and stops at the per-model limit.
- */
 export function addTask(tasks: readonly string[], raw: string, known: readonly string[] = []): string[] {
   const name = normalizeAutoRouterTaskName(raw).slice(0, AUTO_ROUTER_TASK_MAX_LENGTH).trim();
   const key = autoRouterTaskKey(name);
@@ -138,7 +119,6 @@ export function addTask(tasks: readonly string[], raw: string, known: readonly s
   return [...tasks, existing ?? name];
 }
 
-/** The tasks a row saves: its chips plus any text still typed in the box. */
 export function rowTasks(row: Pick<RouterModelDraft, "tasks" | "pending">, known: readonly string[] = []): string[] {
   return row.pending.trim() ? addTask(row.tasks, row.pending, known) : [...row.tasks];
 }
@@ -156,7 +136,6 @@ export function routerToDraft(router: AutoRouter | null, newKey: () => string): 
   };
 }
 
-/** Why the draft can't be saved yet, in the words shown next to Save, or null. */
 export function draftProblem(draft: RouterDraft, known: readonly string[] = []): string | null {
   const name = draft.name.trim();
   if (!name) return "Name this Smart Router.";
@@ -169,7 +148,6 @@ export function draftProblem(draft: RouterDraft, known: readonly string[] = []):
   return null;
 }
 
-/** The request body, or null while the draft has a problem. */
 export function draftToWrite(draft: RouterDraft, known: readonly string[] = []): AutoRouterWrite | null {
   if (draftProblem(draft, known)) return null;
   const models = draft.models.flatMap((row) => row.model

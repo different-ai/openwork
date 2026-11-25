@@ -24,7 +24,6 @@ export type MobileChatActionsProps = {
   onParent?: () => void;
 };
 
-/** The former chat-header overflow lives inside the existing mobile sidebar. */
 export function MobileChatActions(props: MobileChatActionsProps) {
   const { setOpenMobile } = useSidebar();
   const select = (action: () => void) => () => {

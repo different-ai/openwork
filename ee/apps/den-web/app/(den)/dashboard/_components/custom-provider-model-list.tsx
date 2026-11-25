@@ -17,7 +17,6 @@ import { sortModelsNewestFirst } from "./gateway-provider-models";
 
 export type ModelTemplate = { id: string; name: string; settings: ModelSettingsDraft };
 
-/** models.dev's OpenRouter list, offered as settings templates. */
 export function useModelTemplates(orgId: string | null) {
   const [templates, setTemplates] = useState<ModelTemplate[]>([]);
   const [busy, setBusy] = useState(true);
@@ -85,7 +84,6 @@ function ModalityPicker({ label, value, onChange, invalid, testId, disabled }: {
   );
 }
 
-/** Every setting of one model. */
 export function ModelSettingsForm({ settings, onChange, invalidField, disabled }: {
   settings: ModelSettingsDraft; onChange: (patch: Partial<ModelSettingsDraft>) => void; invalidField: ModelSettingsField | null; disabled?: boolean;
 }) {
@@ -160,7 +158,6 @@ export type ModelListProps = {
   onExpand: (key: string | null) => void;
 };
 
-/** The provider's models: tick to include, open a row to edit every setting. */
 export function CustomProviderModelList(props: ModelListProps) {
   const { drafts, expandedKey, highlight, templates, disabled } = props;
   const [query, setQuery] = useState("");

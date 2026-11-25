@@ -1,0 +1,53 @@
+{
+  "version": "v1.18.33",
+  "assets": {
+    "opencode-darwin-arm64.zip": {
+      "sha256": "24b12873e605b3db3387cb355f43ba7451cd6065c180d8c188663337d2eeb553",
+      "binarySha256": "139ddeb6a46ba276827bb8f79c7b28208621746e4fd6914d9ae71cc1a0a57524"
+    },
+    "opencode-darwin-x64-baseline.zip": {
+      "sha256": "61fd2f89695c0fc75053737189e489d490bc4bdccd9dbfd78c6532101df9e9fa",
+      "binarySha256": "f53aae8eb68d832ab1bcd27bed88c02de910be61f4b5f90068ae8e93d5e794c9"
+    },
+    "opencode-darwin-x64.zip": {
+      "sha256": "90c7e7d9ffa0d8691ca0f15b42a7b89b72e17a4d26074b9ef06559ff87b221ec",
+      "binarySha256": "f53aae8eb68d832ab1bcd27bed88c02de910be61f4b5f90068ae8e93d5e794c9"
+    },
+    "opencode-linux-arm64-musl.tar.gz": {
+      "sha256": "916e4ca40cdd43025b7741a6c60cd1141b8622a8531e2eebdffcfd3e41f56907",
+      "binarySha256": "fae717633bf1e98aaed9c743e5f8ed55348156ae720ccb1c273f3f0a32d94398"
+    },
+    "opencode-linux-arm64.tar.gz": {
+      "sha256": "c63486624621924bf43be5c01abd252885661a734814224f6d70188a33aea858",
+      "binarySha256": "986fef2069a03b5181a9ec920786836f98fe3e4950c630941908687854e42757"
+    },
+    "opencode-linux-x64-baseline-musl.tar.gz": {
+      "sha256": "73e9b259761fca92c8480a078c09c1e911baf2621b60046b95aa12b9dd8e9f60",
+      "binarySha256": "d4fcf071a39badaa8001de891777c5c9bc5fc24b243d987011f82027ead16246"
+    },
+    "opencode-linux-x64-baseline.tar.gz": {
+      "sha256": "440ca65423e99505cf285f8660684503cc54f6f9e6b64cfcd11bf412369be6d5",
+      "binarySha256": "0abbb7c32ab0294c0a7bfa2705f9ff0df5dce5ab721d1f00cccfe393f2a11427"
+    },
+    "opencode-linux-x64-musl.tar.gz": {
+      "sha256": "56636216a0b6595339ffdd5e2c885e6ea68a854f880720120e8cfa71172042c2",
+      "binarySha256": "d4fcf071a39badaa8001de891777c5c9bc5fc24b243d987011f82027ead16246"
+    },
+    "opencode-linux-x64.tar.gz": {
+      "sha256": "e546123213ae47909a4268692aa4b94950d011afe9cac9938753a2194f1c16d5",
+      "binarySha256": "0abbb7c32ab0294c0a7bfa2705f9ff0df5dce5ab721d1f00cccfe393f2a11427"
+    },
+    "opencode-windows-arm64.zip": {
+      "sha256": "836ca8d7b2aa5812cecd8bf22be59d406b9e18feb15a26e1d9266c96b61c1b00",
+      "binarySha256": "055bd11592f9f60c8b9e74f20d49320e620566a7fdeafc720c59a967177d4c97"
+    },
+    "opencode-windows-x64-baseline.zip": {
+      "sha256": "d69fcdf88552eacf8bd3140015e629941f284b603a25fa53bb565bd3becbf59a",
+      "binarySha256": "70bca36b3d8be0c8e4196b05e455e931bc734c6376cb3a90ad61fdc4d692e3d9"
+    },
+    "opencode-windows-x64.zip": {
+      "sha256": "cc827fda2e32502373c5de25a4b78471766b99881d12a441ae5b9fcff39c5780",
+      "binarySha256": "52f60248a576b34c9a6dcaa27e0a7f08089af35bcdc0dfb10c04d3e00a98314c"
+    }
+  }
+}

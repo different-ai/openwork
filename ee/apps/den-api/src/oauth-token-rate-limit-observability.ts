@@ -9,7 +9,6 @@ const KNOWN_GRANT_TYPES = new Set([
   "urn:ietf:params:oauth:grant-type:jwt-bearer",
 ])
 
-/** RFC 6749 §5.2 and RFC 8707 token error codes. Anything else is logged as "other". */
 const KNOWN_OAUTH_ERRORS = new Set([
   "invalid_grant",
   "invalid_client",
@@ -20,35 +19,20 @@ const KNOWN_OAUTH_ERRORS = new Set([
   "invalid_target",
 ])
 
-/** Den's refresh-grant refusal once the MCP session behind the grant has ended. */
 export const MCP_SESSION_REVOKED_GRANT_DESCRIPTION = "The authorization backing this grant has been revoked. Re-authorize the connection."
 
-/**
- * Fixed token error descriptions mapped to a label. Descriptions are matched
- * exactly and never logged, so a description that echoes request input can
- * only ever produce no label.
- */
 const KNOWN_ERROR_REASONS = new Map([
   [MCP_SESSION_REVOKED_GRANT_DESCRIPTION, "mcp_session_revoked"],
-  // Better Auth's refresh grant: the token is unknown, or it is expired,
-  // already rotated, or issued to another client.
   ["session not found", "refresh_token_unknown"],
   ["invalid refresh token", "refresh_token_rejected"],
 ])
 
-/** Limiter bucket names are short fixed literals; anything else could be a key. */
 const SAFE_BUCKET_PATTERN = /^[a-z][a-z0-9_]{0,39}$/
 
-/** Den's own limits in front of the token endpoint, or a limiter inside the Better Auth handler. */
 export type OAuthTokenLimitLayer = "den_admission" | "auth_handler"
 
 export type OAuthTokenLimitBlock = { bucket: string; retryAfterSeconds: number }
 
-/**
- * Which limiter answered a token request. `blocked` lists every Den bucket that
- * limited it. `clientIpSource` says how the caller's address was found (never
- * the address), which decides how well per-address budgets separate callers.
- */
 export type OAuthTokenLimitAttribution = {
   layer: OAuthTokenLimitLayer
   blocked?: readonly OAuthTokenLimitBlock[]
@@ -65,7 +49,6 @@ export type OAuthTokenRateLimitLogFields = OAuthTokenRequestLogFields & {
   retry_after: string | undefined
   limit_layer: OAuthTokenLimitLayer
   client_ip_source: ClientIpSource
-  /** The bucket with the longest wait, which sets the response's Retry-After. */
   bucket?: string
   blocked_buckets?: { bucket: string; retry_after_seconds: number }[]
 }
@@ -153,12 +136,6 @@ function blockedBucketFields(blocked: readonly OAuthTokenLimitBlock[] | undefine
   return { bucket: longest.bucket, blocked_buckets: entries }
 }
 
-/**
- * Safe fields for a rate-limited POST /oauth2/token, or null for any other
- * request or response. Never includes tokens, secrets, raw client IDs or
- * bucket keys: the client ID is fingerprinted and bucket names must be short
- * literals.
- */
 export async function getOAuthTokenRateLimitLogFields(
   request: Request,
   response: Response,
@@ -168,7 +145,6 @@ export async function getOAuthTokenRateLimitLogFields(
     return null
   }
 
-  // Den's own limits send Retry-After; Better Auth's limiter sends X-Retry-After.
   const retryAfter = (response.headers.get("retry-after") ?? response.headers.get("x-retry-after"))?.trim().slice(0, 128)
 
   return {
@@ -180,7 +156,6 @@ export async function getOAuthTokenRateLimitLogFields(
   }
 }
 
-/** The token error code (allowlisted) and a fixed label for known descriptions. Never the description text. */
 export async function readOAuthTokenErrorLogFields(response: Response): Promise<OAuthTokenErrorLogFields> {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
   const body: unknown = contentType.includes("json")
@@ -196,11 +171,6 @@ export async function readOAuthTokenErrorLogFields(response: Response): Promise<
   }
 }
 
-/**
- * Safe fields for the failed POST /oauth2/token that filled a failure budget
- * and started its cooldown, or null for any other request or response. Logged
- * once per filled budget instead of once per failure.
- */
 export async function getOAuthTokenFailureLogFields(
   request: Request,
   response: Response,

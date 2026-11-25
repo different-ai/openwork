@@ -8,7 +8,6 @@ export type ManagedProviderConfigInput = {
   providerId: string;
   name: string;
   source: string | null;
-  /** Environment names and SDK bindings must already use this target's runtime names. */
   providerConfig: JsonRecord;
   models: readonly ManagedProviderModel[];
 };
@@ -83,7 +82,6 @@ const modelConfigPassthroughKeys = [
   "headers",
   "provider",
   "variants",
-  // Engine request quirks per model, such as `cacheFormat: "anthropic"` for Claude behind an OpenAI-compatible endpoint.
   "compatibility",
 ];
 

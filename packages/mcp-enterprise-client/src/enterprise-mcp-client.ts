@@ -96,7 +96,6 @@ type Session = {
   requestOptions: RequestOptions
   lifecycle: EnterpriseMcpLifecycle
   legacyEventsAdvertised: () => boolean
-  /** Set once the server was asked to end the session. */
   releaseAttempted?: boolean
 }
 
@@ -188,17 +187,9 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     try {
       options.diagnosticSink?.(event)
     } catch {
-      // Diagnostics must never change the connection outcome they observe.
     }
   }
 
-  /**
-   * Asks the server to end this one-off session (an HTTP DELETE). Closing the
-   * client only stops local requests, so a stateful server would otherwise
-   * keep the session until it expires, and gateways that cap open sessions
-   * then refuse new ones. Bounded, attempted once and best-effort: a server
-   * without DELETE support, a failure or a timeout never changes the result.
-   */
   async function releaseSession(session: Session): Promise<void> {
     if (session.releaseAttempted || !session.transport.sessionId) return
     session.releaseAttempted = true
@@ -234,9 +225,6 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     if (!session.oauthProvider || !["tool-execution", "resource-discovery", "resource-read"].includes(input.operationPhase)) return
     const failure = session.observer.lastRequestFailure()
     if (!failure || !isMcpResourceRequest(failure.requestPhase)) return
-    // `insufficient_scope` refuses one request: the token is still valid for
-    // every request its scopes cover, and a new sign-in asks for the same
-    // scopes, so clearing it would only sign the member out again.
     const rejected = (failure.httpStatus === 401 && failure.invalidToken)
       || (failure.httpStatus === 403 && failure.bearerChallenge && !failure.insufficientScope)
     if (!rejected) return
@@ -326,15 +314,11 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         })
       : undefined
     const transport = new StreamableHTTPClientTransport(serverUrl, {
-      // Callback validation may use the staged token, but must never start OAuth
-      // again (including refresh or scope step-up) when the resource rejects it.
       authProvider: input.flow.kind === "callback" && oauthProvider
         ? { token: async () => (await oauthProvider.tokens())?.access_token }
         : oauthProvider,
       fetch: oauthProvider ? oauthProvider.exclusiveRefreshFetch(observer.fetch) : observer.fetch,
       requestInit: requestInit(input.connection.authorization),
-      // Only a sign-in can widen scopes. Outside one, the refusal is reported
-      // with the scope the server named, without a refresh or a second call.
       onInsufficientScope: input.flow.kind === "connect" ? "reauthorize" : "throw",
     })
     const legacyEventsAdvertised = options.webhookEvents ? observeLegacyEventCapability(transport) : () => false
@@ -444,7 +428,6 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       })
       throw wrapped
     } finally {
-      // A failure can leave a session the operation never closed.
       await releaseSession(session)
       session.controller.abort()
     }
@@ -523,18 +506,9 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               connectionId: input.connection.id,
               operationPhase: "connection-handshake",
             })
-            // Some providers allow protocol negotiation before challenging on tools/list.
-            // Probe only when the server advertised the tools capability: MCP
-            // servers are allowed to expose resources and/or prompts without
-            // implementing tools/list at all.
             if (session.client.getServerCapabilities()?.tools) {
               await session.client.listTools(undefined, session.requestOptions)
             }
-            // OAuth connections must not be treated as member-connected merely
-            // because a provider exposes protocol negotiation and tools/list publicly.
-            // When no member credential exists, proactively run OAuth discovery
-            // so providers such as BigQuery can return an authorization URL
-            // without first issuing an MCP-level 401 challenge.
             if (session.oauthProvider && !hadOAuthCredential) {
               const authResult = await auth(session.oauthProvider, {
                 serverUrl: session.serverUrl,
@@ -548,7 +522,6 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
                 try {
                   await closeSession(session)
                 } catch {
-                  // The bounded cleanup attempt must not discard a valid authorization URL.
                 }
                 return { status: "needs_auth", authorizeUrl }
               }
@@ -569,7 +542,6 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               try {
                 await closeSession(session)
               } catch {
-                // The bounded cleanup attempt must not discard a valid authorization URL.
               }
               return { status: "needs_auth", authorizeUrl }
             }
@@ -614,7 +586,6 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             await session.oauthProvider.commitPendingAuthorizationCodeCredential()
           } catch (error) {
             operationFailed = true
-            // Preserve the rejection phase before cleanup or close can change it.
             const requestPhase = failureRequestPhase(session.observer)
             let credentialCleanupError: unknown = null
             if (exchangedTokens && credentialPort) {
@@ -691,8 +662,6 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         operation: async (session) => {
           let advertised = session.legacyEventsAdvertised() || advertisesEvents(session.client.getServerCapabilities())
           if (!advertised && session.client.getProtocolEra() === "modern") {
-            // Auto-negotiation owns the transport observer while discovering. Preserve the
-            // ChatGPT top-level alias with an explicit schema on this read-only fallback.
             const discovery = await session.client.request({ method: "server/discover" }, z.record(z.string(), z.unknown()), session.requestOptions)
             advertised = advertisesEvents(discovery.capabilities)
           }

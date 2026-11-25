@@ -28,7 +28,6 @@ export const AccountFollowUpActionTable = mysqlTable("account_follow_up_action",
   actorUserId: denTypeIdColumn("user", "actor_user_id").notNull(),
   contactUserId: denTypeIdColumn("user", "contact_user_id"),
   note: varchar("note", { length: 500 }),
-  /** The follow-up date this action completed, kept to measure on-time follow-ups. */
   followUpDueAt: timestamp("follow_up_due_at", { fsp: 3 }),
   occurredAt: timestamp("occurred_at", { fsp: 3 }).notNull().defaultNow(),
 }, table => [

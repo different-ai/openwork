@@ -3,7 +3,6 @@ import { z } from "zod"
 import { fileName, readToolFile } from "./tool-files.js"
 import type { ToolApp, ToolDocument, ToolImage, ToolResult, ToolSpec } from "./types.js"
 
-/** Tools from one remote MCP server, connected for the duration of one turn. */
 export type ToolSession = {
   tools: ToolSpec[]
   call(name: string, input: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult>
@@ -12,7 +11,6 @@ export type ToolSession = {
 export type McpConnector = (input: {
   token: string
   signal: AbortSignal
-  /** Called when the server says its tool list changed while this session is open. */
   onToolsChanged?: () => void
 }) => Promise<ToolSession>
 
@@ -24,7 +22,6 @@ export function truncate(text: string, max = MAX_TOOL_OUTPUT_CHARS) {
   return text.length <= max ? text : `${text.slice(0, max)}\n…[truncated ${text.length - max} characters]`
 }
 
-/** Provider tool names must match ^[a-zA-Z0-9_-]{1,64}$. */
 export function modelToolName(name: string, taken: ReadonlySet<string>) {
   let candidate = name.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) || "tool"
   if (taken.has(candidate)) candidate = `mcp_${candidate}`.slice(0, 64)
@@ -72,10 +69,6 @@ const appLaunch = z.object({
 })
 const appSummary = z.object({ app: z.object({ title: z.string() }) })
 
-/**
- * The App a result opened, when OpenWork Connect says so (`_meta["openwork/mcpApp"]`): an App built in OpenWork, which
- * its own server opens with `open_app`. An App a connected service brings has another launch tool and is left out.
- */
 export function appOf(result: { structuredContent?: unknown; isError?: boolean; _meta?: unknown }): ToolApp | undefined {
   if (result.isError === true) return undefined
   const launch = appLaunch.safeParse(result._meta)
@@ -97,7 +90,6 @@ export async function formatToolResult(value: unknown): Promise<ToolResult> {
       continue
     }
     const resource = block.resource
-    // Binary content: an image or audio block, or a resource that embeds a file (for example a PDF read from Slack).
     const data = block.type === "image" || block.type === "audio" ? block.data : block.type === "resource" ? resource?.blob : undefined
     if (data !== undefined) {
       const reading = await readToolFile(
@@ -143,7 +135,6 @@ const toolList = z.object({
         name: z.string(),
         description: z.string().optional(),
         inputSchema: z.record(z.string(), z.unknown()),
-        // Only a hint: anything else there is ignored, and a tool that doesn't say it only reads may change things.
         annotations: z.object({ readOnlyHint: z.boolean().optional() }).loose().optional().catch(undefined),
       })
       .loose(),
@@ -151,18 +142,12 @@ const toolList = z.object({
   nextCursor: z.string().optional(),
 })
 
-/**
- * Connects to the operator-configured MCP URL with the caller's bearer token.
- * The URL is never caller-controlled; the token lives only in this closure.
- */
 export function remoteMcpConnector(options: {
   url: string
   allowlist: string[]
   reservedNames: ReadonlySet<string>
 }): McpConnector {
   return async ({ token, signal, onToolsChanged }) => {
-    // Negotiates the 2026-07-28 protocol where the server speaks it (falling back to 2025's), so the client can listen
-    // for tools/list_changed; the list itself is fetched again by the caller, which decides when that is worth it.
     const client = new Client({ name: "openwork-headless-runner", version: "0.1.0" }, {
       versionNegotiation: { mode: "auto" },
       ...(onToolsChanged ? { listChanged: { tools: { autoRefresh: false, onChanged: () => onToolsChanged() } } } : {}),
@@ -196,7 +181,6 @@ export function remoteMcpConnector(options: {
         cursor = page.nextCursor
       } while (cursor)
     } catch (error) {
-      // The caller may connect again (the runner retries): a connection that never listed its tools isn't left open.
       await client.close().catch(() => undefined)
       throw error
     }

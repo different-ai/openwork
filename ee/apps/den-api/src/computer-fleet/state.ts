@@ -23,22 +23,11 @@ import {
 } from "@openwork/types/den/admin-computer-fleet"
 import type { RunnerComputer, RunnerComputerDetail, RunnerComputerFleet, RunnerComputerSettings } from "../headless-runner/client.js"
 
-/**
- * Turns the runner's list of computers (each in its provider's own words) into the admin page's fleet: one
- * vocabulary of states, what needs a look, whose it is, totals and an overall status. Pure: no clock, no I/O.
- */
-
-/** A computer's key at its provider, from its conversation's session id (Computers.slug in headless-computer). */
 export const computerKey = (sessionId: string) => `hc-${createHash("sha256").update(sessionId).digest("hex").slice(0, 40)}`
 
-/**
- * Whose a computer is. `activeAt`: when its conversation last had a turn or an open view (epoch ms), and
- * `turnRunning`: whether one is under way; both left out when Den does not say.
- */
 export type ComputerOwner = { id: string; name: string; activeAt?: number | null; turnRunning?: boolean }
 const MINUTE_MS = 60_000
 const EXPIRY_GRACE_MS = 10 * MINUTE_MS
-/** Past a provider's own idle rule, it has had this long to act on it. */
 const PROVIDER_IDLE_GRACE_MS = 15 * MINUTE_MS
 
 const STATES: Record<string, ComputerFleetState> = {
@@ -57,7 +46,6 @@ const STATES: Record<string, ComputerFleetState> = {
   error: "failed",
 }
 
-/** A provider's time as an ISO moment, or null when it is missing or not a time. */
 function moment(value: string | null): string | null {
   if (!value) return null
   const ms = Date.parse(value)
@@ -66,13 +54,8 @@ function moment(value: string | null): string | null {
 const ms = (value: string | null) => (value === null ? null : Date.parse(value))
 const whole = (value: number | null) => (value !== null && Number.isFinite(value) && value >= 0 ? Math.round(value) : null)
 
-/** When the step a computer is in began, as near as its provider says: its last change, else its last activity. */
 const stepStartedAt = (sandbox: ComputerFleetSandbox) => ms(sandbox.lastChangedAt) ?? ms(sandbox.lastActivityAt) ?? ms(sandbox.createdAt)
 
-/**
- * How long a running computer may go unused before it is flagged: well past the runner's own pause, and past the
- * provider's idle rule for it where that is longer (a provider that stops idle computers itself is given its time).
- */
 function idleRunningAfterMs(raw: Pick<RunnerComputer, "idleTimeoutSeconds">, settings: RunnerComputerSettings | null) {
   const runner = settings ? 3 * settings.idlePauseSeconds * 1000 : 0
   const provider = raw.idleTimeoutSeconds && raw.idleTimeoutSeconds > 0 ? raw.idleTimeoutSeconds * 1000 + PROVIDER_IDLE_GRACE_MS : 0
@@ -88,12 +71,9 @@ function attentionOf(sandbox: ComputerFleetSandbox, now: number, idleRunningAfte
   if (sandbox.state === "stopping" && stuck(COMPUTER_FLEET_STUCK_MINUTES.stopping)) return "stuck_stopping"
   const expires = ms(sandbox.expiresAt)
   if (expires !== null && now - expires > EXPIRY_GRACE_MS) return "expired"
-  // The last sign of use: activity, or the start that put it in this state. Never guessed when the provider gives none.
   const used = ms(sandbox.lastActivityAt)
   if (sandbox.state === "running" && used !== null && now - Math.max(used, ms(sandbox.lastChangedAt) ?? 0) > idleRunningAfter) return "idle_running"
-  // Its provider sees a desktop as always in use. Den knows better: the conversation has been quiet for hours.
   if (sandbox.state === "running" && owner && owner.turnRunning !== true && typeof owner.activeAt === "number" && now - owner.activeAt > COMPUTER_FLEET_QUIET_HOURS * 60 * MINUTE_MS) return "idle_running"
-  // In use as far as its provider can tell, yet awake most of its life: something never lets it sleep.
   const created = ms(sandbox.createdAt)
   if (sandbox.state === "running" && sandbox.runSeconds !== null && created !== null) {
     const life = now - created
@@ -132,7 +112,6 @@ function sandboxOf(raw: RunnerComputer, owners: ReadonlyMap<string, ComputerOwne
     runSeconds: whole(raw.runSeconds),
   }
   if (state === "failed" && !keepOldFailure) {
-    // A failure ends a sandbox, and providers keep ended ones: only the last day's are news.
     const failedAt = ms(sandbox.endedAt) ?? ms(sandbox.lastChangedAt) ?? ms(sandbox.createdAt)
     if (failedAt === null || now - failedAt > COMPUTER_FLEET_FAILURE_HOURS * 60 * MINUTE_MS) return null
   }
@@ -147,7 +126,6 @@ const settingsOf = (settings: RunnerComputerSettings | null): ComputerFleetSetti
   persistent: settings.persistent,
 }
 
-/** Needing a look first, then the busiest states, then the most recently active. */
 const STATE_ORDER: Record<ComputerFleetState, number> = { failed: 0, starting: 1, pausing: 2, stopping: 3, running: 4, unknown: 5, paused: 6, stopped: 7 }
 function byUrgency(a: ComputerFleetSandbox, b: ComputerFleetSandbox) {
   const attention = Number(b.attention !== null) - Number(a.attention !== null)
@@ -175,15 +153,10 @@ export function notConfiguredComputerFleet(now: Date): AdminComputerFleet {
   return { status: "not_configured", generatedAt: now.toISOString(), runnerError: null, sources: [], sandboxes: [], listTruncated: false, totals: emptyTotals(), attentionCounts: noAttention(), organizations: [], unknownOrganization: 0 }
 }
 
-/** The runner's list could not be read at all: nothing is known about any computer. */
 export function unreadableComputerFleet(now: Date, error: string): AdminComputerFleet {
   return { ...notConfiguredComputerFleet(now), status: "unreachable", runnerError: error.slice(0, 40) }
 }
 
-/**
- * `organization` narrows the list to one organization's computers (its id), or to those whose organization is not
- * known (`unknown`). Totals, sources and the status stay the whole fleet's either way.
- */
 export function computerFleetFrom(runner: RunnerComputerFleet, owners: ReadonlyMap<string, ComputerOwner>, now: Date, organization: string | null = null): AdminComputerFleet {
   const at = now.getTime()
   const settings = new Map(runner.sources.map((source) => [source.source, source.settings]))
@@ -235,7 +208,6 @@ export function computerFleetFrom(runner: RunnerComputerFleet, owners: ReadonlyM
     : all.filter((sandbox) => sandbox.organization?.id === organization)
   const listTruncated = listed.length > COMPUTER_FLEET_LIST_LIMIT
   return {
-    // The whole fleet's: a filter narrows what is listed, not what is wrong.
     status: statusOf(sources, all, all.length > COMPUTER_FLEET_LIST_LIMIT),
     generatedAt: now.toISOString(),
     runnerError: null,
@@ -249,7 +221,6 @@ export function computerFleetFrom(runner: RunnerComputerFleet, owners: ReadonlyM
   }
 }
 
-/** What Den knows of the conversation a computer belongs to. Never its name or content. */
 export type ComputerConversation = {
   sessionId: string
   chat: "main" | "side" | null
@@ -258,25 +229,18 @@ export type ComputerConversation = {
   lastActiveAt: Date | null
   activeTurnSince: Date | null
 }
-/** What Workbot's server last reported about the computer, and what it saw happen to it, newest first. */
 export type ComputerReports = {
   reported: { state: string; detail: string | null; at: Date | null } | null
   events: Array<{ at: Date; type: string; level: "info" | "warning" | "error"; message: string }>
 }
 
 const FAILURE = /fail|reject|retry|expired/
-/** The gateway's details as `name: value` pairs, in a fixed order, so the same event always reads the same. */
 function providerMessage(details: Record<string, string>) {
   return Object.keys(details).sort().map((name) => `${name}: ${details[name]}`).join(", ").slice(0, 600)
 }
 
-/**
- * One computer in full: the runner's read of its provider, with whose it is and what Den was told happened to it.
- * A failure from long ago is still shown here: someone followed a link to it.
- */
 export function computerDetailFrom(detail: RunnerComputerDetail, owner: ComputerOwner | null, conversation: ComputerConversation | null, reports: ComputerReports, now: Date): AdminComputerDetail {
   const raw = detail.computer
-  // Read now, not from the list's shared index: whether a turn is under way decides what this page says.
   const activity = conversation ? { activeAt: Math.max(conversation.lastActiveAt?.getTime() ?? 0, reports.reported?.at?.getTime() ?? 0) || null, turnRunning: conversation.activeTurnSince !== null } : {}
   const computer = sandboxOf(raw, raw.key && owner ? new Map([[raw.key, { ...owner, ...activity }]]) : new Map(), detail.settings, now.getTime(), true)
   if (!computer) throw new Error("a computer kept for its detail was dropped")

@@ -37,8 +37,6 @@ import { localManagedMcpAppIdentity } from "./local-managed-mcp.js";
 import { externalFetch } from "./server-fetch.js";
 
 async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string) {
-  // Account-scoped gateways live in the engine-global runtime layer. Resolve
-  // Apps against the same effective configuration that produced the tool call.
   return listMcpFromRuntimeSnapshot(workspaceRoot, await readEffectiveRuntimeOpencodeConfig(serverConfig, workspaceId));
 }
 
@@ -48,7 +46,6 @@ const MAX_TOOL_PAGES = 32;
 const MAX_TOOLS = 2_048;
 const MAX_RESOURCE_BYTES = MCP_APP_RESOURCE_MAX_BYTES;
 const MAX_RESULT_BYTES = 1024 * 1024;
-/** Same cap Den applies to provider-declared error excerpts before relaying them. */
 const MAX_PROVIDER_ERROR_CHARS = 512;
 
 type McpAppCsp = {
@@ -60,9 +57,7 @@ type McpAppCsp = {
 
 export type McpAppToolResult = CallToolResult & { hostAction?: ConnectionActionIntent };
 
-/** Result _meta key the host trusts to decide whether a result may be kept. */
 export const MCP_APP_READ_ONLY_RESULT_META = "openwork/readOnly";
-/** Result _meta key naming the verified server and credential revision a result came from, so a kept result never crosses either. */
 export const MCP_APP_PROVIDER_IDENTITY_META = "openwork/providerIdentity";
 
 export async function supportsHostConnectionActions(serverName: string, config: Record<string, unknown>, toolName: string, resourceUri: string): Promise<boolean> {
@@ -133,7 +128,6 @@ function staleLaunch(): McpAppHostError {
   return new McpAppHostError("stale_launch_context", "This view’s launch has expired, closed, or changed. Reopen the view in its original conversation before trying again.");
 }
 
-/** Values and private credential revisions stay on the host, never in the resource response. */
 async function launchFingerprint(input: { serverConfig: ServerConfig; workspaceId: string }, serverName: string, config: Record<string, unknown>): Promise<string> {
   const managed = await localManagedMcpAppIdentity(input.serverConfig, input.workspaceId, serverName, config.url);
   const runtimeRevisions = readRuntimeMcpConfigRevisions(input.serverConfig, input.workspaceId,
@@ -143,9 +137,6 @@ async function launchFingerprint(input: { serverConfig: ServerConfig; workspaceI
   return createHash("sha256").update(JSON.stringify({ config, managed, runtimeRevisions, privateRevision })).digest("hex");
 }
 
-// The revision URI of an App built in OpenWork, as mcpAppResourceUri in
-// @openwork/types/mcp-app writes it. That subpath ships as TypeScript, which the
-// packaged server cannot load, so the format is matched here.
 const BUILT_APP_REVISION_URI = /^ui:\/\/openwork\/apps\/(cob_[0-7][0-9a-hjkmnp-tv-z]{25})\/revisions\/cov_[0-7][0-9a-hjkmnp-tv-z]{25}\/index\.html$/u;
 
 const resourceCaches = new WeakMap<ServerConfig, ReturnType<typeof createMcpAppResourceCache>>();
@@ -156,7 +147,6 @@ async function readAppResource(input: { serverConfig: ServerConfig; workspaceId:
     return { html: resource.html, ...resourcePresentationMeta(resource.meta) };
   };
   const id = BUILT_APP_REVISION_URI.exec(uri)?.[1];
-  // A provider can imitate a revision URI. Only the trusted private built-App endpoint is immutable.
   if (!id || serverName !== connectMcpAppHostName(id)) return load();
   let cache = resourceCaches.get(input.serverConfig);
   if (!cache) {
@@ -166,11 +156,6 @@ async function readAppResource(input: { serverConfig: ServerConfig; workspaceId:
   return cache.read(JSON.stringify([input.workspaceId, serverName, fingerprint]), uri, load);
 }
 
-/**
- * An App built in OpenWork publishes each update as a new revision of the same
- * App, so a card from an earlier revision opens the one its tool advertises now
- * instead of failing. Anything else must still match exactly.
- */
 export function advertisesLaunchedResource(launchedUri: string, advertisedUri: string, connectionId?: string): boolean {
   if (advertisedUri === launchedUri) return true;
   const launched = BUILT_APP_REVISION_URI.exec(launchedUri)?.[1];
@@ -178,7 +163,6 @@ export function advertisesLaunchedResource(launchedUri: string, advertisedUri: s
 }
 
 function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; workspaceRoot: string; context?: McpAppLaunchContext; launch?: { arguments?: Record<string, unknown> } }, app: McpAppResource, fingerprint: string, tool: Tool): McpAppResource {
-  // Old clients can read HTML, but cannot manufacture an actionable launch from a server name.
   if (!input.context || input.context.readOnly || input.serverConfig.readOnly) return app;
   const launches = liveLaunches(input.serverConfig);
   while (launches.size >= MAX_LIVE_LAUNCHES) {
@@ -226,12 +210,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * A bounded, single-line excerpt of a provider's error text. Providers already
- * return arbitrary tool *results* to the same callers, so relaying their
- * rejection is not a new disclosure, but the text is untrusted: strip control
- * characters and cap its length before it becomes an API error message.
- */
 function providerErrorExcerpt(error: unknown): string | null {
   if (!(error instanceof Error) || !error.message) return null;
   const sanitized = error.message
@@ -350,8 +328,6 @@ function clientOptions() {
   };
 }
 
-/** Transport messages can echo URLs, headers and arbitrary provider bodies. Only
- * expose typed statuses and fixed categories, never their raw messages. */
 function connectionFailure(error: unknown): string {
   if ((error instanceof StreamableHTTPError || error instanceof SseError)
     && typeof error.code === "number" && error.code >= 100 && error.code <= 599) {
@@ -374,7 +350,6 @@ function connectionFailure(error: unknown): string {
   return "connection or protocol negotiation failed";
 }
 
-/** Authentication and access failures need human action, never a retry. Provider text is not relayed. */
 function remoteAccessError(error: unknown): McpAppHostError | null {
   if (error instanceof UnauthorizedError
     || ((error instanceof StreamableHTTPError || error instanceof SseError) && error.code === 401)) {
@@ -428,9 +403,6 @@ async function connectRemoteClient(config: Record<string, unknown>): Promise<Cli
       const denied = remoteAccessError(error);
       if (denied) throw denied;
       failures.push(`${index === 0 ? "Streamable HTTP POST" : "Legacy SSE fallback"}: ${connectionFailure(error)}`);
-      // MCP 2025-11-25 backwards compatibility applies only to a rejected
-      // InitializeRequest, not auth/network errors or the initialized notification.
-      // The SDK handles optional-stream GET 405 itself; it is not a fallback signal.
       if (index !== 0 || client.getServerVersion() !== undefined
         || !(error instanceof StreamableHTTPError)
         || (error.code !== 400 && error.code !== 404 && error.code !== 405)) break;
@@ -456,7 +428,6 @@ async function withRemoteClient<T>(
   }
 }
 
-/** Like withRemoteClient, but a successful run keeps the client open for the launch it resolves. */
 async function withResolveClient<T>(
   config: Record<string, unknown>,
   run: (client: Client) => Promise<T>,
@@ -470,10 +441,6 @@ async function withResolveClient<T>(
   }
 }
 
-/**
- * Binds the launch and hands it the client that resolved it, so the App's
- * first calls skip a second connect handshake. Without a launch, it closes.
- */
 function bindResolvedLaunch(
   input: Parameters<typeof bindLaunch>[0],
   match: { app: McpAppResource; fingerprint: string; tool: Tool; client: Client },
@@ -494,9 +461,6 @@ function closeResolveClients(matches: Array<{ client: Client }>): void {
   for (const match of matches) void match.client.close().catch(() => undefined);
 }
 
-// One connected client per live launch, so an open App's follow-up calls skip
-// the connect handshake. Tools are still listed on every call, because their
-// visibility and approval annotations authorize it.
 const LAUNCH_SESSION_IDLE_MS = 60_000;
 const MAX_LAUNCH_SESSIONS = 32;
 type LaunchSession = {
@@ -538,7 +502,6 @@ function idleCloseLaunchSession(key: string, session: LaunchSession): void {
   session.idle.unref?.();
 }
 
-/** Keeps a client already connected for this launch as its session. */
 function adoptLaunchSession(key: string, client: Client): void {
   const session: LaunchSession = { client: Promise.resolve(client), inFlight: 0 };
   addLaunchSession(key, session);
@@ -564,8 +527,6 @@ async function withLaunchSession<T>(
   try {
     return await run(await current.client);
   } catch (error) {
-    // Only a refusal OpenWork made on purpose keeps the session; any other
-    // failure, including a wrapped call or resource-read failure, reconnects.
     if (!(error instanceof McpAppHostError) || !LAUNCH_SESSION_REFUSALS.has(error.code)) closeLaunchSession(key);
     throw remoteAccessError(error) ?? error;
   } finally {
@@ -643,7 +604,6 @@ async function privateConnectMcpConfigUntimed(input: {
   connectionId?: string;
   serverName?: string;
 }): Promise<{ serverName: string; config: Record<string, unknown> } | null> {
-  // Ordinary user-configured servers do not depend on Connect discovery.
   if (input.connectionId === undefined && !input.serverName?.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)) return null;
   let descriptor = await findOpenWorkConnectMcpAppHostServer(
     input.serverConfig,
@@ -653,8 +613,6 @@ async function privateConnectMcpConfigUntimed(input: {
   if (!descriptor) {
     let refreshed = await refreshOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
     if (refreshed.diagnostic === "discovery_unavailable") {
-      // One immediate discovery-only recovery, with one shared deadline for
-      // its handshake and read. Never add backoff or replay a provider tool.
       const deadline = AbortSignal.timeout(CONNECT_CATALOG_RECOVERY_BUDGET_MS);
       refreshed = await refreshOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId, (url, init) => externalFetch(url, {
         ...init,
@@ -719,22 +677,18 @@ function findHtmlResource(
 
 export type McpAppCatalogApp = {
   serverName: string;
-  /** Present for Connect app-host apps: launch them through this connection reference. */
   connectionId?: string;
   toolName: string;
   projectedToolName: string;
   resourceUri: string;
   title: string | null;
   description: string | null;
-  /** True when the launch tool declares required input, so a host cannot start it with empty arguments. */
   requiresInput: boolean;
-  /** True when calling the launch tool needs user approval (not explicitly read-only, or destructive). */
   requiresApproval: boolean;
 };
 
 export type McpAppCatalogServer = {
   serverName: string;
-  /** Human-readable provider name for Connect app-host servers. */
   displayName?: string;
   connectionId?: string;
   reachable: boolean;
@@ -748,12 +702,10 @@ function toolRequiresInput(tool: Tool): boolean {
   return Array.isArray(schema.required) && schema.required.length > 0;
 }
 
-/** The single approval rule: `callMcpAppTool` enforces it, the catalog reports it. */
 function toolRequiresApproval(tool: Tool): boolean {
   return tool.annotations?.readOnlyHint !== true || tool.annotations?.destructiveHint === true;
 }
 
-/** Per-server budget for catalog probes so one slow server cannot starve the rest. */
 const CATALOG_PROBE_TIMEOUT_MS = 10_000;
 
 async function withCatalogProbeTimeout<T>(work: Promise<T>): Promise<T> {
@@ -778,7 +730,6 @@ async function catalogAppsFromClient(client: Client, options: {
   serverName: string;
   workspaceRoot: string;
   connectionId?: string;
-  /** Cold launches resolve by projected tool name, which needs model visibility. */
   requireModelVisibility: boolean;
 }): Promise<McpAppCatalogApp[]> {
   const catalog: McpAppCatalogApp[] = [];
@@ -815,23 +766,12 @@ function toolDisplayTitle(tool: Tool): string | null {
   return typeof annotationTitle === "string" && annotationTitle.trim() ? annotationTitle : null;
 }
 
-/**
- * Enumerates every MCP App a host surface can launch cold: tools on configured
- * remote MCP servers that advertise a standard UI resource binding, stay
- * visible to both the model (resolution) and apps (tool calls), and are not
- * denied by the workspace tool policy. Unreachable servers are reported, not
- * fatal, so the catalog doubles as a live connection probe.
- */
 export async function listMcpAppCatalog(input: {
   serverConfig: ServerConfig;
   workspaceId: string;
   workspaceRoot: string;
 }): Promise<McpAppCatalogServer[]> {
   const configured = await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
-  // Connect app-host providers: org connections surfaced through the Cloud
-  // capability gateway. Their catalog and authorization live in the private
-  // app-host store, not the workspace MCP config, and their launches resolve
-  // through a connection reference (app audience only).
   let connectCatalog = await readOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
   if (connectCatalog.servers.length === 0) {
     const refreshed = await refreshOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
@@ -839,9 +779,6 @@ export async function listMcpAppCatalog(input: {
       connectCatalog = await readOpenWorkConnectMcpAppHostCatalog(input.serverConfig, input.workspaceId);
     }
   }
-  // A Connect host can also appear in the workspace MCP config under the same
-  // name; the provider section owns it (its entries carry the connection
-  // reference launches need), so the workspace copy is skipped.
   const connectHostNames = new Set(
     connectCatalog.servers.map((descriptor) => connectMcpAppHostName(descriptor.connectionId)),
   );
@@ -851,9 +788,6 @@ export async function listMcpAppCatalog(input: {
     .map(async (item): Promise<McpAppCatalogServer> => {
       try {
         const apps = await withCatalogProbeTimeout(withRemoteClient(item.config, (client) =>
-          // Cold dashboard launches resolve by projected tool name (model
-          // audience) and execute through the app-mediated call path, so a
-          // listed app must stay visible to both.
           catalogAppsFromClient(client, {
             serverName: item.name,
             workspaceRoot: input.workspaceRoot,
@@ -918,8 +852,6 @@ export async function listMcpAppCatalog(input: {
     }
   });
 
-  // Servers are independent probes: run them concurrently so catalog latency
-  // is the slowest single server, not the sum of every connection attempt.
   return Promise.all([...configuredEntries, ...connectEntries]);
 }
 
@@ -998,12 +930,6 @@ export async function resolveMcpAppResource(input: {
   return matches[0] ? bindResolvedLaunch(input, matches[0]) : null;
 }
 
-/**
- * Resolves a capability-gateway launch back to the exact native Connect MCP
- * tool. The gateway reference is only a routing hint: the local host derives
- * the managed server name, re-lists the provider tool, and requires its live
- * UI binding to match before reading or executing any resource.
- */
 export async function resolveConnectMcpAppResource(input: {
   context?: McpAppLaunchContext;
   serverConfig: ServerConfig;
@@ -1069,10 +995,6 @@ export async function resolveConnectMcpAppResource(input: {
   return bindResolvedLaunch(input, { ...match, fingerprint, client });
 }
 
-/** Resolve an indirect launch against the same MCP server that owns the
- * model-visible capability gateway tool. The target launch tool stays
- * app-visible, but its standard UI binding and resource are revalidated live.
- */
 export async function resolveSameServerMcpAppResource(input: {
   context?: McpAppLaunchContext;
   serverConfig: ServerConfig;
@@ -1164,9 +1086,7 @@ export async function callMcpAppTool(input: {
   expectedResourceDigest?: string;
   arguments?: Record<string, unknown>;
   approved?: boolean;
-  /** Run every check for a call that needs no approval, then return without calling the tool. */
   checkOnly?: boolean;
-  /** Required for conversation leases; the HTTP host checks current ownership/archive state. */
   assertSessionActive?: () => Promise<void>;
 }): Promise<McpAppToolResult> {
   if (!input.launchId) throw new McpAppHostError("missing_launch_context", "This view has no live launch context. Update OpenWork and reopen the view before using its actions.");
@@ -1193,7 +1113,6 @@ export async function callMcpAppTool(input: {
       serverName: input.serverName,
     });
     const configured = privateItem ? [] : await listMcp(input.serverConfig, input.workspaceId, input.workspaceRoot);
-    // A reserved private host must never fall back to a same-name workspace configuration.
     const item = input.serverName.startsWith(CONNECT_MCP_APP_HOST_NAME_PREFIX)
       ? privateItem : configured.find((candidate) => candidate.name === input.serverName);
     if (!item || item.config.enabled === false) {
@@ -1264,22 +1183,13 @@ export async function callMcpAppTool(input: {
     }
     await currentConfig();
     assertLive();
-    // The configured server and credential revision this launch verified: the
-    // launch fingerprint already hashes its configuration, auth headers and
-    // private credential revision, so any credential change gives a new identity.
     const providerIdentity = createHash("sha256").update(JSON.stringify([input.serverName, remoteUrl(config)?.href ?? null, launch.fingerprint])).digest("hex");
-    // For a cached read: the call would be allowed now without approval, so
-    // the host may show the result it kept from this same server. Nothing reaches the tool.
     if (input.checkOnly) {
       if (input.approved === true || toolRequiresApproval(tool) || hostConnectionAction) {
         throw new McpAppHostError("tool_requires_approval", "Only a read-only App tool's kept result can be shown.");
       }
       return { content: [], _meta: { [MCP_APP_READ_ONLY_RESULT_META]: true, [MCP_APP_PROVIDER_IDENTITY_META]: providerIdentity } };
     }
-    // A provider that rejects the call (for example JSON-RPC -32602 for a
-    // missing required argument) must reach the member as that rejection,
-    // not as an unhandled 500 "Unexpected server error". The text is
-    // provider-controlled: bound it the same way Den bounds provider excerpts.
     const result = await timeMcpApp("desktop.tools-call", () => client.callTool({ name: input.name, arguments: input.arguments ?? {} })).catch((error: unknown) => {
       throw new McpAppHostError("tool_call_failed", providerErrorExcerpt(error) ?? "The MCP App tool call failed.");
     });
@@ -1287,9 +1197,6 @@ export async function callMcpAppTool(input: {
       throw new McpAppHostError("result_too_large", "The MCP App tool result exceeds the 1 MiB host limit.");
     }
     const parsed = CallToolResultSchema.parse(stripProviderHostActions(result));
-    // Whether the tool ran without needing approval: read-only and not
-    // destructive. The host keeps only such results for instant reopening.
-    // Set here, never taken from the provider.
     const sanitized = { ...parsed, _meta: { ...parsed._meta, [MCP_APP_READ_ONLY_RESULT_META]: !toolRequiresApproval(tool), [MCP_APP_PROVIDER_IDENTITY_META]: providerIdentity } };
     if (!hostConnectionAction || sanitized.isError) return sanitized;
     await currentConfig();
@@ -1307,7 +1214,6 @@ export async function callMcpAppTool(input: {
   });
 }
 
-// Opt-in numeric profiling only; never emit request payloads or identities.
 if (process.env.OPENWORK_MCP_APP_TIMINGS === "1") {
   new PerformanceObserver(list => {
     for (const entry of list.getEntries()) if (entry.name.startsWith("openwork.mcp-app.")) {

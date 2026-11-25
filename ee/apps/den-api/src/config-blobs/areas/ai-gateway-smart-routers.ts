@@ -1,25 +1,3 @@
-/**
- * Config-blob area `ai-gateway.smart-routers`: Smart Routers (Manage › AI
- * Gateway › AI Providers › Smart routers).
- *
- * - Spec: who the router applies to (everyone, team refs, people refs) and its
- *   models in order, each a `$ref` to its `ai-gateway.providers` provider plus
- *   the catalog model id and the task names it handles (in order). Tasks are
- *   organization-wide rows (`auto_router_task`, matched by `name_key`) created
- *   and removed by the router writes, so they travel as names inside models.
- *   Router model row ids are regenerated on every save and are not exported.
- *   `auto_router_reasoning` is runtime state and never exported.
- * - Identity: the router name (names are not unique, so a similarity score
- *   helps the confirm step). The router id is reused on create when free: the
- *   desktop model id is `openwork-smart-<router id>`.
- * - Apply goes through the same functions the routes use (auto-router.ts:
- *   readAutoRouterRouting, checkAutoRouterWrite against the organization's
- *   model options, saveAutoRouter, checkAutoRouterAssignment,
- *   saveAutoRouterAssignment with the Share with everyone rule,
- *   deleteAutoRouter). Only what the plan's changes name is written: a rename
- *   alone updates the name only, models are replaced only when they changed,
- *   and the assignment only when it changed.
- */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { AutoRouterAccessTable, AutoRouterModelTable, AutoRouterModelTaskTable, AutoRouterTable, AutoRouterTaskTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -38,34 +16,22 @@ import { audienceRefs, ConfigApplyError, isJsonObject, loadMemberEmails, loadTea
 const AREA = "ai-gateway.smart-routers" as const
 const PROVIDERS_AREA = "ai-gateway.providers"
 
-// ---------------------------------------------------------------------------
-// Spec
-
-/** The provider reference of a model, as a positional path: `models[2].provider`. */
 const MODEL_PROVIDER_PATH = /^models\[\d+\]\.provider$/
 
 const routerSpecSchema = z.object({
-  /** Who the router applies to. A new router with none applies to nobody. */
   assignment: z.object({
     everyone: z.boolean().default(false),
     teams: z.array(configRefSchema).max(200).default([]),
     members: z.array(configRefSchema).max(1000).default([]),
   }).strict().default({ everyone: false, teams: [], members: [] }),
-  /** In order: the first wins ties and is used when the router cannot decide. */
   models: z.array(z.object({
-    /** The AI Gateway provider. */
     provider: configRefSchema,
-    /** Catalog model id within that provider (not a member's gwm_… alias). */
     modelId: z.string().trim().min(1).max(255),
-    /** Task names this model handles, in order. Matched across the organization ignoring case and spacing. */
     tasks: z.array(z.string().trim().min(1).max(AUTO_ROUTER_TASK_MAX_LENGTH)).min(1).max(AUTO_ROUTER_MAX_TASKS_PER_MODEL),
   }).strict()).min(1).max(AUTO_ROUTER_MAX_MODELS),
 }).strict()
 
 type RouterSpec = z.infer<typeof routerSpecSchema>
-
-// ---------------------------------------------------------------------------
-// Read
 
 async function readRouters(ctx: ConfigAreaContext, ids?: string[]): Promise<ConfigItem[]> {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
@@ -75,7 +41,6 @@ async function readRouters(ctx: ConfigAreaContext, ids?: string[]): Promise<Conf
     .where(and(eq(AutoRouterTable.organizationId, organizationId), ...(wanted ? [inArray(AutoRouterTable.id, wanted)] : [])))
   if (routers.length === 0) return []
   const routerIds = routers.map((router) => router.id)
-  // Sequential: ctx.db may be a transaction.
   const access = await ctx.db.select().from(AutoRouterAccessTable)
     .where(and(eq(AutoRouterAccessTable.organizationId, organizationId), inArray(AutoRouterAccessTable.autoRouterId, routerIds)))
   const models = await ctx.db.select().from(AutoRouterModelTable)
@@ -119,9 +84,6 @@ async function readRouters(ctx: ConfigAreaContext, ids?: string[]): Promise<Conf
     })
 }
 
-// ---------------------------------------------------------------------------
-// Matching
-
 function modelKeys(item: ConfigItem): Set<string> {
   const parsed = routerSpecSchema.safeParse(item.spec)
   if (!parsed.success) return new Set()
@@ -144,9 +106,6 @@ function similarity(blob: ConfigItem, target: ConfigItem): { score: number; reas
   }
   return { score: Math.min(1, Math.round(score * 1000) / 1000), reasons }
 }
-
-// ---------------------------------------------------------------------------
-// Apply
 
 function touches(changes: ConfigFieldChange[], field: string): boolean {
   return changes.some((change) => change.path === field || change.path.startsWith(`${field}.`) || change.path.startsWith(`${field}[`))
@@ -212,7 +171,6 @@ function hasAudience(assignment: AutoRouterAssignment): boolean {
   return assignment.everyone || assignment.teamIds.length > 0 || assignment.memberIds.length > 0
 }
 
-/** Checks and saves the name and models the way the router routes do. Returns the router id. */
 async function saveRouter(ctx: ConfigAreaContext, input: { name: string; models: ResolvedRouter["models"]; routerId?: string; createId?: string }) {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const parsed = autoRouterWriteSchema.safeParse({ name: input.name, models: input.models })
@@ -290,14 +248,12 @@ async function applyRouter(ctx: ConfigAreaContext, op: ConfigApplyOp) {
       return { localId: routerId, steps: steps.done }
     }
 
-    // update
     const [current] = await ctx.db.select({ id: AutoRouterTable.id, name: AutoRouterTable.name }).from(AutoRouterTable)
       .where(and(eq(AutoRouterTable.organizationId, organizationId), eq(AutoRouterTable.id, normalizeDenTypeId("autoRouter", op.targetId)))).limit(1)
     if (!current) throw new ConfigApplyError("auto_router_not_found", `Smart Router "${op.previous.name}" no longer exists.`, 404)
 
     const renames = touches(op.changes, "name") && current.name !== name
     if (touches(op.changes, "models")) {
-      // Models and their tasks are one ordered list: saveAutoRouter replaces it (and the name, unchanged unless renamed).
       await steps.run({ action: "update", target: `Smart Router "${current.name}"`, detail: renames ? "models, name" : "models" }, "models", () => saveRouter(ctx, { name: renames ? name : current.name, models: spec.models, routerId: current.id }))
     } else if (renames) {
       await steps.run({ action: "update", target: `Smart Router "${current.name}"`, detail: "name" }, "name", async () => {
@@ -306,7 +262,6 @@ async function applyRouter(ctx: ConfigAreaContext, op: ConfigApplyOp) {
     }
 
     if (touches(op.changes, "assignment")) {
-      // People without an email are never exported, so a blob can't name them: keep their assignment.
       const access = await ctx.db.select({ memberId: AutoRouterAccessTable.orgMembershipId }).from(AutoRouterAccessTable).where(eq(AutoRouterAccessTable.autoRouterId, current.id))
       const memberIds = access.flatMap((row) => row.memberId ? [row.memberId] : [])
       const emails = await loadMemberEmails(ctx.db, organizationId, memberIds)
@@ -336,23 +291,18 @@ export const aiGatewaySmartRoutersArea = defineConfigArea({
   deployments: ["cloud", "self_hosted"],
   viewPermission: "gateway_providers.view",
   managePermission: "gateway_providers.manage",
-  // Not auto_router_reasoning: short-lived runtime state.
   tables: ["auto_router", "auto_router_access", "auto_router_model", "auto_router_task", "auto_router_model_task"],
   naturalKeys: [{ label: "name", get: (item) => item.name.trim().toLowerCase() || null }],
   similarity,
   secretFields: [],
   orderedArrays: ["models", "models[].tasks"],
-  // A router's model is a provider's: dropping the provider drops that model from the router.
   requiredRefs: ["models[].provider"],
-  // The auto-router service writes through the global db in its own transactions.
   transactional: false,
-  // Saving checks the AI Gateway's routing status over the network.
   externalEffects: true,
   irreversible,
 
   exportItems: (ctx) => readRouters(ctx),
   readItems: (ctx, ids) => readRouters(ctx, ids),
-  // A model goes with its dropped provider: say how many are left out, and refuse a router left with none.
   async preflight(_ctx, op, info) {
     if (op.kind === "delete" || !info.refs) return null
     const dropped = info.refs.filter((ref) => MODEL_PROVIDER_PATH.test(ref.path) && ref.resolution === "drop").length

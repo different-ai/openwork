@@ -8,13 +8,6 @@ import { isRecord } from "./workspace-kv-store.js";
 
 const STATE_FILE = "engine-system-proxy.json";
 
-/**
- * Whether the agent engine is started pointing at the desktop's system-proxy
- * relay. An engine reads its proxy once, when it starts, and the organization
- * that decides this is only known after the window signs in. So the last
- * checked answer is remembered for the next start, and corrected as soon as a
- * fresh answer arrives.
- */
 export function createEngineSystemProxy(config: Pick<ServerConfig, "configPath" | "engineSystemProxyEnv">) {
   const path = join(runtimeStorageDir(config), STATE_FILE);
   let wanted = false;
@@ -22,14 +15,11 @@ export function createEngineSystemProxy(config: Pick<ServerConfig, "configPath" 
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     wanted = isRecord(parsed) && parsed.enabled === true;
   } catch {
-    // Never checked on this computer: off.
   }
   const available = typeof config.engineSystemProxyEnv === "function";
   return {
-    /** Only the desktop app has system proxy settings to follow. */
     available,
     wanted: () => available && wanted,
-    /** The proxy variables for an engine starting now; none when off or when the relay cannot start. */
     async env(): Promise<Record<string, string>> {
       if (!available || !wanted) return {};
       try {
@@ -39,7 +29,6 @@ export function createEngineSystemProxy(config: Pick<ServerConfig, "configPath" 
         return {};
       }
     },
-    /** Records a fresh answer. An answer that could not be read changes nothing. */
     async record(enabled: boolean | undefined): Promise<void> {
       if (enabled === undefined || enabled === wanted) return;
       wanted = enabled;

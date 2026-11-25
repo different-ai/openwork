@@ -5,7 +5,6 @@ import { DenCheckbox } from "../../_components/ui/checkbox";
 import { DenSegmented } from "../../_components/ui/segmented";
 import type { DenConfigTokenScope, DenOrgApiKey, DenOrgApiKeyType } from "../../_lib/den-org";
 
-/** What each config token scope lets a script do, in plain words. */
 export const CONFIG_TOKEN_SCOPE_LABELS: Record<DenConfigTokenScope, string> = {
     "config:export": "Export",
     "config:submit": "Submit changes",
@@ -34,7 +33,6 @@ export const EMPTY_CONFIG_TOKEN_DRAFT: ConfigTokenDraft = {
     areas: [],
 };
 
-/** The request body fields for this draft, or a reason it can't be sent yet. */
 export function configTokenRequestFields(draft: ConfigTokenDraft): { ok: true; fields: Record<string, unknown> } | { ok: false; reason: string } {
     if (draft.type !== "config") return { ok: true, fields: {} };
     if (draft.scopes.length === 0) return { ok: false, reason: "Choose at least one thing this token can do." };
@@ -53,11 +51,6 @@ function toggle<T>(values: readonly T[], value: T, on: boolean): T[] {
     return on ? (values.includes(value) ? [...values] : [...values, value]) : values.filter((entry) => entry !== value);
 }
 
-/**
- * The create-form part for config tokens: key type,
- * what the token can do and an optional area limit. Areas come from
- * GET /v1/config-blobs/areas; without them the limit is left out.
- */
 export function ConfigTokenFields({
     draft,
     onChange,
@@ -66,7 +59,6 @@ export function ConfigTokenFields({
 }: {
     draft: ConfigTokenDraft;
     onChange: (next: ConfigTokenDraft) => void;
-    /** Null when the areas couldn't be loaded: the area limit is not offered. */
     areas: readonly ConfigAreaDescriptor[] | null;
     disabled?: boolean;
 }) {
@@ -125,7 +117,6 @@ export function ConfigTokenFields({
                                 ]}
                             />
                             {draft.limitAreas ? (
-                                // Column by column, so areas of one sidebar group stay together.
                                 <div className="gap-x-6 sm:columns-2">
                                     {offeredAreas.map((area) => (
                                         <label key={area.key} className="mb-2 flex break-inside-avoid items-center gap-2 text-[13px] text-gray-900">
@@ -148,7 +139,6 @@ export function ConfigTokenFields({
     );
 }
 
-/** One line for the list: what a config token can do and where. Null for standard keys. */
 export function describeConfigToken(apiKey: DenOrgApiKey, areas: readonly ConfigAreaDescriptor[] | null): string | null {
     if (apiKey.type !== "config") return null;
     const can = apiKey.scopes.map((scope) => CONFIG_TOKEN_SCOPE_LABELS[scope]).join(", ");

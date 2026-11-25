@@ -41,11 +41,9 @@ async function save(c: PromptRouteContext, input: { teamId: DenTypeId<"team"> | 
   try {
     await write()
   } catch (error) {
-    // A concurrent first save of the same scope created the prompt; update it.
     if (!isDuplicateEntry(error)) throw error
     await write()
   }
-  // primary: the response shows the prompt just saved.
   return c.json(await settingsView(c, organizationId, db.$primary))
 }
 
@@ -74,11 +72,6 @@ const removeResponses = {
   404: notFound,
 }
 
-/**
- * Prompts: system prompts admins write for everyone and for each team. Members'
- * desktops append the ones that apply to them to OpenWork's instructions
- * (GET /v1/me/prompts).
- */
 export function registerOrgPromptRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/prompts",

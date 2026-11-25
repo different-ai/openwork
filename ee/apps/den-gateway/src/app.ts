@@ -262,8 +262,6 @@ export function shouldProxyToInstance(request: Request) {
     return true
   }
 
-  // /workspace/ is ambiguous: openwork-server owns API routes here, while the
-  // BrowserRouter SPA owns reloadable session/settings deep links under it.
   return pathname.startsWith(workspacePathPrefix) && !isDocumentNavigation(request)
 }
 
@@ -362,7 +360,6 @@ function escapeScriptJson(json: string) {
 
 type GatewayMarkerFields = {
   buildVersion?: string
-  /** Den web origin the app signs in with; the published image bakes none in. */
   denWebUrl?: string
 }
 
@@ -712,8 +709,6 @@ export function createGatewayApp(options: GatewayAppOptions = {}) {
   const cache = new Map<string, ReadyCacheEntry>()
   const app = new Hono()
 
-  // Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
-  // A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
   app.use("*", async (c, next) => {
     await next()
     if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive")

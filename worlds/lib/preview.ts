@@ -478,6 +478,22 @@ function isPreviewScenario(value: string): value is PreviewScenario {
   return value === "blank" || value === "fresh" || value === "team" || value === "restricted" || value === "workspace" || value === "plans";
 }
 
+/** The current origin/dev commit: what a remote preview builds when no source is given. */
+async function resolveRemoteDev(): Promise<string> {
+  try {
+    const { stdout } = await promisify(execFile)("git", ["ls-remote", "--exit-code", "origin", "refs/heads/dev"], {
+      cwd: fileURLToPath(new URL("../..", import.meta.url)),
+      timeout: 30_000,
+    });
+    const ref = stdout.trim().split(/\s+/)[0];
+    if (!ref || !/^[0-9a-f]{40}$/.test(ref)) throw new Error("Remote dev did not return a full commit SHA.");
+    console.error(`preview  defaulting to origin/dev at ${ref}`);
+    return ref;
+  } catch (cause) {
+    throw new Error("Could not resolve remote dev for this preview. Check access to origin or set OPENWORK_EVAL_REF to a reviewed, pushed full 40-character commit SHA.", { cause });
+  }
+}
+
 function pinSourceRef(sha: string, label: string): void {
   if (process.env.OPENWORK_EVAL_REF?.trim() && process.env.OPENWORK_EVAL_REF !== sha) {
     throw new Error(`${label} --source conflicts with OPENWORK_EVAL_REF.`);
@@ -555,18 +571,7 @@ export async function runPreview(surface: PreviewSurface, argv = process.argv.sl
   const { lifetimeMinutes } = parsed;
   if (target.os === "windows" && lifetimeMinutes > 1410) throw new Error("Windows previews support --lifetime 0-1410 (30 minutes reserved for sandbox startup).");
   if (place.kind === "daytona" && !process.env.OPENWORK_EVAL_REF?.trim()) {
-    try {
-      const { stdout } = await promisify(execFile)("git", ["ls-remote", "--exit-code", "origin", "refs/heads/dev"], {
-        cwd: fileURLToPath(new URL("../..", import.meta.url)),
-        timeout: 30_000,
-      });
-      const ref = stdout.trim().split(/\s+/)[0];
-      if (!ref || !/^[0-9a-f]{40}$/.test(ref)) throw new Error("Remote dev did not return a full commit SHA.");
-      process.env.OPENWORK_EVAL_REF = ref;
-      console.error(`preview  defaulting to origin/dev at ${ref}`);
-    } catch (cause) {
-      throw new Error("Could not resolve remote dev for this preview. Check access to origin or set OPENWORK_EVAL_REF to a reviewed, pushed full 40-character commit SHA.", { cause });
-    }
+    process.env.OPENWORK_EVAL_REF = await resolveRemoteDev();
   }
   if (place.kind === "daytona") process.env.OPENWORK_WORLD_PREVIEW_DAYTONA = "1";
   process.env.OPENWORK_WORLD_PREVIEW_LIFETIME_MINUTES = String(lifetimeMinutes);

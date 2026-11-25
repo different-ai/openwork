@@ -1,33 +1,14 @@
 import { createHash } from "node:crypto"
 
-/**
- * The files a skill ships beside its SKILL.md: references, scripts, templates,
- * examples, images, fonts, office templates. A version lists them in
- * `normalizedPayloadJson.files` as { path, sha256, size }; their contents are
- * stored once per organization in skill_file_blob (skill-file-blobs.ts), so
- * reading a version's list never loads contents. Versions saved before that
- * kept each file's text inline as { path, text }; those still read, and move to
- * blobs the next time the skill is saved.
- *
- * Served as `skill://<name>/<path>` resources, per the MCP Skills Extension.
- * Kept free of database and environment imports so it can be unit tested.
- */
-
-/** One supporting file as a version lists it. `inline` holds the bytes of a file an older version stored in its payload. */
 export type SkillFileEntry = { path: string; sha256: string; size: number; inline?: Uint8Array }
-/** A supporting file's contents in hand, before they are stored. */
 export type SkillFileBody = { path: string; bytes: Uint8Array }
 
 const MiB = 1024 * 1024
 export const SKILL_FILES_MAX_COUNT = 500
-// One file per row and per statement: PlanetScale's driver sends it as hex (2x)
-// and reads it back as base64, both well under its 64 MiB query limit.
 export const SKILL_FILE_MAX_BYTES = 10 * MiB
-// Anthropic's Agent Skills accept 30 MB per skill, uncompressed.
 export const SKILL_FILES_MAX_TOTAL_BYTES = 30 * MiB
 const SKILL_FILE_PATH_MAX_CHARS = 255
 
-/** Why a path cannot be a supporting file, or null when it can. */
 export function skillFilePathProblem(path: string): string | null {
   if (!path || path.length > SKILL_FILE_PATH_MAX_CHARS) return `must be 1-${SKILL_FILE_PATH_MAX_CHARS} characters`
   if (path === "SKILL.md") return "SKILL.md is the skill itself"
@@ -38,7 +19,6 @@ export function skillFilePathProblem(path: string): string | null {
   return null
 }
 
-/** Text that survived UTF-8 decoding intact: no NUL bytes and no replacement characters. */
 export function isSkillFileText(text: string): boolean {
   return !text.includes("\u0000") && !text.includes("�")
 }
@@ -51,7 +31,6 @@ export function sha256Hex(bytes: Uint8Array): string {
 
 const strictUtf8 = new TextDecoder("utf-8", { fatal: true })
 
-/** The bytes as text when they are UTF-8 without NUL bytes, else null. */
 export function skillFileText(bytes: Uint8Array): string | null {
   if (bytes.includes(0)) return null
   try {
@@ -67,12 +46,6 @@ function decodeBase64(value: string): Uint8Array | null {
   return new Uint8Array(Buffer.from(compact, "base64"))
 }
 
-/**
- * Checks supporting files: { path, text } for text or { path, base64 } for any
- * file, as clients send them, or { path, bytes } from Den's own code (JSON
- * cannot carry a Uint8Array). Applies the path rules and size limits and
- * returns the contents sorted by path, or the first problem found.
- */
 export function checkSkillFiles(value: unknown): { files: SkillFileBody[] } | { problem: SkillFilesProblem } {
   if (!Array.isArray(value)) return { problem: { path: null, message: "files must be an array of { path, text } or { path, base64 }." } }
   if (value.length > SKILL_FILES_MAX_COUNT) {
@@ -110,11 +83,6 @@ export function checkSkillFiles(value: unknown): { files: SkillFileBody[] } | { 
   return { files: files.sort((a, b) => a.path.localeCompare(b.path)) }
 }
 
-/**
- * Which of a skill folder's files fit, judged by path and size alone, before
- * anything is downloaded. Files are taken in path order; the rest are named
- * in `leftOut` so an import can say what it did not bring.
- */
 export function selectSkillFilesBySize(entries: readonly { path: string; size: number | null }[]): { included: string[]; leftOut: string[] } {
   const included: string[] = []
   const leftOut: string[] = []
@@ -139,23 +107,16 @@ function formatBytes(bytes: number): string {
   return bytes >= 1024 * 1024 && bytes % (1024 * 1024) === 0 ? `${bytes / (1024 * 1024)} MB` : `${Math.round(bytes / 1024)} KB`
 }
 
-/** One sentence saying how many of a skill's files an import leaves out, and the limits behind it. */
 export function skillFilesLeftOutMessage(input: { skillName: string; leftOut: number; total: number; atImport?: boolean }): string {
   const verb = input.atImport ? (input.leftOut === 1 ? "was" : "were") : "will be"
   return `${input.skillName}: ${input.leftOut} of ${input.total} supporting file${input.total === 1 ? "" : "s"} ${verb} left out. `
     + `An import from GitHub brings text files only, up to ${formatBytes(SKILL_FILE_MAX_BYTES)} each, ${formatBytes(SKILL_FILES_MAX_TOTAL_BYTES)} and ${SKILL_FILES_MAX_COUNT} files in total.`
 }
 
-/** A file list as a version stores it. */
 export function storedSkillFileList(entries: readonly SkillFileEntry[]): Array<{ path: string; sha256: string; size: number }> {
   return entries.map(({ path, sha256, size }) => ({ path, sha256, size }))
 }
 
-/**
- * The supporting files a version lists, in path order. Older versions kept
- * text inline; those entries carry their bytes in `inline`. Anything malformed
- * reads as no files.
- */
 export function skillFilesFromPayload(payload: unknown): SkillFileEntry[] {
   if (typeof payload !== "object" || payload === null || !("files" in payload) || !Array.isArray(payload.files)) return []
   const entries: SkillFileEntry[] = []
@@ -175,14 +136,12 @@ export function skillFilesFromPayload(payload: unknown): SkillFileEntry[] {
   return entries.sort((a, b) => a.path.localeCompare(b.path))
 }
 
-/** Same paths with the same contents. */
 export function sameSkillFiles(stored: readonly SkillFileEntry[], incoming: readonly SkillFileBody[]): boolean {
   if (stored.length !== incoming.length) return false
   const byPath = new Map(stored.map((file) => [file.path, file.sha256]))
   return incoming.every((file) => byPath.get(file.path) === sha256Hex(file.bytes))
 }
 
-/** `skill://<name>/<path>`, each path segment percent-encoded. */
 export function skillFileUri(skillName: string, path: string): string {
   return `skill://${skillName}/${path.split("/").map(encodeURIComponent).join("/")}`
 }
@@ -216,7 +175,6 @@ const MIME_TYPES: Record<string, string> = {
   woff2: "font/woff2",
 }
 
-/** A file's media type from its extension; unknown extensions are text/plain, or application/octet-stream when the contents are not text. */
 export function skillFileMimeType(path: string, isText = true): string {
   const extension = path.includes(".") ? path.slice(path.lastIndexOf(".") + 1).toLowerCase() : ""
   return MIME_TYPES[extension] ?? (isText ? "text/plain" : "application/octet-stream")
@@ -224,7 +182,6 @@ export function skillFileMimeType(path: string, isText = true): string {
 
 export type SkillFileResource = SkillFileEntry & { uri: string; digest: string; mimeType: string }
 
-/** A supporting file as the Skills Extension lists it: its URI, sha256 digest and byte size. */
 export function skillFileResource(skillName: string, file: SkillFileEntry): SkillFileResource {
   return {
     ...file,

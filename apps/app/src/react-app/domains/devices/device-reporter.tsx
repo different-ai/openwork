@@ -14,13 +14,6 @@ import { DEVICE_REPORT_POLL_MS, createDeviceReporter, deviceReportFailure, type 
 import { useThisDeviceStore } from "./this-device-store"
 import { remoteDevicesQueryKey } from "./use-remote-devices"
 
-/**
- * Keeps this desktop in its organization's devices list:
- * who it is and how its computer use is doing, at launch, when that changes
- * and every few minutes. Mounted once per window.
- * When signed out or disconnected from the organization, it calls nothing: no
- * desktop command and no request to Den.
- */
 export function DeviceReporter() {
   return isElectronRuntime() ? <ActiveDeviceReporter /> : null
 }
@@ -30,7 +23,6 @@ function ActiveDeviceReporter() {
   const { refresh: checkSignIn } = useDenAuth()
   const disconnected = useThisComputerDisconnected()
   const queryClient = useQueryClient()
-  // The sign-in and the active organization live outside React: look again when they change.
   const [, refresh] = useReducer((count: number) => count + 1, 0)
   useEffect(() => {
     window.addEventListener(denSessionUpdatedEvent, refresh)
@@ -58,18 +50,14 @@ function ActiveDeviceReporter() {
           return deviceReportFailure(error)
         }
       },
-      // Reporting starts again when someone signs in on this computer: that clears the refusal.
-      // A disconnect usually ends this sign-in too: find out now, not at the next request.
       onDisconnected: () => {
         markThisComputerDisconnected(signIn)
         void checkSignIn()
       },
-      // Signs out cleanly when the sign-in is gone, which stops this reporter.
       onSignInRefused: () => { void checkSignIn() },
       onReported: (deviceId) => {
         const known = useThisDeviceStore.getState().deviceIds[organizationId]
         useThisDeviceStore.getState().setDeviceId(organizationId, deviceId)
-        // First report of this sign-in: an open Devices page shows this computer now.
         if (known !== deviceId) void queryClient.invalidateQueries({ queryKey: remoteDevicesQueryKey(organizationId) })
       },
     })

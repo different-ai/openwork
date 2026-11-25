@@ -6,8 +6,9 @@
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { after, test } from "node:test"
+import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { bootDen, summary, type Call } from "./harness.js"
+import { bootDen, field, summary, type Call } from "./harness.js"
 
 const den = await bootDen()
 after(() => den.close())
@@ -96,6 +97,48 @@ test("account and credential findings come from real rows", async () => {
   }
 })
 
+test("the organization finding ranks founders by settled free spend in distinct new organizations", async () => {
+  const founder = await den.signUp("Workspace founder")
+  const first = await den.createOrg(founder, "One")
+  const second = await den.createOrg(founder, "Two")
+  const unused = await den.createOrg(founder, "Unused")
+  const past = await den.createOrg(founder, "Past")
+  const other = await den.createOrg(person, "Independent")
+  const replacementOwner = await den.newMember(founder, second.orgId, "Next owner")
+  await query("UPDATE member SET role = 'owner' WHERE id = ?", [replacementOwner.memberId])
+  await query("UPDATE member SET role = 'member' WHERE id = ?", [second.owner.memberId])
+  const now = new Date()
+  const weekAgo = new Date(now.getTime() - 8 * 86_400_000)
+  const dollar = INFERENCE_USAGE_CONVERSION_FACTOR
+  await freeUsage(first.orgId, first.owner.memberId, now, 2 * dollar)
+  await freeUsage(first.orgId, first.owner.memberId, now, dollar)
+  await freeUsage(other.orgId, other.owner.memberId, now, 20 * dollar)
+  await freeUsage(unused.orgId, unused.owner.memberId, now, 50 * dollar)
+  await query("UPDATE inference_free_usage SET estimated = true WHERE organization_id = ?", [unused.orgId])
+  await freeUsage(unused.orgId, unused.owner.memberId, now, 0)
+  await freeUsage(past.orgId, past.owner.memberId, now, 30 * dollar)
+  await query("UPDATE organization SET created_at = ? WHERE id = ?", [utc(weekAgo), past.orgId])
+  await freeUsage(second.orgId, replacementOwner.memberId, weekAgo, dollar)
+
+  async function finding() {
+    const report = securityReportResponseSchema.parse(ok(await den.request(admin.token, "GET", "/v1/admin/security?days=7")))
+    const result = report.findings.find(entry => entry.id === "organization-creation")
+    assert.ok(result)
+    return result
+  }
+  assert.equal((await finding()).entityCount, 0)
+  await freeUsage(second.orgId, replacementOwner.memberId, now, dollar)
+  assert.equal((await finding()).entities[0]?.severity, "low")
+  await freeUsage(second.orgId, replacementOwner.memberId, now, dollar)
+  const medium = await finding()
+  assert.equal(medium.unit, "micro_usd")
+  assert.equal(medium.value, 5_000_000)
+  assert.deepEqual(medium.entities, [{ id: founder.userId, label: founder.email, detail: "$5.00 across 2 new organizations",
+    value: 5_000_000, severity: "medium", target: { type: "user", userId: founder.userId } }])
+  await freeUsage(second.orgId, replacementOwner.memberId, now, 10 * dollar)
+  assert.equal((await finding()).entities[0]?.severity, "high")
+})
+
 test("request activity shows the failed sign-in burst by hour", async () => {
   const requests = securityRequestsResponseSchema.parse(ok(await den.request(admin.token, "GET", "/v1/admin/security/requests")))
   assert.equal(requests.hourly.length, 24)
@@ -105,4 +148,21 @@ test("request activity shows the failed sign-in burst by hour", async () => {
   const signIns = requests.findings.find((finding) => finding.id === "failed-sign-ins")
   assert.equal(signIns?.severity, "high")
   assert.ok(requests.endpoints.some((endpoint) => endpoint.action === "auth.sign_in.email.attempted" && endpoint.refused >= 120))
+})
+
+test("platform admins can time-limit and lift a free model safety pause", async () => {
+  const path = "/v1/admin/free-auto/safety-pause"
+  const body = { identifier: "a".repeat(64), hours: 1, reason: "provider_notice" }
+  assert.equal((await den.request(null, "PUT", path, { body })).status, 401)
+  assert.equal((await den.request(person.token, "PUT", path, { body })).status, 403)
+  assert.equal((await den.request(admin.token, "PUT", path, { body: { ...body, hours: 169 } })).status, 400)
+  const saved = await den.request(admin.token, "PUT", path, { body })
+  assert.equal(saved.status, 200)
+  const active = async () => {
+    const [rows] = await query("SELECT actor_id FROM free_auto_safety_pause WHERE identifier = ? AND expires_at > CURRENT_TIMESTAMP(3)", [body.identifier])
+    return rows
+  }
+  assert.deepEqual(await active(), [{ actor_id: admin.userId }])
+  assert.equal((await den.request(admin.token, "PUT", path, { body: { ...body, hours: 0, reason: "review_complete" } })).status, 200)
+  assert.deepEqual(await active(), [])
 })

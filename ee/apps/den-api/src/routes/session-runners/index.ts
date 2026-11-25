@@ -55,15 +55,12 @@ import { readOrganizationEnginePolicy } from "../engine-policy.js"
 import { onRemoteSessionWork } from "../../remote-sessions/work-signal.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 
-/** Desktops that send this header want queued remote-session tasks announced. */
 const REMOTE_SESSION_PUSH_HEADER = "x-openwork-remote-session-push"
-/** Longest a push stream waits before checking for pending commands queued on another Den instance. */
 const REMOTE_SESSION_PUSH_CHECK_MS = 5_000
 
 const idParamsSchema = z.object({ id: z.string().min(1).max(160) })
 const computerDisconnectedSchema = z.object({ error: z.literal(COMPUTER_DISCONNECTED_ERROR), message: z.string() })
 
-/** True while the install is disconnected; a sign-in made after the disconnect connects it again and answers false. */
 async function refusesDisconnected(runner: { organizationId: string; ownerMemberId: string; runnerId: string }, session: SignInSession | null) {
   const disconnection = await findDisconnection(runner.organizationId, runner.ownerMemberId, runner.runnerId)
   return disconnection !== null && await reconnectIfSignedInAgain(disconnection, session) === "refused"
@@ -77,7 +74,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     commandStore?: RemoteSessionCommandStore
     requestStore?: RemoteSessionRequestStore
     readEnginePolicy?: typeof readOrganizationEnginePolicy
-    /** What the runner's organization lets other devices do on its members' computers; defaults to remote-sessions/access.ts. */
     readSessionAccess?: (identity: { organizationId: string; ownerMemberId: string }) => Promise<RemoteSessionAccessPolicy>
   } = {},
 ) {
@@ -87,21 +83,11 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
   const { authenticateRunner, attributeRunner } = createRunnerProtocol(service)
   const readSessionAccess = options.readSessionAccess
     ?? ((identity: { organizationId: string; ownerMemberId: string }) => readRemoteSessionAccessPolicy(identity.organizationId, { memberId: identity.ownerMemberId }))
-  /**
-   * The policy a runner is told and reports under. Null for runners that
-   * understand neither session access nor the owner's choice, and in an
-   * organization that uses none of it: Den tells those nothing about it and
-   * takes no report from them.
-   */
   const sessionAccessFor = async (identity: { organizationId: string; ownerMemberId: string; capabilities: readonly string[] }) => {
     const runner = runnerAccessCapabilities(identity.capabilities)
     if (!runner.accessCapable && !runner.choiceCapable) return null
     return readSessionAccess(identity)
   }
-  /**
-   * Attaches reach sessions that were started on the computer: only a runner
-   * that can refuse one takes them; the organization ceiling and owner choice still apply.
-   */
   const attachesAllowed = (identity: Parameters<typeof sessionAccessFor>[0], policy: RemoteSessionAccessPolicy | null) =>
     policy !== null && runnerAccessCapabilities(identity.capabilities).accessCapable
   const takesAttaches = async (identity: Parameters<typeof sessionAccessFor>[0]) => attachesAllowed(identity, await sessionAccessFor(identity))
@@ -128,13 +114,9 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       if (!context) return c.json({ error: "organization_not_found" }, 404)
       const scope = { organizationId: context.organization.id, ownerMemberId: context.currentMember.id }
       const body = c.req.valid("json")
-      // This route can never opt into scheduling, even when the client omits
-      // the marker. All other capabilities and the released registration shape
-      // are preserved, including supportedExecutionTargets: ["desktop"].
       const registration = sessionOnly
         ? automationDesktopRunnerRegistrationSchema.parse({ ...body, capabilities: [...new Set([...body.capabilities, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY])] })
         : body
-      // A disconnected computer gets no credential and no registration until someone signs in on it again.
       const session = signInSessionOf(c)
       const runner = { ...scope, runnerId: registration.runnerId }
       if (await refusesDisconnected(runner, session)) return c.json(computerDisconnectedBody, 403)
@@ -146,7 +128,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
         }
         throw error
       }
-      // A disconnect that landed while the registration was being written wins.
       if (await refusesDisconnected(runner, session)) {
         await dropDisconnectedRunner(runner)
         return c.json(computerDisconnectedBody, 403)
@@ -176,8 +157,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     return [...recoverable, ...pending].map((request) => ({ kind: "remote_session_request", requestId: request.id }))
   }
 
-  // The released token response names this stream. Keep it alive even without
-  // a scheduler; only Automation-capable runners receive scheduler hints.
   app.get(
     "/v1/automation-runners/events",
     runnerRoute({
@@ -196,7 +175,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       let cursor = Number.isSafeInteger(requestedCursor) && requestedCursor >= 0 ? requestedCursor : 0
       const wantsPush = c.req.header(REMOTE_SESSION_PUSH_HEADER) === "1"
         && identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)
-      // An attach is announced like a new task, to runners that can take one.
       let announceAttach = wantsPush && await takesAttaches(identity)
       return streamSSE(c, async (stream) => {
         let lastKeepaliveAt = 0
@@ -217,7 +195,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
           while (!stream.aborted) {
             if (Date.now() >= identity.expiresAt) break
             if (Date.now() - lastOwnerCheckAt >= 15_000) {
-              // An inactive owner or a disconnected computer ends the stream; reconnecting is told why.
               if (await service.runnerStanding(identity) !== "active") break
               announceAttach = wantsPush && await takesAttaches(identity)
               lastOwnerCheckAt = Date.now()
@@ -244,14 +221,12 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
               const fresh = pending.filter((command) => !announced.has(command.id))
               for (const command of fresh) announced.add(command.id)
               if (fresh.length > 0) {
-                // No event id: remote announcements never move the Automation cursor.
                 const payload = automationRunnerNotificationSchema.parse({ type: "remote_session_work_available", cursor: String(cursor || 0) })
                 await stream.writeSSE({ event: payload.type, data: JSON.stringify(payload) })
                 pushed = true
               }
             }
             if (notifications.length === 0 && !pushed && Date.now() - lastKeepaliveAt >= RUNNER_KEEPALIVE_INTERVAL_MS) {
-              // Idle streams deliberately avoid durable presence writes.
               await stream.writeSSE({ event: "keepalive", data: "{}" })
               lastKeepaliveAt = Date.now()
             }
@@ -259,7 +234,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
             let delayMs = capRunnerNotificationPollDelayForKeepalive(notificationPollDelayMs, Date.now() - lastKeepaliveAt)
             if (wantsPush) delayMs = Math.min(delayMs, Math.max(0, REMOTE_SESSION_PUSH_CHECK_MS - (Date.now() - lastPushCheckAt)))
             if (woken) continue
-            // A command queued on this instance cuts the wait short.
             await Promise.race([stream.sleep(delayMs), new Promise<void>((resolve) => { wake = resolve })])
             wake = null
           }
@@ -282,8 +256,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
       const audited = await attributeRunner(c, identity)
       if (!audited.ok) return audited.response
-      // Released Automation work items keep their wire shape. Remote item kinds
-      // require their advertised capabilities; short control requests go first.
       try {
         await service.touchDesktopRunner(identity)
       } catch (error) {
@@ -310,8 +282,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
         for (const command of [...recoverable, ...pending]) {
           items.push({ kind: "remote_session_create", commandId: command.id })
         }
-        // Attach commands are a kind of their own: the listings above never
-        // return one, so a runner that cannot refuse a session is never handed it.
         if (attachesAllowed(identity, sessionAccess)) {
           const attach = { ...input, kinds: ["attach"] as const }
           const recoverableAttaches = recovers ? await commandStore.listRecoverableForRunner(attach) : []
@@ -389,12 +359,8 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       if (!runner.accessCapable && !runner.choiceCapable) return c.json({ error: "runner_capability_missing" }, 403)
       const sessionAccess = await sessionAccessFor(identity)
       if (!sessionAccess) return c.json({ error: "feature_disabled" }, 404)
-      // What Den keeps never exceeds the ceiling, and titles the organization does not
-      // allow other devices to see are never kept.
       const report = storedRunnerSessionReport(runner, c.req.valid("json"), sessionAccess)
       const stored = await service.saveDesktopRunnerSessions(identity, report)
-      // The computer no longer shares the sessions that were started on it: the
-      // attaches it delivered stop reaching them, and reaching one again is a new attach.
       if (report.access !== "all") {
         await commandStore.detach({
           organizationId: identity.organizationId,
@@ -442,8 +408,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
         command = await commandStore.claim(claim)
       } catch (error) {
         if (!(error instanceof RemoteSessionAttachClaimRefusedError)) throw error
-        // The command is an attach. Nothing was claimed: only a runner that can
-        // refuse a session takes one, and only while the feature is on.
         if (!identity.capabilities.includes(REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY)) {
           return c.json({ error: "runner_capability_missing" }, 403)
         }
@@ -470,7 +434,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
             prompt: command.prompt,
             model: command.model,
             expiresAt: command.expiresAt,
-            // Unpinned commands keep their long-standing assignment shape.
             ...(command.targetWorkspaceId ? { workspaceId: command.targetWorkspaceId } : {}),
           },
       }))
@@ -640,8 +603,6 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
         ...body,
       })
       if (!request) return c.json({ error: "request_complete_conflict" }, 409)
-      // The request store records the receipt and first-turn reset atomically.
-      // Duplicate completions do not reset progress again.
       return c.json(remoteSessionRequestCompleteResponseSchema.parse({
         request: { id: request.id, status: request.status },
       }))

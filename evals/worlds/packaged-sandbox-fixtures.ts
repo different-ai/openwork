@@ -114,15 +114,15 @@ async function close(server: Server) {
   await new Promise<void>(resolve => server.close(() => resolve()));
 }
 
-/** This is explicitly a disposable signed-out Den contract fixture, not production flag evidence. */
-export async function sandboxDenFixture(enabled = true) {
+/** This is explicitly a disposable signed-out Den contract fixture, not a production organization. */
+export async function sandboxDenFixture() {
   const reads: string[] = [];
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://fixture").pathname.replace(/^\/api\/den/, "");
     const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "content-type": "application/json" };
     if (request.method === "OPTIONS") { response.writeHead(204, headers).end(); return; }
     reads.push(path);
-    const body = path === "/v1/features" ? { features: { sandboxTools: enabled } }
+    const body = path === "/v1/features" ? { features: {} }
       : path === "/v1/app-version" ? { minAppVersion: "0.0.0", latestAppVersion: "0.0.0", publishedDesktopVersions: [] }
       : null;
     response.writeHead(body ? 200 : 404, headers).end(JSON.stringify(body ?? { error: "fixture_not_found" }));

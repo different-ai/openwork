@@ -13,7 +13,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** The organization's identity providers, or null when they could not be read. */
 async function loadSsoProviders(orgSlug: string): Promise<{ organizationName: string; providers: SsoProviderOption[] } | null> {
   try {
     const { response, payload } = await requestJson(`/api/auth/sso-options?organizationSlug=${encodeURIComponent(orgSlug)}`, { method: "GET" }, 12000);
@@ -28,10 +27,6 @@ async function loadSsoProviders(orgSlug: string): Promise<{ organizationName: st
   }
 }
 
-/**
- * An organization's SSO sign-in. With one identity provider (or a `providerId`
- * in the link) it goes straight there; with several it shows one button each.
- */
 export default function OrganizationSsoSignInPage() {
   const params = useParams<{ orgSlug: string }>();
   const searchParams = useSearchParams();
@@ -63,13 +58,9 @@ export default function OrganizationSsoSignInPage() {
             setChoices(options);
             return;
           }
-          // One provider: name it. None or unknown: the organization decides, as before.
           providerId = options?.providers[0]?.providerId ?? null;
         }
 
-        // React StrictMode runs this effect twice in dev. A second sign-in/sso
-        // call overwrites the OAuth state cookie and the callback then fails
-        // with state_mismatch, so both runs share one request.
         const requestKey = JSON.stringify([orgSlug, providerId, callbackURL, errorCallbackURL, loginHint, attempt]);
         let startRequest = startRequests.current.get(requestKey);
         if (!startRequest) {

@@ -1,39 +1,28 @@
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
-import { InferenceKeyTable, MemberTable, OrganizationTable, readDesktopPolicyForOrgMember, sandboxFreeAutoStopped } from "@openwork-ee/den-db"
+import { FreeRequestError } from "./errors.js"
+import { AuthUserTable, InferenceKeyTable, MemberTable, OrganizationTable, readDesktopPolicyForOrgMember, sandboxFreeAutoStopped } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
 import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed } from "@openwork/types/den/inference"
 import { db, freeAutoDatabase } from "../../db.js"
 
 type InferenceKeyRow = typeof InferenceKeyTable.$inferSelect
-/**
- * Signed-out desktop: the id is the keyed hash of the machine identifier. An untagged build (no release tag) also
- * carries its IP hash, because its machine id is only self-reported: it is limited per IP as well.
- */
 export type GuestPrincipal = { kind: "installation"; id: string; untaggedIpHash?: string;
-  /** Client-reported random journey, used only for analytics; never allowance identity. */
   journeyHash?: string;
-  /** Keyed network hash derived by the Gateway, used only to bound analytics writes. */
   observationRateHash?: string;
-  /** An open request (no desktop proof, like OpenCode Zen's "public" key): there is no machine, only the IP. */
   deviceless?: true }
-/** Signed-in, unsubscribed member using their OpenWork Models key. The allowance is per person. */
 export type MemberPrincipal = { kind: "member"; id: NonNullable<typeof MemberTable.$inferSelect.userId>;
   inferenceKeyId: InferenceKeyRow["id"]; memberId: InferenceKeyRow["org_membership_id"]; organizationId: InferenceKeyRow["organization_id"] }
 export type FreePrincipal = GuestPrincipal | MemberPrincipal
 type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
 export const freeIdentityHash = freeInferenceDigest
 export function freePrincipalHash(principal: FreePrincipal) { return freeIdentityHash(principal.kind, principal.id) }
-/**
- * What OpenAI receives as `safety_identifier`, so it can name and limit one person instead of the whole free key.
- * It is the `principal_hash` on that person's usage rows: stable per member, machine, or (open requests) IP,
- * and it carries no name, email or address.
- */
 export const freeSafetyIdentifier = freePrincipalHash
 
-async function memberFreePrincipalRow(principal: Pick<MemberPrincipal, "inferenceKeyId" | "memberId" | "organizationId">, database: Database) {
-  const [row] = await database.select({ userId: MemberTable.userId, metadata: OrganizationTable.metadata }).from(InferenceKeyTable)
+async function memberFreePrincipalRow(principal: Pick<MemberPrincipal, "inferenceKeyId" | "memberId" | "organizationId">, database: Pick<Database, "select">) {
+  const [row] = await database.select({ userId: MemberTable.userId, emailVerified: AuthUserTable.emailVerified, metadata: OrganizationTable.metadata }).from(InferenceKeyTable)
     .innerJoin(MemberTable, and(eq(MemberTable.id, InferenceKeyTable.org_membership_id), eq(MemberTable.organizationId, InferenceKeyTable.organization_id)))
+    .innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
     .innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
     .where(and(eq(InferenceKeyTable.id, principal.inferenceKeyId), eq(InferenceKeyTable.status, "active"),
       eq(MemberTable.id, principal.memberId), eq(OrganizationTable.id, principal.organizationId),
@@ -41,10 +30,6 @@ async function memberFreePrincipalRow(principal: Pick<MemberPrincipal, "inferenc
   return row
 }
 
-/**
- * Free Auto is for joined members of every organization that has not opted out, whether or not they pay for
- * OpenWork Models. It always comes from the member's free weekly allowance and is never billed to the organization.
- */
 function freeOrganization(metadata: Record<string, unknown> | null) {
   if (!freeInferenceOrganizationAllowed(metadata)) return false
   assertManagedModelsAllowed(metadata)
@@ -54,24 +39,29 @@ function freeOrganization(metadata: Record<string, unknown> | null) {
 async function freePolicyAllowed(identity: Pick<MemberPrincipal, "memberId" | "organizationId">, database: Database) {
   const policy = await readDesktopPolicyForOrgMember(database, { organizationId: identity.organizationId, orgMemberId: identity.memberId })
   if (policy.allowZenModel === false) return false
-  // A closed or expired sandbox organization gets no Free Auto (the same check as Den API).
   return !await sandboxFreeAutoStopped(database, identity.organizationId)
 }
 
-export async function findMemberFreePrincipal(key: Pick<InferenceKeyRow, "id" | "org_membership_id" | "organization_id">, database: Database = freeAutoDatabase()): Promise<MemberPrincipal | null> {
+function requireVerifiedEmail(verified: boolean) {
+  if (!verified) throw new FreeRequestError(403, "email_verification_required", "Verify your account email to use OpenWork Free.")
+}
+
+export async function findMemberFreePrincipal(key: Pick<InferenceKeyRow, "id" | "org_membership_id" | "organization_id">, database: typeof db = freeAutoDatabase()): Promise<MemberPrincipal | null> {
   const identity = { inferenceKeyId: key.id, memberId: key.org_membership_id, organizationId: key.organization_id }
-  const row = await memberFreePrincipalRow(identity, database)
+  const row = await memberFreePrincipalRow(identity, database.$primary)
   if (!row?.userId || !freeOrganization(row.metadata) || !await freePolicyAllowed(identity, database)) return null
+  requireVerifiedEmail(row.emailVerified)
   return { kind: "member", id: row.userId, ...identity }
 }
 
 export async function memberFreePrincipalAllowed(principal: FreePrincipal, database: Database = db): Promise<boolean> {
   if (principal.kind !== "member") return true
   const row = await memberFreePrincipalRow(principal, database)
-  return Boolean(row && row.userId === principal.id && freeOrganization(row.metadata) && await freePolicyAllowed(principal, database))
+  if (!row || row.userId !== principal.id || !freeOrganization(row.metadata) || !await freePolicyAllowed(principal, database)) return false
+  requireVerifiedEmail(row.emailVerified)
+  return true
 }
 
-/** Whether the organization pins Auto for its members. Guests always see Auto pinned. */
 export async function readFreePrincipalDefaultPinned(principal: FreePrincipal, database: Database = freeAutoDatabase()): Promise<boolean> {
   if (principal.kind !== "member") return true
   const row = await memberFreePrincipalRow(principal, database)

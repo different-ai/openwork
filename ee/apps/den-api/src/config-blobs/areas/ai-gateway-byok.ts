@@ -1,27 +1,3 @@
-/**
- * `ai-gateway.byok`: Bring-your-own-key (legacy custom) LLM providers, their
- * models and who can use them.
- *
- * Exported per provider: source (models.dev catalog or custom), provider id,
- * credential mode, models (keyed by model id), access (everyone, teams, people
- * by email) and, for custom providers, the provider config through an
- * allowlist: `id, name, npm, env, doc, api` plus a few named `options` and
- * model fields. Custom configs keep arbitrary fields and can hold inline
- * credentials (`options.apiKey`, `headers`…), so anything outside the
- * allowlist is never exported; an update keeps those stored fields as they are.
- *
- * The shared credential becomes placeholders: `credentials.apiKey` for a
- * provider with one env key, or `credentials.apiKeys.<ENV>` per env key for
- * multi-key providers (Bedrock…). Per-member credentials are never exported.
- * Managed OpenWork providers (`source = openwork`) are not part of this area.
- * Like GET /v1/llm-providers, a caller who can't edit a provider (no Edit any
- * provider permission, not its creator) never gets its stored configuration
- * or grants: such providers are left out of what this area reads.
- *
- * Applies through the same handlers as POST/PATCH/DELETE /v1/llm-providers
- * (`createLlmProvider`, `updateLlmProvider`, `deleteLlmProvider`). Catalog
- * providers read the models.dev catalog.
- */
 import { and, eq, inArray, ne } from "@openwork-ee/den-db/drizzle"
 import { LlmProviderAccessTable, LlmProviderModelTable, LlmProviderTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -60,7 +36,6 @@ import {
 
 const AREA = "ai-gateway.byok"
 
-/** Custom provider config fields that are exported (and replaced on update). Everything else stays as stored. */
 const PROVIDER_FIELDS = ["id", "name", "npm", "env", "doc", "api", "options"] as const
 const PROVIDER_OPTION_FIELDS = ["baseURL", "resourceName", "apiVersion", "region", "project", "location", "useDeploymentBasedUrls"] as const
 const MODEL_FIELDS = [
@@ -93,19 +68,15 @@ const modelConfigSchema = z.object({
 
 const specSchema = z.object({
   source: z.enum(["models_dev", "custom"]),
-  /** models.dev provider id, or the custom provider's own id. */
   providerId: z.string().trim().min(1).max(255),
   credentialMode: z.enum(["shared", "per_member"]),
-  /** Custom providers only (null for catalog providers). */
   provider: providerConfigSchema.nullable(),
   models: z.array(z.object({
-    /** The model id (stable per provider). */
     id: z.string().trim().min(1).max(255),
     name: z.string().trim().min(1).max(255).optional(),
     config: modelConfigSchema.optional(),
   }).strict()).min(1),
   access: specAudienceSchema.extend({ allMembers: z.boolean() }).strict(),
-  /** Shared credential (null for per-member providers). */
   credentials: z.union([
     z.object({ apiKey: specSecretSchema }).strict(),
     z.object({ apiKeys: z.record(z.string().min(1).max(255), specSecretSchema) }).strict(),
@@ -138,7 +109,6 @@ function exportModelConfig(config: JsonObject): JsonObject {
   return out
 }
 
-/** Stored config with the exported fields replaced by the blob's: unexported fields (possibly secret) are kept. */
 function mergeConfig(stored: JsonObject | null, written: JsonObject, fields: readonly string[], optionFields: readonly string[]): JsonObject {
   const base = omit(stored ?? {}, fields.filter((field) => field !== "options"))
   const storedOptions = isJsonObject(base.options) ? omit(base.options, optionFields) : {}
@@ -150,13 +120,11 @@ function mergeConfig(stored: JsonObject | null, written: JsonObject, fields: rea
   return out
 }
 
-/** Where a custom provider sends its key: `api` and `options.baseURL`. */
 function providerEndpoints(config: JsonObject): Array<string | null> {
   const options = isJsonObject(config.options) ? config.options : {}
   return [config.api, options.baseURL].map((value) => (typeof value === "string" && value.trim() ? value.trim() : null))
 }
 
-/** Whether every endpoint stays on its origin (as `sameCustomOrigin` for Gateway custom providers). */
 function sameProviderOrigins(stored: JsonObject, next: JsonObject): boolean {
   const before = providerEndpoints(stored)
   const after = providerEndpoints(next)
@@ -167,10 +135,8 @@ function sameProviderOrigins(stored: JsonObject, next: JsonObject): boolean {
   })
 }
 
-/** Inline credentials a custom config may hold outside the exported allowlist. */
 const INLINE_SECRET_OPTION = /key|token|secret|auth|password|header|cookie/i
 
-/** Stored config without inline credentials: kept fields must never follow the provider to another host. */
 function withoutInlineSecrets(config: JsonObject): JsonObject {
   const out = omit(config, ["headers"])
   if (isJsonObject(out.options)) {
@@ -179,7 +145,6 @@ function withoutInlineSecrets(config: JsonObject): JsonObject {
   return out
 }
 
-/** Secret decisions under `credentials` that keep the stored value (or have no decision). */
 function keptCredentials(value: unknown): string[] {
   if (!isJsonObject(value)) return []
   if (value.apiKey !== undefined) {
@@ -208,7 +173,6 @@ function credentialsSpec(row: typeof LlmProviderTable.$inferSelect) {
   return { apiKeys }
 }
 
-/** apiKey / apiKeys for the write body. Omitted ones keep the stored value; "" clears it. */
 function credentialWrite(value: unknown): { apiKey?: string; apiKeys?: Record<string, string> } {
   if (!isJsonObject(value)) return {}
   if (value.apiKey !== undefined) {
@@ -263,7 +227,6 @@ export const aiGatewayByokArea = defineConfigArea({
   transactional: false,
   externalEffects: false,
 
-  // The apply's own rule, earlier: a saved key never follows a custom provider to another host.
   async preflight(_ctx, op, info) {
     if (op.kind !== "update" || op.item.spec.source !== "custom" || op.item.spec.credentialMode !== "shared") return null
     const before = isJsonObject(op.previous.spec.provider) ? op.previous.spec.provider : null
@@ -341,7 +304,6 @@ async function applyProvider(ctx: ConfigAreaContext, op: ConfigApplyOp, log: Con
     if ((op.item.key ?? null) !== (row.externalKey ?? null) && touches(op.changes, "key")) warnings.push("A provider's key can't change; the existing key was kept.")
   }
 
-  // A custom provider moving to another host: its saved key (and inline credentials) must not follow it there.
   if (stored && spec.source === "custom" && !sameProviderOrigins(stored.providerConfig, mergeConfig(stored.providerConfig, spec.provider ?? {}, PROVIDER_FIELDS, PROVIDER_OPTION_FIELDS))) {
     const kept = spec.credentialMode === "shared" ? keptCredentials(raw.credentials) : []
     if (kept.length > 0) {
@@ -354,7 +316,6 @@ async function applyProvider(ctx: ConfigAreaContext, op: ConfigApplyOp, log: Con
     const dropped = JSON.stringify(cleaned.providerConfig) !== JSON.stringify(stored.providerConfig)
       || [...stored.models].some(([id, config]) => JSON.stringify(cleaned.models.get(id)) !== JSON.stringify(config))
     if (dropped) warnings.push("The provider moved to another address: inline credentials saved in its config were removed.")
-    // Cleaned model configs must be written even when the plan changes no model.
     modelsCleaned = [...stored.models].some(([id, config]) => JSON.stringify(cleaned.models.get(id)) !== JSON.stringify(config))
     stored = cleaned
   }
@@ -400,8 +361,6 @@ async function applyProvider(ctx: ConfigAreaContext, op: ConfigApplyOp, log: Con
     return { localId, warnings }
   }
 
-  // Update: updateLlmProvider replaces the provider row (one row, written when anything in the
-  // item changes); its models and access are written only when the plan changes them, as a diff.
   const touched = opTouched(op)
   const writeModels = touches(touched, "models") || modelsCleaned
   const writeAccess = touches(touched, "access")
@@ -416,7 +375,6 @@ async function applyProvider(ctx: ConfigAreaContext, op: ConfigApplyOp, log: Con
     ...(writeAccess ? await accessSteps(ctx, storedAccess, { allMembers: spec.access.allMembers, memberIds, teamIds }) : []),
   ]
   const [first, ...rest] = steps
-  // Nothing this adapter writes changed (e.g. only the key, which never changes).
   if (!first) return { localId: op.targetId, warnings }
   await log.run(first, async () => {
     await expectRouteOk(await updateLlmProvider(c, payload, op.targetId, input, { models: writeModels, access: writeAccess }), `Update "${op.item.name}"`)
@@ -425,13 +383,11 @@ async function applyProvider(ctx: ConfigAreaContext, op: ConfigApplyOp, log: Con
   return { localId: op.targetId, warnings }
 }
 
-/** "options.baseURL, api" under `prefix`. */
 function changedPaths(changes: readonly ConfigFieldChange[], prefix: string): string | undefined {
   const paths = [...new Set(changes.filter((change) => change.path.startsWith(`${prefix}.`)).map((change) => change.path.slice(prefix.length + 1)))]
   return paths.length > 0 ? paths.join(", ") : undefined
 }
 
-/** One step per key written: a new value, or a stored key cleared ("unset" of a key not stored writes nothing). */
 function credentialSteps(value: unknown, previous: unknown): ConfigApplyStep[] {
   const write = credentialWrite(value)
   const before = isJsonObject(previous) ? previous : {}
@@ -449,7 +405,6 @@ function modelIdsOf(value: unknown): Map<string, string> {
   return out
 }
 
-/** One step per model added, removed or changed. */
 function modelSteps(previous: unknown, next: Array<{ id: string }>): ConfigApplyStep[] {
   const before = modelIdsOf(previous)
   const after = modelIdsOf(next)
@@ -486,9 +441,6 @@ async function readProviders(ctx: ConfigAreaContext, ids: readonly string[] | nu
     .from(LlmProviderTable)
     .where(and(eq(LlmProviderTable.organizationId, organizationId), ne(LlmProviderTable.source, "openwork"), providerIds ? inArray(LlmProviderTable.id, providerIds) : undefined))
   if (stored.length === 0) return []
-  // As GET /v1/llm-providers: only callers who can edit a provider (Edit any provider, or its
-  // creator) see its stored configuration and who is granted it; everyone else gets a redacted
-  // view. A redacted provider can't round-trip, so it is left out of the export instead.
   const permissions = await resolvePermissionsForMember({ organizationId, memberId: normalizeDenTypeId("member", ctx.actor.memberId) })
   const canUpdateAll = permissions.has("llm_providers.update")
   const rows = canUpdateAll ? stored : stored.filter((row) => row.createdByOrgMembershipId === ctx.actor.memberId)

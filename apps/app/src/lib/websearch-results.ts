@@ -8,7 +8,6 @@ const TITLE_PATTERN = /^Title:\s*(.+)$/m
 const URL_PATTERN = /^URL:\s*(https?:\/\/\S+)$/m
 const HIGHLIGHTS_PATTERN = /(?:^|\n)Highlights:\s*([\s\S]*?)(?:\n\[\.\.\.\]|$)/
 
-/** OpenCode v1 (Exa) blocks: Title / URL / Highlights, joined by ---. */
 function parseV1WebSearchResults(output: string): WebSearchResult[] {
   return output.split(/\n---\n/).flatMap((block) => {
     const title = block.match(TITLE_PATTERN)?.[1]?.trim()
@@ -33,17 +32,6 @@ function parseV1WebSearchResults(output: string): WebSearchResult[] {
   })
 }
 
-/**
- * OpenCode v2 websearch text: markdown headings with an optional published
- * date and excerpt paragraph.
- *
- * ```
- * ## [Title](https://example.com/page)
- * Published: 2026-10-30T00:00:00.000Z
- *
- * Excerpt…
- * ```
- */
 const V2_HEADING_PATTERN =
   /^##\s+(?:\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)|(.+))\s*$/gm
 
@@ -91,7 +79,6 @@ function parseV2WebSearchResults(output: string): WebSearchResult[] {
         description,
       })
     } catch {
-      // skip malformed URLs
     }
   }
 

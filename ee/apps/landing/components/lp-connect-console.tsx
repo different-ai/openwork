@@ -5,7 +5,6 @@ import { useRef, useState, type KeyboardEvent } from "react";
 import { LpCopyButton, LpCopyIcon } from "./lp-copy";
 import { MCP_CLIENTS, MCP_SERVER_URL } from "./lp-mcp-clients";
 
-/** URL first, then one exact install step per client. Light surface only (no dark panels). */
 export function LpConnectConsole() {
   const [activeId, setActiveId] = useState(MCP_CLIENTS[0].id);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);

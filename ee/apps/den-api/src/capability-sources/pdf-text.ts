@@ -3,23 +3,13 @@ import { getResolvedPDFJS } from "unpdf"
 
 export type PdfTextResult =
   | { kind: "text"; text: string; truncated: boolean; pageCount: number }
-  /** A PDF with no text layer, such as a scan; its pages are images. */
   | { kind: "no_text"; pageCount: number }
-  /** Not a PDF pdf.js can open (damaged, encrypted, or not a PDF at all). */
   | { kind: "unreadable" }
-  /** Reading the PDF took longer than the time limit; the work was stopped. */
   | { kind: "timed_out" }
-  /** Reading the PDF needed more memory than the extraction is allowed. */
   | { kind: "out_of_memory" }
 
 export type PdfTextWorkerInput = { buffer: ArrayBuffer; byteOffset: number; byteLength: number; maxCharacters: number }
 
-// Extraction runs in a worker thread: pdf.js parses synchronously, so on the
-// request thread one large or hostile PDF would stall every other request and
-// no timer could stop it. The worker has its own heap limit and is terminated
-// at the deadline. Measured on generated 50 MB PDFs: under 0.6 s and about 260 MB
-// above the file itself in the worst case (a broken cross-reference table that
-// makes pdf.js scan every object).
 const WORKER_HEAP_LIMIT_MB = 512
 const MAX_CONCURRENT_EXTRACTIONS = 2
 let running = 0
@@ -41,19 +31,11 @@ function isPdfTextResult(value: unknown): value is PdfTextResult {
     && (value.kind === "text" || value.kind === "no_text" || value.kind === "unreadable")
 }
 
-/**
- * Extracts a PDF's text layer in a worker thread, stopping once maxCharacters
- * is reached, within timeoutMs. Callers bound the input size before calling.
- *
- * Takes ownership of `bytes`: its buffer is transferred to the worker, not
- * copied, so callers must not use it afterwards.
- */
 export async function extractPdfText(
   bytes: Uint8Array,
   options: { maxCharacters: number; timeoutMs: number },
 ): Promise<PdfTextResult> {
   return withExtractionSlot(() => new Promise<PdfTextResult>((resolve) => {
-    // Development and tests load TypeScript through tsx, which the worker inherits; production runs the emitted JavaScript.
     const extension = import.meta.url.endsWith(".ts") ? "ts" : "js"
     const input: PdfTextWorkerInput = bytes.buffer instanceof ArrayBuffer
       ? { buffer: bytes.buffer, byteOffset: bytes.byteOffset, byteLength: bytes.byteLength, maxCharacters: options.maxCharacters }
@@ -84,7 +66,6 @@ export async function extractPdfText(
   }))
 }
 
-/** The extraction itself; runs inside the worker. The loading task is always destroyed, freeing the document. */
 export async function extractPdfTextInThisThread(bytes: Uint8Array, maxCharacters: number): Promise<PdfTextResult> {
   const { getDocument } = await getResolvedPDFJS()
   const loadingTask = getDocument({ data: bytes, disableFontFace: true, useSystemFonts: false, verbosity: 0 })

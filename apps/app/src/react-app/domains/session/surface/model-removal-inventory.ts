@@ -1,10 +1,8 @@
 import { z } from "zod";
 import type { ModelRef } from "@/app/types";
 
-/** A complete member assignment inventory, independent of the connected engine. */
 export type ModelRemovalInventory = {
   models: Array<ModelRef & { title?: string }>;
-  /** Assigned identities needing member authorization are never removals. */
   lockedModels: ModelRef[];
 };
 
@@ -38,25 +36,17 @@ const gatewayInventory = z.object({
     name: z.string(),
     source: z.literal("openwork_gateway"),
     credentialStatus: z.enum(["ready", "member_auth_required", "org_credential_missing"]),
-    // Aggregate readiness is not completeness: another granted credential set
-    // may have omitted aliases. Old servers cannot attest to this contract.
     modelAssignmentsComplete: z.literal(true),
     models: z.array(gatewayModel),
     authorizationRequests: z.array(z.object({
       credentialSetId: identity,
       name: z.string(),
       authUrl: identity,
-      // Older responses may omit these aliases. That cannot prove absence.
       models: z.array(gatewayModel),
     })),
   })),
 });
 
-/**
- * Parse both complete responses before returning anything. Never drop malformed
- * rows or substitute []: this inventory is evidence for a destructive verdict.
- * Only model identity/title leave this boundary; config and credentials do not.
- */
 export function parseModelRemovalInventory(
   legacyPayload: unknown,
   gatewayPayload: unknown,

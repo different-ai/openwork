@@ -5,16 +5,8 @@ import { BrandLogo } from "./lp-brand-logos";
 import { GoogleMark, LinearMark, SkillMark, SlackMark } from "./lp-service-marks";
 import { OpenWorkMark } from "./openwork-mark";
 
-/* Static previews for the roadmap. Each one shows what a product looks like
- * today, or, for "Coming soon" apps, what we are designing. Numbers and names
- * are sample data. */
-
 const initialsClass =
   "flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F3F4F6] text-[10px] font-semibold text-[#374151]";
-
-/* ------------------------------------------------------------------ */
-/* Visibility                                                          */
-/* ------------------------------------------------------------------ */
 
 type UsageRow = { mark: ReactNode; name: string; kind: string; share: number; people: string; uses: string; trend: string };
 
@@ -102,10 +94,6 @@ export function RoadmapInsightsPreview() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Sharing and activity                                                */
-/* ------------------------------------------------------------------ */
-
 type ActivityRow = { who: ReactNode; title: string; detail: string; when: string; action?: string; faded?: boolean };
 
 const ACTIVITY_TODAY: ActivityRow[] = [
@@ -160,10 +148,6 @@ export function RoadmapActivityPreview() {
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/* Workflows                                                           */
-/* ------------------------------------------------------------------ */
 
 type StepKind = "start" | "tool" | "decision" | "finish";
 type Step = { n: number; kind: StepKind; badge: string; badgeClass: string; title: string; note?: string; skipped?: boolean };
@@ -260,10 +244,6 @@ export function RoadmapWorkflowPreview() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Dashboards                                                          */
-/* ------------------------------------------------------------------ */
-
 const RECENT = [
   { name: "Brief for Thursday call", where: "Documents", when: "1h" },
   { name: "Clean up invoices.xlsx", where: "Documents", when: "Running" },
@@ -319,10 +299,6 @@ export function RoadmapDashboardPreview() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Across apps                                                         */
-/* ------------------------------------------------------------------ */
-
 const AT_RISK = [
   { account: "Northwind", why: "Renewal Oct 12", meeting: "No meeting" },
   { account: "Globex", why: "Usage down 40%", meeting: "No meeting" },
@@ -373,7 +349,6 @@ export function RoadmapSlackPreview() {
   );
 }
 
-/* The phone app starts with MCP Apps: the same quick views as Dashboards. */
 export function RoadmapPhonePreview() {
   return (
     <div className="flex h-[500px] w-[250px] shrink-0 rounded-[40px] bg-[var(--lp-ink)] p-2 shadow-[0_24px_48px_-24px_rgba(1,22,39,0.45)]" aria-label="OpenWork phone app preview">
@@ -418,10 +393,6 @@ export function RoadmapPhonePreview() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Workbot                                                             */
-/* ------------------------------------------------------------------ */
-
 const WORKBOT_CHATS = ["Northwind renewal", "Monday pipeline review", "Launch checklist", "Expense report for October"];
 
 function WorkbotAvatar({ size }: { size: number }) {
@@ -432,7 +403,6 @@ function WorkbotAvatar({ size }: { size: number }) {
   );
 }
 
-/* What Workbot is doing in its browser: a small page and one button to open it. */
 function WorkbotBrowserCard({ compact }: { compact?: boolean }) {
   return (
     <span className={`flex max-w-full items-center self-start rounded-xl bg-white p-2 pr-3 shadow-[0_0_0_1px_#E3E7EE] ${compact ? "gap-2" : "gap-3 pl-3 sm:pl-2"}`}>
@@ -460,7 +430,6 @@ function WorkbotBrowserCard({ compact }: { compact?: boolean }) {
   );
 }
 
-/** Workbot in a desktop browser: the chat, with what it read and the browser it used. */
 export function RoadmapWorkbotPreview() {
   return (
     <div className="flex w-full" aria-label="Workbot preview with sample data">

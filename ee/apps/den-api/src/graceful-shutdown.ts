@@ -1,44 +1,14 @@
 import { ServerResponse, type IncomingMessage, type Server } from "node:http"
 import type { Http2Bindings, HttpBindings } from "@hono/node-server"
 
-/**
- * Graceful shutdown for den-api.
- *
- * Render runs zero-downtime deploys: it moves traffic to the new instance,
- * waits 60s, sends SIGTERM to the old one, then SIGKILLs it after the
- * service's shutdown delay (`maxShutdownDelaySeconds`, 300s for den-api,
- * Render's maximum). Requests can still reach the old instance after the
- * switch because cloudflared keeps its pooled connections to it, so the old
- * instance must finish what it is already doing instead of cutting it off.
- *
- * On the first signal we:
- * - report draining (`/ready` answers 503),
- * - stop accepting connections and ask keep-alive callers to reconnect,
- *   which lands their next request on the new instance,
- * - close long-lived GET event streams at once: they never finish on their
- *   own, and their clients resume on the new instance with Last-Event-ID,
- * - stop background loops alongside the request drain,
- * - wait for both, bounded by one fixed drain deadline, then exit.
- * A second signal exits immediately.
- */
-
-/**
- * Fixed request and background-work drain. With the after-stop work and the
- * final socket close it stays inside Render's 300s shutdown delay.
- */
 export const DEN_SHUTDOWN_DRAIN_MS = 240_000
 
 export type GracefulShutdownOptions = {
-  /** Max time to wait for in-flight requests and background work after the first signal. */
   drainTimeoutMs: number
-  /** Called once when draining starts, before anything else. */
   onDrainStart?: () => void
-  /** Stops background loops. Runs alongside the request drain and shares its deadline. */
   stopBackgroundWork?: () => Promise<void>
-  /** Work to finish after requests and background work stop (telemetry flush). */
   afterStop?: () => Promise<void>
   afterStopTimeoutMs?: number
-  /** How often idle keep-alive sockets and event streams are closed while draining. */
   sweepMs?: number
   exit?: (code: number) => void
   log?: (message: string, details?: Record<string, unknown>) => void
@@ -55,8 +25,6 @@ export type GracefulShutdown = {
 
 type DenFetch = (request: Request, env: HttpBindings | Http2Bindings) => Response | Promise<Response>
 
-// Responses that are long-lived GET event streams. Filled by trackEventStreams
-// before @hono/node-server writes the response, read when draining.
 const eventStreams = new WeakSet<ServerResponse>()
 
 function isEventStream(request: Request, response: Response) {
@@ -64,11 +32,6 @@ function isEventStream(request: Request, response: Response) {
     && (response.headers.get("content-type") ?? "").toLowerCase().startsWith("text/event-stream")
 }
 
-/**
- * Wraps the app's fetch so shutdown can tell which responses are long-lived
- * GET event streams. Only GET streams are closed early: a POST that answers
- * with an event stream (an MCP tool call) is real work and drains normally.
- */
 export function trackEventStreams(fetch: DenFetch): DenFetch {
   return async (request, env) => {
     const response = await fetch(request, env)
@@ -107,9 +70,6 @@ export function installGracefulShutdown(server: Server, options: GracefulShutdow
   const responses = new Set<ServerResponse>()
   const idleWaiters = new Set<() => void>()
 
-  // Keep-alive callers (cloudflared) pool connections to this instance. Ask
-  // them to open a fresh connection for their next request, which reaches a
-  // live instance, instead of closing the socket under them.
   function askToReconnect(response: ServerResponse) {
     if (!response.headersSent) response.setHeader("Connection", "close")
   }

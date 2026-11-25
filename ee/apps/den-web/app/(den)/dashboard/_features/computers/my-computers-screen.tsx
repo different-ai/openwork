@@ -23,7 +23,6 @@ import { disconnectMyComputer, myComputersQueryKey, removeMyComputer, renameMyCo
 const EVENT_TONE: Record<RemoteDeviceEvent["level"], DeviceTone> = { info: "neutral", warning: "warning", error: "danger" };
 const EVENT_LABEL: Record<RemoteDeviceEvent["level"], string> = { info: "Information", warning: "Needs attention", error: "Problem" };
 
-/** What happened to one computer lately, in the sentences Den recorded. No ids or codes: those are for admins. */
 export function MyComputerActivity({ events, now }: { events: readonly RemoteDeviceEvent[]; now: number }) {
   if (events.length === 0) return <p className={`py-2 text-[13px] ${secondaryText}`}>Nothing recorded yet.</p>;
   return <ul className="max-w-2xl text-[13px]" aria-label="Recent activity">
@@ -35,12 +34,6 @@ export function MyComputerActivity({ events, now }: { events: readonly RemoteDev
   </ul>;
 }
 
-/**
- * An open row's remote access: what other devices can do on this computer,
- * why when something other than the owner's choice decides it, and where to
- * change it. Read-only: the owner chooses on the computer itself. Nothing
- * for a computer that takes no tasks this way.
- */
 export function MyComputerRemoteAccess({ access }: { access: RemoteDeviceAccess | null }) {
   if (!access) return null;
   const note = remoteAccessNote(access, "owner");
@@ -52,23 +45,19 @@ export function MyComputerRemoteAccess({ access }: { access: RemoteDeviceAccess 
   </div>;
 }
 
-/** How many of a member's computers answer right now. A disconnected one never does. */
 export function onlineCount(devices: readonly Pick<RemoteDevice, "availability" | "disconnectedAt">[]): number {
   return devices.filter((device) => device.availability === "online" && !device.disconnectedAt).length;
 }
 
-/** The member's own and shared computers as rows. `detail` renders under the open row. */
 export function MyComputerRows({ devices, now, openId, onToggle, action, detail }: {
   devices: readonly RemoteDevice[];
   now: number;
   openId: string;
   onToggle: (deviceId: string) => void;
-  /** The row's `…` menu, in its fixed lane. */
   action: (device: RemoteDevice) => ReactNode;
   detail: (device: RemoteDevice) => ReactNode;
 }) {
   const notes = duplicateNameNotes(devices, (device) => device.access, now);
-  // The lane is there once any computer says what other devices can do on it; an older API says it for none.
   const remoteAccess = devices.some((device) => device.remoteAccess);
   return <RowList label="My computers" header={<RowListHeader lead="Computer" menu chevron>
     <RowLaneLabel lane={LANE.status}>Status</RowLaneLabel>
@@ -102,7 +91,6 @@ function Activity({ orgId, memberId, deviceId }: { orgId: string; memberId: stri
   return <MyComputerActivity events={activity.data} now={Date.now()} />;
 }
 
-/** An open row: what other devices can do on this computer, then its recent activity. */
 function OpenComputer({ orgId, memberId, device }: { orgId: string; memberId: string; device: RemoteDevice }) {
   return <>
     <MyComputerRemoteAccess access={device.remoteAccess} />
@@ -110,12 +98,6 @@ function OpenComputer({ orgId, memberId, device }: { orgId: string; memberId: st
   </>;
 }
 
-/**
- * My Computers: every member's own view in Den of the computers they have
- * connected to OpenWork and the ones shared with their organization. They
- * rename, disconnect and remove their own here; the team-wide list for owners
- * and admins is Manage › Computers.
- */
 export function MyComputersScreen() {
   const { orgId, orgContext, activeOrg, runReauthableAction } = useOrgDashboard();
   const queryClient = useQueryClient();

@@ -9,12 +9,6 @@ import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-
 import { dispatchAutomationsStateChanged } from "./automation-events"
 import { automationModelOptions, type AutomationProviderCatalog } from "./automation-model-options"
 
-/**
- * Den access, queries and actions shared by the Automations page and the
- * Calendar. Both read the same TanStack Query cache, so an action taken in
- * one refreshes the other.
- */
-
 export const ACTIVE_RUN_STATUSES = new Set<AutomationRun["status"]>(["queued", "claimed", "running"])
 export const AUTOMATIONS_FAST_POLL_MS = 10_000
 export const AUTOMATIONS_SLOW_POLL_MS = 60_000
@@ -31,7 +25,6 @@ export function describeAutomationError(error: unknown) {
 export type AutomationsDenContext = {
   client: DenClient | null
   organizationId: string | null
-  /** Signed in with a client and an active organization. */
   ready: boolean
   queryRoot: readonly ["den", "automations", string | null]
 }
@@ -126,10 +119,6 @@ export function useAutomationRunsQuery(context: AutomationsDenContext, automatio
   })
 }
 
-/**
- * Runs one Automation action at a time with the shared busy state, refreshes
- * every Automation query on success, and reports the outcome as a toast.
- */
 export function useAutomationActions(context: AutomationsDenContext) {
   const queryClient = useQueryClient()
   const [busyAction, setBusyAction] = useState<string | null>(null)
@@ -154,10 +143,6 @@ export function useAutomationActions(context: AutomationsDenContext) {
   return { busyAction, setBusyAction, refresh, act }
 }
 
-/**
- * The models an Automation can use, per placement, the same way the editor offers them: the organization's
- * providers, plus the free Zen starter on desktops where policy and the local runtime allow it.
- */
 export function useAutomationModelChoices(context: AutomationsDenContext, providerCatalog?: AutomationProviderCatalog) {
   const zenModelRestricted = useDesktopRestriction("allowZenModel")
   const providersQuery = useQuery({
@@ -165,15 +150,13 @@ export function useAutomationModelChoices(context: AutomationsDenContext, provid
     queryFn: () => context.client!.listOrgLlmProviders(context.organizationId!),
     enabled: context.ready,
   })
-  // The runtime catalog belongs to this desktop workspace, so only it narrows the desktop models; an
-  // Automation pinned to another workspace is checked by the runtime that executes it.
   const desktop = useMemo(
     () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: !zenModelRestricted, catalog: providerCatalog }),
     [providerCatalog, providersQuery.data, zenModelRestricted],
   )
   const desktopOtherWorkspace = useMemo(
-    () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: !zenModelRestricted }),
-    [providersQuery.data, zenModelRestricted],
+    () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: !zenModelRestricted, desktopWideCatalog: providerCatalog }),
+    [providerCatalog, providersQuery.data, zenModelRestricted],
   )
   const cloud = useMemo(() => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: false }), [providersQuery.data])
   return { desktop, desktopOtherWorkspace, cloud, providersQuery }

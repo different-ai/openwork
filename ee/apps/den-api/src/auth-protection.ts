@@ -94,12 +94,6 @@ function lockoutKey(email: string) {
   return `auth:email-password-lockout:${digest}`
 }
 
-/**
- * SHA-1 is the Have I Been Pwned k-anonymity protocol, not credential
- * storage: only the first five hex characters ever leave this process, the
- * digest is compared against the returned range, and the value is never
- * persisted. Password-at-rest hashing is handled by better-auth.
- */
 function hashPasswordForRangeLookup(password: string) {
   return createHash("sha1").update(password).digest("hex").toUpperCase()
 }
@@ -141,7 +135,6 @@ export async function readEmailSignInAttempt(request: Request): Promise<LoginAtt
 }
 
 async function readLoginFailureState(email: string): Promise<LoginFailureState | null> {
-  // primary: failure counts from rapid repeated attempts must not be missed.
   const [row] = await db.$primary
     .select({
       count: RateLimitTable.count,

@@ -1,10 +1,4 @@
-// V1 cancels foreground task jobs before it interrupts the parent runner. A
-// cancelled child can therefore wake the parent's model continuation inside
-// the abort request. Fence model dispatch until that native abort has settled;
-// this does not alter tools, credentials, history, or the next user turn.
 const stops = new WeakMap<object, Map<string, number>>();
-// Native OpenCode canonicalizes macOS temporary paths; the workspace can keep
-// their /var or /tmp aliases. Compare the same owner without probing the FS.
 export function normalizeStopDirectory(directory: string, platform: NodeJS.Platform = process.platform): string {
   return platform === "darwin" ? directory.replace(/^\/private\/(var|tmp)(\/|$)/, "/$1$2") : directory;
 }

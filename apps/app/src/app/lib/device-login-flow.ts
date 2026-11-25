@@ -1,16 +1,13 @@
-/** RFC 8628 desktop adapter. Private codes/tokens stay in the app-owned flow and transport. */
 export const DESKTOP_DEVICE_CLIENT_ID = "openwork-desktop-device";
 export const DEVICE_LOGIN_UNSUPPORTED = "This OpenWork server doesn't support device sign-in yet. Use the sign-in link instead.";
 const FAILED = "Device sign-in failed. Try again or use the sign-in link.";
 const MAX_LIFETIME_MS = 15 * 60_000;
 const SERVER_DEVICE_UNAVAILABLE = "Device sign-in is not available on this server. Use the sign-in link instead.";
 
-/** Only anonymous discovery exhaustion may cross the public boundary with this reason. */
 export class DeviceLoginDiscoveryUnavailable extends Error {
   constructor(readonly host: string) { super("Device sign-in discovery is unavailable."); }
 }
 
-/** Status and host only: never carry a server response body into control output. */
 export class DeviceLoginRequestRefused extends Error {
   constructor(readonly host: string, readonly httpStatus: number) { super("Device sign-in request was refused."); }
 }
@@ -62,8 +59,6 @@ export function deviceRetryAfterMs(value: string | null, now: number): number {
   if (!value) return 0;
   const trimmed = value.trim();
   if (/^\d+$/.test(trimmed)) {
-    // Even an overflowing delta-seconds value means wait past this flow's
-    // deadline, not retry immediately.
     return Math.min(MAX_LIFETIME_MS, Number(trimmed) * 1000);
   }
   if (!/^(?:[A-Za-z]{3}, |[A-Za-z]+, \d{2}-|[A-Za-z]{3} [A-Za-z]{3} )/.test(trimmed)) return 0;
@@ -80,14 +75,11 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** No error body, request URL, device code, or credential is ever returned to control callers. */
 export function createDesktopDeviceLogin(deps: Dependencies) {
   const now = deps.now ?? Date.now;
   const wait = deps.sleep ?? sleep;
   let status: DeviceLoginStatus = { state: "failed", message: "No device sign-in is pending." };
   let current: { attempt: Attempt; controller: AbortController } | null = null;
-  // Public caller correlation only, never sent to Den or used as auth authority.
-  // Retain terminal ownership so an older command cannot inspect a later result.
   let ownerRequestId: string | undefined;
   let admittedAt: number | null = null;
   const superseded = (): DeviceLoginStatus => ({ state: "failed", message: "Device sign-in was superseded by a newer sign-in." });
@@ -151,7 +143,6 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
       }
       rejectUnexpectedClientResponse(started.response, destination);
       if (!started.response.ok || !record(body) || typeof body.device_code !== "string" || !body.device_code || typeof body.user_code !== "string" || !body.user_code) throw new Error("invalid response");
-      // Only the public user code may appear in the approval URL. Never echo arbitrary server URLs.
       const verificationUri = `${destination.baseUrl.replace(/\/+$/, "")}/device`;
       const publicAuthorization = {
         userCode: body.user_code,
@@ -176,7 +167,6 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
               }, deadline);
             } catch {
               if (!live()) break;
-              // RFC 8628: reduce request frequency after connection timeouts.
               intervalMs = Math.min(MAX_LIFETIME_MS, intervalMs * 2);
               delayMs = intervalMs;
               continue;
@@ -192,7 +182,6 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
               status = { state: "approved" };
               const identity = await deps.enroll({ token: payload.access_token, destination, attempt: flow.attempt, signal: AbortSignal.any([flow.controller.signal, AbortSignal.timeout(Math.max(1, Math.ceil(deadline - now())))]) });
               if (!live()) break;
-              // Enrollment already committed synchronously; do not undo it on a subsequent cancel.
               status = { state: "signed_in", email: identity.email, org: identity.org };
               current = null;
               flow.controller.abort();
@@ -235,7 +224,6 @@ export function createDesktopDeviceLogin(deps: Dependencies) {
 
   return {
     start,
-    // Local observation freshness only, not part of the public control projection.
     admittedAt: () => admittedAt,
     status: (requestId?: string): DeviceLoginStatus => {
       if (!isOwner(requestId)) return superseded();

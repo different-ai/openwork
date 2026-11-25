@@ -2,39 +2,17 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, join, resolve, sep } from "node:path"
 import { AwsClient } from "aws4fetch"
 
-/**
- * Where saved files' bytes live. The runner keeps each file's name, type and owner in SQLite and only the
- * bytes here: a folder on the runner's disk (development and single-disk installs), or any S3-compatible bucket
- * (AWS S3, Cloudflare R2, MinIO, Tigris, Backblaze B2, Google Cloud Storage's XML API), which every host can share.
- * Files are optional: with no store configured, the file routes and tools are simply not offered.
- *
- * Keys are `sessions/<sessionId>/<fileId>` (plus `.preview/...` for page images); the runner only ever reads a
- * key it recorded for that session, so one conversation can never name another's bytes.
- */
 export type BlobStore = {
   kind: "disk" | "s3"
   put(key: string, bytes: Uint8Array<ArrayBuffer>, contentType: string): Promise<void>
-  /** Null when the object does not exist. */
   get(key: string): Promise<Uint8Array<ArrayBuffer> | null>
   delete(key: string): Promise<void>
-  /**
-   * Every object under a prefix, with when it was last written (epoch ms): for orphan cleanup of sealed segments and
-   * large bodies (storage/), which deletes only old objects nothing references. Optional for test stores.
-   */
   list?(prefix: string): Promise<Array<{ key: string; lastModified: number }>>
-  /**
-   * Moving bytes without holding them (S3 only; a disk store has none of these). `link` is an address for one object
-   * and one method that stops working after `expiresSeconds`: it carries a signature, never the store's credentials,
-   * so it can be handed to a conversation's computer. `size` and `copy` let the runner check and keep what arrived.
-   */
   link?(method: "GET" | "PUT", key: string, expiresSeconds: number): Promise<string>
-  /** An object's size in bytes; null when it does not exist. */
   size?(key: string): Promise<number | null>
-  /** Copies an object inside the store, giving the copy this content type. */
   copy?(from: string, to: string, contentType: string): Promise<void>
 }
 
-/** Keys are runner-generated (`sessions/<id>/<fileId>`); this only guards against a key escaping the folder. */
 function safeKey(key: string) {
   if (!/^[A-Za-z0-9._/-]+$/.test(key) || key.split("/").some((part) => part === ".." || part === "")) throw new Error("invalid_blob_key")
   return key
@@ -87,20 +65,17 @@ export function diskBlobStore(directory: string): BlobStore {
 }
 
 export type S3Options = {
-  /** e.g. https://<account>.r2.cloudflarestorage.com, https://s3.us-east-1.amazonaws.com, http://127.0.0.1:9000 */
   endpoint: string
   region: string
   bucket: string
   accessKeyId: string
   secretAccessKey: string
-  /** `https://endpoint/bucket/key` instead of `https://bucket.endpoint/key`. MinIO and most self-hosted stores need it. */
   forcePathStyle: boolean
   fetch?: typeof fetch
 }
 
 const S3_TIMEOUT_MS = 120_000
 
-/** Any S3-compatible bucket, signed with SigV4. No provider SDK, so it runs the same on Node and Workers runtimes. */
 export function s3BlobStore(options: S3Options): BlobStore {
   const client = new AwsClient({
     accessKeyId: options.accessKeyId,
@@ -147,7 +122,6 @@ export function s3BlobStore(options: S3Options): BlobStore {
       if (!response.ok && response.status !== 404) throw await fail("delete", response)
       await response.body?.cancel()
     },
-    // A presigned URL: the signature is in the query, bound to this object, this method and the expiry.
     async link(method, key, expiresSeconds) {
       const url = new URL(urlOf(key))
       url.searchParams.set("X-Amz-Expires", String(Math.max(1, Math.round(expiresSeconds))))
@@ -161,16 +135,13 @@ export function s3BlobStore(options: S3Options): BlobStore {
       if (!response.ok || length === null || !/^\d+$/.test(length)) throw new Error(`s3_head_${response.status}`)
       return Number(length)
     },
-    // CopyObject; the copy's metadata is replaced so it gets this content type, whatever the source was sent with.
     async copy(from, to, contentType) {
       const source = `/${encodeURIComponent(options.bucket)}/${safeKey(from).split("/").map(encodeURIComponent).join("/")}`
       const response = await send("PUT", to, { contentType, headers: { "x-amz-copy-source": source, "x-amz-metadata-directive": "REPLACE" } })
       if (!response.ok) throw await fail("copy", response)
-      // A copy can fail after the 200 was sent: the error is then in the body.
       const body = await response.text()
       if (/<Error>/.test(body)) throw new Error(`s3_copy_failed: ${body.slice(0, 300)}`)
     },
-    // ListObjectsV2, page by page.
     async list(prefix) {
       safeKey(prefix.replace(/\/$/, ""))
       const bucketUrl = options.forcePathStyle ? `${base.origin}/${encodeURIComponent(options.bucket)}` : `${base.protocol}//${options.bucket}.${base.host}/`

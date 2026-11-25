@@ -23,6 +23,8 @@ export const pluginArchRoutePaths = {
   mcps: `${orgBasePath}/mcps`,
   plugins: `${orgBasePath}/plugins`,
   pluginSkillZip: `${orgBasePath}/plugins/skill-zip`,
+  anthropicSkillsPreview: `${orgBasePath}/plugins/anthropic-skills/preview`,
+  anthropicSkillsImport: `${orgBasePath}/plugins/anthropic-skills/import`,
   plugin: `${orgBasePath}/plugins/:pluginId`,
   pluginArchive: `${orgBasePath}/plugins/:pluginId/archive`,
   pluginRestore: `${orgBasePath}/plugins/:pluginId/restore`,

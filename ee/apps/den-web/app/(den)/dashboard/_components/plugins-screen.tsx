@@ -47,7 +47,6 @@ const PLUGIN_TABS = [
   { value: "sources" as const, label: "Sources", icon: GitFork },
 ];
 
-/** Each tab's feature intro, for its box and unseen dot (DESIGN.md I9). */
 const PLUGIN_TAB_INTROS: Record<PluginView, FeatureIntroKey> = {
   plugins: "plugins",
   agents: "plugins.agents",
@@ -85,7 +84,6 @@ export function PluginsScreen() {
   const [query, setQuery] = useState("");
   const introUnseen = useFeatureIntroUnseen();
 
-  // The tab lives in `?view=` so links (and feature intro actions) can open one.
   useEffect(() => {
     if (viewParam) setActiveViewState(viewParam);
   }, [viewParam]);
@@ -194,8 +192,6 @@ export function PluginsScreen() {
   };
 
   const searchPlaceholder = SEARCH_PLACEHOLDERS[activeView];
-  // Feature intros: null until both lists are known, so nothing flashes while loading.
-  // Data, not isLoading: a paused or not-yet-enabled query has no data and isn't loading either.
   const seesAllPlugins = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
@@ -359,8 +355,6 @@ export function PluginsScreen() {
           <IntegrationsPanel />
         </>
       ) : (
-        // With feature intros on, a tab with nothing in it shows its box, and the Plugins intro takes over
-        // while there are no plugins at all (DESIGN.md I1, I2); with the flag off, the catalog renders as before.
         <FeatureIntroGate introKey={PLUGIN_TAB_INTROS[activeView]} facts={introFacts}>{catalog}</FeatureIntroGate>
       )}
     </DashboardPageTemplate>

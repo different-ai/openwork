@@ -18,7 +18,6 @@ import {
 } from "./outreach-plays.js"
 
 const DAY = 86_400_000
-/** People loaded per listed account, and accounts considered per request. Both far above what the rules produce today. */
 const MAX_PEOPLE = 6_000
 const MAX_ACCOUNTS = 1_500
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
@@ -48,16 +47,10 @@ export async function readFollowUps(ids: OrganizationId[]) {
   return result
 }
 
-/**
- * Who to write to and why, from what Den already records: who ran tasks, recorded
- * subscriptions, free model limit refusals and the team's own follow-up notes.
- * Reads no content, credentials or Stripe; calls nothing outside the database.
- */
 export async function readAdminOutreach(now = new Date()) {
   const from = new Date(now.getTime() - OUTREACH_WINDOW_DAYS * DAY)
   const history = new Date(now.getTime() - HISTORY_DAYS * DAY)
   const at = TelemetryEventTable.event_timestamp
-  // One pass over the time index, grouped by member, before any join. "Before" is history up to the window.
   const recent = db.select({
     memberId: TelemetryEventTable.member_id,
     days: sql<number>`count(distinct case when ${at} >= ${from} then date(${at}) end)`.as("active_days"),
@@ -102,7 +95,6 @@ export async function readAdminOutreach(now = new Date()) {
     startedBefore: Number(row.startedBefore), failedBefore: Number(row.failedBefore), lastActiveAt: new Date(Number(row.lastMs)),
   }] : [])
   const activeByOrganization = new Map<string, number>()
-  // Accounts where people ran tasks before the window: how many, how regularly, and whether a work address is among them.
   const earlier = new Map<string, { people: number, stopped: number, regular: boolean, work: boolean, started: number, failed: number }>()
   for (const row of rows) {
     if (row.activeDays > 0) activeByOrganization.set(row.organizationId, (activeByOrganization.get(row.organizationId) ?? 0) + 1)
@@ -120,7 +112,6 @@ export async function readAdminOutreach(now = new Date()) {
   const limited = new Set(limits.map(row => row.organizationId))
   for (const [id, entry] of earlier) {
     const active = activeByOrganization.get(id) ?? 0
-    // Lapsed: regular use, then nobody. Kept to accounts with a team, a work address, failures or the free limit behind them.
     const lapsed = active === 0 && entry.regular && (entry.people >= 2 || entry.work || limited.has(id as OrganizationId) || (entry.started >= 5 && entry.failed / entry.started >= 0.3))
     if (lapsed || (active > 0 && entry.people >= 2 && entry.stopped > 0)) candidates.add(id as OrganizationId)
   }
@@ -131,7 +122,6 @@ export async function readAdminOutreach(now = new Date()) {
   const ids = [...candidates].slice(0, MAX_ACCOUNTS)
   if (!ids.length) return { generatedAt: now.toISOString(), windowDays: OUTREACH_WINDOW_DAYS, ...buildOutreach([], [], now) }
 
-  // People in the listed workspaces, plus colleagues in other workspaces named by a company reason.
   const colleagues = [...new Set(seeds.flatMap(seed => seed.others.map(other => other.userId)))] as NonNullable<typeof MemberTable.$inferSelect.userId>[]
   const person = { organizationId: MemberTable.organizationId, userId: MemberTable.userId, role: MemberTable.role, name: AuthUserTable.name, email: AuthUserTable.email, companyDomain: companyDomainSql() }
   const contactedIds = followUpIds.flatMap(row => row.contactedAt ? [row.id] : [])
@@ -142,7 +132,6 @@ export async function readAdminOutreach(now = new Date()) {
     colleagues.length ? db.select(person).from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
       .where(and(humanMember, inArray(MemberTable.userId, colleagues))).limit(MAX_PEOPLE) : [],
     readFollowUps(ids),
-    // Days with a task, only for accounts someone recorded contacting: did they come back afterwards?
     contactedIds.length ? db.select({ organizationId: TelemetryEventTable.org_id, date: sql<string>`date_format(${at}, '%Y-%m-%d')`.as("active_date") })
       .from(TelemetryEventTable).where(and(inArray(TelemetryEventTable.org_id, contactedIds), gte(at, new Date(now.getTime() - (RESULT_DAYS + 2 * OUTREACH_WINDOW_DAYS) * DAY)), lt(at, now),
         sql`${TelemetryEventTable.event_type} like 'task.%'`, eq(TelemetryEventTable.source, "app")))

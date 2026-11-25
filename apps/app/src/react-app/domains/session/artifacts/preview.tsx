@@ -81,9 +81,6 @@ interface BinaryHTMLPreviewProps {
 
 type HTMLPreviewProps = { className?: string } & (TextHTMLPreviewProps | BinaryHTMLPreviewProps);
 
-// Workspace HTML is untrusted. srcdoc and app-created blob: URLs inherit the
-// app's origin, so the frame must never get allow-same-origin: it would run as
-// the main window and reach the desktop bridge. Scripts run in an opaque origin.
 export const HTML_PREVIEW_SANDBOX = "allow-scripts";
 
 export function HTMLPreview({ className, ...props }: HTMLPreviewProps) {
@@ -101,9 +98,6 @@ interface PdfPreviewProps {
 }
 
 export function PdfPreview({ url, title, className }: PdfPreviewProps) {
-  // Chromium's built-in PDF viewer (enabled via webPreferences.plugins) renders
-  // reliably through <embed>; <object>/sandboxed <iframe> show a blank frame.
-  // The blob URL comes from a trusted workspace file.
   return <embed src={url} type="application/pdf" title={title} data-testid="artifact-pdf-preview" className={cn("h-full w-full border-0", className)} />;
 }
 

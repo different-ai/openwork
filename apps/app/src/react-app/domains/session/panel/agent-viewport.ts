@@ -13,7 +13,6 @@ export function useBrowserAgentTurns(statusById: Record<string, string>) {
   useEffect(() => {
     const before = previous.current;
     previous.current = statusById;
-    // Statuses already running when the window opens are not new turns.
     if (!before) return;
     for (const [sessionId, status] of Object.entries(statusById)) {
       if (isActiveWorkSessionStatus(status) && !isActiveWorkSessionStatus(before[sessionId])) {

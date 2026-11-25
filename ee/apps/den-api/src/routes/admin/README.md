@@ -163,9 +163,9 @@ network. Payloads are counts, byte sizes and the first 12 characters of cell ids
 
 `/admin › Computer fleet` shows the sandboxes cloud conversations use as computers (`src/computer-fleet/`). Nothing
 in OpenWork keeps a list of them: a conversation's computer is found again by its key at the provider, and only the
-headless runner holds the providers' keys. So the runner lists them (`GET /v1/computers`: the sandbox gateway's
-sandboxes and pools, and the direct provider's machines, whichever it is configured with) and Den reads that with
-the runner credentials it already has. The page needs no setting of its own and Den holds no provider key.
+headless runner holds the provider key. The runner lists its direct provider's machines (`GET /v1/computers`),
+and Den reads that with the runner credentials it already has. The page needs no setting of its own and Den holds
+no provider key.
 
 - `state.ts`: one vocabulary of states for every provider, what needs a look (failed in the last day, stuck
   starting, pausing or stopping, past its expiry, running with no use for 30 minutes or longer where the runner's
@@ -187,8 +187,6 @@ member, when a turn has been under way, and the events Workbot's server reported
 (`remote_device_event`: views opened, pauses, resumes, rebuilds, failures). It never returns the conversation's name
 or content. Nothing is run on the computer to answer, since a command would count as use: so what is installed
 inside one (its guest version) is not shown, only the image it was built from and whether new computers still use it.
-The gateway's own events need a runner key that may read its audit log (`audit:read`); without it the page says so
-and shows Workbot's reports alone.
 
 A runner from before `GET /v1/computers` answers 404: the page says the runner is too old, and nothing is recorded.
 One from before `GET /v1/computers/:source/:id` lists computers without their image or the runner's pause rule, and a

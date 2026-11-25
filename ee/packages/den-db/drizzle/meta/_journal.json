@@ -1443,6 +1443,62 @@
       "when": 1795139540657,
       "tag": "0206_skill_file_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 207,
+      "version": "5",
+      "when": 1795463890124,
+      "tag": "0207_free_usage_spend_lookup",
+      "breakpoints": true
+    },
+    {
+      "idx": 208,
+      "version": "5",
+      "when": 1795464211561,
+      "tag": "0208_free_auto_safety_pause",
+      "breakpoints": true
+    },
+    {
+      "idx": 209,
+      "version": "5",
+      "when": 1795465730458,
+      "tag": "0209_free_auto_founder_budgets",
+      "breakpoints": true
+    },
+    {
+      "idx": 210,
+      "version": "5",
+      "when": 1795467811847,
+      "tag": "0210_free_auto_safety_cases",
+      "breakpoints": true
+    },
+    {
+      "idx": 211,
+      "version": "5",
+      "when": 1795469022012,
+      "tag": "0211_funded_model_account_suspensions",
+      "breakpoints": true
+    },
+    {
+      "idx": 212,
+      "version": "5",
+      "when": 1795546127152,
+      "tag": "0212_handoff_grant_without_token",
+      "breakpoints": true
+    },
+    {
+      "idx": 213,
+      "version": "5",
+      "when": 1795549583385,
+      "tag": "0213_left_swarm",
+      "breakpoints": true
+    },
+    {
+      "idx": 214,
+      "version": "5",
+      "when": 1795550847114,
+      "tag": "0214_famous_the_fury",
+      "breakpoints": true
     }
   ]
 }

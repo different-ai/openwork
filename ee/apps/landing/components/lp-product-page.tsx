@@ -4,32 +4,21 @@ import { LP_PRODUCTS, type LpProductKey } from "./lp-products";
 import { SiteFooter } from "./site-footer";
 import { SiteNav, type ActivePage } from "./site-nav";
 
-/**
- * Building blocks shared by the product pages (/connect, /ai-gateway,
- * /desktop, /cloud) so the four read as one family: the same hero scale,
- * section headings, numbered steps, facts and plan rows.
- */
-
 export const CLOUD_SIGNUP_URL = "https://app.openworklabs.com";
 
-/** The sales call link, the same one the header uses. */
 export function salesCallHref() {
   return process.env.NEXT_PUBLIC_CAL_URL || "/enterprise#book";
 }
 
 type LpProductShellProps = {
-  /** GitHub star count for the header, from getGithubData(). */
   stars: string;
-  /** Where "Book a call" goes. */
   callHref: string;
   active: ActivePage;
   current: LpProductKey;
-  /** The main action in the phone menu. */
   mobilePrimary: { href: string; label: string };
   children: ReactNode;
 };
 
-/** Page frame for a product page: header, content column, the other products, footer. */
 export function LpProductShell({ stars, callHref, active, current, mobilePrimary, children }: LpProductShellProps) {
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-[var(--lp-page)] text-[var(--lp-ink)]">
@@ -54,17 +43,12 @@ export function LpProductShell({ stars, callHref, active, current, mobilePrimary
 }
 
 type LpProductHeroProps = {
-  /** id of the h1, for aria-labelledby on the section. */
   id: string;
-  /** Product name shown above the headline. */
   label: string;
-  /** One short fact in a green pill, such as "Free for solo use". */
   badge?: string;
   lines: string[];
   sub: string;
-  /** Buttons and the note under them. */
   actions?: ReactNode;
-  /** The product preview under the copy. */
   children?: ReactNode;
 };
 
@@ -100,7 +84,6 @@ type LpProductHeadingProps = {
   id: string;
   label: string;
   lines: string[];
-  /** Short paragraph on the right of the heading on wide screens. */
   aside?: ReactNode;
   size?: "major" | "small";
 };
@@ -146,7 +129,6 @@ export function LpStep({ number, title, children }: { number: string; title: str
   );
 }
 
-/** The white card under a step. `mono` sets terminal-style lines. */
 export function LpStepCard({ children, mono = false }: { children: ReactNode; mono?: boolean }) {
   return (
     <div
@@ -170,7 +152,6 @@ export function LpFact({ title, children }: { title: ReactNode; children: ReactN
 
 type LpTierProps = { name: string; price: string; note: string };
 
-/** Plans as one ruled row: name, price, one line. */
 export function LpTiers({ id, tiers, footnote }: { id: string; tiers: LpTierProps[]; footnote?: ReactNode }) {
   return (
     <section aria-labelledby={id} className="mt-24 md:mt-28">
@@ -196,7 +177,6 @@ export function LpTiers({ id, tiers, footnote }: { id: string; tiers: LpTierProp
   );
 }
 
-/** A ruled grid of named marks: providers, connections, platforms. */
 export function LpMarkGrid({ items, label }: { items: { name: string; mark: ReactNode }[]; label: string }) {
   return (
     <ul aria-label={label} className="mt-8 grid grid-cols-2 border-b border-[var(--lp-border)] md:grid-cols-4">
@@ -213,7 +193,6 @@ export function LpMarkGrid({ items, label }: { items: { name: string; mark: Reac
   );
 }
 
-/** Closing panel: one line and the page's main action. */
 export function LpProductCta({ heading, note, children }: { heading: string; note: string; children: ReactNode }) {
   return (
     <section className="mt-24 md:mt-28">
@@ -226,7 +205,6 @@ export function LpProductCta({ heading, note, children }: { heading: string; not
   );
 }
 
-/** The other three products, so every product page leads to the rest. */
 export function LpOtherProducts({ current }: { current: LpProductKey }) {
   const others = LP_PRODUCTS.filter((product) => product.key !== current);
   return (
@@ -257,7 +235,6 @@ export function LpOtherProducts({ current }: { current: LpProductKey }) {
   );
 }
 
-/** A small "Rolling out" style label next to a fact title. */
 export function LpStatusBadge({ children }: { children: ReactNode }) {
   return (
     <span className="ml-2 inline-flex h-5 items-center rounded-full bg-[var(--lp-tonal)] px-2 align-middle text-[11px] font-medium text-[var(--lp-body)]">
@@ -266,7 +243,6 @@ export function LpStatusBadge({ children }: { children: ReactNode }) {
   );
 }
 
-/** White preview window with the hairline and soft drop used by the homepage showcase. */
 export function LpPreviewFrame({ children, tall = false, label }: { children: ReactNode; tall?: boolean; label: string }) {
   return (
     <div

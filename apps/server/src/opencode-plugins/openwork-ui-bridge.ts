@@ -24,8 +24,6 @@ function uiControlDiscoveryPaths(): string[] {
 }
 
 async function discoverUiBridge(): Promise<UiBridge | null> {
-  // A changed discovery override points at a different desktop; never reuse
-  // the bridge cached for the previous one.
   const discovery = process.env.OPENWORK_UI_CONTROL_DISCOVERY?.trim();
   if (cachedBridge && cachedBridgeDiscovery === discovery && Date.now() - cachedBridgeAt < BRIDGE_CACHE_MS) return cachedBridge;
   cachedBridge = null;
@@ -42,7 +40,6 @@ async function discoverUiBridge(): Promise<UiBridge | null> {
         return cachedBridge;
       }
     } catch {
-      // Try next
     }
   }
   return null;
@@ -50,7 +47,6 @@ async function discoverUiBridge(): Promise<UiBridge | null> {
 
 export async function uiBridgeRequest(
   path: string,
-  /** `timeoutMs: null` waits until `signal` aborts. */
   options: { method?: string; body?: unknown; timeoutMs?: number | null; signal?: AbortSignal } = {},
 ): Promise<unknown> {
   const bridge = await discoverUiBridge();

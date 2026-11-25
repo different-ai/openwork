@@ -1,13 +1,3 @@
-// Argument repair for the browser tools. Kept out of openwork-chrome-devtools.ts
-// because the OpenCode plugin loader treats every export of a plugin file as a
-// plugin.
-
-/**
- * Tool-call transports sometimes deliver nested objects as JSON strings
- * (especially union-shaped params like browser_act.action). Parse those back
- * so Zod sees an object instead of rejecting with
- * "expected object, received string" (#5492).
- */
 export function coerceJsonValue(value: unknown): unknown {
   if (typeof value !== "string") {
     return value;
@@ -45,4 +35,15 @@ export function coerceNestedJsonArgs(raw: unknown): unknown {
     out[key] = coerceJsonValue(value);
   }
   return out;
+}
+
+export function singleActionAsList(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw) || !("action" in raw)) {
+    return raw;
+  }
+  if ("actions" in raw) {
+    throw new Error("Pass every step in actions, not in both action and actions.");
+  }
+  const { action, ...rest } = raw;
+  return { ...rest, actions: [coerceJsonValue(action)] };
 }

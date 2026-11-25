@@ -61,7 +61,6 @@ export function useBuiltDashboardApps() {
       try {
         return await context.client.listBuiltMcpApps(context.orgId);
       } catch (error) {
-        // Older deployments did not have a member-accessible App catalog.
         if (
           error instanceof DenApiError &&
           (error.status === 404 || error.status === 403)
@@ -132,7 +131,6 @@ export function BuiltAppPicker({
       />
       <p className="px-4 pt-3 text-xs text-muted-foreground">{search.trim() ? "Matches" : "Artifacts available to you"} <span className="ml-1 tabular-nums">{matching.length}</span></p>
       <CommandEmpty>No artifacts match your search.</CommandEmpty>
-      {/* Long catalogs scroll here so the search field and footer stay in the dialog. */}
       <CommandPanel className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-width:thin] [&>[data-slot=scroll-area]]:h-auto">
         <CommandList>
           {(app: BuiltMcpAppCatalogEntry) => (
@@ -230,7 +228,6 @@ export function BuiltDashboardTiles({
   );
 }
 
-/** Same discreet hover menu as company dashboard tiles; sharing lives inside it. */
 function BuiltDashboardTileMenu({
   app,
   badge,

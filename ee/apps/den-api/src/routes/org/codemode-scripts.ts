@@ -162,11 +162,6 @@ const artifactViewParamsSchema = z.object({
   revisionId: z.string().trim().min(1).max(160).optional(),
 })
 
-/**
- * A save that comes too long after the test run is not the person's problem:
- * the agent runs the same steps again and saves, and says only what the person
- * would notice. They never hear about receipts or retention.
- */
 const SAVE_RECOVERY = "Do this without asking: run the same code again with execute_capability_script (same input and schemas), then call saveWorkflow with the new receiptId and the agreed name. Tell the person only userMessage, never receipts, retention or error codes."
 const SAVE_RECOVERY_USER_MESSAGE = "That run was a little while ago, so I'm running it once more to save it."
 
@@ -276,7 +271,6 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationFeatures: await getOrganizationFeatures(context.organization.id, { userId: context.currentMember.userId }),
-      // Den web and REST callers run saved Workflows here.
       usageSource: "workflow",
     })
     const buildTools: BuildCodemodeTools = (required) => buildCapabilityToolTree(capabilityContext, required)
@@ -799,7 +793,6 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     return app.fetch(new Request(url, request))
   }
 
-  // TODO(workflows): remove these one-release compatibility aliases.
   app.all("/v1/codemode-scripts", (c) => proxyWorkflowAlias(c.req.raw, "/v1/codemode-scripts"))
   app.all("/v1/codemode-scripts/*", (c) => proxyWorkflowAlias(c.req.raw, "/v1/codemode-scripts"))
   app.all("/v1/programs/*", (c) => proxyWorkflowAlias(c.req.raw, "/v1/programs"))

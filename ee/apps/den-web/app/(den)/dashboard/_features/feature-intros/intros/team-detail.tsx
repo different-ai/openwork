@@ -11,37 +11,22 @@ import { TeamModelsExample } from "./examples/members/team-models-example";
 import { TeamPromptExample } from "./examples/members/team-prompt-example";
 import { TeamWorkbotExample } from "./examples/members/team-workbot-example";
 
-/**
- * Facts a team's page (and Everyone's, which shares these tabs) reports from
- * data its tabs already load. A missing fact means "not loaded yet", which
- * shows nothing: a tab never swaps its content for an intro on a guess.
- */
 export type TeamDetailFacts = {
-  /** People in the team (Members tab). */
   teamMembers?: number;
   managedByScim?: boolean;
-  /** The team grants organization Admin, so changing who's in it needs Manage Admin teams. */
   adminTeam?: boolean;
-  /** Plugins the team can use, any source (Access tab, `GET /v1/teams/:id/plugin-access`). */
   plugins?: number;
-  /** AI Gateway providers and OpenWork Models (Models tab), as the AI Gateway intro reads them. */
   providers?: number;
   openworkModels?: boolean;
-  /** Providers this team can use through any grant; only reported on a team's page. */
   sharedProviders?: number;
-  /** A system prompt applies here: this scope's own, or Everyone's on a team (Prompts tab). */
   hasPrompt?: boolean;
-  /** The viewer may write prompts (`canEdit` from `GET /v1/org/prompts`). */
   canEditPrompts?: boolean;
 };
 
-/** Teams and Everyone share one path pattern; the literal Everyone path falls back to it. */
 const PATH = `${getMembersRoute()}/teams/:teamId`;
 const DOCS = "cloud/members-and-rbac";
 const AGENT_DOCS = "cloud/share-with-your-team/agent-permissions";
-/** Same page, Members tab: the team page sends this on to the team's edit form (DESIGN.md I5). */
 const ADD_PEOPLE = "?tab=overview&addPeople=1";
-/** Same page, Prompts tab with the editor open. */
 const WRITE_PROMPT = "?tab=prompts&write=1";
 
 export const teamDetailIntros = [
@@ -67,7 +52,6 @@ export const teamDetailIntros = [
       { when: (ctx) => ctx.can("canManagePermissions") && ctx.can("canManageTeams"), label: "Create a custom role", href: getNewRoleRoute() },
       { when: () => true, label: "Create a custom role", href: getNewRoleRoute(), locked: { reason: permissionLockReason("permissions.manage") } },
     ],
-    // Every team always has a role: `?` only.
     setupState: () => "done",
   }),
 
@@ -119,7 +103,6 @@ export const teamDetailIntros = [
       alt: "Example: Sales can use Sales playbook shared with the team, Brand voice shared with everyone and Deal desk through the Revenue catalog.",
     },
     docsUrl: docsPage("start-here/do-work-with-it/publish-and-copy-a-skill#2-choose-who-can-use-it"),
-    // Anyone can create a plugin and share their own, so there is no locked variant.
     ctas: [{ when: () => true, label: "Share a plugin", href: getPluginsRoute() }],
     setupState: (ctx) => {
       if (ctx.facts.plugins === undefined) return "done";
@@ -145,7 +128,6 @@ export const teamDetailIntros = [
       alt: "Example: for Contractors, run commands asks first except git and npm test, editing files follows Everyone, and local MCP servers are blocked.",
     },
     docsUrl: docsPage(AGENT_DOCS),
-    // The tab is the editor, and "Follows Everyone" is a valid state: `?` only.
     ctas: [],
     setupState: () => "done",
   }),
@@ -197,8 +179,6 @@ export const teamDetailIntros = [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Add your first AI provider", href: getNewAiGatewayProviderRoute() },
       { when: () => true, label: "Add your first AI provider", href: getNewAiGatewayProviderRoute(), locked: { reason: permissionLockReason("gateway_providers.manage") } },
     ],
-    // Box when the organization has no models at all (no providers, OpenWork Models off);
-    // banner when it has providers but none reaches this team.
     setupState: (ctx) => {
       if (ctx.facts.providers === undefined || ctx.facts.openworkModels === undefined) return "done";
       if (ctx.facts.openworkModels) return "done";
@@ -225,7 +205,6 @@ export const teamDetailIntros = [
       alt: "Example: Support calls Workbot Helpdesk and starts on Claude Sonnet 4.5, Sales uses Everyone's name, Workbot, and model, GPT-6 Luna, and Workbot is off for Engineering.",
     },
     docsUrl: docsPage("workbot/overview"),
-    // The tab is the editor, and "From Everyone" is a valid state: `?` only.
     ctas: [],
     setupState: () => "done",
   }),
@@ -252,7 +231,6 @@ export const teamDetailIntros = [
       { when: (ctx) => ctx.facts.canEditPrompts === true, label: "Add a prompt", href: WRITE_PROMPT },
       { when: () => true, label: "Add a prompt", href: WRITE_PROMPT, locked: { reason: permissionLockReason("prompts.manage") } },
     ],
-    // Box only when no prompt applies here at all.
     setupState: (ctx) => {
       if (ctx.facts.hasPrompt === undefined) return "done";
       return ctx.facts.hasPrompt ? "done" : "none";
@@ -277,7 +255,6 @@ export const teamDetailIntros = [
       alt: "Example: three suggestion cards in a new desktop session: summarize this week's tickets, draft a renewal email and prepare a call brief.",
     },
     docsUrl: docsPage("cloud/share-with-your-team/team-prompt-cards"),
-    // The tab shows the built-in suggestions until changed: `?` only.
     ctas: [],
     setupState: () => "done",
   }),

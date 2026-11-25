@@ -60,13 +60,9 @@ const updateOrganizationSchema = z.object({
   allowedEmailDomains: z.array(z.string().trim().min(1).max(255)).max(100).nullable().optional(),
   allowedDesktopVersions: z.array(z.string().trim().min(1).max(32)).max(200).nullable().optional(),
   requireSso: z.boolean().optional(),
-  /** every email on the verified SSO domain must sign in with this organization's SSO. */
   restrictDomainToSso: z.boolean().optional(),
-  /** Hours a sign-in lasts without activity, web and desktop (12, 24, 72 or 168). */
   sessionLengthHours: z.literal(SESSION_LENGTH_HOURS).optional(),
-  /** Days a sign-in lasts at most, however active; people sign in at least once every period (1, 7, 14, 30, 60 or 90). */
   maxSessionLengthDays: z.literal(MAX_SESSION_LENGTH_DAYS).optional(),
-  /** Minutes since sign-in before an admin must confirm their identity for sensitive changes (15, 60, 240, 480 or 1440); 0 turns it off. */
   adminReauthMinutes: z.literal(ADMIN_REAUTH_MINUTES).optional(),
   brandAppName: z.string().trim().min(1).max(64).nullable().optional(),
   brandLogoUrl: z.string().url().max(2048).nullable().optional(),
@@ -90,9 +86,6 @@ const resolveSsoByEmailResponseSchema = z.object({
 }).or(z.object({
   requireSso: z.literal(false),
   method: z.union([z.literal("google"), z.literal("password"), z.literal("signup")]),
-  // the domain's organization offers SSO as one sign-in
-  // option; `method` stays the usual way in. `ssoRequired` is the
-  // organization's own Require SSO (it opens only from an SSO session).
   ssoRequired: z.boolean().optional(),
   organizationSlug: z.string().optional(),
   signInPath: z.string().optional(),
@@ -111,14 +104,9 @@ const rateLimitedSchema = z.object({
 
 const SSO_RESOLVE_IDENTITY_RATE_LIMIT_MAX = 20
 const SSO_RESOLVE_RATE_LIMIT_WINDOW_MS = 60_000
-// See the login-options buckets: a long domain window buys burst tolerance for
-// a coworker sign-in wave while keeping SUSTAINED per-domain throughput below
-// the previous flat 20/min (120 per 10 min = 12/min; 30 misses per 10 min = 3/min).
 const SSO_RESOLVE_DOMAIN_RATE_LIMIT_WINDOW_MS = 600_000
 const SSO_RESOLVE_DOMAIN_RATE_LIMIT_MAX = 120
 const SSO_RESOLVE_DOMAIN_MISS_RATE_LIMIT_MAX = 30
-// A generous domain bucket bounds distributed enumeration without recreating coworker lockouts;
-// only unresolved addresses pay the tighter miss bucket.
 
 const singleOrgSsoStatusResponseSchema = z.object({
   configured: z.boolean(),
@@ -203,11 +191,6 @@ const organizationContextResponseSchema = z.object({
       description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
     }),
   }).passthrough(),
-  /**
-   * Effective on/off for every registry feature (packages/features/src/registry.ts).
-   * New clients read this; `capabilities` is frozen for published clients.
-   * A key missing here means an older server: treat it as off.
-   */
   features: clientFeaturesSchema.meta({ description: "Effective on/off for every OpenWork feature in this organization, plus fixed deprecated client compatibility values. Treat a missing key as off." }),
   canManageDeploymentServices: z.boolean().meta({ description: "Whether this caller may open installation diagnostics: a self-hosted installation administrator (local allowlist), signed in or using an API key they own. Organization ownership and permissions never grant it. False on hosted deployments and when the lookup fails." }),
   deploymentCapabilities: deploymentCapabilitiesSchema,
@@ -319,10 +302,6 @@ export async function setRequestActiveOrganization(
 
 export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>
 
-/**
- * PATCH /v1/org, callable with an in-process route context (config-blob
- * imports, src/config-blobs/areas/settings-general.ts).
- */
 export async function updateOrganizationAction(c: ResourceActionContext, payload: ResourceOrganizationContext, input: UpdateOrganizationInput) {
 
       const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined
@@ -344,9 +323,6 @@ export async function updateOrganizationAction(c: ResourceActionContext, payload
         || (input.restrictDomainToSso === true && currentMetadata.restrictDomainToSso !== true)
       const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
       if (enablesRequireSso) {
-        // Requiring SSO takes effect at once for every member, the admin too:
-        // only an admin signed in through it can turn it on, so nobody locks
-        // themselves out of the organization by mistake.
         if (!await sessionCanRequireOrganizationSso({ sessionId: c.get("signInSessionId") ?? null, organizationId: payload.organization.id })) {
           const signInPath = `/sso/${encodeURIComponent(payload.organization.slug)}`
           return c.json({
@@ -403,7 +379,6 @@ export async function updateOrganizationAction(c: ResourceActionContext, payload
         return c.json({ error: "organization_not_found" }, 404)
       }
 
-      // Shorter limits end members' longer sessions now, not at their next extension.
       if (changesSessionLimits) {
         await shortenMemberSessions({
           organizationId: payload.organization.id,
@@ -451,7 +426,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
     await setRequestActiveOrganization(c, organizationId)
 
-    // primary: reads back the organization created above.
     const organization = await db.$primary
       .select()
       .from(OrganizationTable)
@@ -485,8 +459,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       return c.json({ error: "invitation_not_found" }, 404)
     }
 
-    // The invitation token proves its organization: served evidence there
-    // (category read), actor unknown; the token itself is never recorded.
     await attributeAuditRequest(c, { organizationId: invitation.organization.id, actor: { type: "unknown", id: null }, principalKey: "unknown:invitation_token" })
 
     return c.json(invitation)
@@ -536,8 +508,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         userId: normalizeDenTypeId("user", user.id),
         email,
         invitationId: input.id,
-        // The invitation matched the verified session user's email: its
-        // organization is the tenant; the invitee has no member id yet.
         beforeEffect: async (invitation) => {
           const attribution = auditSessionUserAttribution(user.id)
           if (!attribution) return true
@@ -662,13 +632,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const query = c.req.valid("query")
 
-      // Security note:
-      // This endpoint intentionally preserves per-user auth-method routing for non-SSO
-      // accounts as a product UX decision. To reduce enumeration risk it:
-      // 1. resolves SSO by verified domain, not membership,
-      // 2. requires Vercel BotID verification before per-user method resolution,
-      // 3. relies on Better Auth/routing rate limits,
-      // 4. returns a uniform 200 response envelope for successful lookups.
       const botProtection = await verifyBotProtection()
       if (!botProtection.ok) {
         return c.json({
@@ -688,10 +651,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const requirement = await findEnterpriseAuthRequirementForEmailDomain(query.email)
-      // This is the password/Google preflight, not organization access. With
-      // per-org SSO, Require SSO must not undo the alternative offered by login
-      // options: the person may still sign in for their other organizations.
-      // Only restricting the entire domain (or the legacy behavior) redirects.
       const domainPolicy = requirement ? await findDomainSsoRequirement(query.email) : null
       const permitsNonSsoSignIn = Boolean(domainPolicy?.perOrganization && !domainPolicy.policy.restrictDomainToSso)
 
@@ -705,7 +664,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         : null
 
       if (ssoOption && !permitsNonSsoSignIn) {
-        // SSO is forced for the whole domain: the only way in.
         return c.json({ requireSso: true, method: "sso", ...ssoOption, ssoRequired: true })
       }
 
@@ -721,8 +679,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }
       }
 
-      // SSO set up but not forced for the domain: one of the sign-in options,
-      // next to the usual `method` (the sign-in page redirects only on method "sso").
       return c.json({
         requireSso: false,
         method,
@@ -749,19 +705,12 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
 
-      // Same per-request resolution the middleware made.
       const memberPermissions = await memberPermissionsForOrganizationContext(payload, c.get("memberTeams"))
-      // Reuse the organization row and feature snapshot resolved for this request.
       const currentOrganization = payload.organization
       const features = payload.features
-      // Cloud is entitled by OpenWork Web access (paid subscription or the
-      // platform-admin complimentary grant) on hosted deployments; there is no
-      // separate per-organization Cloud rollout flag.
       const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })
         && (await getOpenWorkWebAccess(payload.organization.id)).hasAccess
-        // With webPerMember, only members an admin gave Web get Cloud.
         && payload.currentMember.openworkWeb
-      // The directory is only loaded here, not with every org request's context.
       const [directory, ssoRows, scimRows] = await Promise.all([
         loadOrganizationDirectory(payload.organization.id),
         db
@@ -799,8 +748,6 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
             : null,
         },
         currentMemberTeams: c.get("memberTeams") ?? [],
-        // Caller-specific operator authority is queried only here, not by the
-        // shared org context loader used by unrelated organization requests.
         canManageDeploymentServices: await canManageDeploymentServices({ user: c.get("user"), session: c.get("session"), apiKey: c.get("apiKey") }),
         deploymentCapabilities: {
           ...deploymentCapabilities(),
@@ -809,29 +756,15 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         plan: parseOrganizationPlan(currentOrganization.metadata),
         entitlements: getOrganizationEntitlements(currentOrganization.metadata),
         features: clientFeatures(features),
-        // Frozen for published clients; new clients read `features`.
         capabilities: {
           auditLogs: env.auditVisibilityEnabled,
           gatewayDashboard: true,
-          // Organization Dashboards were removed (2026-10). Published desktop
-          // builds call the old dashboard routes only when this is true, so it
-          // stays pinned to false.
           orgManagedDashboards: false,
-          // Compatibility field for published clients: Connect is always on.
           mcpConnections: true,
-          // Building your own Apps is on for every organization unless the
-          // deployment turns it off.
           appMcpServers: env.appMcpServersEnabled,
-          // Workflows/Code Mode are enabled for every organization; the field
-          // remains for published clients that still read it.
           workflows: true,
-          // Compatibility field for published clients: install links are always on.
           installLinks: true,
-          // Effective offer: the deployment switch enables Web generally,
-          // while the platform-admin complimentary grant enables only this
-          // organization when the deployment switch is off.
           openworkWeb: isOpenWorkWebAvailableForOrganization(payload.organization.metadata),
-          // Workbot is generally available when its app origin is configured (DEN_WORKBOT_URL).
           workbot: workbotOrigin() !== null,
           ...(cloudEnabled ? { cloud: true } : {}),
         },

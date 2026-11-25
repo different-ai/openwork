@@ -15,6 +15,7 @@ on:
   issue_comment:
     types: [created]
 
+cache-mode: none
 permissions: {}
 
 # Serialize repeated /test commands for a PR instead of duplicating paid work.

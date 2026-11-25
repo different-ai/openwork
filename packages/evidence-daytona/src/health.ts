@@ -54,8 +54,6 @@ export function failureLayer(health: GuestHealth | undefined, externalStatus: nu
   if (health.gateway.status !== 200 || !health.gateway.cdp) return "guest-gateway-or-stale-port";
   if (health.upstreamPort <= 0) return "unresolved";
   if (health.chromePort !== health.upstreamPort) return "guest-gateway-or-stale-port";
-  // A fixed guest error body contradicts blaming the provider merely because
-  // the internal endpoints recovered before this post-failure inspection.
   if (externalStatus === 502 && externalBody === GATEWAY_UNAVAILABLE_BODY) return "guest-upstream-at-external-probe";
   return externalStatus === 502 ? "provider-preview-route" : "external-preview-route";
 }
@@ -69,7 +67,6 @@ export function safeExternalResponse(status: number, headers: Headers, body: str
   for (const name of ["content-type", "server", "via", "cf-ray", "x-request-id"]) {
     const value = headers.get(name);
     if (!value || containsSecret(value)) continue;
-    // Only known header grammars/values, not cookies, redirects or arbitrary echoed text.
     if (name === "content-type" && /^(application\/json|text\/(plain|html))(; charset=utf-8)?$/i.test(value)) selected[name] = value.toLowerCase();
     if (name === "server" && /^(nginx|envoy|cloudflare|daytona)$/i.test(value)) selected[name] = value.toLowerCase();
     if (["cf-ray", "x-request-id"].includes(name) && /^[a-f0-9-]{8,64}(?:-[A-Z]{3})?$/.test(value)) selected[name] = value;
@@ -83,6 +80,6 @@ export async function boundedDiagnostic(work: () => Promise<void>, timeoutMs = 1
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([Promise.resolve().then(work), new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); })]);
-  } catch { /* Diagnostics must not replace the original failure or prevent cleanup. */ }
+  } catch {}
   finally { if (timer) clearTimeout(timer); }
 }

@@ -9,13 +9,9 @@ export const adminOrganizationDetailSchema = z.object({
   organization: z.object({
     id: z.string(), name: z.string(), slug: z.string().nullable(), createdAt: z.string().datetime(),
     planTier: z.string(), seatLimit: count, memberCount: count,
-    /** The resolved plan: tier, who pays, users and the limit every join path enforces. Older Den APIs omit it. */
     plan: organizationPlanStateSchema.optional(),
-    /** Users split into joined members and unexpired pending invitations. Older Den APIs omit it. */
     people: z.object({ joined: count, invited: count }).optional(),
-    /** The organization's Team (seat) Stripe subscription, as last recorded. Older Den APIs omit it. */
     subscriptions: z.object({ team: adminSubscriptionSummarySchema.nullable() }).optional(),
-    /** Complimentary OpenWork Web access and any paid OpenWork Web subscription. Older Den APIs omit it. */
     openworkWeb: z.object({
       complimentaryAccess: z.boolean(), hasAccess: z.boolean(), hasOngoingSubscription: z.boolean(), subscriptionStatus: z.string().nullable(),
     }).optional(),
@@ -73,12 +69,9 @@ export const adminOrganizationInsightsSchema = adminOrganizationDetailSchema.ext
 }).meta({ ref: "AdminOrganizationInsights" })
 export type AdminOrganizationInsights = z.infer<typeof adminOrganizationInsightsSchema>
 
-// Billing comes from recorded subscriptions and the stored plan tier. "Paying" means a
-// current active subscription; trials are not paying.
 export const opportunityBillingSchema = z.object({
   plan: z.enum(["free", "team", "enterprise"]), paying: z.boolean(), modelsAddOn: z.boolean(),
 })
-// Contacted means a platform admin recorded outreach, a reply or a meeting.
 export const opportunityOutreachSchema = z.object({
   status: z.enum(["not_contacted", "contacted"]), lastContactedAt: z.string().datetime().nullable(),
 })
@@ -110,7 +103,6 @@ export const adminSignupCompaniesSchema = z.object({
 }).meta({ ref: "AdminSignupCompanies" })
 export type AdminSignupCompanies = z.infer<typeof adminSignupCompaniesSchema>
 
-// Platform-internal sales follow-up. Never written to an organization's audit log or shown to its members.
 export const ACCOUNT_FOLLOW_UP_STAGES = ["needs_review", "ready", "contacted", "engaged", "closed", "dismissed"] as const
 export const ACCOUNT_FOLLOW_UP_ACTIONS = ["reviewed", "contacted", "replied", "meeting", "note", "closed", "dismissed", "reopened"] as const
 export const ACCOUNT_CONFIRMED_OPPORTUNITIES = ["expansion", "commercial"] as const
@@ -123,10 +115,8 @@ export const accountFollowUpSchema = z.object({
   confirmedOpportunity: z.enum(ACCOUNT_CONFIRMED_OPPORTUNITIES).nullable(), updatedAt: isoDate,
 })
 
-// Reasons to write to an account, strongest first. An account is listed once, under its strongest reason.
 export const OUTREACH_PLAYS = [
   "follow_up", "payment", "cancelling", "team_no_plan", "seats_full", "company", "shrinking", "free_limit", "quiet_paying",
-  // Accounts that used to run tasks and stopped, by what happened just before.
   "lapsed_failed", "lapsed_limit", "lapsed",
 ] as const
 export type OutreachPlay = (typeof OUTREACH_PLAYS)[number]

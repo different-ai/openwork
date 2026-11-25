@@ -7,7 +7,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { markFeatureUsed } from "@/app/lib/den";
 import { desktopBridge } from "@/app/lib/desktop";
 import { isElectronRuntime } from "@/app/lib/runtime-env";
 import { useOpenTargets } from "@/lib/target-provider";
@@ -51,18 +50,16 @@ function syncCodeRunButtons(root: HTMLElement, runnable: boolean) {
 
 const MarkdownTableExpandContext = createContext(false);
 
-export function MarkdownTableExpand({ enabled, children }: { enabled: boolean; children: ReactNode }) {
-  return <MarkdownTableExpandContext.Provider value={enabled}>{children}</MarkdownTableExpandContext.Provider>;
+export function MarkdownTableExpand({ children }: { children: ReactNode }) {
+  return <MarkdownTableExpandContext.Provider value={true}>{children}</MarkdownTableExpandContext.Provider>;
 }
 
 type MarkdownBlockInnerProps = {
   className?: string;
   text: string;
   streaming?: boolean;
-  /** Opt in only for conversation prose, never tool output or artifact previews. */
   sessionReferences?: boolean;
   highlightQuery?: string;
-  /** Text-first rail: GitHub pull request and issue links show their mark. */
   githubReferences?: boolean;
   onRunCommand?: (command: string) => void;
 } & Omit<
@@ -70,11 +67,6 @@ type MarkdownBlockInnerProps = {
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
 >;
 
-/**
- * A streaming answer renders one payload per top-level block so a new token
- * only re-parses and repaints the block it lands in; a settled answer renders
- * the whole document at once, exactly as history does.
- */
 type RenderedMarkdown =
   | { kind: "document"; html: string }
   | { kind: "blocks"; blocks: MarkdownBlockHtml[] };
@@ -99,7 +91,6 @@ function MarkdownBlockInner({
     const literal = openTargetFromLocalPath(value, { decode });
     const root = rootRef.current;
     const contextual = literal && root ? contextualizeFileTarget(literal, precedingDirectory(root, node)) : literal;
-    // Context belongs to this occurrence, not another same-named link or artifact.
     if (contextual?.pathHints?.length || !decode) return contextual;
     return openTargetForHref(value, openTargets, workspaceRoot);
   }, [openTargets, workspaceRoot]);
@@ -187,9 +178,6 @@ function MarkdownBlockInner({
     return { kind: "document", html: syncHtml };
   }, [highlightedHtml, streamedBlocks, streaming, syncHtml, text, resolveReference]);
   const rendered = useSelectionStableValue(rootRef, candidate);
-  // Keep the innerHTML prop referentially stable too: a fresh wrapper object
-  // can make an unrelated React render replace selected text nodes even when
-  // the HTML string itself is unchanged.
   const stableInnerHtml = useMemo(
     () => ({ __html: rendered.kind === "document" ? rendered.html : "" }),
     [rendered],
@@ -203,8 +191,6 @@ function MarkdownBlockInner({
       setHighlightedHtml(null);
       return;
     }
-    // Selection stability commits the settled document on a later render. Wait
-    // for that keyed root, not the streaming root that is about to be removed.
     const root = rootRef.current;
     if (!root || isEmpty || rendered.kind !== "document") return;
     let cancelled = false;
@@ -263,8 +249,6 @@ function MarkdownBlockInner({
       let cancelled = false;
       let objectUrl: string | null = null;
       const href = video.dataset.openworkVideoPath ?? "";
-      // A video that cannot load reads as its plain inline reference instead
-      // of an empty player in the middle of the sentence.
       const showError = () => {
         const box = video.closest("[data-openwork-video]");
         const fallback = box?.querySelector(":scope > [data-openwork-video-fallback]");
@@ -278,8 +262,6 @@ function MarkdownBlockInner({
         if (objectUrl) URL.revokeObjectURL(objectUrl);
       });
       if (/^https?:/i.test(href)) continue;
-      // Streaming and clicking use the same candidate resolution. Streaming
-      // never probes the desktop or downloads outside the owning workspace.
       const target = targetAt(href, video, video.dataset.openworkPathDecode === "true");
       if (!client || !workspaceId || !target) {
         showError();
@@ -305,8 +287,6 @@ function MarkdownBlockInner({
     }
   }, [client, workspaceId, workspaceRoot, sessionId, sessionFileEvidence, targetAt, rendered]);
 
-  // A local image in a reply: one this chat's computer use saved on this Mac, or a
-  // workspace file. Until it loads (or when it cannot) the reply shows its file reference.
   const loadLocalImage = useCallback(async (href: string, node: Element, decode: boolean) => {
     const literal = openTargetFromLocalPath(href, { decode })?.value;
     if (literal && sessionId && isElectronRuntime()) {
@@ -341,7 +321,6 @@ function MarkdownBlockInner({
       }
       const cache = localImageUrls.current;
       void pending.then((url) => {
-        // A file that is not there yet (still saving) is tried again on the next render.
         if (!url) { if (cache.get(key) === pending) cache.delete(key); return; }
         if (!image.isConnected) return;
         image.addEventListener("load", () => {
@@ -366,9 +345,6 @@ function MarkdownBlockInner({
       if (event.target instanceof HTMLImageElement) sync();
     };
 
-    // A chat image that cannot load (a page URL, a dead link) reads as its
-    // plain link. Only the picture itself counts: the fallback link's favicon
-    // failing must not replace an image that loaded.
     const handleImageError = (event: Event) => {
       const image = event.target;
       if (!(image instanceof HTMLImageElement) || !image.parentElement?.hasAttribute("data-openwork-image-preview")) return;
@@ -382,8 +358,6 @@ function MarkdownBlockInner({
       if (!sessionReferences || !(event.target instanceof Element)) return false;
       const link = event.target.closest("a[data-openwork-session-reference]");
       if (!(link instanceof HTMLAnchorElement) || !root.contains(link)) return false;
-      // Even a stale/selected reference must never reach a browser or a file
-      // target. Resolve and authorize again at activation, using its stable pair.
       event.preventDefault();
       event.stopPropagation();
       if (event.type !== "mousedown" && (event.button === 0 || event.button === 1)) {
@@ -404,7 +378,6 @@ function MarkdownBlockInner({
         event.stopPropagation();
         if (!tableExpand) return;
         setExpandedTableMarkdown(tableExpandButton.dataset.openworkTableExpand || null);
-        try { markFeatureUsed("chatTableExpand"); } catch {}
         return;
       }
 
@@ -574,8 +547,6 @@ function MarkdownBlockInner({
   return (
     <>
       {rendered.kind === "blocks" ? (
-        // Keyed by kind so the switch to the settled document remounts the root
-        // instead of mixing children with dangerouslySetInnerHTML.
         <div key="blocks" ref={rootRef} className={rootClassName} {...props}>
           {rendered.blocks.map((block, index) => (
             block.__html ? <div key={index} dangerouslySetInnerHTML={block} /> : null
@@ -639,11 +610,5 @@ function MarkdownBlockInner({
   );
 }
 
-/**
- * Memoize so a message block that has already been rendered — the usual
- * case for every assistant bubble above the currently-streaming one —
- * doesn't re-parse its markdown on every token. Only re-renders when its
- * own text / streaming / highlightQuery props change.
- */
 export const MarkdownBlock = memo(MarkdownBlockInner);
 MarkdownBlock.displayName = "MarkdownBlock";

@@ -1,4 +1,3 @@
-/** Compatibility exports for Den; pure brand resolution is shared with Workbot. */
 export {
   apexDomain,
   brandIconCandidates,

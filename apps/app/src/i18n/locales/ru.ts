@@ -1,8 +1,3 @@
-/**
- * Russian translations
- * Product terms like OpenWork, OpenCode, OpenPackage, Skills, Plugins, Commands, Sessions, and MCP stay as project terminology where needed.
- */
-
 export default {
   "artifact.office_empty": "В этом файле нет читаемого текста. Откройте его в другом приложении, чтобы увидеть оригинал.",
   "artifact.office_empty_slide": "На этом слайде нет читаемого текста.",

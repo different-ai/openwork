@@ -12,18 +12,12 @@ import { useWorkbotReadiness } from "./workbot-readiness-data";
 
 type BlockedWorkbotEntry = Exclude<WorkbotEntry, { kind: "open" }>;
 
-/** The dialog's one action, for viewers who can fix what blocks Workbot themselves. */
 function entryAction(entry: BlockedWorkbotEntry): { href: string; label: string; testId: string } | null {
   if (entry.kind === "add-provider") return { href: entry.href, label: WORKBOT_ENTRY_COPY.addProviderAction, testId: "workbot-entry-dialog-add-provider" };
   if (entry.kind === "off" && entry.teamsHref) return { href: entry.teamsHref, label: WORKBOT_ENTRY_COPY.offAction, testId: "workbot-entry-dialog-open-teams" };
   return null;
 }
 
-/**
- * Shown instead of leaving for Workbot when it has no AI provider or an admin turned it off for the viewer. Title only
- * (DESIGN.md P2): the admin's action names the fix, and the member's title says who can change it, with a neutral
- * lock (P4, C5).
- */
 export function WorkbotEntryDialog({ entry, open, onOpenChange }: {
   entry: BlockedWorkbotEntry;
   open: boolean;
@@ -67,10 +61,6 @@ export function WorkbotEntryDialog({ entry, open, onOpenChange }: {
   );
 }
 
-/**
- * The dashboard's Workbot entry. Readiness loads with the dashboard (no "Checking…" step, P11), so a click either
- * goes to Workbot at once or opens the dialog. Off unless Workbot is offered.
- */
 export function useWorkbotEntry({ orgId, orgSlug, orgContext, access, enabled }: {
   orgId: string | null;
   orgSlug: string | null;
@@ -85,8 +75,6 @@ export function useWorkbotEntry({ orgId, orgSlug, orgContext, access, enabled }:
   const blocked = entry.kind !== "open";
   const { refetch } = readiness;
 
-  // While blocked, check again as people move around Den (for example after adding a provider, or turning Workbot
-  // on for a team), so the next Workbot click uses fresh state. Once Workbot is ready this stops.
   const checkedPathRef = useRef(pathname);
   useEffect(() => {
     if (checkedPathRef.current === pathname) return;
@@ -94,7 +82,6 @@ export function useWorkbotEntry({ orgId, orgSlug, orgContext, access, enabled }:
     if (blocked) void refetch();
   }, [blocked, pathname, refetch]);
 
-  /** True when the navigation to `href` was handled here and the caller must not navigate. */
   const interceptNavigation = useCallback((href: string) => {
     if (!isWorkbotEntryHref(href) || !blocked) return false;
     setDialogOpen(true);

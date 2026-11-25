@@ -42,10 +42,6 @@ function hostnameOf(url: string | undefined): string | undefined {
   }
 }
 
-/**
- * Human-readable "what is this tool doing" label. Safe against partial
- * streamed input (fields may be missing despite the type contract).
- */
 export function getToolActivityLabel(part: AnyToolPart): string {
   if (isBashToolPart(part)) {
     const description = part.input?.description?.trim()

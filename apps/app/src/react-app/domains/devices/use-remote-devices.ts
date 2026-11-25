@@ -11,8 +11,6 @@ const DEVICES_REFRESH_MS = 60_000
 
 export const remoteDevicesQueryKey = (organizationId: string | null) => ["den", "remote-devices", organizationId] as const
 
-// A new sign-in or Den host must not reuse another member's cached inventory,
-// even when the organization id is unchanged. Never put credentials in keys.
 const clientScopes = new WeakMap<object, number>()
 let nextClientScope = 0
 export function remoteDevicesContextQueryKey(context: AutomationsDenContext) {
@@ -26,7 +24,6 @@ function ready(context: AutomationsDenContext) {
   return { client: context.client, organizationId: context.organizationId }
 }
 
-/** The member's computers. Refreshes every minute while the page is visible, on focus and when the sign-in changes. */
 export function useRemoteDevicesQuery(context: AutomationsDenContext) {
   const queryClient = useQueryClient()
   const active = context.ready
@@ -35,12 +32,10 @@ export function useRemoteDevicesQuery(context: AutomationsDenContext) {
     if (!active) return
     const queryKey = remoteDevicesContextQueryKey(context)
     const refresh = () => { void queryClient.invalidateQueries({ queryKey }) }
-    // The query client follows page visibility; a window coming back to the front counts too.
     const focus = () => { if (document.visibilityState === "visible") void queryClient.refetchQueries({ queryKey, exact: true, stale: true }) }
     window.addEventListener(denSessionUpdatedEvent, refresh)
     window.addEventListener(denSettingsChangedEvent, refresh)
     window.addEventListener("focus", focus)
-    // This computer being disconnected or connected again changes its own row.
     const unsubscribeConnection = useComputerConnectionStore.subscribe(refresh)
     return () => {
       unsubscribeConnection()
@@ -61,7 +56,6 @@ export function useRemoteDevicesQuery(context: AutomationsDenContext) {
   })
 }
 
-/** One computer's recent activity, read when its row is opened. */
 export function useRemoteDeviceDetailQuery(context: AutomationsDenContext, deviceId: string, open: boolean) {
   return useQuery({
     queryKey: [...remoteDevicesContextQueryKey(context), "detail", deviceId],

@@ -11,13 +11,6 @@ import type { z } from "zod";
 import { getErrorMessage, requestJson } from "../../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../../_lib/org-scope";
 
-/**
- * The member's own usage for My Usage: their spend limits
- * (`GET /v1/gateway/usage-limits/me`), their past 30 days by model with the
- * models they can use (`GET /v1/gateway/usage/me`), and asking for more
- * (`POST /v1/gateway/usage-limit-reset-requests`). Never another member's data.
- */
-
 export function myUsageKey(orgId: string): string[] {
   return ["my-usage", orgId];
 }
@@ -37,7 +30,6 @@ async function requestOwn<T>(orgId: string, path: string, schema: z.ZodType<T>, 
   return parsed.data;
 }
 
-/** Days in a response must be the asked-for UTC days, oldest first, each adding up to the totals. */
 export function myUsageConsistent(data: GatewayMemberUsageResponse): boolean {
   const { usage } = data;
   const from = Date.parse(`${usage.from}T00:00:00Z`);
@@ -78,7 +70,6 @@ export function useMyGatewayLimits(orgId: string) {
   });
 }
 
-/** Ask an admin for more on one used-up bucket. Admins answer in AI Gateway › Limits. */
 export function useAskForMoreUsage(orgId: string) {
   const client = useQueryClient();
   const limitsKey = [...myUsageKey(orgId), "limits"];
@@ -88,7 +79,6 @@ export function useAskForMoreUsage(orgId: string) {
     mutationFn: (input: { bucketId: string; reason: string }) => requestOwn(orgId, "/v1/gateway/usage-limit-reset-requests", gatewayUsageResetRequestSchema,
       "Your request couldn’t be sent.", { method: "POST", body: JSON.stringify({ bucketId: input.bucketId, reason: input.reason.trim() }) }),
     onSuccess: (request) => {
-      // Show "waiting for an admin" at once; the refetch below confirms it.
       client.setQueryData<GatewayUsageStatus>(limitsKey, (status) => {
         if (!status) return status;
         const pending = <T extends { id: string }>(bucket: T) => bucket.id === request.bucketId ? { ...bucket, canRequestReset: false, resetRequestStatus: request.status } : bucket;

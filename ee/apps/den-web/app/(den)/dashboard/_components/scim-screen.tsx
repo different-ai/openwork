@@ -32,13 +32,10 @@ function formatDateTime(value: string | null) {
 }
 
 export type ScimScreenProps = {
-  /** `?setup=1` from an intro's action: open the connector settings instead of the intro (DESIGN.md I5). */
   setupMode?: boolean;
-  /** Latest setup facts, so the Auth & Security section intro follows changes made here. */
   onIntroFacts?: (facts: AuthSecurityFacts) => void;
 };
 
-/** The User provisioning tab of Settings › Auth & Security. The tab names it, so no second title (P2). */
 export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps = {}) {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [loaded, setLoaded] = useState(false);
@@ -332,14 +329,12 @@ export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps 
     }
   }
 
-  // Feature intro facts (DESIGN.md I2) once the connector has loaded.
   const introState = loaded ? scimIntroState(connection, health) : null;
   const scimIncluded = orgContext?.entitlements.scim;
   useEffect(() => {
     if (!introState || scimIncluded === undefined) return;
     onIntroFacts?.({ scim: introState, scimIncluded, ssoReady });
   }, [introState, scimIncluded, ssoReady, onIntroFacts]);
-  // `?setup=1` skips the intro that stands in for an empty connector; a created one still gets its banner.
   const introFacts = introState && scimIncluded !== undefined && !(setupMode && introState === "none")
     ? { scim: introState, scimIncluded, ssoReady }
     : null;

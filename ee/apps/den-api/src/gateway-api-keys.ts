@@ -12,14 +12,6 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
 
-/**
- * AI Gateway API keys members create for 3rd party tools.
- *
- * Separate from gateway-keys.ts, which manages the one key OpenWork issues to each member's own apps.
- * These keys are stored as a digest only, belong to one member, and authenticate as that member at the
- * Gateway, which also checks the feature and the organization setting on every request.
- */
-
 type OrganizationId = typeof MemberTable.$inferSelect.organizationId
 type MemberId = typeof MemberTable.$inferSelect.id
 type ApiKeyRow = typeof GatewayApiKeyTable.$inferSelect
@@ -30,12 +22,10 @@ export class GatewayApiKeyLimitError extends Error {
   }
 }
 
-/** Whether the organization lets members create and use their own keys. */
 export function memberApiKeysAllowed(metadata: unknown): boolean {
   return readOrganizationAiGatewaySettings(metadata).memberApiKeys
 }
 
-/** The URL tools are pointed at: the Gateway's OpenAI and Anthropic compatible API root. */
 export function gatewayApiBaseUrl(): string {
   return `${env.gatewayPublicBaseUrl.replace(/\/+$/, "")}/api/v1`
 }
@@ -51,7 +41,6 @@ function toGatewayApiKey(row: Pick<ApiKeyRow, "id" | "name" | "key_prefix" | "cr
   }
 }
 
-/** The member's keys that are not revoked (expired ones included, so they can be seen and removed), newest first. */
 export async function listMemberGatewayApiKeys(input: { organizationId: OrganizationId; memberId: MemberId }): Promise<GatewayApiKey[]> {
   const rows = await db.select().from(GatewayApiKeyTable)
     .where(and(
@@ -63,10 +52,6 @@ export async function listMemberGatewayApiKeys(input: { organizationId: Organiza
   return rows.map(toGatewayApiKey)
 }
 
-/**
- * Creates a key for the member and returns it once. The member row is locked so two requests cannot both
- * pass the per-member limit.
- */
 export async function createMemberGatewayApiKey(input: { organizationId: OrganizationId; memberId: MemberId; name: string; expiresAt: Date | null }): Promise<CreatedGatewayApiKey> {
   return db.transaction(async (tx) => {
     const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable)
@@ -78,7 +63,6 @@ export async function createMemberGatewayApiKey(input: { organizationId: Organiz
         eq(GatewayApiKeyTable.organization_id, input.organizationId),
         eq(GatewayApiKeyTable.org_membership_id, input.memberId),
         eq(GatewayApiKeyTable.status, "active"),
-        // Expired keys no longer count toward the limit.
         or(isNull(GatewayApiKeyTable.expires_at), gt(GatewayApiKeyTable.expires_at, new Date())),
       ))
     if ((active?.total ?? 0) >= GATEWAY_API_KEY_MEMBER_LIMIT) throw new GatewayApiKeyLimitError()
@@ -102,10 +86,6 @@ export async function createMemberGatewayApiKey(input: { organizationId: Organiz
   })
 }
 
-/**
- * Revokes one active key in the organization. With `ownerMemberId`, only that member's key; without it,
- * any member's (admins). Returns false when no such active key exists.
- */
 export async function revokeGatewayApiKey(input: {
   organizationId: OrganizationId
   apiKeyId: ApiKeyRow["id"]
@@ -124,7 +104,6 @@ export async function revokeGatewayApiKey(input: {
   return affectedRows(result) > 0
 }
 
-/** MySQL and PlanetScale drivers report changed rows differently. */
 function affectedRows(result: unknown): number {
   if (Array.isArray(result)) return affectedRows(result[0])
   if (typeof result !== "object" || result === null) return 0
@@ -133,7 +112,6 @@ function affectedRows(result: unknown): number {
   return 0
 }
 
-/** Every active key in the organization with its member, newest first. */
 export async function listOrganizationGatewayApiKeys(organizationId: OrganizationId): Promise<OrganizationGatewayApiKey[]> {
   const rows = await db.select({
     key: GatewayApiKeyTable,

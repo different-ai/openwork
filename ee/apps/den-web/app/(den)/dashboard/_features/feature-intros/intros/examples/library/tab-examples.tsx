@@ -25,27 +25,22 @@ function TabExample({ caption, rows }: { caption: string; rows: readonly Library
   );
 }
 
-/** Library › Connectors: shared ones, one waiting on your sign-in, one you added. */
 export function LibraryConnectorsExample() {
   return <TabExample caption="Your connectors" rows={libraryConnectorRows} />;
 }
 
-/** Library › Skills: two shared with you and one of yours. */
 export function LibrarySkillsExample() {
   return <TabExample caption="Your skills" rows={librarySkillRows} />;
 }
 
-/** Library › Plugins: two plugins shared with you. */
 export function LibraryPluginsExample() {
   return <TabExample caption="Your plugins" rows={libraryPluginRows} />;
 }
 
-/** Library › Models: models from the organization, one waiting on your sign-in, and your own key. */
 export function LibraryModelsExample() {
   return <TabExample caption="Your models" rows={libraryModelRows} />;
 }
 
-/** "Use your own key": one provider key, who can use it and the models it brings. */
 export function LibraryModelKeyExample() {
   const step = useExampleStep(libraryModelKey.models.length);
   return (

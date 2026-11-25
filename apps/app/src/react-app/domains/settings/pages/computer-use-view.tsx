@@ -1,8 +1,10 @@
 /** @jsxImportSource react */
-import { useEffect, useEffectEvent, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { CircleCheck, CircleDashed, LoaderCircle, Lock, Monitor, MonitorCheck, MonitorCog, MonitorOff, MonitorX, type LucideIcon } from "lucide-react";
-import type { ComputerPermission, ComputerStatus, DesktopCommandResult } from "@openwork/types/desktop-ipc";
+import type { ComputerPermission, ComputerStatus, DesktopCommandResult, PrivateValueSettings, PrivateValueSwitch } from "@openwork/types/desktop-ipc";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { readGatewayUsageScope, subscribeGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
 
 import { desktopBridge } from "@/app/lib/desktop";
 import type { FileSendGrants, OpenworkServerClient } from "@/app/lib/openwork-server";
@@ -10,6 +12,7 @@ import { isElectronRuntime, isMacPlatform } from "@/app/utils";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import {
   LayoutSection,
@@ -22,17 +25,14 @@ import {
 import { SettingsInset } from "../settings-section";
 
 type Busy = "choose" | "reset" | ComputerPermission | null;
-/** What the summary reports: the helper's readiness, or that nothing was read. */
 type SummaryState = ComputerStatus["readiness"] | "checking" | "off";
 
 const PERMISSIONS: Array<{ id: ComputerPermission; title: string; purpose: string }> = [
   { id: "accessibility", title: "Accessibility", purpose: "Use app controls, the mouse and the keyboard in Mac apps." },
   { id: "screenRecording", title: "Screen Recording", purpose: "See app windows. macOS may call it Screen & System Audio Recording." },
 ];
-// After opening a pane, give macOS a moment before offering the stale-entry fix.
 const STUCK_AFTER_MS = 15_000;
 
-// Color marks only what needs the person: ready is confirmed, setup is theirs to finish.
 const SUMMARY: Record<SummaryState, { icon: LucideIcon; label: string; tile: string }> = {
   ready: { icon: MonitorCheck, label: "Ready", tile: "bg-green-3 text-green-11" },
   "setup-required": { icon: MonitorCog, label: "Setup needed", tile: "bg-amber-3 text-amber-11" },
@@ -42,21 +42,15 @@ const SUMMARY: Record<SummaryState, { icon: LucideIcon; label: string; tile: str
   off: { icon: Lock, label: "Not turned on", tile: "bg-muted text-muted-foreground" },
 };
 
-// What turning the permissions on shares, said wherever they are listed.
 const SEEN = "The agent sees the app window it is using, and its content goes to your AI model provider.";
 
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
-/** Settings > Computer use, for the native desktop app. */
 export function ComputerUseView({ fileSends }: { fileSends?: FileSendGrantsClient | null }) {
   const enabled = isElectronRuntime();
   return <ComputerUseSettings enabled={enabled} fileSends={fileSends} />;
 }
 
-/**
- * Computer use is set up once, here, for every chat. Each status comes from a
- * fresh helper probe; opening a System Settings pane never grants anything.
- */
 export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; fileSends?: FileSendGrantsClient | null }) {
   const [status, setStatus] = useState<ComputerStatus | null>(null);
   const [readError, setReadError] = useState("");
@@ -87,7 +81,6 @@ export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; 
   useEffect(() => {
     if (!enabled) return;
     void readLatest();
-    // macOS reports no event when a permission changes; check while this page is open.
     const update = () => { if (document.visibilityState === "visible") void readLatest(); };
     const timer = window.setInterval(update, 1_500);
     window.addEventListener("focus", update);
@@ -137,6 +130,7 @@ export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; 
     return (
       <LayoutStack>
         <Summary state="off" detail="Computer use isn't turned on in this app." />
+        <PrivateValues />
         <RememberedFileSharing />
         <RememberedFileSends client={fileSends} />
       </LayoutStack>
@@ -149,13 +143,11 @@ export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; 
   const verified = readError ? undefined : status?.permissions;
   const missing = PERMISSIONS.filter((permission) => verified?.[permission.id] !== true);
   const nextPermission = missing[0]?.id;
-  // System permissions exist only for this Mac; Windows and VMs need none.
   const showPermissions = status?.placement === "local" && isMacPlatform() && !["unsupported", "unavailable"].includes(status.readiness);
   const helper = <span className="font-medium text-foreground" data-testid="settings-computer-entry">{entry}</span>;
   const state: SummaryState = readError ? "unavailable" : status?.readiness ?? "checking";
   const detail = readError ? `Couldn't check this computer. ${readError}`
     : !status ? undefined
-      // The helper's own wording addresses one chat and points at a setup screen; this page is that screen, for every chat.
       : status.readiness === "ready" ? `Every chat can use apps on ${status.placement === "local" ? "this computer" : computer}. While the agent works, the chat shows a live view with Take over and Stop.`
         : showPermissions && status.readiness === "setup-required" ? (missing.length === 1 ? `Turn on ${missing[0].title} below.` : "Turn on both macOS permissions below.")
           : status.detail;
@@ -228,13 +220,13 @@ export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; 
           </Group>
         </LayoutSection>
       ) : null}
+      <PrivateValues />
       <RememberedFileSharing />
       <RememberedFileSends client={fileSends} />
     </LayoutStack>
   );
 }
 
-/** The page's focal element: the one state every chat depends on, and where it applies. */
 function Summary({ state, detail, error, children }: { state: SummaryState; detail?: string; error?: string; children?: ReactNode }) {
   const { icon: Icon, label, tile } = SUMMARY[state];
   return (
@@ -245,7 +237,6 @@ function Summary({ state, detail, error, children }: { state: SummaryState; deta
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div
           role="status"
-          // Off is not a readiness: nothing was asked of the helper.
           data-testid={state === "off" ? undefined : "settings-computer-status"}
           data-state={state}
           className="text-sm font-medium text-foreground"
@@ -261,7 +252,6 @@ function Summary({ state, detail, error, children }: { state: SummaryState; deta
   );
 }
 
-/** A titled list of rows between hairlines, with what it holds counted on the right. */
 function Group({ title, count, footnote, children }: { title: string; count?: string; footnote?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-3">
@@ -276,7 +266,6 @@ function Group({ title, count, footnote, children }: { title: string; count?: st
 }
 
 function Row({ className, ...props }: ComponentProps<"li">) {
-  // Narrow panes: the state and action drop below the text instead of squeezing it.
   return <li className={cn("flex min-h-12 flex-wrap items-start gap-x-3 gap-y-2 py-3", className)} {...props} />;
 }
 
@@ -293,7 +282,6 @@ const FILE_SEND_KINDS: Record<string, string> = {
   outlook_create_draft_with_attachments: "Attach files to Outlook drafts",
 };
 
-/** File sends this member chose to always allow. The host owns them; this only lists and removes. */
 export function RememberedFileSends({ client }: { client?: FileSendGrantsClient | null }) {
   const [state, setState] = useState<FileSendGrants | null>(null);
   const [error, setError] = useState("");
@@ -308,7 +296,6 @@ export function RememberedFileSends({ client }: { client?: FileSendGrantsClient 
       const next = await client.listFileSendGrants();
       if (current === generation.current) setState(next);
     } catch (cause) {
-      // Never keep showing one account's approvals after a failed read.
       if (current === generation.current) { setState(null); setError(`Couldn't check always-allowed file sends. Try again. ${message(cause)}`); }
     }
   }
@@ -344,7 +331,6 @@ export function RememberedFileSends({ client }: { client?: FileSendGrantsClient 
     }
   }
 
-  // Nothing to manage until the member has chosen Always allow once.
   const grants = state?.enabled ? state.grants : [];
   if (!grants.length && !error) return null;
   return (
@@ -375,7 +361,6 @@ export function RememberedFileSends({ client }: { client?: FileSendGrantsClient 
   );
 }
 
-/** Main owns identity, feature checks and grants. The renderer only lists and revokes. */
 export function RememberedFileSharing() {
   const [state, setState] = useState<DesktopCommandResult<"computerListFileGrants"> | null>(null);
   const [loading, setLoading] = useState(false);
@@ -385,7 +370,6 @@ export function RememberedFileSharing() {
 
   async function refresh(clearIdentity = false) {
     const current = ++generation.current;
-    // Never retain one account's folders as a fallback for another account or a failed read.
     setState((previous) => clearIdentity ? null : previous ? { enabled: previous.enabled, grants: [] } : null);
     setLoading(true);
     setError("");
@@ -473,6 +457,169 @@ export function RememberedFileSharing() {
           </Row>
         ) : null}
       </Group>
+    </LayoutSection>
+  );
+}
+
+const PRIVATE_VALUES_REFRESH_MS = 15_000;
+
+const PRIVATE_VALUE_SWITCHES: Array<{ name: PrivateValueSwitch; title: string; description: string }> = [
+  { name: "commands", title: "Get values from commands", description: "OpenWork runs a command you approve, such as your password manager's, and puts what it prints where it is needed: a website field, a program or a request." },
+  { name: "paste", title: "Paste values into the card", description: "The agent asks, you paste the value into OpenWork's own card, and it goes straight to where it is needed." },
+  { name: "keep", title: "Keep a pasted value for the chat", description: "Offers to keep a value you paste until the chat ends or OpenWork quits, so you paste it once." },
+];
+
+const PRIVATE_VALUE_RESULTS: Record<string, string> = {
+  filled: "Filled",
+  declined: "You said no",
+  blocked: "Blocked by your organization",
+  off: "Turned off here",
+};
+
+const PRIVATE_VALUE_SOURCES: Record<PrivateValueSettings["recent"][number]["source"], string> = {
+  command: "from a command",
+  paste: "pasted",
+  kept: "kept for the chat",
+};
+
+function OrganizationSet({ children = "Set by your organization" }: { children?: ReactNode }) {
+  return <span role="status" className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground"><Lock aria-hidden className="size-3" />{children}</span>;
+}
+
+export function PrivateValues() {
+  const identity = useSyncExternalStore(subscribeGatewayUsageScope, () => readGatewayUsageScope().generation);
+  const listed = useQuery({
+    queryKey: ["private-values", identity],
+    queryFn: () => desktopBridge.computerListPrivateValues(),
+    enabled: isElectronRuntime(),
+    gcTime: 0,
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    refetchInterval: PRIVATE_VALUES_REFRESH_MS,
+  });
+  const [failed, setFailed] = useState("");
+  const [changing, setChanging] = useState<string | null>(null);
+  const state = listed.data;
+  const error = failed || (listed.error ? `Couldn't check private values. Try again. ${message(listed.error)}` : "");
+
+  async function refresh() {
+    setFailed("");
+    await listed.refetch();
+  }
+
+  async function change(id: string, problem: string, action: () => Promise<{ ok: boolean }>) {
+    if (changing) return;
+    setChanging(id);
+    setFailed("");
+    try {
+      if (!(await action()).ok) throw new Error("Nothing changed.");
+      await listed.refetch();
+    } catch (cause) {
+      setFailed(`${problem} Try again. ${message(cause)}`);
+    } finally {
+      setChanging(null);
+    }
+  }
+
+  if (!state?.enabled) return null;
+  const { organization, switches, always, kept, recent } = state;
+  const blocked = organization.fills === "blocked";
+  const locked: Record<PrivateValueSwitch, boolean> = {
+    commands: blocked || organization.commands === "blocked",
+    paste: blocked || organization.paste === "blocked",
+    keep: blocked || organization.paste === "blocked",
+  };
+  const on: Record<PrivateValueSwitch, boolean> = {
+    commands: switches.commands && !locked.commands,
+    paste: switches.paste && !locked.paste,
+    keep: switches.keep && switches.paste && !locked.keep,
+  };
+  const note = blocked ? "Your organization blocks filling private values on websites."
+    : organization.fills === "limited" ? "Your organization limits the websites private values can be filled on."
+    : organization.fills === "ask" ? "Your organization asks you before every fill, so Always isn't offered." : null;
+  return (
+    <LayoutSection id="private-values">
+      <Group
+        title="Private values"
+        footnote={<>Passwords, codes and other values the agent puts into a website without seeing them. You approve every fill on a card in the chat.{note ? <> <span data-testid="settings-private-values-organization">{note}</span></> : null}</>}
+      >
+        {PRIVATE_VALUE_SWITCHES.map(({ name, title, description }) => (
+          <Row key={name} className="items-center" data-testid={`settings-private-values-${name}`}>
+            <RowText>
+              <LayoutSectionItemTitle className="flex-wrap gap-x-3">
+                {title}
+                {locked[name] ? <OrganizationSet />
+                  : name === "commands" && organization.commands === "limited" ? <OrganizationSet>Some commands are set by your organization</OrganizationSet> : null}
+              </LayoutSectionItemTitle>
+              <LayoutSectionItemDescription>{description}</LayoutSectionItemDescription>
+            </RowText>
+            <Switch
+              className="ml-auto shrink-0"
+              aria-label={title}
+              checked={on[name]}
+              disabled={locked[name] || changing !== null || (name === "keep" && !on.paste)}
+              onCheckedChange={(checked) => void change(name, "Couldn't change the setting.", () => desktopBridge.computerSetPrivateValueSwitch(name, checked))}
+            />
+          </Row>
+        ))}
+        {error ? (
+          <Row className="items-center">
+            <div role="alert" className="min-w-0 flex-1 basis-64 text-sm text-red-11">{error}</div>
+            <Button size="sm" variant="outline" className="ml-auto shrink-0" onClick={() => void refresh()}>Try again</Button>
+          </Row>
+        ) : null}
+      </Group>
+      {always.length ? (
+        <Group title="Always used without asking" count={`${always.length} ${always.length === 1 ? "command" : "commands"}`} footnote="Each holds in the chat where you chose Always, until OpenWork quits.">
+          {always.map((grant) => (
+            <Row key={grant.id} className="items-center" data-testid="settings-private-values-always">
+              <RowText>
+                <LayoutSectionItemTitle className="flex-wrap gap-x-3 break-all">
+                  <span dir="ltr" className="font-mono">{grant.site}</span>
+                  {grant.blocked ? <OrganizationSet>Blocked by your organization</OrganizationSet> : null}
+                </LayoutSectionItemTitle>
+                <LayoutSectionItemDescription className="break-all text-xs">
+                  The {grant.field} field, from <span dir="ltr" className="font-mono">{grant.command}</span>
+                </LayoutSectionItemDescription>
+              </RowText>
+              <Button size="sm" variant="outline" className="ml-auto shrink-0" disabled={changing !== null} aria-busy={changing === grant.id} data-testid="settings-private-values-always-remove" aria-label={`Ask again before using ${grant.command} for ${grant.site}`} onClick={() => void change(grant.id, "Couldn't remove it.", () => desktopBridge.computerRemovePrivateValue("always", grant.id))}>Remove</Button>
+            </Row>
+          ))}
+        </Group>
+      ) : null}
+      {kept.length ? (
+        <Group title="Kept for a chat" count={`${kept.length} ${kept.length === 1 ? "value" : "values"}`} footnote="Kept in memory only, never on disk, until the chat ends or OpenWork quits.">
+          {kept.map((entry) => (
+            <Row key={entry.id} className="items-center" data-testid="settings-private-values-kept">
+              <RowText>
+                <LayoutSectionItemTitle className="break-all">{entry.label}</LayoutSectionItemTitle>
+                <LayoutSectionItemDescription className="break-all text-xs">
+                  {entry.program ? <>A key for <span dir="ltr" className="font-mono">{entry.program}</span></> : <span dir="ltr" className="font-mono">{entry.site}</span>}
+                </LayoutSectionItemDescription>
+              </RowText>
+              <Button size="sm" variant="outline" className="ml-auto shrink-0" disabled={changing !== null} aria-busy={changing === entry.id} aria-label={`Forget ${entry.label}`} onClick={() => void change(entry.id, "Couldn't forget it.", () => desktopBridge.computerRemovePrivateValue("kept", entry.id))}>Forget</Button>
+            </Row>
+          ))}
+        </Group>
+      ) : null}
+      {recent.length ? (
+        <Group title="Recent fills" footnote="Since OpenWork started. No value is recorded.">
+          {recent.map((entry, index) => (
+            <Row key={`${entry.at}-${index}`} className="items-center" data-testid="settings-private-values-recent" data-result={entry.result}>
+              <RowText>
+                <LayoutSectionItemTitle className="break-all"><span dir="ltr" className="font-mono">{entry.site}</span></LayoutSectionItemTitle>
+                <LayoutSectionItemDescription className="break-all text-xs">
+                  The {entry.field} field, {PRIVATE_VALUE_SOURCES[entry.source]}{entry.program ? <> (<span dir="ltr" className="font-mono">{entry.program}</span>)</> : null}
+                </LayoutSectionItemDescription>
+              </RowText>
+              <span className="ml-auto shrink-0 text-sm text-muted-foreground">
+                {PRIVATE_VALUE_RESULTS[entry.result] ?? "Not filled"} · <time dateTime={new Date(entry.at).toISOString()}>{new Date(entry.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time>
+              </span>
+            </Row>
+          ))}
+        </Group>
+      ) : null}
     </LayoutSection>
   );
 }

@@ -118,7 +118,6 @@ function AccessAddPicker({
       await onGrant(selectedId, role);
       resetAndClose();
     } catch {
-      // The mutation error is rendered below the access container.
     } finally {
       setSubmitting(false);
     }
@@ -227,8 +226,6 @@ export function PluginAccessSection({
     orgContext?.currentMember.permissions,
   );
   const libraryItem = library.data?.find((item) => item.type === "plugin" && item.id === pluginId);
-  // Workflows also embed this editor: their own edit role does not authorize
-  // changing the parent plugin's audience.
   const canManage = canManageOverride ?? ((pluginCreatedByOrgMembershipId !== null
     && pluginCreatedByOrgMembershipId === orgContext?.currentMember.id)
     || (libraryItem?.type === "plugin" && libraryItem.role === "manager")
@@ -245,7 +242,6 @@ export function PluginAccessSection({
   );
   const busy = grantMutation.isPending || revokeMutation.isPending;
   const disabled = busy || !canManage || isLoading || Boolean(error);
-  // Turning org-wide sharing on needs `sharing.share_org_wide`; turning it off does not.
   const orgWideLocked = !orgWideGrant && !access.canShareWithEveryone;
 
   const memberCandidates: AccessCandidate[] = members
@@ -272,7 +268,6 @@ export function PluginAccessSection({
         await grantMutation.mutateAsync({ pluginId, body: { orgWide: true, role: "viewer" } });
       }
     } catch {
-      // The mutation error is rendered below the access container.
     }
   }
 
@@ -283,7 +278,6 @@ export function PluginAccessSection({
     try {
       await revokeMutation.mutateAsync({ pluginId, grantId });
     } catch {
-      // The mutation error is rendered below the access container.
     }
   }
 

@@ -56,19 +56,13 @@ export type ExternalMcpDiagnostic = {
   payloadBytes?: number
   jsonRpcCode?: number
   connectUrl?: string
-  /** A validated link to the provider page where the named setting is changed. */
   providerSettingsUrl?: string
   providerErrorMessage?: string
   providerErrorData?: string
   providerResponseExcerpt?: string
-  /** The OAuth scopes the server said a refused request needs, space separated. */
   requiredScope?: string
 }
 
-/**
- * A tool call the server refused because the sign-in lacks a scope. The
- * sign-in is kept, and a new one asks for the same scopes.
- */
 export function isToolScopeRefusal(diagnostic: Pick<ExternalMcpDiagnostic, "code" | "operationPhase">): boolean {
   return diagnostic.code === "MCP_OAUTH_INSUFFICIENT_SCOPE" && diagnostic.operationPhase === "MCP_TOOL_EXECUTION"
 }
@@ -87,10 +81,6 @@ export type ExternalMcpSafeCause = {
 
 type FetchLike = (url: string | URL, init?: RequestInit) => Promise<Response>
 
-// JSON MCP responses are expected to be compact. Event streams need more
-// headroom because a single request can carry multiple protocol messages, but
-// still need an absolute byte ceiling so a provider cannot grow Den memory
-// without bound.
 export const EXTERNAL_MCP_JSON_RESPONSE_LIMIT_BYTES = 4 * 1024 * 1024
 export const EXTERNAL_MCP_SSE_RESPONSE_LIMIT_BYTES = 16 * 1024 * 1024
 const EXTERNAL_MCP_PROVIDER_DECLARED_ERROR_SNIFF_LIMIT_BYTES = 64 * 1024
@@ -273,8 +263,6 @@ function structuredProviderResponseExcerpt(text: string): string | undefined {
         allowed.error_message = redactSensitiveString(parsed.error.message)
       }
     }
-    // Some MCP servers (Slack) answer a refusal with top-level error_code and
-    // error_message instead of a JSON-RPC error object.
     if (
       allowed.error_code === undefined
       && typeof parsed.error_code === "number"
@@ -332,9 +320,6 @@ function numericErrorCode(value: unknown): number | undefined {
   let current: unknown = value
   for (let depth = 0; depth < 5 && current; depth += 1) {
     const code = isRecord(current) ? current.code : undefined
-    // MCP/JSON-RPC protocol errors use negative integer codes. Positive
-    // values on SDK errors are commonly HTTP statuses and are already
-    // represented by httpStatus, so do not mislabel them as JSON-RPC.
     if (typeof code === "number" && Number.isSafeInteger(code) && code < 0) return code
     current = errorCause(current)
   }
@@ -504,13 +489,6 @@ function providerDeclaredErrorFromJson(
   return providerDeclaredErrorFromEnvelope(value, phase)
 }
 
-/**
- * Reads the error a server states in the body of an HTTP refusal. Accepts a
- * JSON-RPC error object, with or without the jsonrpc marker, and the
- * top-level error_code/error_message shape Slack's MCP server uses. Only
- * negative (JSON-RPC style) codes count; the message is sanitized and capped
- * because it is untrusted provider text.
- */
 function providerDeclaredErrorFromRefusalBody(
   text: string,
   phase: ExternalMcpDiagnosticPhase,
@@ -533,11 +511,6 @@ const SLACK_APP_SETTINGS_LINK = /https:\/\/api\.slack\.com\/apps\/[^\s"'<>]+/i
 const SLACK_APP_SETTINGS_PATH = /^\/apps\/([A-Za-z0-9]{1,32})(?:\/([a-z0-9-]{1,64}))?\/?$/
 export const EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE = "MCP_SLACK_APP_MCP_DISABLED"
 
-/**
- * Rebuilds the Slack app settings link named in a provider message. Only an
- * https link on api.slack.com to an app page survives; query, fragment,
- * credentials and ports are dropped or rejected.
- */
 export function slackAppSettingsUrl(message: string | undefined): string | undefined {
   const match = message ? SLACK_APP_SETTINGS_LINK.exec(message) : null
   if (!match) return undefined
@@ -561,7 +534,6 @@ export function slackAppSettingsUrl(message: string | undefined): string | undef
   return `https://${SLACK_APP_SETTINGS_HOSTNAME}/apps/${appId}${page ? `/${page}` : ""}`
 }
 
-/** The link a failure page offers so the person can change the named provider setting. */
 export function externalMcpProviderSettingsLink(diagnostic: ExternalMcpDiagnostic): { label: string; href: string } | undefined {
   if (diagnostic.code !== EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE) return undefined
   const href = slackAppSettingsUrl(diagnostic.providerSettingsUrl)
@@ -785,14 +757,8 @@ function typedOAuthErrorName(error: unknown): string | undefined {
 }
 
 const REQUIRED_SCOPE_MAX_CHARS = 300
-// RFC 6749 scope tokens: printable ASCII without space, quote or backslash.
 const OAUTH_SCOPE_TOKEN = /^[\x21\x23-\x5B\x5D-\x7E]+$/
 
-/**
- * A request the server refused with an `insufficient_scope` challenge, and the
- * scopes it named. Everything in the challenge is the server's own text, so a
- * value that is not a plain scope list is dropped rather than shown.
- */
 function scopeChallengeFromError(error: unknown): { requiredScope?: string } | undefined {
   let current: unknown = error
   for (let depth = 0; depth < 5 && current; depth += 1) {
@@ -815,8 +781,6 @@ function oauthProviderDetail(error: unknown): string | undefined {
     seen.add(current)
     const name = errorName(current)
     if (TYPED_OAUTH_ERROR_NAMES.has(name) || name === "OAuthError" || name === "CustomOAuthError") {
-      // SDK v2 embeds raw response bodies in OAuthError.message. Only legacy
-      // typed errors use message as the provider description.
       const description = stringProperty(current, "error_description")
         ?? (TYPED_OAUTH_ERROR_NAMES.has(name) ? stringProperty(current, "message") : undefined)
       if (!description) return undefined
@@ -944,7 +908,6 @@ function safeMessageFor(input: {
   const message = input.providerDetail
     ? `${baseMessage} Provider detail (untrusted): "${input.providerDetail}".`
     : input.category === "http_failure" && input.phase.startsWith("MCP_") && input.providerErrorMessage
-      // The server said why it refused; without it a refusal is a bare status.
       ? `${baseMessage} Provider-declared message (untrusted): "${input.providerErrorMessage}".`
       : baseMessage
   const details = [
@@ -987,8 +950,6 @@ function safeBaseMessageFor(input: {
       : message
   }
   if (input.code === "MCP_INVALID_PARAMS" || input.code === "MCP_PROVIDER_INVALID_PARAMS") {
-    // The provider's own rejection names the offending argument; without it a
-    // member cannot correct a launch input that omits a required field.
     const message = "The provider rejected the tool arguments."
     return input.providerErrorMessage
       ? `${message} Provider-declared message (untrusted): "${input.providerErrorMessage}".`
@@ -1143,10 +1104,6 @@ function logProviderToolEvidence(input: {
   })
 }
 
-/**
- * A sign-in asks for the connection's configured scopes, so after a tool call
- * is refused for scope only a change to those scopes makes a new sign-in help.
- */
 function insufficientScopeAction(phase: ExternalMcpDiagnosticPhase, otherwise: string): string {
   return phase === "MCP_TOOL_EXECUTION"
     ? "Ask an organization admin to add the scope under Requested OAuth scopes in this connection's settings, then sign in to the connection again. Signing in again without that change requests the same scopes."
@@ -1162,7 +1119,6 @@ function httpClassification(input: {
   hasSession: boolean
   contentType: string
   providerResponseExcerpt?: string
-  /** The response body says the server's session limit was reached. */
   sessionLimit?: boolean
 }): Classification | null {
   const { phase, status } = input
@@ -1200,8 +1156,6 @@ function httpClassification(input: {
       operatorAction: "Verify Streamable HTTP content negotiation and the provider's supported MCP transport.",
     }
   }
-  // Only an explicit statement from the server: a generic refusal is never
-  // reported as a session limit.
   if (input.sessionLimit && phase === "MCP_INITIALIZE" && status >= 400 && status !== 401 && status !== 404) {
     return {
       phase,
@@ -1233,9 +1187,6 @@ function httpClassification(input: {
     }
   }
   if ((status === 401 || status === 403) && phase.startsWith("MCP_") && input.hasAuthorization) {
-    // A 401 is itself an authentication challenge. A 403 is ambiguous for
-    // enterprise providers: initialization rejects access to the resource,
-    // while an ordinary tools/* 403 is usually an ACL/role denial.
     if (status === 401 || phase === "MCP_INITIALIZE" || input.bearerChallenge || input.insufficientScope) {
       return {
         phase: "AUTH_RESOURCE_VALIDATION",
@@ -1482,8 +1433,6 @@ function classifyByCode(code: string): Classification | null {
 }
 
 function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase): Classification {
-  // The enterprise client aborts with a RequestTimeout MCP error of its own, so
-  // check for our marker before any JSON-RPC code is read as the provider's.
   if (error instanceof ExternalMcpLifecycleDeadlineError || isEnterpriseMcpLifecycleDeadline(error)) {
     return {
       phase: fallbackPhase,
@@ -1992,7 +1941,6 @@ export class ExternalMcpDiagnosticTracker {
     const scopeChallenge = classification.code === "MCP_OAUTH_INSUFFICIENT_SCOPE"
       ? scopeChallengeFromError(error) ?? scopeChallengeFromError(source.error)
       : undefined
-    // A scope challenge's only detail is its scope list, reported on its own.
     const safeOAuthProviderDetail = scopeChallenge
       ? undefined
       : oauthProviderDetail(error) ?? oauthProviderDetail(source.error) ?? capturedOAuthProviderDetail
@@ -2070,9 +2018,6 @@ function requestPhase(input: string | URL, init: RequestInit | undefined, endpoi
 
   if (url.origin === endpoint.origin && url.pathname === endpoint.pathname) {
     const method = jsonRpcMethod(body)
-    // server/discover is the modern wire's protocol negotiation; it shares
-    // the initialize phase so its unauthenticated bearer challenge is
-    // suppressed the same way.
     if (method === "server/discover" || method === "initialize") return "MCP_INITIALIZE"
     if (method === "notifications/initialized") return "MCP_INITIALIZED"
     if (method === "tools/list") return "MCP_TOOL_DISCOVERY"
@@ -2086,10 +2031,6 @@ function healthForPhase(phase: ExternalMcpDiagnosticPhase): ExternalMcpHealthLev
   if (phase === "HTTP_ROUTING" || phase === "AUTH_RESOURCE_DISCOVERY" || phase === "AUTH_ISSUER_DISCOVERY" || phase === "AUTH_CLIENT_REGISTRATION") {
     return "reachable"
   }
-  // An HTTP response proves reachability only. Higher health levels are
-  // advanced by parsed OAuth/MCP operations after schema, lifecycle, and
-  // pagination checks succeed; a 200 HTML page must never become
-  // protocol_ready or catalog_ready.
   if (phase.startsWith("MCP_") || phase === "AUTH_RESOURCE_VALIDATION") return "reachable"
   return undefined
 }
@@ -2105,8 +2046,6 @@ function preserveResponseMetadata(target: Response, source: Response): void {
     try {
       Object.defineProperty(target, key, { configurable: true, value: source[key] })
     } catch {
-      // These properties are diagnostic conveniences only. The status,
-      // headers, and bounded body are the protocol-relevant fields.
     }
   }
 }
@@ -2204,9 +2143,7 @@ const SESSION_LIMIT_TEXT = /\b(?:too many|max(?:imum)?|limit(?:ed)?|capacity|exh
 
 async function providerResponseExcerpts(response: Response, phase: ExternalMcpDiagnosticPhase): Promise<{
   memberExcerpt?: string
-  /** Read from the body for classification only; the body itself is never kept. */
   sessionLimit: boolean
-  /** The error the server stated in the body, sanitized and capped. */
   declaredError: ProviderDeclaredErrorEvidence | null
   log: ProviderResponseLog
 } | null> {
@@ -2254,7 +2191,6 @@ async function sniffProviderDeclaredError(input: {
     const evidence = providerDeclaredErrorFromJson(parsed, input.phase)
     if (evidence) input.tracker.recordProviderDeclaredError(evidence)
   } catch {
-    // Sniffing is best-effort diagnostic evidence; the SDK still receives the original body.
   }
 }
 
@@ -2267,8 +2203,6 @@ async function boundedExternalMcpResponse(input: {
   sniffProviderDeclaredError: boolean
 }): Promise<Response> {
   if (input.response.status === 202) {
-    // 202 Accepted carries no JSON-RPC message. Some providers keep its body
-    // open, so reading it (to sniff or relay) would stall the MCP lifecycle.
     void input.response.body?.cancel().catch(() => undefined)
     const accepted = new Response(null, {
       status: 202,
@@ -2279,8 +2213,6 @@ async function boundedExternalMcpResponse(input: {
     return accepted
   }
   if (input.sniffProviderDeclaredError) {
-    // Clone before any original .body getter access. Bun breaks the tee if the
-    // original body getter is touched before clone(), which would empty the SDK body.
     await sniffProviderDeclaredError({
       response: input.response,
       phase: input.phase,
@@ -2380,8 +2312,6 @@ export function createExternalMcpDiagnosticFetch(input: {
       if (!response.ok || (response.ok && isOAuthTokenPhase(phase) && contentType === "application/json")) {
         const excerpts = await providerResponseExcerpts(response, phase)
         sessionLimit = excerpts?.sessionLimit === true
-        // A refusal's own reason is kept for MCP requests only. Credential
-        // rejections stay excluded: their text can repeat a submitted key.
         if (
           !response.ok
           && phase.startsWith("MCP_")

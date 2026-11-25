@@ -24,11 +24,6 @@ import {
   type RangeKey,
 } from "./metrics.js"
 
-/**
- * Control Center snapshots: a background job recomputes each metric on its
- * tier's interval and the read endpoint only ever reads these rows.
- */
-
 export type MetricTier = "fast" | "heavy"
 export type MetricDefinition = { tier: MetricTier; ranges: readonly RangeKey[]; compute: (context: MetricContext) => Promise<MetricResult<ControlCenterSectionKey>> }
 
@@ -46,27 +41,21 @@ export type Intervals = Record<MetricTier, number>
 export type SnapshotRow = { metricKey: string; rangeKey: string; payload: unknown; computedAt: Date | null; durationMs: number | null; error: string | null }
 
 export interface SnapshotStore {
-  /** Take the metric's lease. `force` also takes a lease that is only cooling down after a refresh, never a running one. */
   claim(metricKey: string, owner: string, until: Date, now: Date, force: boolean): Promise<boolean>
-  /** Give the lease back; nobody refreshes the metric again before `nextDue` unless forced. */
   release(metricKey: string, owner: string, nextDue: Date): Promise<void>
   saveSuccess(metricKey: string, payloads: Partial<Record<RangeKey, unknown>>, durationMs: number, now: Date): Promise<void>
-  /** Record the error on the metric's rows without touching their last good payload. */
   saveFailure(metricKey: string, ranges: readonly RangeKey[], error: string, durationMs: number, now: Date): Promise<void>
   read(rangeKeys: readonly RangeKey[]): Promise<SnapshotRow[]>
-  /** Record a manual refresh unless one was requested less than `minIntervalMs` ago. */
   requestRefresh(now: Date, minIntervalMs: number): Promise<{ accepted: true } | { accepted: false; retryAfterMs: number }>
   lastRequestedAt(): Promise<Date | null>
 }
 
 const MANUAL_REFRESH_KEY = "manual_refresh"
-/** A refresh that holds its lease longer than this is presumed dead and can be taken over. */
 export const REFRESH_LEASE_MS = 15 * 60_000
 
 export const defaultOwner = () => `${hostname().slice(0, 40)}:${process.pid}:${randomBytes(4).toString("hex")}`
 
 function errorMessage(error: unknown): string {
-  // Drizzle wraps driver errors as "Failed query: <sql>"; the cause says what went wrong.
   const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error
   const message = cause instanceof Error ? cause.message : String(cause)
   return (message.split("\n")[0] ?? "Refresh failed").slice(0, 500)
@@ -91,20 +80,16 @@ export async function refreshMetric(key: ControlCenterSectionKey, deps: {
       if (!parsed.success) throw new Error(`The ${key} metric produced an invalid ${range} snapshot: ${parsed.error.issues[0]?.message ?? "unknown issue"}`)
       payloads[range] = parsed.data
     }
-    // The data is as of the context's clock, which every query used for its windows.
     await store.saveSuccess(key, payloads, Date.now() - started, context.now)
     outcome = "refreshed"
   } catch (error) {
     await store.saveFailure(key, definition.ranges, errorMessage(error), Date.now() - started, context.now)
   } finally {
-    // A failure waits out the interval too: the lease is shared, so no instance or
-    // boot retries it sooner and a failing metric costs no more than a healthy one.
     await store.release(key, owner, new Date(Date.now() + Math.floor(deps.intervals[definition.tier] * 0.9)))
   }
   return outcome
 }
 
-/** Refresh metrics one at a time so a refresh never competes with itself for the database. */
 export async function refreshMetrics(keys: readonly ControlCenterSectionKey[], deps: Parameters<typeof refreshMetric>[1]) {
   const outcomes: Partial<Record<ControlCenterSectionKey, RefreshOutcome>> = {}
   for (const key of keys) outcomes[key] = await refreshMetric(key, deps)
@@ -119,7 +104,6 @@ export async function readControlCenter(range: ControlCenterRange, deps: { store
     const definition = METRICS[key]
     const rangeKey = definition.ranges.includes(range) ? range : "all"
     const row = rows.find((candidate) => candidate.metricKey === key && candidate.rangeKey === rangeKey)
-    // A snapshot written by an older build may no longer match the schema; show it as missing until the next refresh.
     const parsed = row?.payload == null ? null : schema.safeParse(row.payload)
     const computedAt = parsed?.success ? row?.computedAt ?? null : null
     return {
@@ -151,20 +135,17 @@ const toDate = (value: unknown) => {
   return null
 }
 
-/** The MySQL store. Claims are a single upsert, so two instances never both win a lease. */
 export const dbSnapshotStore: SnapshotStore = {
   async claim(metricKey, owner, until, now, force) {
     const free = force
       ? sql`(${AdminMetricRefreshLeaseTable.lease_until} IS NULL OR ${AdminMetricRefreshLeaseTable.lease_until} < ${now} OR ${AdminMetricRefreshLeaseTable.owner} IS NULL)`
       : sql`(${AdminMetricRefreshLeaseTable.lease_until} IS NULL OR ${AdminMetricRefreshLeaseTable.lease_until} < ${now})`
-    // MySQL applies these assignments in order, so lease_until sees the owner just written.
     await db.insert(AdminMetricRefreshLeaseTable).values({ metric_key: metricKey, owner, lease_until: until }).onDuplicateKeyUpdate({
       set: {
         owner: sql`IF(${free}, ${owner}, ${AdminMetricRefreshLeaseTable.owner})`,
         lease_until: sql`IF(${AdminMetricRefreshLeaseTable.owner} <=> ${owner}, ${until}, ${AdminMetricRefreshLeaseTable.lease_until})`,
       },
     })
-    // Primary: reads back the claim upserted above.
     const [row] = await db.$primary.select({ owner: AdminMetricRefreshLeaseTable.owner }).from(AdminMetricRefreshLeaseTable)
       .where(eq(AdminMetricRefreshLeaseTable.metric_key, metricKey)).limit(1)
     return row?.owner === owner
@@ -203,7 +184,6 @@ export const dbSnapshotStore: SnapshotStore = {
     return { accepted: false, retryAfterMs: Math.max(1_000, last.getTime() + minIntervalMs - now.getTime()) }
   },
   async lastRequestedAt() {
-    // Primary: requestRefresh reads back the request it just upserted.
     const [row] = await db.$primary.select({ requestedAt: AdminMetricRefreshLeaseTable.requested_at }).from(AdminMetricRefreshLeaseTable)
       .where(eq(AdminMetricRefreshLeaseTable.metric_key, MANUAL_REFRESH_KEY)).limit(1)
     return row?.requestedAt ? toDate(row.requestedAt) : null

@@ -1,18 +1,3 @@
-/**
- * Builds the Freestyle snapshot desktop computers boot from: the same desktop as
- * Dockerfile.desktop, installed on Freestyle's Ubuntu base and captured while running,
- * so each new computer resumes with its desktop already up instead of booting it.
- *
- *   pnpm --filter @openwork-ee/headless-computer build
- *   FREESTYLE_API_KEY=... pnpm --filter @openwork-ee/headless-computer snapshot:build:freestyle-desktop
- *
- * Then run the runner with HEADLESS_COMPUTER=freestyle, HEADLESS_COMPUTER_DESKTOP=true and
- * HEADLESS_COMPUTER_SNAPSHOT=<printed slug>. The slug follows the desktop image's identity, so a
- * runner and its snapshot always match; re-running with an unchanged image is a no-op, and a runner
- * with a newer guest installs it into the computers it starts. Building a new snapshot gives the
- * ones it replaces an unused-for-14-days deletion window, so old images don't pile up.
- * The API key stays on this machine; it never enters the VM.
- */
 import { readFile, readdir } from "node:fs/promises"
 import { Freestyle, FreestyleApiError } from "freestyle"
 import { DESKTOP_COMPUTER_INSTALL_SCRIPT } from "../src/image.js"
@@ -30,12 +15,9 @@ const [imageVersion, guestVersion] = await Promise.all([text("dist/desktop-image
   process.exit(1)
 })
 const base = process.env.FREESTYLE_DESKTOP_BASE ?? "freestyle/ubuntu"
-// Chromium for Testing through Playwright: Ubuntu ships Chromium only as a snap.
 const playwright = "1.56.1"
-// A fixed Node release, checked against its published SHA-256 (nodejs.org/dist/v24.22.1/SHASUMS256.txt.asc).
 const node = { version: "24.22.1", sha256: "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6" }
 const slug = process.env.HEADLESS_COMPUTER_SNAPSHOT ?? `workbot-desktop-freestyle-${imageVersion.trim().slice(0, 16)}`
-/** Superseded snapshots are deleted once nothing has booted from them for this long; rolling back can still use them. */
 const RETIRED_SNAPSHOT_SECONDS = 14 * 24 * 3600
 const api = new Freestyle({ apiKey })
 
@@ -48,8 +30,6 @@ if (exists) {
   process.exit(0)
 }
 
-// The lock's hashes name Debian's Python 3.11 wheels; Freestyle's Ubuntu has 3.12. Install the
-// same pinned versions as binary wheels into the system Python (/usr/bin/python3) instead.
 const lock = await text("requirements-desktop.lock")
 const pinned = [...lock.matchAll(/^([A-Za-z0-9._-]+==[^\s\\]+)/gm)].map(match => match[1]).join("\n") + "\n"
 const lockedInstall = "python3 -m pip install --no-cache-dir --quiet --break-system-packages --require-hashes --only-binary=:all: -r /usr/local/share/openwork-computer/requirements-desktop.lock"
@@ -57,11 +37,12 @@ if (!DESKTOP_COMPUTER_INSTALL_SCRIPT.includes(lockedInstall)) throw new Error("T
 const installComputer = DESKTOP_COMPUTER_INSTALL_SCRIPT.replace(lockedInstall,
   "/usr/bin/python3 -m pip install --no-cache-dir --quiet --break-system-packages --only-binary=:all: -r /usr/local/share/openwork-computer/requirements-desktop.lock")
 
-// Everything Dockerfile.desktop copies into its image, from this checkout.
 const build = "/opt/openwork-desktop-build"
 const files: Record<string, string> = {
   "install-computer.sh": installComputer,
   "requirements-desktop.lock": pinned,
+  "desktop-node-packages.json": await text("desktop-node-packages.json"),
+  "desktop-node-packages.lock.json": await text("desktop-node-packages.lock.json"),
   "apps.mjs": await text("src/desktop-apps.mjs"),
   "desktop-scripting.mjs": await text("src/desktop-scripting.mjs"),
   "configure-files.sh": await text("scripts/configure-desktop-files.sh"),
@@ -100,11 +81,12 @@ printf 'openwork-command ALL=(root) NOPASSWD: /usr/local/sbin/openwork-install\\
 chmod 0440 /etc/sudoers.d/ubuntu /etc/sudoers.d/openwork-command
 mkdir -p /usr/local/share/openwork-computer /usr/local/share/openwork-desktop/scripting /workspace
 install -m 0644 $B/requirements-desktop.lock /usr/local/share/openwork-computer/requirements-desktop.lock
-bash $B/install-computer.sh
+install -m 0644 $B/desktop-node-packages.json $B/desktop-node-packages.lock.json /usr/local/share/openwork-computer/
 # Freestyle's base puts its own Python first on PATH (/usr/local/bin -> /opt/freestyle/python); the
 # computer's packages are in the system Python, so python and pip there must be the system ones.
 for name in python python3 python3.12; do ln -sfn /usr/bin/python3 /usr/local/bin/$name; done
 for name in pip pip3 pip3.12; do ln -sfn /usr/bin/pip3 /usr/local/bin/$name; done
+bash $B/install-computer.sh
 PLAYWRIGHT_BROWSERS_PATH=/opt/openwork-chromium /usr/local/bin/npx -y playwright@${playwright} install --with-deps chromium
 ln -sfn "$(ls -d /opt/openwork-chromium/chromium-*/chrome-linux/chrome | head -n 1)" /usr/local/bin/chromium
 chmod -R a+rX /opt/openwork-chromium
@@ -142,7 +124,6 @@ try {
   await vm.exec({ command: `sudo mkdir -p ${build}/scripting && sudo chown -R 1000:1000 ${build}`, timeoutMs: 30_000 })
   for (const [name, content] of Object.entries(files)) await vm.fs.writeTextFile(`${build}/${name}`, content)
   await vm.fs.writeTextFile(`${build}/install.sh`, install)
-  // The install outlives Freestyle's five-minute command limit, so it runs as a unit.
   const launch = await vm.exec({ command: `sudo systemd-run --unit=desktop-install --collect bash ${build}/install.sh`, timeoutMs: 30_000 })
   if (launch.statusCode !== 0) throw new Error(`install did not start: ${launch.stderr ?? ""}`)
   const deadline = Date.now() + 60 * 60_000
@@ -159,12 +140,9 @@ try {
   console.log(`\nInstalled in ${Math.round((Date.now() - started) / 1000)}s.`)
   await vm.exec({ command: `sudo rm -rf ${build}`, timeoutMs: 30_000 })
 
-  // Start the desktop exactly as the runner does, so the snapshot captures it running
-  // and a new computer's first viewer request finds it healthy at once.
   const start = await vm.exec({ command: `sudo -n /usr/local/sbin/openwork-desktop-bridge start ${imageVersion.trim()} ${guestVersion.trim()}`, timeoutMs: 60_000 })
   console.log(start.stdout?.trim())
   if (start.statusCode !== 0) throw new Error(`desktop did not start: ${start.stderr ?? ""}`)
-  // The bridge returns once the guest is launched; poll until it listens, as the runner does.
   const probeHealth = () => vm.exec({ command: "printf '{}' | sudo -n /usr/local/sbin/openwork-desktop-bridge call /health", timeoutMs: 30_000 })
   let health = await probeHealth()
   for (let attempt = 1; attempt < 60 && health.statusCode !== 0; attempt++) {
@@ -185,10 +163,6 @@ try {
   await vm.delete().catch(() => undefined)
 }
 
-/**
- * Gives every earlier desktop snapshot without a deletion window one: Freestyle deletes it once no computer has been
- * created from it for RETIRED_SNAPSHOT_SECONDS. Computers already made from it keep running; only new ones can't use it.
- */
 async function retireOlderSnapshots() {
   let retired = 0
   for (let offset = 0; ; offset += 100) {

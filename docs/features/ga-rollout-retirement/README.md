@@ -6,6 +6,10 @@ A [second pass retires 18 additional globally enabled rollouts](../globally-enab
 
 ## Retired switches
 
+The November follow-up makes `workbotAgentBrief`, `workbotProfileComputers`, `workbotDeviceActivity`, `workbotEnableAllConnectors`, `workbotAgentStoppedSources`, `chatRunCommands`, `chatTableExpand`, `sessionMultiSelect`, `followUpSuggestions`, `sideChatPanel`, `personalSkillPortability`, `denGreySidebar`, `litellmEntraMemberSignIn`, `sandboxTools`, `mcpThreadEvents`, `nativeMcpEvents` standard behavior on Cloud and self-hosted. `connectionSelectedScopesOnly` and `opencodeV2Only` remain rollback switches.
+
+The November cleanup removes the opt-in paths for `connectEngineTools`, `connectStandardTools`, `connectionMcpServers`, `sandboxGateway`, and `workbotDocumentEditing`. The previous off behavior remains; historical overrides and operator locks are ignored.
+
 - Connect: `googleCalendarRecurrence`, `googleDrivePdfText`, `desktopPersonalConnectors`, `outlookAttachments`.
 - Artifacts: `appToolRepair`, `publicApps`, `appSites`.
 - Desktop: `plainFreeModel`, `settledSessions`, `composerBackgroundTasks`, `agentQuestions`, `steadyLiveTurn`, `remoteSessionPush`.
@@ -112,32 +116,21 @@ Revert this code change to restore the switches and their checks. Their historic
 ## Flags intentionally retained
 
 November 2026 follow-up: `teamSettingsSidebar` was removed; `workbotSettingsTabs`
-and Cloud sandbox-only `sandboxSlack` and `sandboxModelChoice` became standard behavior without rollout switches.
+and Cloud sandbox-only `sandboxSlack` and `sandboxModelChoice` became standard behavior without rollout switches; desktop `settingsFind` (Cmd/Ctrl+F on a settings page) is always on.
 
 These remain controlled rollouts or operational switches. Neither a stale code default nor a single-organization override is sufficient evidence of GA. The 18 deployment-wide completed rollouts listed in the second-pass guide are no longer in this registry.
 
 | Key | Feature |
 | --- | --- |
-| `nativeMcpEvents` | Session and computer MCP events |
-| `mcpThreadEvents` | MCP thread events |
 | `remoteDesktopDeviceLogin` | Remote desktop device sign-in |
-| `followUpSuggestions` | Desktop: suggested follow-ups |
-| `denGreySidebar` | Den: grey sidebar, white pages |
 | `administratorRecovery` | Deploy-time administrator recovery |
-| `connectionMcpServers` | Connect: an MCP server for each connection |
 | `opencodeV2Only` | OpenCode v2 only |
 | `managedDeployments` | Managed deployments |
 | `workbotDocuments` | Workbot Documents |
-| `workbotDocumentEditing` | Workbot Documents: editing |
 | `workbotWorkspaceAssistant` | Workbot: workspace assistant |
-| `workbotProfileComputers` | Workbot: Computers in its profile |
 | `workbotCalmChat` | Workbot: calm chat look |
-| `workbotAgentBrief` | Workbot: Your agent's brief and check rhythm |
 | `workbotAgentCheckGate` | Workbot: Your agent skips checks when nothing new arrived |
 | `workbotAgentSendCheck` | Workbot: Your agent checks each message before sending |
 | `browserDemonstrations` | Workbot: teach browser tasks |
 | `remoteComputers` | Desktop: computer use on remote computers |
 | `remoteTasksOptIn` | Desktop: other devices reach a computer only after its owner allows it |
-| `sandboxGateway` | Workbot: computers through the sandbox gateway |
-| `connectStandardTools` | Connect: standard tools |
-| `connectEngineTools` | Connect: a tool for each action in OpenWork's engine |

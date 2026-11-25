@@ -1,11 +1,5 @@
-/**
- * The newest page of each chat, kept on this device so the chat opens on it at once next time, while
- * it is read again. Kept per signed-in person, workspace and chat; only a conversation that wasn't answering when it
- * was read, so what shows first is never a reply in progress; for a week at most; and all of it goes on sign-out.
- */
 const PREFIX = "workbot.thread.v1:";
 const MAX_AGE_MS = 7 * 86_400_000;
-/** As many turns as the first read shows (WORKBOT_FIRST_TURNS). */
 const KEPT_TURNS = 8;
 
 type Identity = { principalId: string; organizationId: string } | undefined;
@@ -36,7 +30,6 @@ export function saveThreadSnapshot(identity: Identity, chat: string | null, thre
   try {
     window.localStorage.setItem(keyOf(identity, chat), JSON.stringify({ savedAt: Date.now(), thread: kept }));
   } catch {
-    // Storage full or off: the chat just opens the way it did before.
   }
 }
 
@@ -48,6 +41,5 @@ export function clearThreadSnapshots() {
       if (key?.startsWith(PREFIX)) window.localStorage.removeItem(key);
     }
   } catch {
-    // Storage off: nothing was kept.
   }
 }

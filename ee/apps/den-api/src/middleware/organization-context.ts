@@ -22,8 +22,15 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
   const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
-  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId
   const session = c.get("session")
+  const sessionScopedOrganizationId = session?.organizationScopeId ?? null
+  if (sessionScopedOrganizationId && headerOrganizationId && headerOrganizationId !== sessionScopedOrganizationId) {
+    return c.json({
+      error: "forbidden",
+      message: "This sign-in works in one organization only.",
+    }, 403)
+  }
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? sessionScopedOrganizationId ?? headerOrganizationId
   const userId = normalizeDenTypeId("user", user.id)
 
   let organizationId = scopedOrganizationId ?? c.get("activeOrganizationId") ?? null
@@ -122,7 +129,6 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   c.set("organizationContext", context)
   c.set("activeOrganizationId", context.organization.id)
   c.set("activeOrganizationSlug", context.organization.slug)
-  // Durable audit intent (when captured) before the handler; 503 if it cannot be recorded.
   const auditBlocked = await beginAuditRequest(c)
   if (auditBlocked) {
     return auditBlocked as never

@@ -81,18 +81,10 @@ export const PROVIDER_LABELS: Record<string, string> = {
 const OPENWORK_MODELS_PROVIDER_ID = "openwork";
 
 export type ProviderAuthModalProps = {
-  /** Claude Code sign-in, offered as a way to connect Anthropic. Absent when the person cannot use it. */
   claudeAgent?: ClaudeAgentSetupState;
-  /** Resolves with the success message once the engine confirms the Claude Code login; rejects with the reason. */
   onConnectClaudeAgent?: () => Promise<unknown>;
-  /**
-   * Connects like onConnectClaudeAgent, first making sure Claude Code is signed in: when it is not, Claude Code's
-   * own sign-in opens in the browser. Used where `claudeAgent.canSignIn` says OpenWork can run it.
-   */
   onSignInClaudeAgent?: () => Promise<unknown>;
-  /** Stops waiting on a Claude Code sign-in the person gave up on. */
   onCancelClaudeAgentSignIn?: () => unknown;
-  /** Looks again for Claude Code on this computer; the answer arrives as `claudeAgent.installed`. */
   onCheckClaudeAgentInstalled?: () => unknown;
   open: boolean;
   loading: boolean;
@@ -101,7 +93,6 @@ export type ProviderAuthModalProps = {
   preferredProviderId?: string | null;
   providers: ProviderAuthProvider[];
   connectedProviderIds: string[];
-  /** Listed by the engine but without the person's own key (built-in Zen): offered under "Available to add". */
   keylessProviderIds?: ReadonlySet<string>;
   gatewayProviderIds?: ReadonlySet<string>;
   authMethods: Record<string, ProviderAuthMethod[]>;
@@ -114,7 +105,6 @@ export type ProviderAuthModalProps = {
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   onRefreshProviders?: () => Promise<unknown>;
   openWorkModelsState?: "included" | "off" | "unavailable";
-  /** True when the organization lists OpenWork Models, so it is not repeated under On this device. */
   hideOpenWorkModelsDeviceRow?: boolean;
   organizationName?: string;
   organizationProviderIds?: ReadonlySet<string>;
@@ -128,7 +118,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     "list" | "method" | "api" | "oauth-code" | "oauth-auto" | "external"
   >("list");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
-  // The key stays in the field until submit takes it; only emptiness is state.
   const apiKeyField = useRef<SecretFieldHandle>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [oauthCodeInput, setOauthCodeInput] = useState("");
@@ -141,7 +130,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
   const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
-  // Claude Code turned up while this step was waiting for it to be installed.
   const [claudeFound, setClaudeFound] = useState(false);
   const claudeWasMissing = useRef(false);
   const checkClaudeInstalled = useRef(props.onCheckClaudeAgentInstalled);
@@ -258,21 +246,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const claudeChecking = Boolean(props.claudeAgent?.checking);
   const claudeBusy = Boolean(props.claudeAgent?.busy);
   const claudeSigningIn = Boolean(props.claudeAgent?.signingIn);
-  // OpenWork opens Claude Code's sign-in itself here; elsewhere the person runs the command in a terminal.
   const claudeCanSignIn = Boolean(props.claudeAgent?.canSignIn && props.onSignInClaudeAgent);
-  // The engine's provider list can fail independently of Claude Code, whose
-  // step shows only its own result: the last check's reason, or none while checking.
   const claudeReason = claudeChecking || claudeSigningIn ? null : props.claudeAgent?.error ?? claudeAgentProblem(props.claudeAgent)?.message ?? null;
   const claudeInstalled = props.claudeAgent?.installed;
-  // Where OpenWork can look, a missing Claude Code is its own state with the way to get it, not an error to read.
   const claudeMissing = claudeCanSignIn && !claudeChecking && !claudeSigningIn
     && (claudeInstalled === false || (claudeInstalled === undefined && claudeCodeMissing(claudeReason)));
-  // "Not installed" is either that state or, once Claude Code is found, out of date.
   const claudeError = claudeCanSignIn && claudeCodeMissing(claudeReason) ? null : claudeReason;
   const errorMessage = localError ?? (resolvedView === "external" ? claudeError : props.error);
 
-  // Connected providers lead the list so the two groups render as one flat
-  // array — keyboard navigation keeps indexing straight into display order.
   const filteredEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     const matched = query
@@ -353,7 +334,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleClose = () => {
-    // Closing gives up on a Claude Code sign-in still open in the browser.
     if (props.claudeAgent?.busy && claudeCanSignIn) void props.onCancelClaudeAgentSignIn?.();
     void props.onRefreshProviders?.();
     stopOauthAutoPolling();
@@ -395,7 +375,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     const preferredId = props.preferredProviderId?.trim().toLowerCase() ?? "";
     if (!preferredId || autoOpenedPreferredProviderIdRef.current === preferredId) return;
 
-    // "Sign in again" on the Claude Code row opens its step under Anthropic.
     const claudeCode = preferredId === CLAUDE_AGENT_PROVIDER_ID;
     const entry = entries.find((item) => item.id.trim().toLowerCase() === (claudeCode ? CLAUDE_AGENT_HOST_PROVIDER_ID : preferredId));
     const externalMethod = claudeCode ? entry?.methods.find((method) => method.type === "external") : undefined;
@@ -416,8 +395,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     resolvedView,
   ]);
 
-  // Look for Claude Code when its step opens and whenever the person comes back to this window; while it is
-  // missing, keep looking, since installing takes a minute or two and can finish with this window in view.
   const claudeStepOpen = props.open && resolvedView === "external" && claudeCanSignIn;
   useEffect(() => {
     if (!claudeStepOpen) return;
@@ -658,7 +635,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       toast.success(`${selectedEntry.name} connected`, {
         description: "API key saved locally by OpenCode.",
       });
-      // Close the modal after a successful save
       props.onClose();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save API key";
@@ -687,13 +663,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     try {
       const result = await connect();
-      // No message means the check was dropped (the workspace changed); nothing to report.
       if (typeof result !== "string") return;
       void reportActivationEvent("own_provider");
       toast.success(result);
       props.onClose();
     } catch {
-      // The reason is published as the Claude Code step's error.
     }
   };
 
@@ -1024,7 +998,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       </Button>
                     </div>
                   )}
-                  {/* The install card's action covers a missing Claude Code; one that was found needs no link. */}
                   {claudeMissing || (claudeCanSignIn && claudeInstalled === true) ? null : (
                     <Button variant="link" className="h-auto gap-1 p-0 text-xs" onClick={() => void openClaudeInstall()}>
                       Install Claude Code
@@ -1236,8 +1209,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           <div className="min-h-[16px] text-xs text-gray-10">
             {props.submitting ? submittingLabel() : null}
           </div>
-          {/* One action bar per view: Back returns to the list, Close dismisses,
-              and the view's primary action sits last. */}
           <div className="flex w-full items-center gap-2">
             {(resolvedView === "api" || resolvedView === "external") && selectedEntry ? (
               <Button variant="outline" onClick={handleBack} disabled={actionDisabled || (resolvedView === "external" && (claudeChecking || claudeSigningIn))}>

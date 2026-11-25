@@ -91,7 +91,6 @@ const clientConfigResponseSchema = z.object({
 
 const apiCheckResponseSchema = z.object({
   providerId: z.string(),
-  /** False when the caller has no sign-in on this connector to check with. */
   checked: z.boolean(),
   apis: z.array(z.object({
     id: z.string(),
@@ -141,8 +140,6 @@ function emailFromIdToken(idToken: string | undefined): string | null {
   const encodedPayload = segments[1]
   if (!encodedPayload) return null
   try {
-    // Identity hint only: the token came directly from the configured token
-    // endpoint over TLS and is never used here for authentication or authorization.
     const payload: unknown = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"))
     const parsed = nativeOAuthIdentitySchema.safeParse(payload)
     return parsed.success ? parsed.data.email : null
@@ -210,8 +207,6 @@ export async function beginNativeProviderConnect(input: OrgIds & {
   request: Request
   teamIds: DenTypeId<"team">[]
 }): Promise<{ authorizeUrl: string } | { error: "client_not_configured" | "client_configuration_invalid" | "forbidden"; message?: string }> {
-  // The literal registry key is the legacy no-row alias and intentionally
-  // remains implicitly org-wide. Connector rows always require a grant.
   if (input.credentialProviderId !== input.provider.providerId) {
     const usableConnections = await listUsableNativeProviderConnections({
       organizationId: input.organizationId,
@@ -320,16 +315,9 @@ async function resolveMemberNativeProviderCredential(input: {
 }
 
 export type SaveOrgOAuthProviderClientBody = Omit<z.infer<typeof saveClientBodySchema>, "clientSecret"> & {
-  /** Omitted keeps the stored secret; null clears it (config-blob imports only, the route never sends null). */
   clientSecret?: string | null
 }
 
-/**
- * POST /v1/oauth-providers/:providerId/client, callable outside a request
- * (config-blob imports). `requireLiteralProvider` refuses a provider key that
- * resolves to a native-provider connection's client; `preferredId` reuses an id
- * for a newly created row.
- */
 export async function saveOrgOAuthProviderClient(
   c: Pick<Context, "json">,
   payload: NonNullable<OrgRouteVariables["organizationContext"]>,
@@ -387,9 +375,6 @@ export async function saveOrgOAuthProviderClient(
   const previousTenantId = provider.tenantIdExtraKey
     ? readProviderTenantId(existing?.extra ?? null, provider.tenantIdExtraKey)
     : null
-  // Fail closed: old-tenant/client tokens are removed before the provider
-  // identity changes, so a failed revoke can never leave them usable under
-  // the new org configuration. A later save failure only requires reconnect.
   await revokeAccountsBeforeOAuthClientIdentityChange({
     hadExistingClient: Boolean(existing),
     previousClientId: existing?.clientId ?? null,
@@ -420,17 +405,6 @@ export async function saveOrgOAuthProviderClient(
   })
 }
 
-/**
- * Generic OAuth provider routes, parameterized by providerId. This is what
- * makes any native provider (google-workspace today, anything else we
- * implement natively later) reachable through one shared implementation:
- * adding a provider is a provider-registry.ts entry, never a new route file.
- *
- * connect/start and connect/callback are OAuth plumbing — tagged
- * "Authentication", already blocked from the MCP surface for the same
- * reason session/token endpoints are: this is not something an agent should
- * ever drive itself.
- */
 export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
     "/v1/oauth-providers/:providerId/client",
@@ -469,7 +443,6 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     paramValidator(providerParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      // oauth_clients.view is not sensitive; this read keeps its own 24 hour recent sign-in window.
       const fresh = ensureFreshPrivilegedSession(c, CONNECTIONS_READ_SESSION_MAX_AGE_MS)
       if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
 
@@ -595,13 +568,6 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     },
   )
 
-  // Native providers surface as synthetic entries in the member-facing
-  // /v1/mcp-connections?scope=usable list (see native-provider-connections.ts),
-  // and the desktop starts a connect by calling the SAME path shape it uses
-  // for external MCP connections. These static delegates are registered
-  // before the parameterized /v1/mcp-connections/:connectionId routes
-  // (routes/org/index.ts order), so provider ids never reach the emc_ id
-  // validator. Zero desktop changes.
   for (const provider of Object.values(NATIVE_OAUTH_PROVIDERS)) {
     app.get(
       `/v1/mcp-connections/${provider.providerId}/connect/start`,
@@ -712,8 +678,6 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       if (!client || !pending?.pendingCodeVerifier || !starter) {
         return c.json({ error: "invalid_request", message: "No pending connection for this state." }, 400)
       }
-      // Signed state names who started this connection, not who approved it at the
-      // provider. Nothing is exchanged, stored or recorded until the browser agrees.
       const starterCheck = checkOAuthCallbackStarter({
         starterUserId: starter.userId,
         sessionUserId: oauthCallbackSessionUserId(c),
@@ -738,8 +702,6 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           fields: { code, state, confirm: createOAuthCallbackConfirmation({ state, code, secret: env.betterAuthSecret }) },
         }, workbotCallbackReturn(statePayload.workbotReturn, statePayload.providerId)))
       }
-      // Signed state + resolved member credential + pending verifier prove the
-      // organization and initiating member: attribute before the token exchange.
       const auditBlocked = await attributeOAuthCallbackMember(c, { organizationId: statePayload.organizationId, memberId: starter.memberId, userId: starter.userId })
       if (auditBlocked) return auditBlocked
 
@@ -757,7 +719,6 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           codeVerifier: pending.pendingCodeVerifier,
         })
         const externalAccountId = await resolveExternalAccountId({
-          // A sandbox's sample token is only ever shown to its own workplace, never Microsoft's userinfo.
           provider: client.sandboxEndpoints?.status === "ready" ? { ...provider, userinfoUrl: client.sandboxEndpoints.userinfoUrl } : provider,
           accessToken: tokens.access_token,
           idToken: tokens.id_token,
@@ -827,8 +788,6 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         }), 400)
       }
 
-      // The grant is stored, but a member whose provider withheld a required
-      // permission would be asked to reconnect forever. Say which one, once.
       const { missingScopes } = resolveNativeProviderReconnectState(provider, client.extra, grantedScopes)
       if (missingScopes.length > 0) {
         const requestId = c.get("requestId")

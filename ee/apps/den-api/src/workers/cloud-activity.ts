@@ -1,7 +1,6 @@
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { AutomationRunTable, AutomationTable, MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
-import { workerHasOpenOfficeSession } from "../documents-office-store.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
 import { fetchWithConnectRetry, previewFetch, type FetchLike } from "./preview-fetch.js"
@@ -15,15 +14,8 @@ export type CloudWorkerActivityReason =
   | "busy_sessions"
   | "waiting_requests"
   | "probe_failed"
-  /** The instance answered, but predates the activity route. */
   | "route_unsupported"
 
-/**
- * What a running instance said when asked whether it may be interrupted.
- * `alive` is true whenever the instance itself answered, even without a
- * usable verdict; it is the liveness evidence the resolver uses to keep a
- * slow-but-working sandbox out of the restart path.
- */
 export type CloudWorkerActivity = {
   verdict: CloudWorkerActivityVerdict
   reason: CloudWorkerActivityReason
@@ -37,7 +29,7 @@ export type CloudWorkerInterruptTrigger = "update" | "idle_stop"
 
 export type CloudWorkerInterruptibility = {
   verdict: "interruptible" | "busy" | "unknown"
-  reason: CloudWorkerActivityReason | "automation_run" | "document_session" | "no_instance" | "legacy_instance"
+  reason: CloudWorkerActivityReason | "automation_run" | "no_instance" | "legacy_instance"
   activity: CloudWorkerActivity | null
 }
 
@@ -64,12 +56,6 @@ function unknownActivity(reason: CloudWorkerActivityReason, alive: boolean): Clo
   return { verdict: "unknown", reason, alive, busySessions: 0, waitingRequests: 0, connectedClients: 0 }
 }
 
-/**
- * Ask the instance's own server (`GET /runtime/activity`, host token) whether
- * any session is running or waiting on a person. Instances older than that
- * route answer with their SPA or a 404; both prove the server is alive without
- * giving a verdict.
- */
 export async function probeCloudWorkerActivity(input: {
   instanceUrl: string
   hostToken: string
@@ -98,8 +84,6 @@ export async function probeCloudWorkerActivity(input: {
   try {
     payload = JSON.parse(await response.text())
   } catch {
-    // The web root is the catch-all on older instances: an unknown route
-    // answers 200 with index.html.
     return unknownActivity("route_unsupported", true)
   }
   if (!isRecord(payload) || payload.ok !== true) return unknownActivity("route_unsupported", true)
@@ -114,7 +98,6 @@ export async function probeCloudWorkerActivity(input: {
   return { verdict: "unknown", reason: "probe_failed", ...counts }
 }
 
-/** A scheduled Cloud run claimed or running on this worker's owner. */
 export async function hasActiveCloudAutomationRun(workerId: WorkerId): Promise<boolean> {
   const rows = await db
     .select({ id: AutomationRunTable.id })
@@ -134,18 +117,10 @@ export async function hasActiveCloudAutomationRun(workerId: WorkerId): Promise<b
   return rows.length > 0
 }
 
-/**
- * The one decision every Den-initiated stop of a running instance goes
- * through. Fails closed: an instance that cannot be asked is not idle. An
- * instance older than the activity route keeps today's behavior, because it
- * cannot report busy and is exactly the instance that needs an update.
- */
 export async function resolveCloudWorkerInterruptibility(input: {
   workerId: WorkerId
   trigger: CloudWorkerInterruptTrigger
   hasActiveAutomationRun: (workerId: WorkerId) => Promise<boolean>
-  /** An Office file open in this worker's document editor. */
-  hasOpenDocumentSession?: (workerId: WorkerId) => Promise<boolean>
   instance: () => Promise<{ url: string; hostToken: string } | null>
   probeActivity?: ProbeCloudWorkerActivity
 }): Promise<CloudWorkerInterruptibility> {
@@ -165,10 +140,6 @@ export async function resolveCloudWorkerInterruptibility(input: {
 async function decide(input: Parameters<typeof resolveCloudWorkerInterruptibility>[0]): Promise<CloudWorkerInterruptibility> {
   if (await input.hasActiveAutomationRun(input.workerId)) {
     return { verdict: "busy", reason: "automation_run", activity: null }
-  }
-  // The editor's unsaved changes live in the instance's memory until Save to Drive.
-  if (await (input.hasOpenDocumentSession ?? workerHasOpenOfficeSession)(input.workerId)) {
-    return { verdict: "busy", reason: "document_session", activity: null }
   }
   const instance = await input.instance()
   if (!instance) return { verdict: "unknown", reason: "no_instance", activity: null }

@@ -15,7 +15,6 @@ import { formatWorkbotCost, formatWorkbotCount, WORKBOT_SURFACE_LABELS, workbotC
 
 type CostRow = { key: string; label: string; detail?: string; costMicroUsd: number; requests: number };
 
-/** One titled list of costs, most expensive first, each with its share of the largest as a bar (title only, DESIGN.md P2). */
 function CostList({ title, rows, total, testId, footer }: {
   title: string; rows: CostRow[]; total: number; testId: string; footer?: ReactNode;
 }) {

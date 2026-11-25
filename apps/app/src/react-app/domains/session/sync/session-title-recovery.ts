@@ -52,12 +52,6 @@ export function classifySessionTitleRecoveryRead(read: SessionTitleRecoveryRead)
   return "failed";
 }
 
-/**
- * OpenCode generates the first title in a detached background task and does
- * not expose a title-regeneration endpoint. Probe the session on a bounded
- * schedule so a slow title still reaches the sidebar, then report a confirmed
- * placeholder after a successful first turn instead of failing silently.
- */
 export function createSessionTitleRecovery(options: SessionTitleRecoveryOptions): SessionTitleRecovery {
   const delaysMs = options.delaysMs ?? SESSION_TITLE_RECOVERY_DELAYS_MS;
   const pending = new Map<string, PendingRecovery>();

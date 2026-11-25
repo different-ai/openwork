@@ -57,7 +57,6 @@ export function useOrgInferenceProviders(orgId: string | null) {
   return { inferenceProviders, busy, error, reloadProviders: loadProviders };
 }
 
-/** One provider with its access grants and credential list (no secret values). */
 export function useInferenceProvider(orgId: string | null, inferenceProviderId: string | null) {
   const generation = useRef(0);
   const [provider, setProvider] = useState<DenInferenceProviderDetails | null>(null);
@@ -146,7 +145,6 @@ function readProviderTestResult(value: unknown): GatewayProviderTestResult | nul
   return null;
 }
 
-/** Asks AI Gateway to send one short prompt with these unsaved settings. Nothing is stored. */
 export async function testInferenceProvider(body: InferenceProviderTestBody): Promise<GatewayProviderTestResult> {
   const { response, payload } = await requestJson(`/v1/inference-providers/test-connection`, { method: "POST", body: JSON.stringify(body) }, 45000);
   if (!response.ok) {
@@ -176,7 +174,6 @@ export async function deleteGatewayResource(providerId: string, resource: Gatewa
   if (!response.ok) throw getRequestError(payload, response, `Could not delete ${resource} (${response.status}).`);
 }
 
-/** The provider still has usage limits; the person chooses where they go before it is removed. */
 export class ProviderHasUsageLimitsError extends Error {
   constructor(message: string, readonly usageLimits: GatewayProviderRemovalUsageLimit[]) {
     super(message);
@@ -201,7 +198,6 @@ export async function deleteInferenceProvider(inferenceProviderId: string, audit
   }
 }
 
-/** Moves a models.dev BYOK provider to the gateway; returns the new gateway provider. */
 export async function migrateLlmProviderToGateway(llmProviderId: string): Promise<DenInferenceProvider> {
   const { response, payload } = await requestJson(
     `/v1/inference-providers/migrate-from-llm-provider`,

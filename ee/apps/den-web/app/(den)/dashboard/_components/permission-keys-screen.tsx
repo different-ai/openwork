@@ -21,7 +21,6 @@ import {
 
 const rowClass = "group flex min-h-11 items-center gap-3 py-2 transition-colors hover:bg-gray-50/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400";
 
-/** Every permission by area; each opens its status across sets. */
 export function PermissionKeysScreen() {
   const permissions = usePermissionsAccess();
 
@@ -54,7 +53,6 @@ export function PermissionKeysScreen() {
 }
 
 
-/** One permission's status in Member, Admin, Super admin and every team's permissions. */
 export function PermissionKeyScreen({ permissionKey }: { permissionKey: string }) {
   const permissions = usePermissionsAccess();
 

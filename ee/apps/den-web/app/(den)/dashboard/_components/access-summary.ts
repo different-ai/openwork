@@ -1,7 +1,6 @@
 import type { DenOrgMember, DenOrgTeam } from "../../_lib/den-org";
 import type { DenPlugin } from "./plugin-data";
 
-/** Who can use a connector or plugin, as edited in the Who can use it block. */
 export type AccessDraft = {
   orgWide: boolean;
   memberIds: string[];
@@ -27,7 +26,6 @@ export function joinNames(names: readonly string[], max = 2): string {
   return `${names.slice(0, max).join(", ")} and ${rest} more`;
 }
 
-/** Everyone the draft reaches besides the owner, counting each person once. */
 export function accessPeopleIds(draft: AccessDraft, directory: Directory, ownerId: string | null): string[] {
   const ids = new Set<string>();
   if (draft.orgWide) {
@@ -47,18 +45,11 @@ export function peopleLabel(count: number): string {
   return count === 1 ? "1 person" : `${count} people`;
 }
 
-/**
- * "Everyone in the organization will find Notion in My Library.", or null when
- * the draft reaches nobody but the owner. Everyone stays everyone even while
- * the owner is the organization's only member, so people who join later are
- * not described as left out.
- */
 export function reachSentence(draft: AccessDraft, reached: number, subject: string): string | null {
   if (draft.orgWide) return `Everyone in the organization will find ${subject} in My Library.`;
   return reached > 0 ? `${peopleLabel(reached)} will find ${subject} in My Library.` : null;
 }
 
-/** Names of the people and teams in a draft, people first, without the owner. */
 export function accessNames(draft: AccessDraft, directory: Directory, ownerId: string | null): string[] {
   const people = draft.memberIds
     .filter((id) => id !== ownerId)
@@ -70,7 +61,6 @@ export function accessNames(draft: AccessDraft, directory: Directory, ownerId: s
   return [...people, ...teams];
 }
 
-/** The status lane text for something the viewer owns. */
 export function ownedAccessStatus(draft: AccessDraft | null, directory: Directory, ownerId: string | null): string {
   if (!draft) return "Only you";
   if (draft.orgWide) return "Everyone";
@@ -78,7 +68,6 @@ export function ownedAccessStatus(draft: AccessDraft | null, directory: Director
   return names.length === 0 ? "Only you" : `Shared with ${joinNames(names)}`;
 }
 
-/** Who-has-it text in Manage, where the admin is not the audience. */
 export function managedAccessStatus(draft: AccessDraft | null, directory: Directory, ownerId: string | null): string {
   if (!draft) return "Only you";
   if (draft.orgWide) return "Everyone";
@@ -86,7 +75,6 @@ export function managedAccessStatus(draft: AccessDraft | null, directory: Direct
   return names.length === 0 ? "Only you" : joinNames(names);
 }
 
-/** "Maya and Support will find it in My Library." */
 export function shareConsequence(draft: AccessDraft, directory: Directory, ownerId: string | null): string {
   if (draft.orgWide) return "Everyone in the organization will find it in My Library.";
   const names = accessNames(draft, directory, ownerId);
@@ -99,7 +87,6 @@ export function sameAccess(left: AccessDraft, right: AccessDraft): boolean {
   return left.orgWide === right.orgWide && same(left.memberIds, right.memberIds) && same(left.teamIds, right.teamIds);
 }
 
-/** Toast body after sharing: "6 people can use it now." */
 export function sharedToastDescription(draft: AccessDraft, org: Directory, ownerId: string | null): string {
   if (draft.orgWide) return "Everyone in the organization can use it now.";
   const count = accessPeopleIds(draft, org, ownerId).length;
@@ -110,7 +97,6 @@ export function sharedToastDescription(draft: AccessDraft, org: Directory, owner
   return onlyTeam ? `${peopleLabel(count)} in ${onlyTeam} can use it now.` : `${peopleLabel(count)} can use it now.`;
 }
 
-/** "They get the skill, the command and HubSpot. Each person uses their own HubSpot account." */
 export function pluginShareSubtitle(plugin: Pick<DenPlugin, "skills" | "commands" | "mcps">): string {
   const parts = [
     ...(plugin.skills.length === 1 ? ["the skill"] : plugin.skills.length > 1 ? [`${plugin.skills.length} skills`] : []),
@@ -123,7 +109,6 @@ export function pluginShareSubtitle(plugin: Pick<DenPlugin, "skills" | "commands
   return `They get ${joinNames(parts, parts.length)}.${accounts}`;
 }
 
-/** "Sales can use it now / 8 people will find it in My Library.", or null when nobody was added. */
 export function accessAddedToast(previous: AccessDraft, next: AccessDraft, org: Directory, ownerId: string | null): { title: string; description: string } | null {
   const added: AccessDraft = {
     orgWide: next.orgWide && !previous.orgWide,

@@ -1,5 +1,3 @@
-// OpenWork's optional Collabora integration. MIT; engine notices and About stay intact.
-// This is the only module that reads the pinned engine's selection state and layout.
 interface OpenWorkEngineMap {
   wopi?: { PostMessageOrigin?: string }
   stateChangeHandler?: { getItemValue(command: string): unknown }
@@ -60,7 +58,6 @@ interface Window { app?: { map?: OpenWorkEngineMap }; autoShowWelcome?: boolean;
       }
     }
   })
-  // Engine initialization is asynchronous. Bound the wait; never poll a closed frame indefinitely.
   const until = Date.now() + 60_000
   const connect = () => {
     map = window.app?.map

@@ -13,10 +13,8 @@ import { denTypeIdColumn } from "../columns"
 export const PublicMcpAppNameTable = mysqlTable(
   "public_mcp_app_name",
   {
-    /** Lowercase letters, digits and hyphens. */
     name: varchar("name", { length: 64 }).notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    /** The App (config object of type app). */
     configObjectId: denTypeIdColumn("configObject", "config_object_id").notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),

@@ -1,7 +1,5 @@
 import type { ExampleService } from "../example-parts";
 
-/** Sample data only: no API calls (DESIGN.md I7). */
-
 export const GITHUB: ExampleService = { name: "GitHub" };
 export const HUBSPOT: ExampleService = { name: "HubSpot" };
 export const LINEAR: ExampleService = { name: "Linear" };
@@ -9,11 +7,8 @@ export const NOTION: ExampleService = { name: "Notion" };
 
 export type PluginsExampleRow = {
   name: string;
-  /** What's inside, as the plugin rows count it. */
   inside: string;
-  /** Who can use it, as "Who can use it" says it. */
   audience: string;
-  /** A GitHub repository, or made in OpenWork. */
   source: { kind: "github"; repo: string } | { kind: "here" };
 };
 
@@ -23,7 +18,6 @@ export const pluginsExampleRows: readonly PluginsExampleRow[] = [
   { name: "Brand voice", inside: "3 skills, 1 connector", audience: "Marketing", source: { kind: "here" } },
 ];
 
-/** One person using a shared plugin, as steps read in chat (C4): sentence first, result on the right. */
 export const pluginsExampleChat = {
   initials: "SL",
   prompt: "Draft the release notes for 4.2",

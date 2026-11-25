@@ -10,52 +10,29 @@ import {
   type AgentPeek,
 } from "@openwork/automations/proactive-brief"
 import type { MemberCalendarRead, MemberMailArrivals } from "../routes/org/google-workspace.js"
-import type { EvaluationModel } from "./evaluation-model.js"
+import type { EvaluationModel } from "../llm/evaluation-model.js"
 import { readableConnections, type ResolvedSource } from "./sources.js"
 
-/**
- * The check gate (`workbotAgentCheckGate`): before a scheduled check, Den looks itself at what reached the member
- * since their agent last looked, and skips the check when nothing that could matter arrived. The rules are plain code
- * (`planCheckGate`, `decideCheckGate` in @openwork/automations/proactive-brief); this file is the two things they need
- * from outside: the look (`peekArrivals`) and, where the deployment has its key, the evaluation model
- * (evaluation-model.ts).
- */
-
 const HOUR_MS = 3_600_000
-/** How far ahead a calendar change still matters to the gate. */
 const CALENDAR_AHEAD_MS = 48 * HOUR_MS
 
 export type AgentCheckGateAnswer = { verdict: AgentCheckGateVerdict; durationMs: number; inputTokens: number | null }
-/** `skipAt`: the policy's own threshold; left out, the default. */
 export type AgentCheckGateModel = (request: AgentCheckGateRequest, skipAt?: number) => Promise<AgentCheckGateAnswer>
 
 export type AgentCheckGate = {
-  /** What reached the member's Gmail since `since`, through exactly this connection. */
   mail: (input: { connectionId: string; since: number; limit: number }) => Promise<MemberMailArrivals>
-  /** The evaluation model, or null where the deployment has no key for it: then only "nothing arrived" skips a check. */
   model: AgentCheckGateModel | null
 }
 
-/**
- * Den's own look, with no agent turn: new mail and changed meetings, each since that source was last read. Den can
- * look at Google Calendar through the calendar source, and at Gmail through the member's Google Workspace connection
- * when it is one of the check's sources (what else that connection reads, such as files, isn't looked at). Any other
- * readable source (Slack, another connection, another mail or calendar provider), a Google Workspace connection an
- * admin turned some reads off for (`restricted`), a source never read yet, or a read that fails means Den can't tell,
- * and the check runs.
- */
 export async function peekArrivals(input: {
-  /** The sources this check would read. */
   sources: readonly ResolvedSource[]
   lastLook: Readonly<Record<string, number>>
   now: number
   timeZone: string
-  /** Connections with reads an admin turned off for agents: Den doesn't look at their mail either. */
   restricted?: ReadonlySet<string>
   mail: AgentCheckGate["mail"]
   calendar: (input: { connectionId: string; timeMin: number; timeMax: number }) => Promise<MemberCalendarRead>
 }): Promise<AgentPeek> {
-  // Decide what Den can look at before it reads anything: one source it can't tell about makes every read pointless.
   const looks: { source: "email" | "calendar"; connectionId: string; since: number }[] = []
   for (const source of input.sources) {
     const connections = readableConnections(source)
@@ -82,7 +59,6 @@ export async function peekArrivals(input: {
   return { kind: "arrivals", items, more }
 }
 
-/** The gate's question to the evaluation model; no usable answer runs the check, exactly as without the gate. */
 export function createCheckGateModel(model: EvaluationModel): AgentCheckGateModel {
   return async (request, skipAt) => {
     const answer = await model(request)

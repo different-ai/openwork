@@ -1,31 +1,14 @@
-/**
- * Sub-agents the agent starts in the background (OpenCode v2 only). When one
- * ends, the engine tells the parent conversation through a synthetic message
- * whose metadata has `source: "subagent"`, the sub-agent's session as
- * `childID`, and `state` (`completed`, `error` or `cancelled`). Its text is
- * `<subagent …>output</subagent>` for the model; the chat shows one sentence
- * that opens the sub-agent's chat.
- *
- * Pure readers, shared by the engine adapter, the sync layer and the chat.
- */
-
 import { SESSION_REPORT_SOURCE } from "@openwork/types/session-link";
 
 export type SubagentOutcome = "finished" | "failed" | "stopped";
 
-/** What the chat shows when a background sub-agent ends. */
 export type SubagentNotice = {
   childSessionId: string;
   description: string;
   outcome: SubagentOutcome;
-  /**
-   * The note is about a session the agent started with session.create, which
-   * the app reports in the engine's own shape (`source: "openwork-session"`).
-   */
   linkedSession?: true;
 };
 
-/** The text part metadata key that marks a sub-agent notice row in the transcript. */
 export const SUBAGENT_NOTICE_KEY = "openworkSubagentNotice";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -40,7 +23,6 @@ function readString(value: unknown, key: string): string | undefined {
 
 const ENGINE_OUTCOMES: Record<string, SubagentOutcome> = { completed: "finished", error: "failed", cancelled: "stopped" };
 
-/** Read the engine's completion message (or inbox payload) for a background sub-agent. */
 export function readSubagentCompletion(payload: unknown): SubagentNotice | null {
   if (!isRecord(payload)) return null;
   const metadata = isRecord(payload.metadata) ? payload.metadata : null;
@@ -56,7 +38,6 @@ export function readSubagentCompletion(payload: unknown): SubagentNotice | null 
   };
 }
 
-/** A notice carried on a transcript part (engine part metadata or UI provider metadata). */
 export function readSubagentNotice(value: unknown): SubagentNotice | null {
   if (!isRecord(value)) return null;
   const childSessionId = readString(value, "childSessionId");

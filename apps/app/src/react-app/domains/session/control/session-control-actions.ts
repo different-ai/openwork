@@ -40,7 +40,6 @@ type UseSessionControlActionsInput = {
   openworkClient: OpenworkServerClient | null;
   opencodeClient: ReturnType<typeof createClient> | null;
   archiveDisabledReason?: string;
-  /** The sidebar's session status, including background work and pending requests. */
   sessionStatusById?: Readonly<Record<string, string>>;
   endpointForWorkspace: (workspace: SessionControlWorkspace | null | undefined) => ResolvedWorkspaceEndpoint | null;
   navigateToSession: (sessionId: string) => void;
@@ -50,7 +49,6 @@ type UseSessionControlActionsInput = {
   refreshRouteState: () => Promise<unknown> | unknown;
   reloadWorkspaceSessions: (workspaceId: string) => Promise<void>;
   archiveSession: (sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>;
-  /** Sessions started from a session are listed under it and linked to it. */
   sessionTreeEnabled?: boolean;
 };
 
@@ -124,8 +122,6 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const workspaceModels = useCallback(async (workspace: SessionControlWorkspace) => {
     const endpoint = endpointForWorkspace(workspace);
     if (!endpoint) throw new Error("Workspace runtime is not connected");
-    // Read the catalog from the engine chat runs on, as session creation does:
-    // v2's catalog can differ from v1's while both engines run.
     const engine = await routeSessionEndpoint(endpoint);
     const catalog = isOpencodeV2BaseUrl(engine.opencodeBaseUrl)
       ? await createClientV2(engine.opencodeBaseUrl, workspace.path, { token: engine.token }).provider.list({ directory: workspace.path })
@@ -154,8 +150,6 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     },
   }), [checkDesktopRestriction, isSignedIn, workspaceModels, workspaces]));
 
-  // Registered only while the feature is on: the server reads `canStartLinked`
-  // from it before linking a session the agent starts, so off means no links.
   useControlAction(useMemo<OpenworkControlAction | null>(() => !sessionTreeEnabled ? null : ({
     id: SESSION_TREE_QUERY_ID,
     label: "List the sessions started from a session",
@@ -410,9 +404,6 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         || reboundVariant !== requestedVariant) {
         return { ok: false, error: "Session model readback did not match the requested binding." };
       }
-      // The composer sends its remembered choice before each v2 prompt. Keep
-      // that choice in sync only after persistence is verified, or reopening
-      // this conversation could silently overwrite the recovered binding.
       useSessionModelStore.getState().setModel(sessionId, { providerID: providerId, modelID: modelId }, reboundVariant);
       useSessionModelStore.getState().setVariant(sessionId, reboundVariant);
       return {
@@ -431,26 +422,16 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   }), [checkDesktopRestriction, endpointForWorkspace, isSignedIn, sessionsByWorkspaceId, workspaceModels, workspaces]);
   useControlAction(sessionSetModelControlAction);
 
-  // ---------------------------------------------------------------------------
-  // Session management control actions (pin, archive, groups)
-  // ---------------------------------------------------------------------------
-
   const store = useSessionManagementStore;
 
-  /** Resolve a workspace ID from user input. Falls back to selectedWorkspaceId
-   *  if the input is empty or doesn't match any known workspace (e.g. if the
-   *  caller passes a display name instead of the actual ID). */
   const resolveWorkspaceId = useCallback((input: string | undefined): string | undefined => {
     if (!input) return selectedWorkspaceId || undefined;
-    // Exact match on ID.
     if (workspaces.some((ws) => ws.id === input)) return input;
-    // Fuzzy match on display name / path — return the first matching workspace ID.
     const byName = workspaces.find(
       (ws) =>
         (ws.displayName?.trim() || ws.name?.trim() || ws.path?.trim() || "").toLowerCase() === input.toLowerCase(),
     );
     if (byName) return byName.id;
-    // Unknown — fall back to selected.
     return selectedWorkspaceId || undefined;
   }, [selectedWorkspaceId, workspaces]);
 

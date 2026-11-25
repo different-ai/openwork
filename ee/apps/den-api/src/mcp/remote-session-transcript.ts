@@ -7,13 +7,6 @@ import {
   type RemoteSessionTranscriptPart,
 } from "@openwork/types/automations"
 
-/**
- * A Cloud transcript in the wire shape desktop runners send: each message's
- * text, reasoning and tool steps in order, with the same caps (2000 chars per
- * tool field, 200 parts per message, a page under the request result size).
- */
-
-/** Page budget below the 256 KB request cap, leaving room for the envelope. */
 const PAGE_BUDGET_BYTES = REMOTE_SESSION_REQUEST_RESULT_MAX_BYTES - 32 * 1024
 
 function bytes(value: unknown): number {
@@ -67,11 +60,6 @@ export function cloudTranscriptParts(message: HeadlessTranscriptMessage, textLim
   return message.parts.slice(0, REMOTE_SESSION_TRANSCRIPT_PARTS_MAX).map((part) => wirePart(part, textLimit))
 }
 
-/**
- * Keeps a page under the result cap: older messages are dropped first, then
- * the remaining tool outputs are halved until it fits. The newest message is
- * always kept.
- */
 export function boundCloudPage<T extends { parts: RemoteSessionTranscriptPart[] }>(messages: T[]): T[] {
   let page = messages
   while (page.length > 1 && bytes(page) > PAGE_BUDGET_BYTES) page = page.slice(1)

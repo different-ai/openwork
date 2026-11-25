@@ -150,7 +150,6 @@ async function waitForHealth(
         return
       }
     } catch {
-      // ignore transient network failures while the instance boots
     }
     await sleep(env.render.pollIntervalMs)
   }

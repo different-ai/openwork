@@ -5,7 +5,6 @@ import { ExampleCaption } from "../example-parts";
 import { useExampleStep } from "../use-example-step";
 import { invoicesExampleRows } from "./invoices-example-data";
 
-/** Invoices example: the same rows the Invoices page shows, one invoice a month. */
 export function InvoicesExample() {
   const step = useExampleStep(invoicesExampleRows.length);
 

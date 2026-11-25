@@ -41,7 +41,6 @@ import type { OrgRouteVariables } from "./shared.js"
 const FILE_READ = ["filesRead", "filesWrite", "filesReadAll", "filesFull"]
 const FILE_WRITE = ["filesWrite", "filesFull"]
 const SITES_READ = ["sitesRead"]
-// Streams are relayed at the client's pace, so they outlive the 30 s Graph budget; a client disconnect still stops them.
 const STREAM_TIMEOUT_MS = 10 * 60 * 1000
 const RELAY_TIMEOUT_MS = 2 * 60 * 1000
 const DOWNLOAD_LINK_TTL_SECONDS = 5 * 60
@@ -152,7 +151,6 @@ const linkPayloadSchema = z.object({
 })
 const uploadTokenSchema = z.object({
   v: z.literal(1), o: z.string(), m: z.string(), url: z.string().url(), s: z.number().int().min(1), e: z.number().int(),
-  /** The Graph the session came from, when it is a sandbox workplace rather than Microsoft. */
   g: z.string().url().optional(),
 })
 
@@ -176,7 +174,6 @@ function isoOrNull(value: string) {
   return Number.isFinite(time) ? new Date(time).toISOString() : null
 }
 
-/** Metadata and the exact bytes a pull would save, without downloading anything. Shortcuts resolve to their target. */
 async function describeDownload(graph: MicrosoftGraphClient, input: { ref?: Microsoft365DriveRef; link?: string; format?: "pdf" }): Promise<{ ok: true; file: DownloadFile; download: Download } | Failure> {
   const item = input.link ? await graph.resolveSharingLink(input.link) : await graph.getDriveItem(input.ref!)
   if (!item.id) return { ok: false, status: 502, body: { error: "microsoft_graph_error", message: "Microsoft did not return the requested file." } }
@@ -201,7 +198,6 @@ async function describeDownload(graph: MicrosoftGraphClient, input: { ref?: Micr
   return { ok: true, file, download: { format: null, mimeType: file.mimeType, extension: null, size: file.size, exported: false, maxBytes: MICROSOFT_DRIVE_TRANSFER_MAX_BYTES } }
 }
 
-/** Stops a stream that grows past the pull cap; the client sees a short, failed download. */
 function capped(body: ReadableStream<Uint8Array>, maxBytes: number) {
   let seen = 0
   return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
@@ -236,7 +232,6 @@ async function streamContent(c: DriveContext, graph: MicrosoftGraphClient, ref: 
   return c.body(capped(upstream.body, range ? MICROSOFT_DRIVE_PULL_CHUNK_BYTES : MICROSOFT_DRIVE_TRANSFER_MAX_BYTES), upstream.status === 206 ? 206 : 200, headers)
 }
 
-/** Check-then-write: the eTag is compared first for a readable conflict, and Graph enforces it again (If-Match). */
 async function prepareUpload(graph: MicrosoftGraphClient, input: z.infer<typeof uploadFields>) {
   if (input.itemId) {
     const current = await graph.getDriveItem({ driveId: input.driveId, itemId: input.itemId })
@@ -272,7 +267,6 @@ function nextOffset(value: unknown): number | null {
   return match ? Number(match[1]) : null
 }
 
-/** Microsoft file search beyond the member's own drive, folders, links, SharePoint sites and file transfers. */
 export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRouteVariables }>(routeApp: Hono<T>, options: MicrosoftDriveFileRouteOptions) {
   routeApp.use("/v1/direct-downloads/microsoft-365/*", contextStorage())
   routeApp.use("/v1/direct-uploads/microsoft-365/*", contextStorage())
@@ -294,7 +288,6 @@ export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRoute
     502: jsonResponse("Microsoft refused or did not return the file; the message gives Microsoft's reason.", upstreamErrorSchema.or(errorSchema)),
   }
 
-  /** Runs with a Graph client for the request's member, or answers why there is none. */
   async function withGraph(c: DriveContext, features: readonly string[], label: string, connectionId: string | null | undefined, run: (graph: MicrosoftGraphClient, context: OrganizationContext, graphBaseUrl: string | undefined) => Promise<Response>, timeoutMs?: number) {
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "unauthorized", message: "Sign in to an organization first." }, 401)
@@ -366,7 +359,6 @@ export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRoute
       v: 1, o: context.organization.id, u: context.currentMember.userId, m: context.currentMember.id,
       c: readInternalCapabilityConnectorId(c.req.raw.headers), d: described.file.driveId, f: described.file.id, x: described.download.format, e: expires,
     })
-    // In the query, which request traces strip, rather than the path they keep.
     const downloadUrl = `${resolvePublicApiBaseUrl(c.req.raw, env.apiPublicUrl)}/v1/direct-downloads/microsoft-365/drive-link?token=${token}`
     const extension = described.download.extension
     const name = `${described.file.name}${extension && !described.file.name.toLowerCase().endsWith(extension) ? extension : ""}`
@@ -482,7 +474,6 @@ export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRoute
     })
   })
 
-  /** Forwards one request to Microsoft's upload session; Microsoft's session URL never leaves Den. */
   async function relay(c: DriveContext, init: { method: "PUT" | "GET"; contentRange?: string; total?: number; body?: Uint8Array<ArrayBuffer> }) {
     const context = c.get("organizationContext")
     const session = openToken(UPLOAD_TOKEN_DOMAIN, c.req.query("token") ?? "", uploadTokenSchema)
@@ -493,7 +484,6 @@ export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRoute
       return c.json({ error: "invalid_request", message: "TOTAL must be the size the upload was prepared with." }, 400)
     }
     if (session.g) {
-      // A sandbox's sample upload continues only while that sample connector may still be used.
       const granted = await options.access({ organizationId: context.organization.id, orgMembershipId: context.currentMember.id, features: FILE_WRITE, label: "OneDrive write" })
       if (!granted.ok) return c.json(granted.body, granted.status)
       if (granted.graphBaseUrl !== session.g) return c.json({ error: "upload_session_expired", message: "This upload is unknown or expired. Check the file before starting another upload." }, 404)

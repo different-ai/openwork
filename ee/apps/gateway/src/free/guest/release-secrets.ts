@@ -3,7 +3,6 @@ import type { AutoConfig } from "../shared/config.js"
 
 export type ReleaseSecretCandidate = { secret: Uint8Array; source: "release" | "previous" | "dev" }
 
-/** Secrets accepted for a claimed version, in preference order: current key, rotation overlap, dev builds. */
 export function releaseSecretCandidates(config: Pick<AutoConfig, "releaseKey" | "releaseKeyPrevious" | "devReleaseSecret">, version: string): ReleaseSecretCandidate[] {
   const candidates: ReleaseSecretCandidate[] = []
   if (config.releaseKey) candidates.push({ secret: deriveReleaseSecret(config.releaseKey, version), source: "release" })

@@ -1,5 +1,3 @@
-// Ubuntu's chromium package is a Snap launcher; use the same signed Chrome
-// repository as the headed-browser CI image instead.
 export function browserRecipe(): string {
   return `DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates gnupg xdg-utils libexo-2-0
 curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /tmp/openwork-chrome-key.pub

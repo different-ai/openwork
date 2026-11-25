@@ -24,15 +24,6 @@ function sessionErrorMessageId(turnKey: string) {
   return `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${turnKey}`;
 }
 
-/**
- * Build the synthetic chat message that surfaces a session error.
- *
- * The error is keyed to the *turn* that failed (`turnKey`), not the session.
- * Both the live `session.error` event and the snapshot reload derive the same
- * `turnKey` from the errored assistant message id, so they reconcile to one
- * message instead of duplicating — while a brand new error on a later turn
- * still produces its own message instead of overwriting the previous one.
- */
 export function createSessionErrorUIMessage(
   turnKey: string,
   presentation: OpencodeSessionErrorPresentation,
@@ -126,7 +117,6 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
   return [mapped];
 }
 
-/** Recover display-only attachments without sending unsupported binary parts to the model. */
 export function attachmentNoteToUIParts(part: TextPart): UIMessage["parts"] {
   if (!part.synthetic || part.ignored) return [];
   const attachments = part.metadata?.openworkAttachments;
@@ -174,9 +164,6 @@ type SnapshotMessages = OpenworkSessionSnapshot["messages"];
 const snapshotMessagesCache = new WeakMap<SnapshotMessages, UIMessage[]>();
 const snapshotMessageCache = new WeakMap<SnapshotMessages[number], UIMessage[]>();
 
-// Query snapshots are immutable. Share the projection between rendering and
-// hydration; a refreshed tail can also reuse unchanged historical messages.
-// Callers must copy before applying live updates to these cached messages.
 export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "messages">): UIMessage[] {
   const cached = snapshotMessagesCache.get(snapshot.messages);
   if (cached) return cached;
@@ -230,12 +217,6 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
       }),
     };
 
-    // Surface a failed turn as its own synthetic error message keyed by the
-    // errored assistant message id. The live `session.error` event keys its
-    // message off the latest assistant turn the same way, so the two
-    // reconcile to one message instead of duplicating — while a later turn's
-    // error still gets its own message. An empty assistant carcass for the
-    // errored turn is dropped so the error reads as that turn's outcome.
     const error = message.info.role === "assistant" && "error" in message.info ? message.info.error : undefined;
     let result: UIMessage[] = [uiMessage];
     if (error) {

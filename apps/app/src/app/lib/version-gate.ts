@@ -1,9 +1,3 @@
-// Version comparator + update gating helpers.
-//
-// Ported from dev's Solid system-state.ts (#1476 + #1512). Pure functions
-// so they're reusable from any React feature site once the updater flow
-// gets wired.
-
 import {
   createDenClient,
   readDenSettings,
@@ -47,7 +41,6 @@ function parseComparableVersion(value: string): ParsedVersion | null {
 }
 
 function comparePrereleaseIdentifiers(left: string[], right: string[]): number {
-  // semver-ish: absence of prerelease ranks higher than presence.
   if (!left.length && !right.length) return 0;
   if (!left.length) return 1;
   if (!right.length) return -1;
@@ -86,11 +79,6 @@ function normalizeStableDesktopVersion(value: string): string | null {
   return /^\d+\.\d+\.\d+$/.test(normalized) ? normalized : null;
 }
 
-/**
- * Compare two version strings. Returns -1 / 0 / 1 as usual, or null if
- * either side fails to parse. Accepts an optional leading `v` and handles
- * prerelease tags (e.g. `0.11.212-alpha.3`).
- */
 export function compareVersions(left: string, right: string): number | null {
   const parsedLeft = parseComparableVersion(left);
   const parsedRight = parseComparableVersion(right);
@@ -106,13 +94,6 @@ export function compareVersions(left: string, right: string): number | null {
   return comparePrereleaseIdentifiers(parsedLeft.prerelease, parsedRight.prerelease);
 }
 
-/**
- * Apply the org-level `allowedDesktopVersions` filter (dev #1512). When
- * the array is unset, everything is allowed; when it's set, the candidate
- * update version must match one of the allowed versions exactly (by
- * semver comparison, so leading `v` prefixes and trailing build metadata
- * are treated equivalently).
- */
 export function isUpdateAllowedByDesktopConfig(
   updateVersion: string,
   desktopConfig: DenDesktopConfig | null | undefined,
@@ -217,19 +198,11 @@ export type StableDesktopUpdateSelection =
   | { kind: "blocked"; latestPublishedVersion: string }
   | { kind: "current"; latestPublishedVersion: string };
 
-/**
- * Select the highest stable release that is both published and approved.
- * The explicit Den inventory is the trust boundary: stored policy entries
- * that do not correspond to a published updater manifest are never targeted.
- */
 export function selectStableDesktopUpdate(input: {
   currentVersion: string;
   metadata: DenAppVersionMetadata;
   desktopConfig: DenDesktopConfig | null | undefined;
 }): StableDesktopUpdateSelection | null {
-  // The installed build may be a prerelease (e.g. returning from the alpha
-  // channel to stable); it only needs to be comparable. The published
-  // inventory below must stay plain-stable x.y.z.
   const currentVersion = input.currentVersion.trim();
   if (!parseComparableVersion(currentVersion)) return null;
 
@@ -306,16 +279,6 @@ export async function resolveAutomaticStableDesktopUpdate(input: {
   }
 }
 
-/**
- * Ask Den for the currently-supported latest app version (dev #1476) and
- * return true only when the candidate update version is the latest
- * version or older. If Den is unreachable or returns an invalid payload,
- * this returns `false` — the caller must treat that as "do not surface
- * the update".
- *
- * No-op safe: callers can invoke this without any Den auth; the client
- * will omit the token when none is persisted.
- */
 export async function isUpdateSupportedByDen(updateVersion: string): Promise<boolean> {
   const latestAppVersion = await readDenLatestAppVersion();
   if (!latestAppVersion) return false;
@@ -324,12 +287,6 @@ export async function isUpdateSupportedByDen(updateVersion: string): Promise<boo
 }
 
 
-/**
- * Combined gate: the update must be supported by Den (version metadata
- * endpoint) AND allowed by the active org's `allowedDesktopVersions` if
- * one is configured. Intended to be the single call site the React
- * updater flow makes before surfacing an update as installable.
- */
 export async function isUpdateAllowed(
   updateVersion: string,
   desktopConfig: DenDesktopConfig | null | undefined,

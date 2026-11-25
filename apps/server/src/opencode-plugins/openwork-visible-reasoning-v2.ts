@@ -1,17 +1,3 @@
-/**
- * Settings › Show model reasoning, applied to the model request.
- *
- * The desktop sends the person's current choice with every prompt as
- * `metadata.openwork.showReasoning`. When it is on, each agent turn asks the
- * provider to return readable reasoning (Anthropic `display: "summarized"`,
- * OpenAI `reasoningSummary: "auto"`, Google `includeThoughts`). When it is off,
- * or unknown (for example after an engine restart before the next prompt), the
- * request is left exactly as the model and its variant define it.
- *
- * Without this, a model's default variant thinks but returns only an encrypted
- * signature, so the setting had nothing to show.
- */
-
 type JsonRecord = Record<string, unknown>;
 type Overlay = { readonly settings?: JsonRecord };
 type ModelInfo = Overlay & {
@@ -50,7 +36,6 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The person's choice carried by one prompt, or undefined when the prompt says nothing. */
 export function promptShowReasoning(metadata: unknown): boolean | undefined {
   const openwork = isRecord(metadata) ? metadata.openwork : undefined;
   const value = isRecord(openwork) ? openwork.showReasoning : undefined;
@@ -61,31 +46,22 @@ function record(value: unknown): JsonRecord | undefined {
   return isRecord(value) ? value : undefined;
 }
 
-/**
- * Provider options that make `model` (with the selected variant) return
- * readable reasoning. Only adds what is missing, never switches thinking on
- * for a variant that turned it off, and returns null when nothing applies.
- */
 export function visibleReasoningOptions(model: ModelInfo, variantID: string | undefined): JsonRecord | null {
   const variant = variantID && variantID !== "default" ? model.variants?.find((item) => item.id === variantID) : undefined;
   const base = model.settings ?? {};
   const selected = variant?.settings ?? {};
   const overlays = [base, ...(model.variants ?? []).map((item) => item.settings ?? {})];
 
-  // Anthropic Messages (direct, Vertex, Bedrock and gateway aliases).
   const thinking = { ...record(base.thinking), ...record(selected.thinking) };
   const adaptiveCapable = overlays.some((settings) => record(settings.thinking)?.type === "adaptive");
   if (thinking.type === "adaptive" && thinking.display !== "summarized") {
     return { thinking: { display: "summarized" } };
   }
-  // No thinking configured: these models think adaptively on their own but
-  // omit the text. Ask for the same adaptive thinking, with a summary.
   if (thinking.type === undefined && adaptiveCapable) {
     return { thinking: { type: "adaptive", display: "summarized" } };
   }
   if (thinking.type !== undefined) return null;
 
-  // OpenAI Responses-style reasoning summaries.
   if (model.package && OPENAI_SUMMARY_PACKAGES.has(model.package)) {
     const effort = selected.reasoningEffort ?? base.reasoningEffort;
     const summary = selected.reasoningSummary ?? base.reasoningSummary;
@@ -94,7 +70,6 @@ export function visibleReasoningOptions(model: ModelInfo, variantID: string | un
     return null;
   }
 
-  // Google Gemini thought summaries.
   const thinkingConfig = { ...record(base.thinkingConfig), ...record(selected.thinkingConfig) };
   const thinks = overlays.some((settings) => record(settings.thinkingConfig) !== undefined);
   if (thinks && thinkingConfig.includeThoughts !== true && thinkingConfig.thinkingBudget !== 0) {
@@ -103,7 +78,6 @@ export function visibleReasoningOptions(model: ModelInfo, variantID: string | un
   return null;
 }
 
-/** Deep-merges `patch` into the request options the engine is about to send. */
 function apply(options: JsonRecord, patch: JsonRecord) {
   for (const [key, value] of Object.entries(patch)) {
     const current = options[key];
@@ -114,7 +88,6 @@ function apply(options: JsonRecord, patch: JsonRecord) {
 export async function registerVisibleReasoning(context: VisibleReasoningContext): Promise<() => Promise<void>> {
   const choices = new Map<string, boolean>();
 
-  // Child sessions (background agents) follow the conversation that started them.
   const choiceFor = async (sessionID: string): Promise<boolean> => {
     let id: string | undefined = sessionID;
     for (let depth = 0; id && depth < MAX_PARENT_DEPTH; depth += 1) {
@@ -140,7 +113,6 @@ export async function registerVisibleReasoning(context: VisibleReasoningContext)
         const patch = visibleReasoningOptions(model, event.model.variant);
         if (patch) apply(event.options, patch);
       } catch {
-        // A display preference must never fail the turn; send the model's defaults.
       }
     }),
   ];

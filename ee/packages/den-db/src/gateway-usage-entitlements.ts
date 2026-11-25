@@ -161,8 +161,6 @@ export async function withGatewayUsageEntitlementMutation<T>(
             ]
           : null,
       )
-    // Compare winners per (provider scope, timeframe): an edit to a provider
-    // limit must not expire requests or extensions on the default, and back.
     for (const providerScope of new Set([...previous.keys(), ...after.keys()])) {
       const was = previous.get(providerScope) ?? []
       const next = after.get(providerScope) ?? []

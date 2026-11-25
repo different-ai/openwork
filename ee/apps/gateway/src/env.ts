@@ -65,20 +65,13 @@ export const isDevMode = process.env.OPENWORK_DEV_MODE === "1" && process.env.NO
 
 const input = {
   ...process.env,
-  // Deprecated INFERENCE_* aliases: an explicitly set GATEWAY_* value wins,
-  // including empty values (disable), and invalid values fail validation.
   PORT: gatewayInteger(process.env.GATEWAY_PORT ?? process.env.PORT ?? process.env.INFERENCE_PORT, "GATEWAY_PORT (or PORT/INFERENCE_PORT when absent)", 8791, 1, 65535),
   GATEWAY_PROXY_BASE_URL: process.env.GATEWAY_PROXY_BASE_URL ?? process.env.INFERENCE_PROXY_BASE_URL,
   GATEWAY_ADMIN_TOKEN: process.env.GATEWAY_ADMIN_TOKEN ?? process.env.INFERENCE_ADMIN_TOKEN,
   GATEWAY_UPSTREAM_TIMEOUT_MS: gatewayInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS ?? process.env.INFERENCE_UPSTREAM_TIMEOUT_MS, "GATEWAY_UPSTREAM_TIMEOUT_MS", 30 * 60_000, 1000, 24 * 60 * 60_000),
   GATEWAY_STREAM_IDLE_MS: gatewayInteger(process.env.GATEWAY_STREAM_IDLE_MS ?? process.env.INFERENCE_STREAM_IDLE_MS, "GATEWAY_STREAM_IDLE_MS", 120000, 1000, 900000),
-  // A proxy in front of the gateway (Cloudflare: ~100s) answers 524 when response
-  // headers take longer than its limit. Streaming requests commit their response
-  // after this long and keep it alive with SSE comments; keep it well below that limit.
   GATEWAY_RESPONSE_START_MS: gatewayInteger(process.env.GATEWAY_RESPONSE_START_MS, "GATEWAY_RESPONSE_START_MS", 20000, 1000, 24 * 60 * 60_000),
   GATEWAY_RESPONSE_HEARTBEAT_MS: gatewayInteger(process.env.GATEWAY_RESPONSE_HEARTBEAT_MS, "GATEWAY_RESPONSE_HEARTBEAT_MS", 15000, 1000, 90000),
-  // Keep below the host's SIGKILL grace (Render: maxShutdownDelaySeconds, default 30s)
-  // minus ~5s for usage writes and telemetry flush.
   GATEWAY_SHUTDOWN_DRAIN_MS: gatewayInteger(process.env.GATEWAY_SHUTDOWN_DRAIN_MS, "GATEWAY_SHUTDOWN_DRAIN_MS", 25000, 0, 600000),
   GATEWAY_CREDITS_PER_DOLLAR: process.env.GATEWAY_CREDITS_PER_DOLLAR ?? process.env.INFERENCE_CREDITS_PER_DOLLAR,
   DATABASE_URL:
@@ -173,7 +166,6 @@ export const env = {
   dbMode: (parsed.DB_MODE ??
     (parsed.DATABASE_URL ? "mysql" : "planetscale")) as DenDbMode,
   planetscale,
-  // Optional read-replica credentials; reads stay on the primary without both.
   readReplica: readReplicaCredentialsFromEnv(parsed),
   dbEncryptionKey: parsed.DEN_DB_ENCRYPTION_KEY,
   proxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL),
@@ -182,10 +174,8 @@ export const env = {
   adminToken: optionalString(parsed.GATEWAY_ADMIN_TOKEN),
   webhookSecret: optionalString(parsed.GATEWAY_WEBHOOK_SECRET),
   creditsPerDollar: parseCreditsPerDollar(parsed.GATEWAY_CREDITS_PER_DOLLAR),
-  /** Feature rollout environment (DEN_DEPLOYMENT, DEN_FEATURE_*), the same den-api reads. */
   features: parseFeatureEnvironment(process.env),
   autoRouter: {
-    /** TypeSafe (Jev) API key; without it Auto always uses the fallback route. */
     typesafeApiKey: optionalString(parsed.TYPESAFE_API_KEY),
     typesafeBaseUrl: normalizeUrl(optionalString(parsed.TYPESAFE_BASE_URL) ?? "https://api.typesafe.ai"),
     jevModel: optionalString(parsed.AUTO_ROUTER_JEV_MODEL) ?? "jev-latest",

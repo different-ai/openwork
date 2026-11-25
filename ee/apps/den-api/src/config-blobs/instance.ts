@@ -6,11 +6,6 @@ import { db } from "../db.js"
 const SINGLETON = "den"
 let cached: string | null = null
 
-/**
- * This Den installation's stable id (`dni_…`), exported as a blob's
- * `source.instanceId`. Created on first use and kept in `den_instance`;
- * concurrent first calls agree because only the first insert wins.
- */
 export async function getConfigInstanceId(): Promise<string> {
   if (cached) return cached
   await db.$primary

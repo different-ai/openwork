@@ -86,6 +86,8 @@ jobs:
           node --test
           .github/scripts/alpha-macos.test.mjs
           .github/scripts/desktop-helper-cache.test.mjs
+          .github/scripts/release-inputs.test.mjs
+          apps/desktop/scripts/prepare-opencode-v1.test.mjs
           apps/desktop/scripts/prepare-runtime-node-modules.test.mjs
           apps/desktop/scripts/prepare-packaged-sandbox-image.test.mjs
           .github/scripts/alpha-windows.test.mjs
@@ -125,7 +127,14 @@ jobs:
           packages/computer-use/browser-task-secrets.test.mjs
           packages/computer-use/browser-secrets.review.test.mjs
           packages/computer-use/computer-control-secret-approval.test.mjs
-          apps/desktop/electron/session-runner-computer-requests.test.mjs
+          packages/computer-use/value-command.test.mjs
+          packages/computer-use/browser-task-values.test.mjs
+          packages/computer-use/value-use.test.mjs
+          packages/computer-use/private-value-use.test.mjs
+          packages/computer-use/computer-control-value-approval.test.mjs
+          apps/desktop/test/ui-control-private-redact.test.mjs
+      - name: Test the openwork command
+        run: node --test packages/cli/test/*.test.ts
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
       - name: Setup pnpm
@@ -150,18 +159,21 @@ jobs:
           node --test scripts/check-node-source-imports.test.mjs
           node scripts/check-node-source-imports.mjs
       # The app's layering and habits, frozen where they stand: no new
-      # wrong-direction imports, legacy-folder files, comments or effects.
+      # wrong-direction imports, legacy-folder files, comments, effects, any,
+      # casts, non-null assertions, suppressions, console.log or AI-sounding docs.
       - name: Check the app's structure and code habits
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          node --test scripts/check-app-structure.test.mjs scripts/check-code-habits.test.mjs
+          node --test scripts/check-app-structure.test.mjs scripts/check-code-habits.test.mjs scripts/check-prose-habits.test.mjs
           node scripts/check-app-structure.mjs
           if [ -n "${BASE_SHA:-}" ]; then
             git fetch --no-tags --depth=1 origin "$BASE_SHA"
             node scripts/check-code-habits.mjs --base "$BASE_SHA"
+            node scripts/check-prose-habits.mjs --base "$BASE_SHA"
           else
             node scripts/check-code-habits.mjs
+            node scripts/check-prose-habits.mjs
           fi
       # Workspace folders match their package names (scripts/check-package-names.mjs).
       - name: Check workspace package names
@@ -273,6 +285,12 @@ jobs:
           pnpm --filter openwork-server build
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
+      # These need the workspace's own packages, so they run here and not with the static checks.
+      - name: Check private value rules, the card and the audit record
+        run: >-
+          node --conditions=development --test
+          apps/desktop/electron/private-values.test.mjs
+          apps/desktop/electron/session-runner-computer-requests.test.mjs
 
   # Single stable context for branch rulesets to require. Every always-run
   # quick check must succeed; the Den job must succeed when selected and be

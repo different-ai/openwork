@@ -15,7 +15,6 @@ export function seatBillingGateEnabled() {
   return isSeatBillingGateEnabled({ orgMode: env.orgMode, stripeSecretKey: env.stripe.secretKey, stripeSeatPriceId: env.stripe.seatPriceId })
 }
 
-/** Who pays for each organization's plan, from its stored Team (seat) subscription. */
 async function paidByForOrganizations(organizationIds: readonly OrgId[]): Promise<Map<OrgId, PlanPaidBy>> {
   const result = new Map<OrgId, PlanPaidBy>()
   if (organizationIds.length === 0) return result
@@ -33,7 +32,6 @@ async function paidByForOrganizations(organizationIds: readonly OrgId[]): Promis
   return result
 }
 
-/** Resolved plans for several organizations at once (admin lists). */
 export async function getOrganizationPlanStates(organizations: readonly OrganizationRow[], now = new Date()): Promise<Map<OrgId, OrganizationPlanState>> {
   const ids = organizations.map((organization) => organization.id)
   const [usersByOrg, paidByOrg] = await Promise.all([countBillingUsersForOrganizations(ids), paidByForOrganizations(ids)])
@@ -54,11 +52,6 @@ export async function getOrganizationPlanStates(organizations: readonly Organiza
   return result
 }
 
-/**
- * One organization's resolved plan, read fresh so a plan a platform admin
- * just set applies to the next invitation, sign-in or SCIM request. Null when
- * the organization does not exist.
- */
 export async function getOrganizationPlanState(organizationId: OrgId): Promise<OrganizationPlanState | null> {
   const [organization] = await db
     .select({ id: OrganizationTable.id, metadata: OrganizationTable.metadata })

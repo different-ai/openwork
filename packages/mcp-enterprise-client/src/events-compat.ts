@@ -28,7 +28,6 @@ export function observeLegacyEventCapability(transport: StreamableHTTPClientTran
   return () => advertised
 }
 
-/** SEP-2243 field-value encoding, including escaping literal Base64 sentinels. */
 function encodedName(name: string): string {
   const plain = name.length > 0 && name === name.trim() && /^[\x20-\x7e\t]+$/.test(name)
     && !(name.startsWith("=?base64?") && name.endsWith("?="))

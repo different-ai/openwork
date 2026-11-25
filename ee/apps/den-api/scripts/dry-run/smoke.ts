@@ -1,8 +1,3 @@
-/**
- * Smoke check for the dry-run workflow: the restored branch answers through
- * Den's database client and the tables most risky changes read are present.
- * Prints yes/no per table only.
- */
 import { sql } from "@openwork-ee/den-db/drizzle"
 import { dryRunDb, fail, finish, report } from "./connect.js"
 

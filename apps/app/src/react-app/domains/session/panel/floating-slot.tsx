@@ -8,25 +8,16 @@ type FloatingSlotContextValue = {
 
 const FloatingSlotContext = React.createContext<FloatingSlotContextValue | null>(null);
 
-/**
- * Shares the chat pane's floating layer with surfaces rendered elsewhere on
- * the session page (a floating computer view).
- * Consumers portal into `useSessionFloatingSlot()`; the layer itself is
- * `pointer-events-none`, so each floating surface opts back in.
- */
 export function FloatingSlotProvider({ children }: { children: React.ReactNode }) {
   const [slot, setSlot] = React.useState<HTMLElement | null>(null);
   const value = React.useMemo(() => ({ slot, setSlot }), [slot]);
   return <FloatingSlotContext.Provider value={value}>{children}</FloatingSlotContext.Provider>;
 }
 
-/** The chat pane's floating layer, or null before it mounts or outside a provider. */
 export function useSessionFloatingSlot(): HTMLElement | null {
   return React.useContext(FloatingSlotContext)?.slot ?? null;
 }
 
-// The composer dock is the sticky ancestor of its toolbar (or the empty-state
-// dock). Floating surfaces stop above the highest dock in the pane.
 function composerDockTop(container: HTMLElement): number | null {
   const view = container.ownerDocument.defaultView;
   if (!view) return null;
@@ -46,11 +37,6 @@ function composerDockTop(container: HTMLElement): number | null {
   return top;
 }
 
-/**
- * The floating layer itself: one absolutely positioned, click-through box over
- * the conversation that ends above the composer dock. Render it inside the
- * chat pane's positioned container, under a `FloatingSlotProvider`.
- */
 export function SessionFloatingLayer() {
   const context = React.useContext(FloatingSlotContext);
   const setSlot = context?.setSlot;
@@ -78,8 +64,6 @@ export function SessionFloatingLayer() {
     const schedule = () => {
       if (frame === null) frame = window.requestAnimationFrame(measure);
     };
-    // Measure only while something floats here: the conversation mutates on
-    // every streamed token, and an empty layer needs no geometry.
     const sync = () => {
       if (layer.childElementCount > 0 && !measuring) {
         const resize = new ResizeObserver(schedule);

@@ -3,6 +3,19 @@ title: "Changelog"
 description: "OpenWork release notes: new features, improvements, and bug fixes."
 "og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="November 23rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.72](https://github.com/different-ai/openwork/compare/v0.18.71...v0.18.72): Bring your team's skills into OpenWork with their files
+
+  - **Bring skills over and use their supporting files.** Teams can import custom skills from Claude or GitHub and upload or download skills as ZIP files. Cloud skills can include scripts, templates, images, and other files; agents can read those files and run skill scripts, with the expected Python and Node libraries available on computers.
+  - **Chat actions and questions are easier to follow.** Run a suggested command directly from chat and the agent continues from its output. Questions appear beside the conversation, are less likely to ask about something you cannot see, and your answers and Automation review cards stay visible after the agent finishes. In Settings, Cmd+F (Ctrl+F on Windows and Linux) finds text on the page you have open.
+  - **AI Gateway setup and sign-in are clearer.** For admins: providers configured for members' own sign-in show as ready, provider edits save credentials and access correctly, and Vertex model choices save as expected. Desktop users can sign in again from models marked **Sign-in required**, and chat now identifies an AI Gateway usage limit instead of suggesting the provider is busy.
+  - **Workbot connects the tools your team actually uses.** It now offers every app your admin set up, and new workspace owners signing in from Workbot can add team tools before chatting. If you connect an app during a conversation, Workbot can use it in the same reply.
+  - **The built-in browser and everyday chat feel more dependable.** Browser pages open at a normal, readable size, links widen a narrow panel, and split-chat app previews open in the panel you can see. Chat no longer flickers when you send a message, and you can start a side chat from text across multiple agent replies.
+  - **Organization access and connected work behave more predictably.** GitHub sources need workspace approval before connecting or syncing; GitHub imports stay private until you share them. Requiring SSO no longer blocks agents, Workbot, and Automations, while invitations use the regular email-verification flow.
+
+</Update>
+
 <Update label="November 19th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
 
   ## [v0.18.71](https://github.com/different-ai/openwork/compare/v0.18.70...v0.18.71): Get the newest OpenWork alpha as soon as it’s published
@@ -133,7 +146,7 @@ description: "OpenWork release notes: new features, improvements, and bug fixes.
 
   - **Older installs move to OpenCode v2 in the background.** Existing installs still using OpenCode v1 are moved over automatically, with a backup made first so your chats are kept. Windows installers also carry less duplicate engine data, and Windows can identify OpenWork's signed app files.
   - **Computer use is more capable and predictable.** For Mac users, the agent can script apps directly and keeps working while you use your computer; Take over and Stop return control, and Continue resumes the task. Workbot can also script supported desktop apps. Browser pages keep a steady desktop, tablet, or phone size while the panel changes, and forms take fewer steps. When available, you can dictate into OpenWork or Workbot.
-  - **Chat can work with more of your existing tasks and connections.** Type `#` to add another task as context, ask the agent to create or move sidebar groups, and find connected actions with everyday wording. You can finish or repair an API-key connection in chat without sharing the key with the agent, and OpenWork Cloud tools work again in older desktop versions.
+  - **Chat can work with more of your existing tasks and connections.** Reference another task as context, ask the agent to create or move sidebar groups, and find connected actions with everyday wording. Use `@` to reference a task when inline suggestions are enabled, or `#` with the original composer. You can finish or repair an API-key connection in chat without sharing the key with the agent, and OpenWork Cloud tools work again in older desktop versions.
   - **Documents and first launches are more dependable.** Closing an edited document now gives clear save, discard, or cancel choices, and reloading or reopening it preserves your editing session and unsaved work. Workbot can open a requested document beside chat, explain why a file could not open, and show or rebuild a computer that will not connect. Fresh desktop installs can load built-in tools even if the package registry is unavailable; slow Windows sign-in and first launch no longer hide recovery options.
   - **For admins: team and organization controls are clearer.** Platform administrators can manage feature access per organization member and, when enabled, grant organizations Web access or extra Free Auto usage. Admins can finish connector setup after a check fails, remove connectors, and save team-role changes reliably; Workbot settings show one default model and its availability. When available, Workbot can guide eligible people from free Auto to paid Luna without losing the conversation.
   - **Website visitors can find practical AI governance guidance.** The expanded enterprise pages explain governing employee AI and planning an OpenWork rollout.

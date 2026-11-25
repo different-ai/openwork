@@ -55,7 +55,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   // in-chat question asked before a secret is entered. Without a store nothing here changes.
   secrets = /** @type {ReturnType<typeof import("@openwork/computer-use/browser-secrets").createBrowserSecrets> | undefined} */ (undefined),
   secretsEnabled = /** @type {() => boolean | Promise<boolean>} */ (() => false),
-  approveSecret = /** @type {((sessionId: string, request: { site: string, label: string, kind: string, field: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined) }) {
+  approveSecret = /** @type {((sessionId: string, request: { site: string, label: string, kind: string, field: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
+  // Fields filled with a private value: whether the feature is on (read at each use), the in-chat question that
+  // lists every command and takes what the person pastes, and the runner. What a command prints, and what the
+  // person pasted, goes to `secrets` for redaction and to the page.
+  valuesEnabled = /** @type {() => boolean | Promise<boolean>} */ (() => false),
+  approveValues = /** @type {((sessionId: string, request: { site: string, fills: Array<{ field: string, command: string[] } | { field: string, ask: string, kept?: true }> }, signal: AbortSignal) => Promise<{ approved: boolean, values: Array<string | null>, keep: boolean[], refused?: { code: string, error: string } }>) | undefined} */ (undefined),
+  runValueCommand = /** @type {((command: string[], signal: AbortSignal) => Promise<import("@openwork/computer-use/value-command").ValueCommandResult>) | undefined} */ (undefined),
+  noteValueFill = /** @type {((sessionId: string, fill: { site: string, field: string, source: "command" | "paste" | "kept", program?: string, result: string }) => void) | undefined} */ (undefined) }) {
   // A page can echo a secret, or keep a placeholder, in its title or address. Whatever of a page
   // this file shows, remembers or logs passes through here first.
   /** @template T @param {T} text @returns {T | string} */
@@ -984,6 +991,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     secrets,
     secretsEnabled,
     approveSecret,
+    valuesEnabled,
+    approveValues,
+    runValueCommand,
+    noteValueFill,
     armSecretSwap: async ({ tabId }) => {
       const tab = getBrowserTab(tabId);
       return Boolean(tab && secretInterception) && await secretInterception.arm(tab);

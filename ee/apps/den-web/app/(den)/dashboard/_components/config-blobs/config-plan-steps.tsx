@@ -75,9 +75,6 @@ function ItemHeading({ entry }: { entry: ConfigPlanEntry }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Match
-
 export function MatchStep({ plan, decisions, editable, saving, onDecisions }: StepProps) {
   const entries = matchEntries(plan, decisions);
   if (entries.length === 0) return <StepEmpty>Every item matched on its own.</StepEmpty>;
@@ -137,15 +134,11 @@ export function MatchStep({ plan, decisions, editable, saving, onDecisions }: St
   );
 }
 
-// ---------------------------------------------------------------------------
-// References
-
 export function ReferencesStep({ plan, decisions, editable, saving, onDecisions }: StepProps) {
   const groups = refGroups(plan);
   if (groups.length === 0) return <StepEmpty>Every reference points to something that exists.</StepEmpty>;
   const disabled = !editable || saving;
   const decide = (uses: readonly ConfigRefEntry[], choice: string) => onDecisions(decideRefs(decisions, uses, choice));
-  // Beside rows that open, a row with nothing to open keeps the same left edge for its name.
   const inset = groups.some((group) => group.uses.length > 1);
 
   return (
@@ -166,10 +159,8 @@ type RefRowProps = {
   onChoose: (uses: readonly ConfigRefEntry[], choice: string) => void;
 };
 
-/** What can be done with a reference: map it to something here, invite the person, or leave it out. */
 function RefChoiceSelect({ plan, uses, label, value, placeholder, disabled, testId, onChange }: {
   plan: ConfigPlan;
-  /** The uses this select decides: a choice is offered while at least one of them can take it. */
   uses: readonly ConfigRefEntry[];
   label: string;
   value: string;
@@ -181,7 +172,6 @@ function RefChoiceSelect({ plan, uses, label, value, placeholder, disabled, test
   const reference = uses[0]?.reference;
   const parsed = reference ? parseConfigRef(reference.ref) : null;
   const choices = parsed ? targetChoices(plan, parsed.area) : [];
-  // A choice already made stays listed, so the select can show it.
   const offers = (choice: string) => value === choice || uses.some((entry) => !refusesChoice(entry.reference, choice));
   return (
     <div className="w-60">
@@ -195,12 +185,10 @@ function RefChoiceSelect({ plan, uses, label, value, placeholder, disabled, test
   );
 }
 
-/** One use of a reference. `title` names the reference; inside a group the row is named by the item that uses it. */
 function RefUseRow({ plan, decisions, entry, title, inset, disabled, onChoose }: RefRowProps & { entry: ConfigRefEntry; title?: string; inset?: boolean }) {
   const { reference } = entry;
   const choice = refChoice(decisions, entry);
   const refused = isRefChoiceRefused(decisions, entry);
-  // Said before any choice is made: this use has no "Leave it out", and why.
   const required = isRefOpen(reference) && refusesChoice(reference, "drop");
   return (
     <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4" data-testid="config-ref-item">
@@ -236,14 +224,12 @@ function RefUseRow({ plan, decisions, entry, title, inset, disabled, onChoose }:
   );
 }
 
-/** A person or item several items point to: one choice covers every use; each use can still differ. */
 function RefGroupRow({ plan, decisions, group, disabled, onChoose }: RefRowProps & { group: ConfigRefGroup }) {
   const usesId = useId();
   const refused = group.uses.some((entry) => isRefChoiceRefused(decisions, entry));
   const choice = refGroupChoice(decisions, group);
   const count = group.uses.length;
   const decided = count - group.open;
-  // The uses a choice for all did not settle are the answer here, so they show without a click (DESIGN.md S3).
   const [toggled, setToggled] = useState<boolean | null>(null);
   const expanded = toggled ?? (refused || (group.open > 0 && decided > 0));
   return (
@@ -290,16 +276,12 @@ function RefGroupRow({ plan, decisions, group, disabled, onChoose }: RefRowProps
   );
 }
 
-// ---------------------------------------------------------------------------
-// Secrets
-
 type SecretChoice = "keep" | "value" | "env" | "unset";
 
 export function SecretsStep({ plan, editable, saving, allowEnv, onInput }: {
   plan: ConfigPlan;
   editable: boolean;
   saving: boolean;
-  /** `env` decisions are offered only where the server allows them (self-hosted with an operator allowlist). */
   allowEnv: boolean;
   onInput: (input: ConfigSecretInput | ConfigSecretInput[]) => Promise<void>;
 }) {
@@ -336,7 +318,6 @@ function SecretRow({ entry, secret, editable, saving, allowEnv, onInput }: {
   const [choice, setChoice] = useState<SecretChoice | "">(secret.decision ?? "");
   const [value, setValue] = useState("");
   const [env, setEnv] = useState(secret.env ?? "");
-  // The server only reads variables in its import namespace (config-blobs/env-secrets.ts).
   const envValid = /^OPENWORK_IMPORT_[A-Z0-9_]{1,112}$/.test(env);
 
   async function pick(next: SecretChoice | "") {
@@ -414,9 +395,6 @@ function SecretRow({ entry, secret, editable, saving, allowEnv, onInput }: {
   );
 }
 
-// ---------------------------------------------------------------------------
-// People
-
 export function PeopleStep({ plan, decisions, editable, saving, onDecisions }: StepProps) {
   const count = inviteCount(plan);
   return (
@@ -436,18 +414,12 @@ export function PeopleStep({ plan, decisions, editable, saving, onDecisions }: S
   );
 }
 
-// ---------------------------------------------------------------------------
-// Review
-
 export function ReviewStep({ plan, decisions, editable, saving, onDecisions, confirmed, onConfirm, closed = false, restore = false }: StepProps & {
   confirmed: ReadonlySet<string>;
   onConfirm: (key: string, checked: boolean) => void;
-  /** Applied or closed: the diff reads Before / After and decision controls are hidden. */
   closed?: boolean;
-  /** A "Restore previous config" request: its removals are what the restored change added. */
   restore?: boolean;
 }) {
-  // Areas where nothing changes collapse into one line at the end.
   const changed = plan.areas.filter((area) => area.items.some((item) => isDeletable(item, plan.mode) || !["unchanged", "untouched"].includes(item.op)));
   const quiet = plan.areas.filter((area) => !changed.includes(area));
   return (
@@ -492,7 +464,6 @@ export function destructiveKey(area: ConfigAreaKey, item: ConfigPlanItem): strin
   return `${area}:${item.ref}`;
 }
 
-/** Destructive changes other than mirror removals; each needs a tick before approval. */
 export function destructiveEntries(plan: ConfigPlan | null): ConfigPlanEntry[] {
   if (!plan) return [];
   return planEntries(plan).filter((entry) => entry.item.flags.includes("destructive") && !isDeletable(entry.item, plan.mode) && entry.item.op !== "skip");
@@ -649,9 +620,7 @@ function ReviewItem({ item, overridden, onOverride, skipped, onSkip, renamedTo, 
   const destructive = item.flags.includes("destructive");
   const blocked = item.flags.includes("blocked");
   const collision = item.flags.includes("collision.unique") || renamedTo !== null;
-  // Items that can't go ahead as they are may be left out of this change.
   const skippable = !closed && (skipped || blocked || drift || collision || item.flags.includes("ref_unresolved"));
-  // A create matched nothing here; "Matched earlier" would only echo the "Add as a new item" choice.
   const tier = item.op === "create" ? null : matchTierLabel(item.matchedBy);
   const renamed = item.op === "rename" && item.target && item.blob && item.target.name !== item.blob.name;
   const irreversible = item.op === "skip" ? [] : item.irreversible ?? [];
@@ -706,7 +675,6 @@ function ReviewItem({ item, overridden, onOverride, skipped, onSkip, renamedTo, 
   );
 }
 
-/** A create whose name is already taken here: pick another name for the new item. */
 function RenameField({ current, editable, onRename }: { current: string | null; editable: boolean; onRename: (name: string | null) => void }) {
   const [name, setName] = useState(current ?? "");
   const trimmed = name.trim();

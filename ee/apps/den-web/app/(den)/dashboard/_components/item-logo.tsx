@@ -8,7 +8,6 @@ import { brandIconCandidates } from "../../_lib/brand-icon";
 
 export { brandHintFor } from "@openwork/types/connector-brand";
 
-/** Starts downloading the logo a ConnectorLogo would show, before its row renders. */
 export function preloadConnectorLogo(name: string, url?: string | null) {
   const [src] = brandIconCandidates(brandHintFor(name, url));
   if (src) preload(src, { as: "image" });
@@ -47,7 +46,6 @@ export function ConnectorLogo({ name, url, iconUrl, size = "sm" }: {
   );
 }
 
-/** Resolve real named-service marks without inventing a logo for a person's plugin. */
 export function PluginLogo({ name, size = "sm" }: { name: string; size?: "sm" | "lg" }) {
   const hint = brandHintFor(name);
   return hint.simpleIconSlug || hint.serviceUrl
@@ -55,7 +53,6 @@ export function PluginLogo({ name, size = "sm" }: { name: string; size?: "sm" | 
     : <LetterTile name={name} size={size} />;
 }
 
-/** Plugins and skills are not brands, so they get a quiet gray tile. */
 export function LetterTile({ name, size = "sm" }: { name: string; size?: "sm" | "lg" }) {
   const letter = name.trim().charAt(0).toUpperCase() || "P";
   return (

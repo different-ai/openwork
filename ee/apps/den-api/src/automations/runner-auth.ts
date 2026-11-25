@@ -47,15 +47,6 @@ export function automationRunnerAudienceFromRequestUrl(requestUrl: string): stri
   return audience
 }
 
-/**
- * Bind proxied runner credentials to the public Den route the desktop will
- * actually use. The Den Web proxy strips caller-supplied forwarding headers
- * and writes its own, while trustedForwardedOrigin limits the destination to
- * configured first-party origins. Direct API requests keep their request URL,
- * resolved through the public scheme because hosted deployments terminate TLS
- * ahead of this process: desktops reject a plaintext runner destination, so an
- * http audience would silently disconnect every runner behind such a proxy.
- */
 export function automationRunnerAudienceFromRequest(
   request: Request,
   options: { trustedOrigins: readonly string[] },

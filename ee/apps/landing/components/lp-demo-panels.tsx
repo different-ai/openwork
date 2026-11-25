@@ -14,10 +14,6 @@ import { OpenWorkMark } from "./openwork-mark";
 
 const selectClass = `flex h-7 items-center rounded-lg px-2.5 text-xs text-[#111827] shadow-[0_0_0_1px_#E5E7EB] hover:bg-[#F7F8FA] ${focusRing}`;
 
-/* ------------------------------------------------------------------ */
-/* MCP Gateway                                                         */
-/* ------------------------------------------------------------------ */
-
 type Audience = "Everyone" | "Marketing" | "Just me";
 const AUDIENCES: Audience[] = ["Everyone", "Marketing", "Just me"];
 type SharedItem = { id: string; mark: ReactNode; name: string; kind: string; who: Audience };
@@ -108,10 +104,6 @@ export function LpDemoMcp() {
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/* AI Gateway                                                          */
-/* ------------------------------------------------------------------ */
 
 type Provider = { id: string; mark: ReactNode; name: string; models: string; who: string; ready: boolean };
 
@@ -255,10 +247,6 @@ export function LpDemoAiGateway() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Cloud App                                                           */
-/* ------------------------------------------------------------------ */
-
 type BrowserTab = "web" | "admin";
 type AdminView = "members" | "policies" | "library" | "mcp" | "ai" | "analytics";
 
@@ -271,7 +259,6 @@ const ADMIN_PATH: Record<AdminView, string> = {
   analytics: "analytics"
 };
 
-/** `adminOnly` shows just the Acme Studio admin dashboard, with no OpenWork Web tab. */
 export function LpDemoCloud({ adminOnly = false }: { adminOnly?: boolean }) {
   const [tab, setTab] = useState<BrowserTab>(adminOnly ? "admin" : "web");
   const [adminView, setAdminView] = useState<AdminView>("members");

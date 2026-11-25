@@ -5,7 +5,6 @@ import { ExampleProviderMark } from "../ai-gateway/example-parts";
 import { ExampleAvatar, ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows, ExampleServiceMark } from "../example-parts";
 import { teamMembersExampleGets, teamMembersExampleRows, teamMembersExampleTeam } from "./team-members-example-data";
 
-/** Team members example: the people in a team, then what each of them gets from it. */
 export function TeamMembersExample() {
   const step = useExampleStep(teamMembersExampleRows.length);
 

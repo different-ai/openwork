@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-/** Responses of the openwork-server `/workspace/:id/opencode-import/connections` routes. */
-
 export const opencodeConnectionPreviewItemSchema = z.object({
   name: z.string(),
   kind: z.enum(["local", "remote"]).optional(),

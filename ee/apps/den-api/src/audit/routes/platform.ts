@@ -1,11 +1,3 @@
-// Platform slice: routes of the org/admin/platform inventory (r3) with no trustworthy tenant:
-// public discovery, auth helpers, session-only user routes, global platform-admin routes,
-// operational probes, app.use middleware entries, the legacy org proxy and the MCP consumption transports.
-//
-// Not declared here: the better-auth catch-alls `DELETE|GET|PATCH|POST|PUT /api/auth/*`
-// (declared per concrete better-auth endpoint in ./auth.ts) and the six /v1/audit/* routes
-// (domain_audit, see ./org.ts).
-
 import { MCP_CONSUMPTION_EXCLUSIONS, OPERATIONAL_EXCLUSIONS, type AuditRouteClass, type AuditRouteDeclaration, type AuditRouteMethod } from "./types.js"
 
 function route(
@@ -19,17 +11,14 @@ function platform(method: AuditRouteMethod, path: string, action: string, kind: 
   return route(method, path, "platform", action, kind, type, idParam, notes)
 }
 
-/** Side-effect-free platform GET (pure metadata, docs, discovery or session read). */
 function readOnly(path: string, action: string, kind: string, type: string, idParam: string | null, notes?: string): AuditRouteDeclaration {
   return { ...platform("GET", path, action, kind, type, idParam, notes), readOnly: true }
 }
 
-/** Platform request evidence; the emitter appends events about the user into the user's verified memberships. */
 function userScoped(method: AuditRouteMethod, path: string, action: string, kind: string, type: string, changeEvidence: string, notes: string): AuditRouteDeclaration {
   return { method, path, class: "platform", action, kind, resource: { type, idParam: null }, attribution: "user_memberships", changeEvidence, notes }
 }
 
-/** Tenant-class route whose handler (or a better-auth hook it forwards to) attributes the tenant after verification. */
 function handler(method: AuditRouteMethod, path: string, auditClass: AuditRouteClass, action: string, kind: string, type: string, notes: string, changeEvidence?: string): AuditRouteDeclaration {
   return { method, path, class: auditClass, action, kind, resource: { type, idParam: null }, attribution: "handler", ...(changeEvidence ? { changeEvidence } : {}), notes }
 }
@@ -60,7 +49,6 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("POST", "/v1/admin/managed-releases/validate", "admin.managed_releases.validate", "managed_installer.settings", "managed_installer", null, "Platform admin only. Immutable candidate, actor, source revision and expiry recorded in managed_installer_validation; no external writes."),
   platform("POST", "/v1/admin/managed-releases/pin", "admin.managed_releases.pin", "managed_installer.settings", "managed_installer", null, "Platform admin only. Canonical before/after, actor, manifest hash and operator-attested evidence URLs committed in managed_installer_change with setting CAS."),
   platform("POST", "/v1/admin/managed-releases/reset", "admin.managed_releases.reset", "managed_installer.settings", "managed_installer", null, "Platform admin only. Explicit restore of environment configuration; before/after and actor committed in managed_installer_change with setting CAS."),
-  // app.use middleware entries (not endpoints)
   support("ALL", "/*", "request.pipeline", "Global middleware stack (observability, request id, headers, access log, CORS, sessionMiddleware, audit request capture, config token confinement)."),
   support("ALL", "/v1/*", "request.preclaim_scope", "preclaimScopeMiddleware: denies provisional agent users outside their bootstrap scope."),
   support("ALL", "/api/auth/scim/v2/*", "scim.diagnostics", "SCIM diagnostics middleware (timing logs only); concrete SCIM v2 routes are declared in ./org.ts."),
@@ -70,26 +58,21 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   support("ALL", "/mcp/public", "mcp_public.no_index", "noIndex middleware: marks the public App MCP surface as not to be indexed by search engines (header only); the App server route is declared with the MCP consumption transports."),
   support("ALL", "/mcp/public/*", "mcp_public.no_index", "noIndex middleware: marks the public App MCP surface as not to be indexed by search engines (header only); the App server route is declared with the MCP consumption transports."),
 
-  // app.fetch re-dispatch
   route("ALL", "/v1/orgs/:orgId/*", "proxy", "legacy_org.proxy", "request.proxy", "organization", "orgId", "delegatedRoute legacy org proxy re-dispatches through app.fetch; the destination route records."),
 
-  // MCP consumption transports (MCP_CONSUMPTION_EXCLUSIONS only)
   mcp("ALL", "/mcp", "mcp.transport"),
   mcp("ALL", "/mcp/agent", "mcp_agent.transport"),
   mcp("ALL", "/mcp/agent/connections/:connectionId", "mcp_agent.connection.proxy"),
-  mcp("ALL", "/mcp/agent/servers/:connectionId", "mcp_agent.connection.server"),
   mcp("ALL", "/mcp/admin", "mcp_admin.transport"),
   mcp("ALL", "/mcp/public/apps/:appIdOrName", "mcp_public.app.server"),
   mcp("GET", "/mcp/.well-known/oauth-protected-resource", "mcp.protected_resource.read"),
   mcp("GET", "/mcp/agent/.well-known/oauth-protected-resource", "mcp_agent.protected_resource.read"),
   mcp("GET", "/mcp/admin/.well-known/oauth-protected-resource", "mcp_admin.protected_resource.read"),
 
-  // Operational probes (OPERATIONAL_EXCLUSIONS only): excluded from audit logs
   operational("/", "service.root"),
   operational("/health", "health.check"),
   operational("/ready", "readiness.check"),
 
-  // Public discovery and metadata
   readOnly("/.well-known/oauth-authorization-server", "discovery.oauth_authorization_server.read", "platform.discovery", "discovery_document", null),
   readOnly("/.well-known/oauth-authorization-server/api/auth", "discovery.oauth_authorization_server.issuer_suffix.read", "platform.discovery", "discovery_document", null),
   readOnly("/api/auth/.well-known/oauth-authorization-server", "discovery.oauth_authorization_server.issuer_prefix.read", "platform.discovery", "discovery_document", null),
@@ -99,7 +82,6 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   readOnly("/.well-known/oauth-protected-resource", "discovery.oauth_protected_resource.read", "platform.discovery", "discovery_document", null),
   readOnly("/.well-known/oauth-protected-resource/mcp", "discovery.oauth_protected_resource.mcp.read", "platform.discovery", "discovery_document", null, "Root-anchored RFC 9728 path; not in MCP_CONSUMPTION_EXCLUSIONS."),
   readOnly("/.well-known/oauth-protected-resource/mcp/agent", "discovery.oauth_protected_resource.mcp_agent.read", "platform.discovery", "discovery_document", null, "Root-anchored RFC 9728 path; not in MCP_CONSUMPTION_EXCLUSIONS."),
-  readOnly("/.well-known/oauth-protected-resource/mcp/agent/servers/:connectionId", "discovery.oauth_protected_resource.mcp_agent_server.read", "platform.discovery", "discovery_document", null, "Root-anchored RFC 9728 path for a connection server; the same /mcp/agent metadata for every id, so it reveals nothing about the connection."),
   readOnly("/.well-known/oauth-protected-resource/mcp/admin", "discovery.oauth_protected_resource.mcp_admin.read", "platform.discovery", "discovery_document", null, "Root-anchored RFC 9728 path; not in MCP_CONSUMPTION_EXCLUSIONS."),
   readOnly("/oauth/client-metadata.json", "discovery.oauth_client_metadata.read", "platform.discovery", "discovery_document", null),
   readOnly("/docs", "api_docs.read", "platform.discovery", "api_document", null),
@@ -112,25 +94,19 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   readOnly("/v1/install-config", "install_config.public.read", "install.distribution", "install_config", null, "Public deployment setup for desktop builds resolving pasted install links; any token is ignored and no organization is identified. Side-effect free."),
   readOnly("/v1/install/:platform", "install_page.redirect", "install.distribution", "install_artifact", "platform", "Redirects older token download links to the normal install page; side-effect free."),
 
-  // OAuth authorization server (better-auth endpoints registered by Den)
   handler("GET", "/api/auth/oauth2/authorize", "tenant_change", "oauth.authorize", "oauth.authorization", "oauth_client", "Den route forwarding to better-auth. When the signed-in user has an MCP consent organization (postLogin.consentReferenceId, the session's active organization) the request is attributed there after the endpoint ran (phase after, src/audit/better-auth.ts) once their active membership is verified; actor = user + memberId. Issuing the authorization code is request evidence only (never the code). No session, no MCP scope or a failed request: platform evidence. The request policy hook may update oauthClient.scopes on this GET."),
   platform("POST", "/api/auth/oauth2/register", "oauth_client.register", "platform.auth", "oauth_client", null, "Public RFC 7591 registration; response carries client credentials (never captured)."),
   platform("POST", "/register", "oauth_client.register_root", "platform.auth", "oauth_client", null, "Root alias of /api/auth/oauth2/register (handled directly, not app.fetch)."),
 
-  // Raw better-auth SCIM management (always 401/403)
   handler("POST", "/api/auth/scim/generate-token", "tenant_change", "scim_raw.token.generate", "platform.auth.raw_mutation", "scim_connection", `Den-shadowed raw better-auth route; use /v1/scim/token. ${RAW_REFUSED}`),
   platform("GET", "/api/auth/scim/list-provider-connections", "scim_raw.provider_connection.list", "platform.auth", "scim_connection", null, "Blocked: always 401/403."),
   platform("GET", "/api/auth/scim/get-provider-connection", "scim_raw.provider_connection.read", "platform.auth", "scim_connection", null, "Blocked: always 401/403."),
   handler("POST", "/api/auth/scim/delete-provider-connection", "tenant_change", "scim_raw.provider_connection.delete", "platform.auth.raw_mutation", "scim_connection", `Den-shadowed raw better-auth route; use DELETE /v1/scim. ${RAW_REFUSED}`),
 
-  // Raw better-auth custom-role management. dynamicAccessControl is off, so better-auth no
-  // longer registers these endpoints; Den shadows them (routes/auth/raw-role-refusals.ts) so
-  // denied attempts stay in the tenant security audit (always 403).
   handler("POST", "/api/auth/organization/create-role", "tenant_change", "auth.organization.role.create", "platform.auth.raw_mutation", "role", `Den-shadowed raw better-auth route; custom organization roles are not supported (permission sets are managed through /v1/permissions). ${RAW_REFUSED}`),
   handler("POST", "/api/auth/organization/update-role", "tenant_change", "auth.organization.role.update", "platform.auth.raw_mutation", "role", `Den-shadowed raw better-auth route; custom organization roles are not supported (permission sets are managed through /v1/permissions). ${RAW_REFUSED}`),
   handler("POST", "/api/auth/organization/delete-role", "tenant_change", "auth.organization.role.delete", "platform.auth.raw_mutation", "role", `Den-shadowed raw better-auth route; custom organization roles are not supported (permission sets are managed through /v1/permissions). ${RAW_REFUSED}`),
 
-  // Auth helpers
   platform("GET", "/v1/auth/login-options", "auth.login_options.read", "platform.auth", "login_options", null, "Public, bot-protected; reveals account sign-in methods."),
   platform("GET", "/v1/auth/sso-options", "auth.sso_options.read", "platform.auth", "login_options", null, "Public, rate limited; lists an organization's enabled SSO identity providers for its /sso/<slug> page."),
   platform("GET", "/v1/orgs/sso/resolve", "auth.sso.resolve", "platform.auth", "login_options", null, "Public, bot-protected email -> SSO routing."),
@@ -145,7 +121,6 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("GET", "/v1/dev/emails", "dev_email.list", "platform.dev", "dev_email", null, "devMode only (404 otherwise); exposes OTP codes and links."),
   platform("GET", "/v1/dev/emails/last", "dev_email.last.read", "platform.dev", "dev_email", null, "devMode only (404 otherwise)."),
 
-  // Session-only user routes and org creation
   readOnly("/v1/me", "user.read", "platform.user", "user", null),
   userScoped("PATCH", "/v1/me/profile", "user.profile.update", "platform.user", "user", "audit/domain/account.ts", "Direct database update (no better-auth hook): the handler appends account.profile_updated (name before/after) to every organization where the user is an active member."),
   platform("GET", "/v1/me/sso-sign-in", "user.sso_sign_in.list", "platform.user", "organization", null, "Lists the caller's member organizations with ready SSO and their sign-in URLs, for re-authentication; no tenant is chosen."),
@@ -156,11 +131,9 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("POST", "/v1/org", "organization.create", "platform.user", "organization", null, "Creates a new org; no tenant exists before the handler and the new org has no audit rollout."),
   platform("POST", "/v1/bootstrap/workspace", "workspace.bootstrap.create", "workspace.bootstrap", "workspace_bootstrap", null, "Public, rate limited; creates a provisional org and returns a preclaim assertion."),
 
-  // Scheduled maintenance (bearer DEN_MAINTENANCE_TOKEN; 404 when unset)
   platform("POST", "/internal/audit/usage/refresh", "audit.usage.refresh", "platform.maintenance", "audit_usage", null, "Called by the den-audit-usage cron (Helm CronJob, Render cron job). Recomputes every organization's audit_state totals from stored rows; no organization activity, so platform evidence only."),
   platform("POST", "/internal/github/reconcile/run", "connector.github.reconcile.run", "platform.maintenance", "github_reconcile", null, "Called by the den-github-reconcile cron (Helm CronJob, Render cron job). Checks due GitHub connector targets for new commits across organizations and queues resyncs; each resulting sync records its own connector_sync.completed job outcome, so platform evidence only."),
 
-  // Global platform admin
   platform("GET", "/v1/admin/services", "platform.service_readiness.read", "platform.admin", "service_readiness", null, `${ADMIN} Cached diagnostics; stale-while-revalidate schedules read-only outbound probes through bounded durable admission (not a pure metadata read). No credentials or upstream error bodies.`),
   platform("POST", "/v1/admin/services/check", "platform.service_readiness.check", "platform.admin", "service_readiness", null, `${ADMIN} Queues read-only deployment probes, globally rate limited; request evidence only. Never sends messages, invokes inference or provisions resources.`),
   platform("GET", "/v1/admin/runner-fleet", "platform.runner_fleet.read", "platform.admin", "platform_report", null, `${ADMIN} Reads each runner node's own state endpoint on the private network (GET only, hosts from deployment configuration): counts, byte sizes and opaque cell id prefixes. Each cell in memory is matched to Den's session index, so the organization and kind of conversation it belongs to are returned; never a conversation's name or content, or a member.`),
@@ -179,10 +152,28 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("GET", "/v1/admin/opportunities/outreach", "platform.opportunities.outreach.read", "platform.admin", "platform_report", null, `${ADMIN} Internal sales list: names the person to write to at each listed organization from existing member records. Platform evidence only; sends no message.`),
   platform("POST", "/v1/admin/opportunities/accounts/:organizationId/actions", "platform.opportunities.account.follow_up.record", "platform.admin", "organization", "organizationId", `${ADMIN} Records an internal follow-up step in account_follow_up tables. Platform evidence only: sales notes are not tenant activity and never reach the organization's audit log. Sends no message.`),
   platform("GET", "/v1/admin/metrics", "platform.metrics.read", "platform.admin", "platform_report", null, ADMIN),
+  platform("POST", "/v1/webhooks/openai/safety", "platform.free_auto_safety_case.receive", "platform.webhook", "free_auto_safety_case", null, "Verified organization-level provider notice, with authoritative case details retrieved before recording. No tenant attribution."),
+  platform("POST", "/v1/admin/free-auto/safety-cases/from-request", "platform.free_auto_safety_case.open", "platform.admin", "free_auto_safety_case", null, ADMIN),
+  readOnly("/v1/admin/free-auto/safety-cases", "platform.free_auto_safety_case.list", "platform.admin", "free_auto_safety_case", null, ADMIN),
+  readOnly("/v1/admin/free-auto/safety-cases/:caseId", "platform.free_auto_safety_case.inspect", "platform.admin", "free_auto_safety_case", "caseId", ADMIN),
+  platform("POST", "/v1/admin/free-auto/safety-cases/import", "platform.free_auto_safety_case.import", "platform.admin", "free_auto_safety_case", null, ADMIN),
+  platform("POST", "/v1/admin/free-auto/safety-cases/:caseId/decision", "platform.free_auto_safety_case.decide", "platform.admin", "free_auto_safety_case", "caseId", ADMIN),
+  readOnly("/v1/admin/users/:userId/funded-model-suspensions", "platform.funded_models.inspect", "platform.admin", "user", "userId", ADMIN),
+  platform("POST", "/v1/admin/users/:userId/funded-model-suspensions", "platform.funded_models.suspend", "platform.admin", "user", "userId", ADMIN),
+  platform("POST", "/v1/admin/users/:userId/funded-model-suspensions/release", "platform.funded_models.release", "platform.admin", "user", "userId", ADMIN),
+  platform("PUT", "/v1/admin/free-auto/safety-pause", "platform.free_auto_safety_pause.set", "platform.admin", "free_auto_safety_pause", null, ADMIN),
   platform("GET", "/v1/admin/free-auto/usage", "platform.free_auto_usage.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/mcp-registration", "platform.mcp_registration.read", "platform.admin", "platform_report", null, ADMIN),
   platform("POST", "/v1/admin/mcp-registration/check", "platform.mcp_registration.check", "platform.admin", "platform_report", null, `${ADMIN} Reads preset providers' sign-in metadata and, when asked, registers and deletes a test OAuth client with them.`),
   platform("GET", "/v1/admin/free-auto/conversions", "platform.free_auto_conversions.read", "platform.admin", "platform_report", null, ADMIN),
+  platform("GET", "/v1/admin/harness-feedback", "platform.harness_feedback.read", "platform.admin", "harness_feedback", null, ADMIN),
+  platform("GET", "/v1/admin/harness-feedback/reports/:organizationId/:reportId", "platform.harness_feedback.report.read", "platform.admin", "harness_feedback", "reportId", ADMIN),
+  platform("GET", "/v1/admin/harness-feedback/:organizationId/:groupId", "platform.harness_feedback.group.read", "platform.admin", "harness_feedback", "groupId", ADMIN),
+  platform("POST", "/v1/admin/harness-feedback/:organizationId/:groupId/retry", "platform.harness_feedback.group.retry", "platform.admin", "harness_feedback", "groupId", ADMIN),
+  platform("GET", "/v1/admin/harness-feedback/settings", "platform.harness_feedback.settings.read", "platform.admin", "harness_feedback", null, ADMIN),
+  platform("PUT", "/v1/admin/harness-feedback/settings/slack", "platform.harness_feedback.slack.set", "platform.admin", "harness_feedback", null, ADMIN),
+  platform("DELETE", "/v1/admin/harness-feedback/settings/slack", "platform.harness_feedback.slack.clear", "platform.admin", "harness_feedback", null, ADMIN),
+  platform("POST", "/v1/admin/harness-feedback/settings/slack/test", "platform.harness_feedback.slack.test", "platform.admin", "harness_feedback", null, ADMIN),
   platform("GET", "/v1/admin/security", "platform.security_report.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/security/requests", "platform.security_requests.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/organizations", "platform.organization.list", "platform.admin", "organization", null, ADMIN),

@@ -61,11 +61,8 @@ export type CloudProviderRow = {
   status: CloudProviderRowStatus;
   name: string;
   detail: string;
-  /** Monospace id at the start of the meta line, e.g. Den's provider id. */
   metaId?: string;
-  /** Who Den grants it to: "Everyone", team names, or a member count. */
   access?: string | null;
-  /** The provider has a credential this member can use. */
   credentialReady?: boolean;
 };
 
@@ -196,10 +193,6 @@ function MarketplacePluginListItem({
   );
 }
 
-/**
- * The organization's OpenWork Models on this device: Turn off / Turn on when
- * the person decides, or "Managed by {organization}" when only admins do.
- */
 export type OpenWorkModelsToggle =
   | { managed?: false; turnedOff: boolean; busy: boolean; onToggle: (enabled: boolean) => void | Promise<void> }
   | { managed: true };
@@ -286,7 +279,6 @@ function CloudProviderListItem({ actionId, row, onRetry, openWorkModelsToggle, o
 }
 
 export interface CloudProvidersSectionProps {
-  /** Device provider sharing: what to offer while nothing is shared with the organization. */
   shareEmptyState?: OrganizationShareEmptyState;
   actionError: string | null;
   actionId: string | null;
@@ -302,10 +294,6 @@ export interface CloudProvidersSectionProps {
   openWorkModelsToggle?: OpenWorkModelsToggle;
 }
 
-/**
- * Nothing is shared with the organization yet: say so and offer the next step
- * (DESIGN C6), or who manages it for someone who cannot (P4, C5).
- */
 export function OrganizationShareEmpty({ state, organizationName, onOpenDen }: {
   state: NonNullable<OrganizationShareEmptyState>;
   organizationName: string;
@@ -317,8 +305,6 @@ export function OrganizationShareEmpty({ state, organizationName, onOpenDen }: {
       <span>{shareLockedLine(state.managerName, organizationName)}</span>
     </p>;
   }
-  // A shareable key already has its Share action on its own row; repeating it
-  // here would put two identical actions on one screen (DESIGN P7, S6).
   return <div data-testid="organization-share-empty" data-state={state.kind} className="flex flex-col gap-3 rounded-2xl border border-dashed border-dls-border px-5 py-4 sm:flex-row sm:items-center">
     <p className="min-w-0 flex-1 text-sm text-muted-foreground">
       {state.kind === "share"

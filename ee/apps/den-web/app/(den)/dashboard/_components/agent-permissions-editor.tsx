@@ -57,7 +57,6 @@ import {
   agentPermissionChoiceOptions,
   agentPermissionChoiceValue,
   agentPermissionToggleState,
-  sandboxRequirementVisibility,
   storedAgentPermissionDecision,
   visibleAgentPermissionGroups,
   visibleAgentPermissionTryKinds,
@@ -69,10 +68,6 @@ import { ReadOnlyNotice, ScopeChip, UseEveryonesButton } from "./scoped-setting"
 import { teamScopeOf, type TeamScope } from "./team-scope";
 
 export type { AgentPermissionsArea } from "./agent-permissions-presentation";
-
-// ---------------------------------------------------------------------------
-// Settings helpers
-// ---------------------------------------------------------------------------
 
 export function sameSettings(left: AgentPermissionSettings, right: AgentPermissionSettings): boolean {
   return JSON.stringify(normalizeAgentPermissionSettings(left)) === JSON.stringify(normalizeAgentPermissionSettings(right));
@@ -89,7 +84,6 @@ function withSetting(settings: AgentPermissionSettings, key: AgentPermissionDefi
   return next;
 }
 
-/** The permissions a record sets: for a team, the rows it changed from Everyone. */
 export function changedDefinitions(settings: AgentPermissionSettings): AgentPermissionDefinition[] {
   const set = normalizeAgentPermissionSettings(settings);
   return agentPermissionDefinitions.filter((definition) => set[definition.key] !== undefined);
@@ -99,18 +93,12 @@ export function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-// ---------------------------------------------------------------------------
-// Access: the viewer's permissions
-// ---------------------------------------------------------------------------
-
 export type AgentPermissionsAccess =
   | { state: "checking" | "error" | "no_access" }
   | { state: "ready"; orgId: string; orgSlug: string | null; canManage: boolean; memberCount: number };
 
 export function useAgentPermissionsAccess(): AgentPermissionsAccess {
   const { orgId, orgSlug, orgContext, orgBusy, orgError } = useOrgDashboard();
-  // A background refresh keeps the organization on screen, so an unsaved draft
-  // stays in place instead of being replaced by a loading state (DESIGN.md P11).
   if (!orgContext || !orgId || orgContext.organization.id !== orgId) return orgError && !orgBusy ? { state: "error" } : { state: "checking" };
 
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
@@ -118,7 +106,6 @@ export function useAgentPermissionsAccess(): AgentPermissionsAccess {
   return { state: "ready", orgId, orgSlug, canManage: access.canManageAgentPermissions, memberCount: orgContext.members.length };
 }
 
-/** Whether the viewer can read agent permissions on a team's Agents tab. */
 export function agentsTabVisible(orgContext: DenOrgContext | null): boolean {
   if (!orgContext) return false;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
@@ -134,7 +121,6 @@ export function AgentPermissionsAccessState({ access }: { access: AgentPermissio
   return <EditorSkeleton />;
 }
 
-/** Loads every record, then renders `children` with them, or the loading and error states. */
 export function WithPolicies({ orgId, children }: { orgId: string; children: (data: AgentPermissionPolicies) => ReactNode }) {
   const query = useAgentPermissions(orgId);
   if (query.isPending) return <EditorSkeleton />;
@@ -150,15 +136,8 @@ export function WithPolicies({ orgId, children }: { orgId: string; children: (da
   return <>{children(query.data)}</>;
 }
 
-// Desktop apps re-read their organization's config every 5 minutes and when
-// the member returns to the app (DesktopConfigProvider in apps/app).
 const PROPAGATION_NOTE = "Members' desktop apps can take up to 5 minutes to pick up changes.";
 
-// ---------------------------------------------------------------------------
-// One scope's Agents panel: Everyone's, or a team's changes from Everyone
-// ---------------------------------------------------------------------------
-
-/** Everyone's Agents or Browser tab, or a team's. Loads, checks access, then edits. */
 export function AgentsPanel({ team, area = "all" }: { team: { id: string; name: string } | null; area?: AgentPermissionsArea }) {
   const access = useAgentPermissionsAccess();
   const testId = area === "browser" ? "agent-permissions-browser" : "agent-permissions-agents";
@@ -179,7 +158,6 @@ function ScopeAgents({ access, data, policy, team, area }: {
   access: Extract<AgentPermissionsAccess, { state: "ready" }>;
   data: AgentPermissionPolicies;
   policy: AgentPermissionPolicy;
-  /** The team's name, or null for Everyone. */
   team: string | null;
   area: AgentPermissionsArea;
 }) {
@@ -206,7 +184,6 @@ function ScopeAgents({ access, data, policy, team, area }: {
     }
   }
 
-  /** Puts back what was saved: a team without its own record before goes back to following Everyone. */
   async function restore(previous: AgentPermissionSettings, hadOwnRecord: boolean) {
     if (team && !hadOwnRecord) {
       try {
@@ -259,7 +236,6 @@ function ScopeAgents({ access, data, policy, team, area }: {
             >
               Open Everyone
             </Link>
-            {/* Reset removes every change the team made, so it lives on the Agents tab only. */}
             {access.canManage && editable && savedChanges.length > 0 && area !== "browser" ? (
               <ResetToEveryone
                 team={team}
@@ -281,7 +257,6 @@ function ScopeAgents({ access, data, policy, team, area }: {
         scopeId={policy.scopeId}
         team={team}
         settings={settings}
-        saved={policy.settings}
         everyone={data.everyone.settings}
         area={area}
         editable={editable}
@@ -309,7 +284,6 @@ function ScopeAgents({ access, data, policy, team, area }: {
   );
 }
 
-/** Confirms before a team loses its changes (DESIGN.md P8, P9), then offers Undo. */
 function ResetToEveryone({ team, changes, previous, remove, removeError, removing, resetError, onReset, undo }: {
   team: string;
   changes: AgentPermissionDefinition[];
@@ -367,11 +341,6 @@ function ResetToEveryone({ team, changes, previous, remove, removeError, removin
   );
 }
 
-// ---------------------------------------------------------------------------
-// The editor: one panel of rows, then Try a request
-// ---------------------------------------------------------------------------
-
-/** One line per row, in the words people use (DESIGN.md C3); the full detail stays in the type's description. */
 const ROW_COPY: Record<string, string> = {
   commands: "Commands the agent runs in the terminal, like npm test",
   fileEdits: "Create, change and delete files in the member's folders",
@@ -382,6 +351,11 @@ const ROW_COPY: Record<string, string> = {
   appScripting: "Run AppleScript and other scripts in Mac apps",
   websites: "Pages the agent fetches and the built-in browser opens",
   browserUploads: "Member decides asks unless remembered. Ask first asks every time.",
+  privateValueFills: "Passwords and codes the agent fills without seeing them. The member approves every fill.",
+  privateValueCommands: "Commands OpenWork runs to get a value, like a password manager's",
+  privateValuePaste: "The member pastes a value into OpenWork's own card",
+  privateValueTerminal: "Off keeps any program the agent fills private values from out of its own terminal",
+  privateValueRuns: "Programs the agent runs with a private value it never sees, like a deploy script's token",
   fileSends: "Drive uploads and saves, and Gmail and Outlook drafts with attachments",
   webSearch: "Look things up with a web search",
   localSkills: "Skills installed on the member's computer",
@@ -390,13 +364,10 @@ const ROW_COPY: Record<string, string> = {
 
 const PATTERN_NOUN: Record<string, string> = { website: "site" };
 
-export function AgentPermissionsEditor({ scopeId, team, settings, saved, everyone, area = "all", editable, onChange }: {
+export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area = "all", editable, onChange }: {
   scopeId: AgentPermissionScopeId;
-  /** The team's name, or null when editing Everyone's. */
   team: string | null;
   settings: AgentPermissionSettings;
-  /** What is stored, so a row being edited stays on screen until it is saved. */
-  saved: AgentPermissionSettings;
   everyone: AgentPermissionSettings;
   area?: AgentPermissionsArea;
   editable: boolean;
@@ -404,16 +375,10 @@ export function AgentPermissionsEditor({ scopeId, team, settings, saved, everyon
 }) {
   const scope = teamScopeOf(team === null ? null : { id: scopeId, name: team });
   const { orgContext } = useOrgDashboard();
-  const features = { sandboxTools: orgFeatureEnabled(orgContext, "sandboxTools") };
-  const inherited = team === null ? null : everyone;
-  const draftRows = sandboxRequirementVisibility(features, settings, inherited);
-  const savedRows = sandboxRequirementVisibility(features, saved, inherited);
-  const sandboxRows = { hostExecution: draftRows.hostExecution || savedRows.hostExecution, sandboxOptOut: draftRows.sandboxOptOut || savedRows.sandboxOptOut };
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
-      {/* The standard list panel; each group brings its own top and bottom padding. */}
       <ItemPanel className="!py-0">
-        {visibleAgentPermissionGroups(area, sandboxRows).map((group) => (
+        {visibleAgentPermissionGroups(area, { privateValues: orgFeatureEnabled(orgContext, "privateValues") }).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="pb-1 pt-3 text-[12px] font-medium text-[var(--dls-text-secondary)]">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -426,7 +391,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, saved, everyon
                   setting={settings[definition.key]}
                   everyoneSetting={team === null ? settings[definition.key] : everyone[definition.key]}
                   editable={editable}
-                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone, features)}
+                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone)}
                   onChange={(setting) => onChange(withSetting(settings, definition.key, setting))}
                 />
               );
@@ -442,7 +407,6 @@ export function AgentPermissionsEditor({ scopeId, team, settings, saved, everyon
 export function PermissionRow({ definition, team, scope, setting, everyoneSetting, editable, blockedBy, onChange }: {
   definition: AgentPermissionDefinition;
   team: string | null;
-  /** Everyone or the team, for the row's chip. */
   scope: TeamScope;
   setting: AgentPermissionSetting | undefined;
   everyoneSetting: AgentPermissionSetting | undefined;
@@ -459,10 +423,7 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
   const toggle = agentPermissionToggleState(definition, effective, blockedBy?.key);
   const requirementTestId = definition.key === "sandboxOptOut" ? "sandbox-use-requirement"
     : definition.key === "hostExecution" ? "sandbox-force-requirement" : undefined;
-  // A team's row is changed while it has anything of its own; otherwise it follows Everyone.
   const changed = team !== null && normalizeAgentPermissionSetting(definition, setting) !== null;
-  // Existing Everyone Allow controls store nothing; upload Ask and Allow stay
-  // explicit because their administrative authority differs from the default.
   const setDecision = (decision: AgentPermissionDecision | undefined) =>
     onChange({ ...setting, decision: storedAgentPermissionDecision(definition, team, decision) });
   const inheritedAllow = team ? everyoneSetting?.allow ?? [] : [];
@@ -475,7 +436,6 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
           <p id={labelId} className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{definition.label}</p>
           <p className={`${definition.toggleMeans === "requires" ? "" : "truncate "}text-[12px] leading-4 text-[var(--dls-text-secondary)]`} title={definition.description}>{ROW_COPY[definition.key] ?? definition.description}</p>
         </div>
-        {/* The chip, with "Use Everyone's" under it when both don't fit the lane. */}
         <div className="flex w-[150px] shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5" data-testid={`agent-permission-${definition.key}-source`}>
           <ScopeChip scope={scope} changed={changed} />
           {changed && editable ? <UseEveryonesButton settingLabel={definition.label} onClick={() => onChange(null)} /> : null}
@@ -533,12 +493,6 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
 
 type PatternListKind = "allow" | "block";
 
-/**
- * Always allowed and always blocked patterns, inside the row. Allowed ones
- * only matter while the row asks first or blocks, and blocked ones while it
- * does not block everything, so each line shows when it can change something
- * or already holds patterns.
- */
 function PatternLines({ definition, kind, noun, setting, effective, inheritedAllow, inheritedBlock, editable, onChange }: {
   definition: AgentPermissionDefinition;
   kind: NonNullable<AgentPermissionDefinition["patterns"]>;
@@ -684,14 +638,9 @@ function PatternLine({ list, label, noun, testId, kind, patterns, inherited, edi
   );
 }
 
-// ---------------------------------------------------------------------------
-// Try a request
-// ---------------------------------------------------------------------------
-
 function TryRequest({ area, everyone, team }: { area: AgentPermissionsArea; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
   const kinds = visibleAgentPermissionTryKinds(area);
   const [selectedAction, setAction] = useState<AgentPermissionAction>(kinds[0]?.action ?? "shell");
-  // Changing the selected area can hide the selected kind without remounting this draft.
   const action = kinds.find((entry) => entry.action === selectedAction)?.action ?? kinds[0]?.action ?? "shell";
   const [value, setValue] = useState("");
   const kind = kinds.find((entry) => entry.action === action);

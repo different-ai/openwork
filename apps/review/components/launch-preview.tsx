@@ -8,11 +8,8 @@ import { previewAccessUrl, type PreviewProviderOption } from "../lib/preview-opt
 
 interface Session { url: string; expiresAt: string; outputs: PreviewOutputs; desktop: boolean; world: string; providerLabel: string }
 
-// A first launch builds the commit's snapshot after the POST returns 202.
 const BUILD_POLL_MS = 4_000;
 const BUILD_GIVE_UP_MS = 15 * 60_000;
-// No builder VM is alive while the source tree is read or between layers, so only
-// a sustained absence after this grace period counts as a failed build.
 const BUILD_FAILED_GRACE_MS = 2 * 60_000;
 const BUILD_FAILED_IDLE_POLLS = 3;
 
@@ -57,7 +54,6 @@ export function LaunchPreview({ id, connected, providerLabel, providers }: { id:
   const [build, setBuild] = useState<{ tracker: BuildTracker; world: string } | null>(null);
   const mounted = useRef(true);
 
-  // Set in the body too: React's development double-mount runs the cleanup once.
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     if (!session) return;
@@ -94,7 +90,6 @@ export function LaunchPreview({ id, connected, providerLabel, providers }: { id:
           const failed = idlePolls >= BUILD_FAILED_IDLE_POLLS && Date.now() - started > BUILD_FAILED_GRACE_MS;
           if (failed || Date.now() - started > BUILD_GIVE_UP_MS) {
             buildOutcome = failed ? "failed" : "still-building";
-            // Keep the steps on screen, marking where the build stopped.
             setBuild({ tracker: { ...tracker, failed: true }, world: requestedWorld });
             throw new Error(buildOutcome);
           }

@@ -116,8 +116,6 @@ async function performQueuedDraftSend(
   const session = await getNativeSession({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken, ...transport }, sessionId);
   assertQueuedSendCurrent(sessionId, generation);
   if (session.time.archived || sessionWorkHeld(context.opencodeBaseUrl, sessionId) || context.isCurrent?.() === false) return "cancelled";
-  // A background follow-up may drain before this conversation has ever opened
-  // locally. Its owned native session already knows the remote launch model.
   restoreSessionModel(sessionId, session);
 
   const sessionModelSelection = getSessionModelSelection(sessionId);
@@ -211,15 +209,11 @@ async function performQueuedDraftSend(
   }
 }
 
-// Mirrors withoutRevertTarget in ../surface/session-surface.tsx without
-// importing the component module.
 function withoutRevertTarget(draft: ComposerDraft): ComposerDraft {
   if (!draft.revertMessageId) return draft;
   return { ...draft, revertMessageId: undefined };
 }
 
-// Mirrors revokeAttachmentPreview in ../surface/session-surface.tsx, with a
-// guard for app-less/node execution.
 function revokeAttachmentPreview(attachment: { previewUrl?: string }) {
   if (!attachment.previewUrl || typeof URL === "undefined" || typeof URL.revokeObjectURL !== "function") return;
   URL.revokeObjectURL(attachment.previewUrl);
@@ -288,7 +282,6 @@ function armObservationProbe(watched: WatchedSession) {
         dispatchQueuedDrain(watched.sessionId, { type: "busy_observed" });
       }
     })().catch(() => {
-      // A spaced retry is armed below from the machine's timing helper.
     }).finally(() => {
       if (watchedSessions.get(watched.sessionId) !== watched) return;
       watched.probeInFlight = false;
@@ -371,7 +364,6 @@ function watchSession(sessionId: string, context: QueuedSendContext) {
   ).then((snapshot) => {
     if (watched.lastObservedStatus === null) handleObservedStatus(watched, snapshot.status);
   }).catch(() => {
-    // The live workspace stream remains authoritative if this initial read fails.
   });
 }
 
@@ -415,18 +407,12 @@ async function attemptDrain(sessionId: string) {
   if (!canAdmitNextQueuedItem(getQueuedDrainState(sessionId), Boolean(nextItem.steer))) return;
 
   const draft = { ...withoutRevertTarget(nextItem.draft), messageId: nextItem.draft.messageId ?? createPromptMessageID() };
-  // Claim synchronously before any await so a mounted surface cannot win the
-  // same item after this drainer observes it.
   if (!claimQueuedSend(sessionId, nextItem.id, Boolean(nextItem.steer))) return;
   const generation = getQueuedSendGeneration(sessionId);
   watched.sendInFlight = true;
-  // The claim prevents another send; retain the row (and its durable mirror)
-  // until acceptance so a renderer restart can recover it as an unsent draft.
 
   try {
     const sendContext = nextItem.steer ? { ...context, agent: nextItem.steer.agent } : context;
-    // A requested Send now stays latency-sensitive after its surface unmounts.
-    // Keep its history, interruption and admission off renderer background traffic.
     const transport: { desktopTransport: "main" } | undefined = nextItem.steer ? { desktopTransport: "main" } : undefined;
     const send = () => performQueuedDraftSend(sendContext, sessionId, draft, generation, transport);
     const outcome = await (async () => {
@@ -480,7 +466,6 @@ async function attemptDrain(sessionId: string) {
       draft.attachments.forEach(revokeAttachmentPreview);
     } else {
       dispatchQueuedDrain(sessionId, { type: "send_error", itemId: nextItem.id });
-      // The unaccepted row is still queued for explicit retry or draft recovery.
     }
   } finally {
     watched.sendInFlight = false;

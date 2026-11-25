@@ -1,15 +1,9 @@
-/**
- * Shared completion page for OAuth callbacks. Used by both external MCP
- * connection callbacks and native provider callbacks.
- */
-
 import type { WorkbotOAuthReturn } from "../workbot/connect-return-schema.js"
 
 export function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
 
-/** A link to the provider page where the person fixes the failure. */
 export type ConnectCallbackFixLink = { label: string; href: string }
 
 function safeFixLink(link: ConnectCallbackFixLink | undefined): ConnectCallbackFixLink | undefined {
@@ -22,11 +16,10 @@ function safeFixLink(link: ConnectCallbackFixLink | undefined): ConnectCallbackF
 }
 
 export function connectCallbackPage(input:
-  | { ok: true; name: string }
+  | { ok: true; name: string; detail?: string; warning?: string }
   | { ok: false; name: string; message: string; referenceId?: string; fixLink?: ConnectCallbackFixLink }, workbotReturn?: WorkbotOAuthReturn & { connectionId: string }): string {
   const fixLink = input.ok ? undefined : safeFixLink(input.fixLink)
   const brand = workbotReturn ? "Workbot" : "OpenWork"
-  // Finishing OAuth is not a readiness check. Workbot verifies the usable connection on return.
   const title = workbotReturn ? input.ok ? `Signed in to ${input.name}` : "Connection not verified" : input.ok ? "You're connected" : "Connection failed"
   const body = workbotReturn
     ? input.ok
@@ -38,8 +31,12 @@ export function connectCallbackPage(input:
     : input.ok
     ? `<div class="status-row success">
         <span class="status-icon" aria-hidden="true">✓</span>
-        <span><strong>${escapeHtml(input.name)} is connected to OpenWork.</strong><small>Connection complete</small></span>
-      </div>
+        <span><strong>${escapeHtml(input.name)} is connected to OpenWork.</strong><small>${escapeHtml(input.detail ?? "Connection complete")}</small></span>
+      </div>${input.warning ? `
+      <div class="status-row warning" role="status">
+        <span class="status-icon" aria-hidden="true">!</span>
+        <span><strong>LiteLLM needs attention</strong><small>${escapeHtml(input.warning)}</small></span>
+      </div>` : ""}
       <p>You can close this window and return to OpenWork.</p>`
     : `<div class="status-row failure">
         <span class="status-icon" aria-hidden="true">!</span>
@@ -48,7 +45,6 @@ export function connectCallbackPage(input:
       ${fixLink ? `<p><a class="fix-link" href="${escapeHtml(fixLink.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(fixLink.label)}</a></p>` : ""}
       ${input.referenceId ? `<p class="reference">Diagnostic reference: <code>${escapeHtml(input.referenceId)}</code></p>` : ""}
       <p>Return to OpenWork to try connecting again. You can close this window.</p>`
-  // No token, account detail, or provider error crosses the popup boundary. The opener must re-read readiness.
   const completion = workbotReturn ? JSON.stringify({ type: "openwork:connection-result", requestId: workbotReturn.requestId, connectionId: workbotReturn.connectionId, ok: input.ok }).replace(/</g, "\\u003c") : null
   const returnUrl = workbotReturn ? new URL(workbotReturn.returnPath, workbotReturn.origin).toString() : null
   const targetOrigin = workbotReturn ? JSON.stringify(workbotReturn.origin).replace(/</g, "\\u003c") : null
@@ -63,12 +59,6 @@ export function connectCallbackPage(input:
   })
 }
 
-/**
- * Shown before anything is exchanged when the provider's reply reaches a
- * browser with no OpenWork session: names the account the connection will
- * belong to, and continues only on a click. The form resubmits the reply to
- * the same callback with the confirmation Den issued for it.
- */
 export function connectConfirmationPage(input: {
   name: string
   accountEmail: string
@@ -120,6 +110,8 @@ function callbackPageShell(page: { title: string; brand: string; workbot: boolea
       .status-icon { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; color: var(--dls-text-secondary); background: var(--dls-hover); font-size: 17px; }
       .failure { border-color: #fecaca; background: #fef2f2; }
       .failure .status-icon { color: #b42318; background: #fee2e2; }
+      .warning { margin-top: 12px; border-color: #fde68a; background: #fffbeb; }
+      .warning .status-icon { color: #b45309; background: #fef3c7; }
       .reference { margin-top: 18px; font-size: 13px; }
       .fix-link { color: var(--dls-text-primary); font-weight: 500; text-underline-offset: .2em; }
       code { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; user-select: all; }

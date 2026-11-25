@@ -1,18 +1,5 @@
 import { z } from "zod"
 
-/**
- * AI Gateway custom OpenAI-compatible providers.
- *
- * An admin enters a name, an OpenAI-compatible base URL and one API key. Den
- * calls `GET {baseUrl}/models`, maps the answer to models.dev-shaped model
- * records (matching against the models.dev `openrouter` provider), the admin
- * picks or adds models, tests one through AI Gateway, then saves.
- *
- * Stored as a `gateway_providers` row with `provider_id` =
- * GATEWAY_CUSTOM_PROVIDER_ID, `settings.upstreamBaseUrl` and
- * `settings.custom` (GatewayCustomProviderSettings). Keys are write-only.
- */
-
 /** Synthetic catalog provider id shared by every custom provider row; rows differ by their own id. */
 export const GATEWAY_CUSTOM_PROVIDER_ID = "openwork-custom"
 export const GATEWAY_CUSTOM_PROVIDER_NPM = "@ai-sdk/openai-compatible"
@@ -88,13 +75,11 @@ const modelListSchema = z.array(gatewayCustomModelSchema).min(1).max(GATEWAY_CUS
 export const gatewayCustomDiscoveryStatusSchema = z.enum(["detailed", "basic", "unavailable"])
 export type GatewayCustomDiscoveryStatus = z.infer<typeof gatewayCustomDiscoveryStatusSchema>
 
-/** Model ids the provider's /models listed at the last fetch; hand-added models are never in it. */
 const listedModelIdsSchema = z.array(z.string().min(1).max(255)).max(GATEWAY_CUSTOM_MAX_MODELS)
 
 export const gatewayCustomDiscoveryStateSchema = z.object({
   status: gatewayCustomDiscoveryStatusSchema,
   lastFetchedAt: z.string().datetime().nullable(),
-  /** Only models in this list are flagged "no longer listed" after a re-fetch. Older rows omit it. */
   listedModelIds: listedModelIdsSchema.default([]),
 })
 
@@ -106,11 +91,8 @@ export const gatewayCustomProviderSettingsSchema = z.object({
 })
 export type GatewayCustomProviderSettings = z.infer<typeof gatewayCustomProviderSettingsSchema>
 
-// --- Discover models ---
-
 export const gatewayCustomDiscoverRequestSchema = z.union([
   z.object({ baseUrl: z.string().trim().min(1).max(2048), apiKey: z.string().trim().min(1).max(8192) }).strict(),
-  /** Re-fetch for a saved provider with its stored key; baseUrl overrides the saved URL when given. */
   z.object({ inferenceProviderId: z.string().min(1), baseUrl: z.string().trim().min(1).max(2048).optional() }).strict(),
 ])
 export type GatewayCustomDiscoverRequest = z.infer<typeof gatewayCustomDiscoverRequestSchema>
@@ -118,15 +100,12 @@ export type GatewayCustomDiscoverRequest = z.infer<typeof gatewayCustomDiscoverR
 export const gatewayCustomModelMatchSchema = z.object({
   providerId: z.literal(GATEWAY_CUSTOM_MATCH_PROVIDER_ID),
   modelId: z.string(),
-  /** How the match was found: exact id, canonical_slug, last path segment, or loose (case/punctuation-insensitive). */
   by: z.enum(["id", "canonical_slug", "suffix", "loose"]),
 })
 export type GatewayCustomModelMatch = z.infer<typeof gatewayCustomModelMatchSchema>
 
 export const gatewayCustomDiscoveredModelSchema = z.object({
-  /** Upstream id, sent as `model`. */
   id: z.string(),
-  /** Suggested settings: the match as base with /models values on top. Null when nothing is known beyond the id. */
   model: gatewayCustomModelSchema.nullable(),
   match: gatewayCustomModelMatchSchema.nullable(),
 })
@@ -134,21 +113,15 @@ export type GatewayCustomDiscoveredModel = z.infer<typeof gatewayCustomDiscovere
 
 export const gatewayCustomDiscoverResponseSchema = z.object({
   status: gatewayCustomDiscoveryStatusSchema,
-  /** Normalized base URL the request went to. */
   baseUrl: z.string(),
-  /** Plain-words reason for "unavailable" (never contains the key). */
   reason: z.string().nullable(),
-  /** HTTP status from /models, when one came back. */
   upstreamStatus: z.number().int().nullable(),
   models: z.array(gatewayCustomDiscoveredModelSchema),
 })
 export type GatewayCustomDiscoverResponse = z.infer<typeof gatewayCustomDiscoverResponseSchema>
 
-// --- Test ---
-
 export const gatewayCustomTestRequestSchema = z.object({
   baseUrl: z.string().trim().min(1).max(2048),
-  /** Required for a new provider; omitted to use the saved key of inferenceProviderId. */
   apiKey: z.string().trim().min(1).max(8192).optional(),
   inferenceProviderId: z.string().min(1).optional(),
   model: gatewayCustomModelSchema,
@@ -174,15 +147,12 @@ export function gatewayCustomTestStep(result: { status: number | null; code: str
   return "connection"
 }
 
-// --- Create / edit ---
-
 export const gatewayCustomCreateRequestSchema = z.object({
   name: z.string().trim().min(1).max(255),
   baseUrl: z.string().trim().min(1).max(2048),
   apiKey: z.string().trim().min(1).max(8192),
   models: modelListSchema,
   discoveryStatus: gatewayCustomDiscoveryStatusSchema.optional(),
-  /** Ids the fetch listed; sent with discoveryStatus. */
   listedModelIds: listedModelIdsSchema.optional(),
   allMembers: z.boolean().optional(),
   memberIds: z.array(z.string()).max(500).optional(),
@@ -201,7 +171,6 @@ export const gatewayCustomUpdateRequestSchema = z.object({
   apiKey: z.string().trim().min(1).max(8192).optional(),
   models: modelListSchema.optional(),
   discoveryStatus: gatewayCustomDiscoveryStatusSchema.optional(),
-  /** Ids the re-fetch listed; sent with discoveryStatus. */
   listedModelIds: listedModelIdsSchema.optional(),
 }).strict()
 export type GatewayCustomUpdateRequest = z.infer<typeof gatewayCustomUpdateRequestSchema>

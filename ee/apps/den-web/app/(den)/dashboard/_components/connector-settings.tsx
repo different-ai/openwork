@@ -25,8 +25,6 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/** Rename a connector, move its address, rotate its key, or replace its OAuth app, in place on its page. */
-/** `lockedReason` shows the settings read-only with why (DESIGN.md P4), e.g. the caller can't edit this connection. */
 export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null }: { connection: ExternalMcpConnection; onSaved: (message: string) => void; lockedReason?: string | null }) {
   const updateConnection = useUpdateMcpConnection();
   const { orgContext } = useOrgDashboard();
@@ -62,7 +60,6 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
     || chosenMode !== connection.credentialMode
     || (usesKey && apiKeyAuthScheme !== connection.apiKeyAuthScheme);
   const requestedScopes = [...new Set(scopes.split(/[\s,]+/).filter(Boolean))];
-  // The choice needs scopes to apply to; with none listed it is off.
   const requestSelectedScopesOnly = selectedScopesOnly && requestedScopes.length > 0;
   const scopesChanged = requestedScopes.join(" ") !== (connection.requestedScopes ?? []).join(" ")
     || (canRequestSelectedScopesOnly && requestSelectedScopesOnly !== (connection.requestSelectedScopesOnly === true));
@@ -210,7 +207,6 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
   );
 }
 
-/** Review changed authorization servers before allowing a fresh sign-in. */
 function ConnectorIssuerReview({ connection, onSaved }: { connection: ExternalMcpConnection; onSaved: (message: string) => void }) {
   const review = useReviewMcpIssuer();
   const [preview, setPreview] = useState<McpIssuerReview | null>(null);

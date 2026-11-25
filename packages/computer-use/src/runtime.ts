@@ -46,8 +46,6 @@ export class ComputerProgramError extends Error {
 }
 const issue = (code: string, message: string, mayHaveActed = false, canRefreshTarget = false): never => { throw new ComputerProgramError(code, message, mayHaveActed, canRefreshTarget) }
 const stringAt = (value: unknown, fallback = "") => typeof value === "string" ? value : fallback
-// Apps wrap numbers and names in invisible direction marks ("\u200E408"), which
-// defeat exact matching against the text a person sees.
 const visibleText = (value: string) => value.replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "")
 const numberAt = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback
 function roleName(value: unknown, tag?: unknown) {
@@ -101,9 +99,6 @@ function point(element: Node, observation: Observation) {
 /** One bounded program, one chat and one surface. Images stay outside the interpreter. */
 export async function runComputerProgram(request: ProgramRequest, host: ProgramHost, parentSignal: AbortSignal): Promise<ProgramResult> {
   const timeoutMs = Math.min(60_000, Math.max(1_000, request.timeoutMs ?? 30_000))
-  // Nothing a program starts outlives it. The standard engine cancels a call
-  // nothing awaited when the program returns, but a helper's promise would run
-  // on and send input that no receipt reports; ending the run stops it.
   const finished = new AbortController()
   const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(timeoutMs), finished.signal])
   let tabId = request.tabId
@@ -181,7 +176,6 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
     latest = null
     images = []
     actions++
-    // Record before transport: a lost response must never authorize a replay.
     mayHaveActed = true
     const receipt = { index: receipts.length, status: "unconfirmed" }
     receipts.push(receipt)
@@ -219,9 +213,6 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
     }
     return element
   }
-  // Pane layout can change between observation and input. Refresh a semantic
-  // target only when the host explicitly confirms that no input was dispatched.
-  // Raw refs, uncertain receipts and already-dispatched actions are never replayed.
   const withFreshTarget = async <T>(work: () => Promise<T>): Promise<T> => {
     for (let attempt = 0; ; attempt++) {
       try { return await work() }
@@ -282,8 +273,6 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
         lastFailure = { code: error instanceof ComputerProgramError ? error.code : "helper_failed", message: error instanceof Error ? error.message : "The UI helper failed." }
         throw error
       }
-    // CodeMode hides host error text from the program. These codes and messages
-    // are authored by this runtime and the helper, so a program can branch on them.
     }, catch: (error) => error instanceof ComputerProgramError
       ? toolError(`${error.code}: ${error.message}${error.mayHaveActed ? " Input may have run; do not repeat it." : ""}`, error)
       : error }),
@@ -335,8 +324,6 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
     findText: add("Find text through the native app's Find field, handling the focus transition locally. Browser programs read matching page text directly.", z.object({ text: z.string().min(1).max(1000) }).strict(), async ({ text }) => {
       if (request.surface === "browser") { const view = await observe(false); return { found: view.text.toLowerCase().includes(text.toLowerCase()) } }
       const before = await observe(false)
-      // Native find fields are often unnamed (TextEdit's is), so the field that
-      // takes focus after Command-F counts as well as one named Find or Search.
       const wasFocused = before.elements.find((element) => element.ref === before.focusedRef)
       const sameControl = (a: Node, b?: Node) => Boolean(b) && a.role === b!.role && a.name === b!.name && a.bounds.width === b!.bounds.width
       await act({ type: "key", key: "f", modifiers: ["command"] })
@@ -359,8 +346,6 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
     }),
     menu: add("Run a menu-bar command by its titles (such as [\"Format\",\"Font\",\"Bold\"]) without opening the menu, or activate a pop-up or context menu path inside the window, or successive named browser controls.", z.object({ path: z.array(z.string().min(1).max(200)).min(1).max(6) }).strict(), async ({ path }) => {
       for (const [index, name] of path.entries()) {
-        // A path that starts outside the window is the app's menu bar: one native step,
-        // no menu to open and nothing to wait for.
         if (index === 0 && request.surface === "computer" && !await find({ name }, false, true)) {
           if (path.length < 2 || path.length > 4) return issue("menu_not_in_window", `"${name}" is not a control in the selected window. Name a menu-bar command by its menu and title, such as ["Format","Font","Bold"].`)
           await act({ type: "menu", path })
@@ -390,8 +375,6 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
   try {
     const input = z.json().parse(request.input ?? null)
     const limits = { timeoutMs, maxToolCalls: 80, maxOutputBytes: 32_000 }
-    // A program runs start to finish on one interpreter. The standard engine
-    // binds input as a JSON copy, so a program can change only its own copy.
     const result = await Effect.runPromise(StandardCodeMode.execute({ code: request.code, tools, bindings: { input }, limits }), { signal })
     return { ok: result.ok, ...(result.ok ? { value: result.value } : { error: lastFailure ?? result.error }), receipts, mayHaveActed, metrics: metrics(), images }
   } catch (error) {

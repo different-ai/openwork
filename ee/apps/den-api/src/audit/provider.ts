@@ -132,8 +132,6 @@ async function providerSnapshot(tx: AuditTx, context: AuditContext, revision: (v
   for (const group of groups) add({ type: "provider_model_group", id: group.id, action: "provider.group", snapshot: serializeProviderGroup(group, links.filter((link) => link.model_group_id === group.id).map((link) => link.gateway_provider_model_id)), related: [universe] })
   for (const model of models) add({ type: "provider_model", id: model.id, action: "provider.model", snapshot: serializeProviderModel(model), configurationRevision: revision(canonicalAuditJson(model.model_config)), related: [universe, ...links.filter((link) => link.gateway_provider_model_id === model.id).map((link) => related("provider_model_group", link.model_group_id))] })
   const grants = await tx.select().from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, id)).for("update")
-  // Fence states before credentials, using the indexed set prefix. A provider-only
-  // predicate has no index and a locking table scan would block other tenants.
   if (sets.length) await tx.select({ id: GatewayProviderOauthStateTable.id })
     .from(GatewayProviderOauthStateTable, { forceIndex: "gateway_provider_oauth_states_set_member" })
     .where(and(eq(GatewayProviderOauthStateTable.gateway_provider_id, id), inArray(GatewayProviderOauthStateTable.credential_set_id, sets.map((set) => set.id))))
@@ -148,9 +146,6 @@ export async function providerAuditMutation<T>(tx: AuditTx, capture: ProviderAud
   if (!capture) return mutate()
   await recheckAuditEntitlement(tx, capture.context.organizationId)
   const changesEnabled = capture.policy.categories.includes("change")
-  // Exact equality of already-decrypted values, not password authentication.
-  // Only opaque, value-independent tokens enter snapshots; neither these tokens
-  // nor the lookup are audit evidence or shared with another mutation.
   const revisions = new Map<string | null, string>()
   const revision = (value: string | null): string => {
     const existing = revisions.get(value)
@@ -162,16 +157,12 @@ export async function providerAuditMutation<T>(tx: AuditTx, capture: ProviderAud
   let result: T
   let events: AuditEventInput[]
   try {
-    // A create has no before state: probing its absent PK FOR UPDATE would acquire
-    // a gap lock and deadlock otherwise independent concurrent provider inserts.
     const before: ProviderAuditSnapshot | null = changesEnabled
       ? capture.step === "create" ? new Map() : await providerSnapshot(tx, capture.context, revision)
       : null
     result = await mutate()
     events = before ? diffProviderSnapshots(capture.context.scope, before, await providerSnapshot(tx, capture.context, revision)) : []
   } finally {
-    // Drop plaintext references before audit writes, also on snapshot/mutation
-    // failure. JS strings cannot be zeroized; do not retain them past comparison.
     revisions.clear()
   }
   await assertAuditPolicyCurrent(tx, capture.policy)
@@ -188,7 +179,6 @@ function providerAttemptEvent(capture: ProviderAuditCapture, outcome: AuditEvent
     ...(reasonCode ? { reasonCode } : {}),
   }
 }
-/** Own transaction outside the rolled-back mutation, retried on transient failures with a per-call idempotency key. */
 export async function recordProviderAttempt(database: AuditDatabase, capture: ProviderAuditCapture | null, status: number) {
   if (!capture || status < 400) return
   const denied = status === 401 || status === 403
