@@ -7,7 +7,9 @@ import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { startLocalRuntime, startRemoteRuntime } from "../evals/packages/env/src/app-web-runtime.ts";
-import { deleteSandboxes, provisionWebSandbox } from "../evals/packages/hosts/src/provision.ts";
+import { defaultDaytonaExec } from "../evals/packages/hosts/src/daytona.ts";
+import { installLiveModel } from "./lib/preview-live-model.ts";
+import { deleteSandboxes, execInSandbox, provisionWebSandbox } from "../evals/packages/hosts/src/provision.ts";
 import { privateSandboxId, privateWebPreview, verifyPrivateWebPreview } from "../evals/packages/hosts/src/private-web-preview.ts";
 import { hold } from "../packages/world/src/hold.ts";
 import { LEDGER_ENV, readLedger, rewriteLedger, trackResource } from "../packages/world/src/ledger.ts";
@@ -63,7 +65,7 @@ export async function bootAppWebWorld(
     if (!options.ref) throw new Error("Freestyle requires a full pushed source SHA.");
     if (Object.keys(selectedEnv).length) throw new Error("Freestyle snapshots use isolated state and do not accept Den proxy overrides.");
     const { ensureSnapshot } = await import("../packages/world-freestyle/src/builder.ts");
-    const { launchPreview, deletePreview } = await import("../packages/world-freestyle/src/index.ts");
+    const { launchPreview, deletePreview, client } = await import("../packages/world-freestyle/src/index.ts");
     await ensureSnapshot(options.ref, undefined, (message) => console.error(message));
     const preview = await launchPreview({ gitSha: options.ref, lifetimeMinutes });
     stack.defer(async () => {
@@ -72,7 +74,17 @@ export async function bootAppWebWorld(
       if (path) await rewriteLedger(path, (await readLedger(path)).filter((entry) => entry.kind !== "freestyle-preview" || entry.id !== preview.id));
     });
     await deps.track({ kind: "freestyle-preview", id: preview.id, match: preview.id, label: runtimeName });
-    return { placement: "freestyle", sourceSha: options.ref, sourceKind: "snapshot", snapshotId: preview.snapshotId,
+    let live = {};
+    if (options.liveModelTeam) {
+      const vm = client().vms.ref(preview.id);
+      const outputs = JSON.parse(await vm.fs.readTextFile("/opt/openwork-preview/outputs.json"));
+      const url = new URL(preview.url);
+      const access = url.searchParams.get("token");
+      if (!access) throw new Error("Private Freestyle access is missing.");
+      live = await installLiveModel(stack, { team: options.liveModelTeam, origin: url.origin, expiresAt: preview.expiresAt,
+        headers: { cookie: `__Host-openwork-preview=${access}` }, token: outputs.openworkToken.value, hostToken: outputs.openworkHostToken.value });
+    }
+    return { ...live, placement: "freestyle", sourceSha: options.ref, sourceKind: "snapshot", snapshotId: preview.snapshotId,
       sandboxId: preview.id, runtimeName, webUrl: { value: preview.url, secret: true }, previewExpires: preview.expiresAt };
   }
   if (options.place === "local") {
@@ -109,8 +121,17 @@ export async function bootAppWebWorld(
   if (new URL(runtime.webUrl).port !== String(WEB_PORT)) throw new Error("Private app-web preview port does not match its runtime.");
   await deps.verify(preview);
   if (Date.now() - previewIssuedAt >= 10 * 60_000) throw new Error("app-web exceeded its signed-preview startup buffer.");
+  const expiresAt = new Date(previewIssuedAt + lifetimeMinutes * 60_000).toISOString();
+  let live = {};
+  if (options.liveModelTeam) {
+    const manifest = await execInSandbox(defaultDaytonaExec, sandboxId, `cat "${runtime.runtimeDirectory}/runtime.json"`,
+      { context: "read owned Daytona runtime connection" });
+    const { token, hostToken } = JSON.parse(manifest.stdout);
+    live = await installLiveModel(stack, { team: options.liveModelTeam, origin: preview.browserOrigin, expiresAt,
+      headers: { "X-Daytona-Skip-Preview-Warning": "true" }, token, hostToken });
+  }
   return {
-    placement: "daytona", sourceKind: "pushed-commit", requestedRef: room.source.requestedRef,
+    ...live, placement: "daytona", sourceKind: "pushed-commit", requestedRef: room.source.requestedRef,
     sourceSha: room.source.actualSha, sourceFingerprint: room.source.preparedFingerprint, sandboxId, runtimeName,
     webUrl: { value: preview.browserOrigin, secret: true }, previewExpiresInSeconds: String((lifetimeMinutes + 10) * 60),
     previewExpires: new Date(previewIssuedAt + (lifetimeMinutes + 10) * 60_000).toISOString(),
@@ -119,7 +140,7 @@ export async function bootAppWebWorld(
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
-  const options = parseAppWebOptions(argv, process.env);
+  const options = parseAppWebOptions(argv, process.env, true);
   await using stack = new AsyncDisposableStack();
   const outputs = await bootAppWebWorld(stack, options);
   const lifetimeMs = (options.lifetimeMinutes ?? 120) * 60_000;

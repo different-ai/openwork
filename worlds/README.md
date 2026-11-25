@@ -94,6 +94,14 @@ of the invocation. Daytona scripts that use `resolvePlace()` also pin an omitted
 source to the current `origin/dev` commit before adoption rather than silently
 reusing an older branch tip.
 
+For a real agent turn in a remote web preview, append `-- --live-model <development-vercel-team-id>` to the usual `preview-app-web` launch, for example:
+
+```sh
+pnpm world up preview-app-web --place daytona --source ref:dev --stage live-test --detach -- --live-model "$DEV_VERCEL_TEAM_ID"
+```
+
+Use `--place freestyle` for Freestyle. The controller needs a Vercel CLI login authorized to create AI Gateway keys in that development team. The launcher makes GPT-6 Luna the initial workspace default and prints its model and usage key ID. Each preview receives a separate AI Gateway key with a $1 lifetime budget and an expiry bounded by the preview lifetime. Teardown revokes the key. Team and user budgets apply across runs. Omit the option for the ordinary preview.
+
 ## App settings
 
 `--env KEY` selects a nonsecret value from your shell. The CLI rejects
