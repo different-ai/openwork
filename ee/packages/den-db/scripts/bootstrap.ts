@@ -12,6 +12,7 @@ import { createExecutor, type Executor } from "./db-executor.ts"
 import { migrateWith0097Compatibility } from "./migration-0097-compat.ts"
 import { reconcilePermissionsFromEnv } from "./permission-reconciliation.ts"
 import { rejectMatrix } from "./migration-0097-schema.ts"
+import { AdministratorRecoveryRefusedError, administratorRecoveryRequestedFromEnv, recoverAdministratorsFromEnv } from "./administrator-recovery.ts"
 
 export { migrateWith0097Compatibility }
 
@@ -151,6 +152,20 @@ export async function initializeDenDb(executor: Executor) {
 }
 
 export async function bootstrapDenDb() {
+  if (await administratorRecoveryRequestedFromEnv()) {
+    const check = await createExecutor()
+    try {
+      if (!(await listTables(check)).includes(MIGRATIONS_TABLE)) {
+        throw new Error("Admin recovery requires a bootstrapped database; upgrade once with recovery disabled first")
+      }
+      const latest = latestMigrationMillis(await check.query(`SELECT MAX(created_at) AS latest FROM \`${MIGRATIONS_TABLE}\``))
+      if (readMigrationFiles({ migrationsFolder }).some((migration) => migration.folderMillis > latest)) {
+        throw new Error("Admin recovery refuses pending database migrations; upgrade once with recovery disabled first")
+      }
+    } finally { await check.close() }
+    await recoverAdministratorsFromEnv()
+    return
+  }
   const executor = await createExecutor()
   try {
     await initializeDenDb(executor)
@@ -169,9 +184,6 @@ export async function bootstrapDenDb() {
     await repairExecutor.close()
   }
 
-  // Not schema: a failure here must not stop den-api from starting. den-api
-  // also reconciles an organization's default sets when it first resolves
-  // permissions for it, so the next deploy or request catches up.
   console.log("[den-db] reconciling default permission sets")
   try {
     await reconcilePermissionsFromEnv()
@@ -182,7 +194,7 @@ export async function bootstrapDenDb() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   bootstrapDenDb().catch((error) => {
-    console.error(error instanceof Error ? error.message : error)
+    if (!(error instanceof AdministratorRecoveryRefusedError)) console.error(error instanceof Error ? error.message : error)
     process.exit(1)
   })
 }

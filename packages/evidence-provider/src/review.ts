@@ -30,9 +30,7 @@ export interface PreviewSession {
 export interface BuildStep { id: string; ms: number }
 export interface BuildProgress {
   building: boolean;
-  /** The layer being prepared right now, when the provider reports layers. */
   layer?: string;
-  /** When that layer's build started (ISO time). */
   since?: string;
   steps: BuildStep[];
 }
@@ -50,22 +48,13 @@ export class CheckpointCapacity extends Error {}
 export interface ReviewPreviewProvider {
   readonly id: EvidenceProviderId;
   readonly label: string;
-  /** The review server has this provider's credentials. */
   configured(): boolean;
-  /** Can launch fresh previews of a commit (not only open saved checkpoints). */
   readonly supportsPreviews: boolean;
-  /** This commit already has a launchable preview for the world. */
   hasSnapshot(gitSha: string, world: PreviewWorld): Promise<boolean>;
-  /** Builds the commit's preview. Runs after the response; may take minutes. */
   buildSnapshot(gitSha: string, world: PreviewWorld): Promise<unknown>;
   buildProgress(gitSha: string, world: PreviewWorld): Promise<BuildProgress>;
   launchPreview(input: { gitSha: string; reportId: string; world: PreviewWorld }): Promise<PreviewSession>;
-  /**
-   * Opens a separate working copy of a saved checkpoint. A retry with the same
-   * requestId returns the same copy. Throws CheckpointUnavailable or CheckpointCapacity.
-   */
   openCheckpoint(input: { checkpoint: EvidenceCheckpoint; reportId: string; requestId: string }): Promise<{ url: string; expiresAt: string }>;
-  /** Log-safe details of a failed launch. Never provider responses, environment or access links. */
   launchFailureDetails(error: unknown): Record<string, string | undefined>;
 }
 

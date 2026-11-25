@@ -17,8 +17,8 @@ linkTest("an owner copies a pending invite's link, and a plain member cannot rea
 
   await step("the owner copies the invite link from the pending row's actions", async () => {
     await user.click({ role: "button", label: `Open actions for ${world.pendingName}` });
-    await user.click({ role: "button", label: "Copy invite link" });
-    await user.notSee({ role: "button", label: "Copy invite link" }, { timeoutMs: 10_000 });
+    await user.click({ role: "menuitem", label: "Copy invite link" });
+    await user.notSee({ role: "menuitem", label: "Copy invite link" });
     await user.screenshot();
   });
 
@@ -99,7 +99,7 @@ test("OPE-82: cloud invitations retain identity and organization through authent
     // The member list does not refresh on its own; the owner reloads it.
     await ownerActor.reload();
     await ownerActor.see({ text: person.email }, { timeoutMs: 30_000 });
-    await ownerActor.notSee({ text: "Pending" }, { timeoutMs: 30_000 });
+    await ownerActor.notSee({ text: "Pending" });
     await user.reload();
     await joined(person.email);
     const session = await witnesses.sessionFor(person);

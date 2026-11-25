@@ -9,6 +9,6 @@ export const metadata = withSocialMetadata({
   }
 });
 
-export default function TermsPage() {
-  return <LegalPage file="terms/terms-of-use.md" />;
+export default async function TermsPage() {
+  return await LegalPage({ file: "terms/terms-of-use.md" });
 }

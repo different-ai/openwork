@@ -1,0 +1,87 @@
+import { z } from "zod"
+
+/**
+ * The "Get set up" checklist: the six activation recipe steps every surface shows,
+ * in this order. Den computes each step from what actually happened (`GET /v1/me/activation`, and
+ * `GET /v1/workbot/activation` for Workbot); clients only report what Den cannot see itself
+ * (`POST /v1/me/activation/events`).
+ */
+export const ACTIVATION_STEP_IDS = ["first_response", "invite_teammate", "use_skill", "own_provider", "gateway_provider", "connector"] as const
+export const activationStepIdSchema = z.enum(ACTIVATION_STEP_IDS)
+export type ActivationStepId = z.infer<typeof activationStepIdSchema>
+
+export const activationStepSchema = z.object({
+  id: activationStepIdSchema,
+  done: z.boolean(),
+  detail: z.string().max(200).optional(),
+  lockedReason: z.string().max(200).optional(),
+  optional: z.boolean().optional(),
+})
+export type ActivationStep = z.infer<typeof activationStepSchema>
+
+export const activationStateSchema = z.object({
+  steps: z.array(activationStepSchema),
+  dismissed: z.boolean(),
+})
+export type ActivationState = z.infer<typeof activationStateSchema>
+
+/** What a client may report: steps only it can observe, and hiding the checklist. */
+export const ACTIVATION_CLIENT_EVENTS = ["first_response", "use_skill", "own_provider", "connector", "dismiss"] as const
+export const activationEventRequestSchema = z.object({
+  step: z.enum(ACTIVATION_CLIENT_EVENTS),
+  durationMs: z.number().int().min(0).max(24 * 60 * 60 * 1000).optional(),
+}).strict()
+export type ActivationEventRequest = z.infer<typeof activationEventRequestSchema>
+export type ActivationClientEvent = ActivationEventRequest["step"]
+
+/** Row titles, shared by Desktop and Workbot so both surfaces read the same. */
+export const ACTIVATION_STEP_TITLES: Record<ActivationStepId, string> = {
+  first_response: "Get your first answer",
+  invite_teammate: "Invite a teammate",
+  use_skill: "Use a skill",
+  own_provider: "Set up a model provider",
+  gateway_provider: "Share a provider on AI Gateway",
+  connector: "Connect an app",
+}
+
+/** The six steps in recipe order; a step Den did not send counts as not done. */
+export function orderedActivationSteps(state: Pick<ActivationState, "steps">): ActivationStep[] {
+  return ACTIVATION_STEP_IDS.map((id) => state.steps.find((step) => step.id === id) ?? { id, done: false })
+}
+
+/** Shown under an optional step, on every surface. */
+export const ACTIVATION_OPTIONAL_DETAIL = "Optional while you work alone"
+
+/** An unfinished optional step is left out of the count; once done it counts like any other. */
+export function activationProgress(state: Pick<ActivationState, "steps">) {
+  const steps = orderedActivationSteps(state).filter((step) => step.done || !step.optional)
+  const done = steps.filter((step) => step.done).length
+  return { done, total: steps.length, complete: done === steps.length }
+}
+
+/**
+ * The step the person can act on next: the first unfinished one that is not locked, else the first unfinished one.
+ * Optional steps are never "next": they wait in the list.
+ */
+export function nextActivationStep(state: Pick<ActivationState, "steps">): ActivationStep | null {
+  const open = orderedActivationSteps(state).filter((step) => !step.done && !step.optional)
+  return open.find((step) => !step.lockedReason) ?? open[0] ?? null
+}
+
+/**
+ * Where a surface shows the checklist: nowhere before the first answer (never before) and once every counted step is done;
+ * one quiet "Next" line after the person hides it; otherwise the full card or chip.
+ */
+export function activationChecklistPresentation(state: ActivationState | null | undefined): "hidden" | "next" | "full" {
+  if (!state) return "hidden"
+  const steps = orderedActivationSteps(state)
+  if (!steps.find((step) => step.id === "first_response")?.done) return "hidden"
+  if (activationProgress(state).complete) return "hidden"
+  return state.dismissed ? "next" : "full"
+}
+
+/** Answered in 2.1 s / Answered in 12 s, from a duration in milliseconds. */
+export function answeredInDetail(durationMs: number): string {
+  const seconds = durationMs / 1000
+  return `Answered in ${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`
+}

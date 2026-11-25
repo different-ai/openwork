@@ -9,11 +9,9 @@ export type ActivityFeedItem =
     id: string;
     timestamp: number;
     entry: MemberActivityEntry;
-    /** The resource is not in the member's current inventory, so it has no destination. */
     unavailable: boolean;
     unread: boolean;
   }
-  /** Access that already existed when this device first verified the member. Never unread. */
   | { type: "baseline"; id: string; timestamp: number; baseline: ActivityBaseline; unread: false };
 
 const RESOURCE_SOURCE: Record<MemberActivityEntry["resource"]["kind"], ActivitySource> = {
@@ -23,11 +21,6 @@ const RESOURCE_SOURCE: Record<MemberActivityEntry["resource"]["kind"], ActivityS
   connection: "connections",
 };
 
-/**
- * Only high-level changes to what the member can use (models, skills, plugins,
- * connections), as on the Paper boards. Device notices such as engine reloads
- * or update checks are not Activity: failures keep their toast instead.
- */
 export function useActivityFeed(active = true) {
   const context = useActivityStore(selectActivityContext);
   const activeScopeKey = useActivityStore((state) => state.activeScopeKey);
@@ -57,7 +50,6 @@ export function useActivityFeed(active = true) {
   }, [activeScopeKey, context]);
 
   const unreadCount = useMemo(() => items.filter((item) => item.unread).length, [items]);
-  /** First verification found nothing shared: the first-week state replaces "Nothing new". */
   const nothingSharedYet = activeScopeKey !== null && context.baseline?.labels.length === 0
     && items.length === 0;
 

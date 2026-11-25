@@ -9,6 +9,7 @@ export type Microsoft365Feature =
   | "filesWrite"
   | "filesReadAll"
   | "filesFull"
+  | "sitesRead"
   | "teamsChatRead"
   | "teamsChatSend"
 
@@ -29,6 +30,7 @@ export const MICROSOFT_365_FEATURES: readonly Microsoft365Feature[] = [
   "filesWrite",
   "filesReadAll",
   "filesFull",
+  "sitesRead",
   "teamsChatRead",
   "teamsChatSend",
 ]

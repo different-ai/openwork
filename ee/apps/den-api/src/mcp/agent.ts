@@ -1,4 +1,7 @@
-import { createAgentMcpServer } from "./agent-server.js"
+import { registerNativeMcpEvents } from "../native-mcp-events/mcp.js"
+import { eventThreadForPrincipal } from "../mcp-events/context.js"
+import { registerMcpEventTools } from "../mcp-events/tools.js"
+import { createAgentMcpServer, WORKFLOW_SAVE_INSTRUCTIONS } from "./agent-server.js"
 export { createAgentMcpServer, AGENT_MCP_INSTRUCTIONS, LEGACY_AGENT_MCP_INSTRUCTIONS, AGENT_MCP_GUIDANCE_URI } from "./agent-server.js"
 import { appAuthoringStarter, registerAppStarterResources } from "./app-authoring-starter.js"
 import { startMcpAppTiming } from "@openwork/types/mcp-app-timing"
@@ -21,16 +24,16 @@ import { connectorCatalogForQuery } from "./connector-catalog.js"
 import { registerAgentConnectionActionApp } from "./connection-action-app.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
-import { getMcpResourceContext, mcpPrincipalCredentialId, verifyMcpRequest, verifyMcpSubscriptionRequest } from "./auth.js"
+import { getMcpResourceContext, isFirstPartyMcpPrincipal, mcpPrincipalCredentialId, verifyMcpRequest } from "./auth.js"
 import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError, auditUnavailableToolResult, mcpAuditPrincipal, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus } from "../audit/mcp-service-audit.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
+import { agentCheckRequestsAvailable, registerAgentCheckRequestTool } from "./agent-check-request.js"
+import { HARNESS_FEEDBACK_INSTRUCTIONS, harnessFeedbackAvailable, registerHarnessFeedbackTool } from "./harness-feedback.js"
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
-import { createScopedAgentMcpHttpHandlers } from "./agent-http.js"
-import { createRemoteSessionReceiptSubscriptions } from "./remote-session-receipt-watch.js"
-import { readRemoteSessionReceipt, registerRemoteSessionReceiptResources } from "./remote-session-resources.js"
-import { databaseRemoteSessionCommandStore } from "../remote-sessions/commands.js"
-import { databaseRemoteSessionRequestStore } from "../remote-sessions/requests.js"
+import { createScopedAgentMcpHttpHandlers, type AgentMcpAudience } from "./agent-http.js"
+import { remoteSessionDirectTools } from "./remote-session-tools.js"
+import { registerConnectFullTools, type CapabilityCall } from "./connect-full-tools.js"
 import { rejectStandaloneSseResponse } from "./standalone-sse.js"
 import { appLogger } from "../observability/logger.js"
 import {
@@ -39,8 +42,11 @@ import {
   SEARCH_CAPABILITIES_TOOL_NAME,
   type CapabilityMatch,
 } from "./search.js"
-import { resolveMcpMember, resolveMcpMemberIdentity } from "./external-capabilities.js"
-import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, parseMarketplaceCapabilityName, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
+import { mcpMemberForToken, resolveMcpMember, resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, listAccessibleMarketplaceSkillSources, parseMarketplaceCapabilityName, readMarketplaceSkillFiles, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
+import { findSkillFile, registerSkillsExtension, resolveSkills, type ResolvedSkill } from "./skills-extension.js"
+import { readSkillFileBytes } from "../skill-file-blobs.js"
+import { skillFileMimeType, skillFileText } from "../skill-files.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
 import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
@@ -66,14 +72,18 @@ import {
   externalCapabilityErrorToolResult,
   externalCapabilitySuccessToolResult,
   searchCapabilityRegistry,
+  slackSendAsBotAvailable,
   withUsageSource,
   workflowExecutionAuditStatus,
   type ExecuteCapabilityToolResult,
 } from "./capability-registry.js"
 import { executeWorkflowAuthoringTest, workflowAuthoringTestInputSchema, workflowAuthoringTestOutputSchema } from "./workflow-authoring-test.js"
+import { workflowCodeRules } from "./codemode-script-object.js"
+import { newWorkflowLanguage } from "./workflow-service.js"
 import { parseNativeCapabilityName } from "./native-capabilities.js"
 import { gmailFileInputPreflightSchema } from "../capability-sources/gmail-file-input.js"
 import { recordWorkflowRun } from "../workflow-runs.js"
+import { withPrimaryReads } from "../read-routing.js"
 import {
   activateArtifactViewRevision,
   getGeneratedArtifactViewRevision,
@@ -99,9 +109,19 @@ import {
   registerConnectMcpServerIndex,
   selectConnectMcpServerIndexConnections,
   supportsConnectMcpAppHost,
+  supportsConnectNativeSkills,
 } from "./connect-mcp-server-index.js"
 import { registerAgentSkillTools } from "./skill-created-app.js"
 import { registerAgentSkillCatalogTools, standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
+import { isSkillDocumentUri, isSkillFileUri, readCachedSkill, rememberSkillRead, skillReadResponse } from "./skill-read-cache.js"
+import {
+  parseSkillSyncRequest,
+  skillBatchResponse,
+  skillIndexChanges,
+  unchangedSkillIndexResponse,
+  type SkillSyncRequest,
+} from "./skill-index-sync.js"
+import { cache } from "../cache.js"
 import {
   connectionActionSearchCard,
   connectionActionAppMeta,
@@ -154,10 +174,15 @@ const connectionStatusOutputSchema = openworkCloudMcpConnectionActionSchema.exte
     surface: z.enum(["openwork_your_connections", "openwork_organization_connections", "provider_admin_console", "network_infrastructure", "openwork_support"]),
     retry: z.literal("search_capabilities"),
     url: z.string().url().optional(),
+    askForKey: z.object({
+      capability: z.literal("postMcpConnectionsCredentialPrompt"),
+      path: z.object({ connectionId: z.string() }),
+      body: z.object({ scope: z.enum(["shared", "personal"]) }),
+    }).optional(),
   }),
 })
 
-const capabilityMatchOutputSchema = z.object({
+const legacyCapabilityMatchOutputSchema = z.object({
   name: z.string(),
   method: z.string(),
   path: z.string(),
@@ -182,15 +207,25 @@ const capabilityMatchOutputSchema = z.object({
 }).passthrough()
 
 export const SEARCH_CAPABILITIES_OUTPUT_SCHEMA = z.object({
-  matches: z.array(capabilityMatchOutputSchema),
+  matches: z.array(legacyCapabilityMatchOutputSchema),
   connectionAction: connectionActionPayloadSchema.optional(),
   connectorCatalog: connectorCatalogSchema.optional(),
   hint: z.string().optional(),
 })
 
-async function mcpRequestInfo(request: Request): Promise<{ method: string | null; resourceUri: string | null; generatedCatalog: boolean }> {
-  if (request.method.toUpperCase() !== "POST") return { method: null, resourceUri: null, generatedCatalog: false }
+async function mcpRequestInfo(request: Request): Promise<{
+  id: string | number | null
+  method: string | null
+  resourceUri: string | null
+  generatedCatalog: boolean
+  toolName: string | null
+  skillSync: SkillSyncRequest | null
+}> {
+  if (request.method.toUpperCase() !== "POST") return { id: null, method: null, resourceUri: null, generatedCatalog: false, toolName: null, skillSync: null }
   const body: unknown = await request.clone().json().catch(() => null)
+  const id = typeof body === "object" && body !== null && "id" in body && (typeof body.id === "string" || typeof body.id === "number")
+    ? body.id
+    : null
   const method = typeof body === "object"
     && body !== null
     && "method" in body
@@ -201,36 +236,63 @@ async function mcpRequestInfo(request: Request): Promise<{ method: string | null
     ? body.params
     : null
   const resourceUri = params && "uri" in params && typeof params.uri === "string" ? params.uri : null
-  return { method, resourceUri, generatedCatalog: needsGeneratedArtifactCatalog(method, params) }
+  const toolName = method === "tools/call" && params && "name" in params && typeof params.name === "string" ? params.name : null
+  return {
+    id, method, resourceUri, generatedCatalog: needsGeneratedArtifactCatalog(method, params), toolName,
+    skillSync: method === "resources/read" ? parseSkillSyncRequest(params) : null,
+  }
 }
 
 export const AGENT_SKILL_INDEX_URI = "skill://index.json"
 export const AGENT_SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
 
-export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[]) {
+export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[], resolved?: ResolvedSkill[]) {
+  const byCapability = new Map(resolved?.map((entry) => [entry.skill.capability, entry]))
+  const listed = resolved ? skills.filter((skill) => byCapability.has(skill.capability)) : skills
   return {
     $schema: AGENT_SKILL_INDEX_SCHEMA,
-    skills: skills.map((skill) => ({
-      name: skill.name,
-      type: "skill-md" as const,
-      title: skill.title,
-      description: skill.description,
-      modelDiscovery: true,
-      url: skill.location,
-      capability: skill.capability,
-      ...(skill.marketplaceName ? { marketplaceName: skill.marketplaceName } : {}),
-      ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
-    })),
+    ...(resolved ? { delivery: "native" as const } : {}),
+    skills: listed.map((skill) => {
+      const entry = byCapability.get(skill.capability)
+      return {
+        name: skill.name,
+        type: "skill-md" as const,
+        title: skill.title,
+        description: skill.description,
+        modelDiscovery: true,
+        url: skill.location,
+        capability: skill.capability,
+        ...(skill.marketplaceName ? { marketplaceName: skill.marketplaceName } : {}),
+        ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
+        ...(entry?.content ? { digest: entry.content.digest, size: entry.content.size } : {}),
+        ...(entry?.content?.files.length ? { files: entry.content.files.map((file) => ({ path: file.path, digest: file.digest, size: file.size })) } : {}),
+        ...(entry?.blocked ? { setup: entry.blocked } : {}),
+      }
+    }),
   }
 }
 
-/** The authorized SKILL.md source behind one listed descriptor, shared by the skill:// resources and get_skill. */
+export async function resolveAgentSkills(input: {
+  skills: RemoteSkillDescriptor[]
+  organizationId: string
+  member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
+}): Promise<ResolvedSkill[]> {
+  const marketplace = await listAccessibleMarketplaceSkillSources({ organizationId: input.organizationId, member: input.member })
+  const sources = new Map<string, RemoteSkillSource>(marketplace)
+  for (const skill of input.skills) {
+    const builtin = await executeBuiltinSkillCapability(skill.capability, input.organizationId)
+    if (builtin) sources.set(skill.capability, { content: builtin.content, provenance: builtin.provenance })
+  }
+  return resolveSkills(input.skills, sources)
+}
+
 export async function readRemoteSkillSource(input: {
   skill: RemoteSkillDescriptor
   organizationId: string
   member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
+  recordUse: boolean
 }): Promise<RemoteSkillSource> {
-  const builtinResult = executeBuiltinSkillCapability(input.skill.capability)
+  const builtinResult = await executeBuiltinSkillCapability(input.skill.capability, input.organizationId)
   if (builtinResult) return { content: builtinResult.content, provenance: builtinResult.provenance }
   const marketplace = parseMarketplaceCapabilityName(input.skill.capability)
   if (!marketplace) return null
@@ -239,19 +301,21 @@ export async function readRemoteSkillSource(input: {
     member: input.member,
     pluginId: marketplace.pluginId,
     configObjectId: marketplace.configObjectId,
-    // Served to the member's agent (skill:// resource or get_skill): one Library use.
-    usageSource: "agent",
+    ...(input.recordUse ? { usageSource: "agent" as const } : {}),
   })
   if (!marketplaceResult.ok || marketplaceResult.result.kind !== "skill") return null
   const result = marketplaceResult.result
   if (typeof result.content !== "string") {
-    // Listed but withheld until its plugin is set up: say what unblocks it.
     if (typeof result.status === "string" && typeof result.hint === "string") {
       return { blocked: { status: result.status, message: result.hint, action: result.action ?? null } }
     }
     return null
   }
-  return { content: result.content, provenance: result.provenance }
+  return {
+    content: result.content,
+    provenance: result.provenance,
+    files: await readMarketplaceSkillFiles({ organizationId: input.organizationId, configObjectId: marketplace.configObjectId }),
+  }
 }
 
 const EXECUTE_CAPABILITY_TIMEOUT_MESSAGE = `The capability call exceeded ${EXECUTE_CAPABILITY_TIMEOUT_MS / 1_000}s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.`
@@ -260,7 +324,7 @@ function textContent(text: string): { text: string; type: "text" }[] {
   return [{ type: "text", text }]
 }
 
-export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T[], coverageHint?: string, connectorCatalog?: ConnectorCatalog | null, connectionIntent = false) {
+export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T[], coverageHint?: string, connectorCatalog?: ConnectorCatalog | null, connectionIntent = false, compact = false) {
   const hint = [
     ...(matches.length === 0 ? [connectorCatalog ? "These are setup suggestions, not connected tools. Use their setup actions; adding a connector requires an organization admin." : "No matches. Try broader or different keywords."] : []),
     ...(coverageHint ? [coverageHint] : []),
@@ -273,25 +337,19 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
     ...(connectorCatalog ? { connectorCatalog } : {}),
   }
   return {
-    content: textContent(JSON.stringify(result, null, 2)),
+    content: textContent(JSON.stringify(result, null, compact ? undefined : 2)),
     structuredContent: result,
     ...(card ? { _meta: connectionActionAppMeta(card.connectionId) } : {}),
   }
 }
 
 export function connectorSetupToolResult() {
-  return capabilitySearchToolResult([], undefined, connectorCatalogForQuery("", true))
+  return capabilitySearchToolResult([], undefined, connectorCatalogForQuery("", true), false, true)
 }
 
 function capabilityTimeoutResult(capability: string): ExecuteCapabilityToolResult {
-  return {
-    isError: true,
-    content: textContent(JSON.stringify({
-      error: "capability_timeout",
-      capability,
-      message: EXECUTE_CAPABILITY_TIMEOUT_MESSAGE,
-    })),
-  }
+  const payload = { error: "capability_timeout", capability, message: EXECUTE_CAPABILITY_TIMEOUT_MESSAGE }
+  return { isError: true, content: textContent(JSON.stringify(payload)), structuredContent: payload }
 }
 
 function isTimeoutError(error: unknown): boolean {
@@ -332,18 +390,43 @@ export function registerAgentSkillResources(input: {
   skills: RemoteSkillDescriptor[]
   organizationId: string
   member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
+  resolveSkills?: () => Promise<ResolvedSkill[]>
+  onSkillRead?: (uri: string, text: string) => void
+  indexSync?: { revision: string | null; known?: Record<string, string> }
+  fileRead?: { uri: string; resolveSkills: () => Promise<ResolvedSkill[]> }
 }) {
+  const fileRead = input.fileRead
+  if (fileRead) {
+    input.server.registerResource("agent-skill-file", fileRead.uri, {
+      title: fileRead.uri.slice(fileRead.uri.lastIndexOf("/") + 1),
+      description: "A supporting file of an Agent Skill.",
+    }, async () => {
+      const file = findSkillFile(await fileRead.resolveSkills(), fileRead.uri)
+      if (!file) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `No skill file at ${fileRead.uri} is available to you.`)
+      const bytes = await readSkillFileBytes(input.organizationId, file)
+      if (!bytes) throw new ProtocolError(ProtocolErrorCode.InternalError, `The skill file at ${fileRead.uri} could not be read. Try again.`)
+      const text = skillFileText(bytes)
+      return {
+        contents: [text !== null
+          ? { uri: file.uri, mimeType: file.mimeType, text }
+          : { uri: file.uri, mimeType: skillFileMimeType(file.path, false), blob: Buffer.from(bytes).toString("base64") }],
+      }
+    })
+  }
   input.server.registerResource("agent-skills-index", AGENT_SKILL_INDEX_URI, {
     title: "Available Agent Skills",
     description: "Authorized Agent Skills discovery index for this OpenWork member.",
     mimeType: "application/json",
-  }, async () => ({
-    contents: [{
-      uri: AGENT_SKILL_INDEX_URI,
-      mimeType: "application/json",
-      text: JSON.stringify(buildAgentSkillIndex(input.skills)),
-    }],
-  }))
+  }, async () => {
+    const index = buildAgentSkillIndex(input.skills, input.resolveSkills ? await input.resolveSkills() : undefined)
+    return {
+      contents: [{
+        uri: AGENT_SKILL_INDEX_URI,
+        mimeType: "application/json",
+        text: JSON.stringify(input.indexSync ? skillIndexChanges(index, input.indexSync.revision, input.indexSync.known) : index),
+      }],
+    }
+  })
   for (const skill of input.skills) {
     input.server.registerResource(skill.name, skill.location, {
       title: skill.title,
@@ -354,6 +437,7 @@ export function registerAgentSkillResources(input: {
         skill,
         organizationId: input.organizationId,
         member: input.member,
+        recordUse: false,
       })
       if (!source) {
         throw new ProtocolError(ProtocolErrorCode.InvalidRequest, "Skill is no longer available")
@@ -361,42 +445,23 @@ export function registerAgentSkillResources(input: {
       if ("blocked" in source) {
         throw new ProtocolError(ProtocolErrorCode.InvalidRequest, source.blocked.message)
       }
+      const text = standardSkillMarkdown(skill, source.content)
+      input.onSkillRead?.(skill.location, text)
       return {
         contents: [{
           uri: skill.location,
           mimeType: "text/markdown",
-          text: standardSkillMarkdown(skill, source.content),
+          text,
         }],
       }
     })
   }
 }
 
-/**
- * The minimal, harness-facing MCP surface: two capability-routing tools, one
- * first-party skill creation App, plus gated Code Mode execution and
- * standards-based Artifact presentation.
- *
- * `/mcp` (index.ts) stays exactly as it is — every catalog operation
- * individually registered, ~129 tools today. That's unchanged and still
- * useful for scripts/admin tooling that want to call a known operation by
- * name directly.
- *
- * `/mcp/agent` is a *different* endpoint for a *different* consumer: the
- * desktop app's "OpenWork Cloud Control" connection, which is what an
- * OpenCode/Claude Code/Codex-style harness actually sees. It always registers
- * `search_capabilities`, `execute_capability`, the direct skill tools
- * `list_skills` and `get_skill`, and `create_skill`, and
- * conditionally registers Code Mode and Artifact presentation tools. Workflows
- * remain discoverable and executable through the same capability-routing
- * tools instead of contributing separate contextual tools. The other ~127
- * operations are not individually callable on this endpoint.
- */
 export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(app: Hono<T>) {
   const handlers = createScopedAgentMcpHttpHandlers(
     (error) => agentMcpLogger.warn("Agent MCP transport error", { error }),
   )
-  const receiptSubscriptions = createRemoteSessionReceiptSubscriptions()
 
   app.get("/.well-known/oauth-protected-resource/mcp/agent", protectedResourceMetadataRoute("agent"), publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "agent")))
@@ -423,28 +488,46 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       return preflightResponse
     }
 
+    const requestInfo = await mcpRequestInfo(c.req.raw)
+    const method = requestInfo.method
+    if (method === "notifications/initialized" && requestInfo.id === null) {
+      return new Response(null, { status: 202 })
+    }
+    const organizationId = normalizeDenTypeId("organization", principal.organizationId)
+    const skillReadUri = method === "resources/read" && requestInfo.id !== null && isSkillDocumentUri(requestInfo.resourceUri)
+      ? requestInfo.resourceUri
+      : null
+    const skillFileReadUri = method === "resources/read" && isSkillFileUri(requestInfo.resourceUri) ? requestInfo.resourceUri : null
+    const skillBatch = skillReadUri && requestInfo.skillSync && (requestInfo.skillSync.uris || requestInfo.skillSync.use)
+      ? { uris: [...new Set([skillReadUri, ...(requestInfo.skillSync.uris ?? [])])], use: requestInfo.skillSync.use === true }
+      : null
+    const indexSync = method === "resources/read" && requestInfo.resourceUri === AGENT_SKILL_INDEX_URI ? requestInfo.skillSync : null
+    const inventoryRevision = skillReadUri || indexSync ? await cache.inventory.revision(organizationId) : null
+    if (indexSync?.revision && indexSync.revision === inventoryRevision && requestInfo.id !== null) {
+      return unchangedSkillIndexResponse(requestInfo.id, AGENT_SKILL_INDEX_URI, AGENT_SKILL_INDEX_SCHEMA, inventoryRevision)
+    }
+    const skillReadKey = skillReadUri && inventoryRevision && !skillBatch
+      ? { organizationId, userId: principal.userId, uri: skillReadUri, revision: inventoryRevision }
+      : null
+    const cachedSkill = skillReadKey ? readCachedSkill(skillReadKey) : null
+    if (skillReadKey && cachedSkill !== null && requestInfo.id !== null) {
+      return skillReadResponse(requestInfo.id, skillReadKey.uri, cachedSkill)
+    }
+
     const finishIndexTiming = startMcpAppTiming("den.agent-index-read")
     const catalog = await getCatalog(app as unknown as Hono, c.env)
-    const organizationId = normalizeDenTypeId("organization", principal.organizationId)
-    const organizationFeatures = await getOrganizationFeatures(organizationId)
-    // External MCP connections are scoped to the calling MEMBER (grants +
-    // per-member credentials), not just the org — resolve who this token's
-    // user is within the org once per request, reusing the features just read.
+    const organizationFeatures = await getOrganizationFeatures(organizationId, { userId: principal.userId })
     const member = await resolveMcpMember({
       userId: principal.userId,
       organizationId: principal.organizationId,
-      teamMembershipCache: organizationFeatures.teamMembershipCache,
     })
-    const memberIdentity = member?.identity ?? null
-    const notificationScope = `${principal.organizationId}\0${principal.userId}`
+    const memberIdentity = member ? mcpMemberForToken(member.identity, principal.scopes) : null
     const connectMcpAppHostSupported = supportsConnectMcpAppHost(
       c.req.header(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER),
     ) && principal.scopes.has(DEN_MCP_APP_HOST_SCOPE)
-    const requestInfo = await mcpRequestInfo(c.req.raw)
-    const method = requestInfo.method
+    const firstPartyToken = isFirstPartyMcpPrincipal(principal)
+    const audience: AgentMcpAudience = { organizationId, userId: principal.userId }
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
-    // Direct service mutations below are audited for the verified token caller
-    // (organization claim + active member), never for tool arguments.
     const auditPrincipal = mcpAuditPrincipal({
       organizationId,
       userId: principal.userId,
@@ -464,11 +547,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       audit: auditPrincipal,
       usageSource: "agent",
     })
-    // Building your own Apps can be turned off for the deployment; MCP Apps
-    // from connected MCP servers work either way.
     const appServersEnabled = env.appMcpServersEnabled
-    // Resolved once per request, and only by the methods that need it: the
-    // skill resources at discovery time, and list_skills / get_skill on call.
     let remoteSkillsPromise: Promise<RemoteSkillDescriptor[]> | null = null
     const loadRemoteSkills = (): Promise<RemoteSkillDescriptor[]> => {
       remoteSkillsPromise ??= (async () => [
@@ -480,8 +559,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       ].sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability)))()
       return remoteSkillsPromise
     }
-    // Only the skill, App builder, Workflow artifact and artifact view tools act
-    // through the organization context, so it loads on first use, once per request.
     let libraryContextPromise: Promise<PluginArchActorContext | null> | null = null
     const loadLibraryContext = (): Promise<PluginArchActorContext | null> => libraryContextPromise ??= (async () => {
       if (!member) return null
@@ -491,17 +568,12 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       })
       return organizationContext ? { organizationContext, memberTeams: member.teams, session: null } : null
     })()
-    // Apps built here are each served as their own MCP server; Connect lists
-    // them in its server index, finds them in search, and builds them.
     const appAccess = { organizationId: principal.organizationId, member: memberIdentity }
     let mcpAppsPromise: Promise<McpAppEntry[]> | null = null
     const loadMcpApps = () => mcpAppsPromise ??= listAccessibleMcpApps(appAccess).catch((error: unknown) => {
       console.error("mcp_app_listing_failed", { organizationId: principal.organizationId, error: error instanceof Error ? error.message : String(error) })
       return []
     })
-    // OpenWork opens an App only through the server index, where Apps fill the
-    // room connections leave. Every usable connection may be listed, so only
-    // Apps that fit beside all of them are offered to open.
     let openableAppsPromise: Promise<McpAppEntry[]> | null = null
     const loadOpenableApps = () => openableAppsPromise ??= (async () => {
       const apps = await loadMcpApps()
@@ -514,18 +586,93 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         console.error("mcp_app_capacity_check_failed", { organizationId: principal.organizationId, error: error instanceof Error ? error.message : String(error) })
         return null
       })
-      // Without the connection count, offer every App rather than call them all past the limit.
       return connections ? apps.slice(0, connectMcpServerIndexAppCapacity(connections.length)) : apps
     })()
-    const receiptScope = { organizationId, createdByUserId: normalizeDenTypeId("user", principal.userId) }
-    const receiptStores = { commandStore: databaseRemoteSessionCommandStore, requestStore: databaseRemoteSessionRequestStore }
-    const remoteSessionEventsEnabled = Boolean(memberIdentity && organizationFeatures.remoteSessionEvents)
+    const nativeSkills = Boolean(memberIdentity)
+    const skillsExtension = Boolean(memberIdentity)
+    let resolvedSkillsPromise: Promise<ResolvedSkill[]> | null = null
+    const loadResolvedSkills = (): Promise<ResolvedSkill[]> => resolvedSkillsPromise ??= (async () => resolveAgentSkills({
+      skills: await loadRemoteSkills(),
+      organizationId: principal.organizationId,
+      member: memberIdentity,
+    }))()
+    if (skillBatch && requestInfo.id !== null) {
+      const skills = await loadRemoteSkills()
+      const contents: Array<{ uri: string; text: string }> = []
+      for (const uri of skillBatch.uris) {
+        const skill = skills.find((entry) => entry.location === uri)
+        if (!skill) continue
+        const key = inventoryRevision ? { organizationId, userId: principal.userId, uri, revision: inventoryRevision } : null
+        const cached = key && !skillBatch.use ? readCachedSkill(key) : null
+        if (cached !== null) {
+          contents.push({ uri, text: cached })
+          continue
+        }
+        const source = await readRemoteSkillSource({ skill, organizationId: principal.organizationId, member: memberIdentity, recordUse: skillBatch.use })
+        if (!source || "blocked" in source) continue
+        const text = standardSkillMarkdown(skill, source.content)
+        if (key) rememberSkillRead(key, text)
+        contents.push({ uri, text })
+      }
+      finishIndexTiming()
+      return skillBatchResponse(requestInfo.id, contents)
+    }
+    const executeCapabilityTool = async ({ name, arguments: args, schemaDigest, path, query, body }: CapabilityCall & { schemaDigest?: string }) => {
+      const plugin = appServersEnabled ? parseMarketplaceCapabilityName(name) : null
+      const definition = plugin && await isActiveMcpApp({ organizationId: principal.organizationId, appId: plugin.configObjectId })
+        ? await loadMcpAppServerDefinition({ ...appAccess, appId: plugin.configObjectId }).catch(() => null)
+        : null
+      if (definition) {
+        const canOpen = (await loadOpenableApps()).some((app) => app.appId === definition.app.appId)
+        return mcpAppLaunchResult({ app: definition.app, publicOrigin: redirectUriBase, message: `Opened ${definition.app.title}.`, launchInput: args ?? body, canOpen })
+      }
+      const result = await executeCapabilityWithBudget({
+        capability: name,
+        invoke: async (): Promise<ExecuteCapabilityToolResult> => (
+          executeCapability(capabilityContext, { name, schemaDigest, path, query, body, ...(args === undefined ? {} : { arguments: args }) })
+        ),
+      })
+      const native = parseNativeCapabilityName(name)
+      if (result.isError === true
+        && native?.toolName === "postCapabilitiesGoogleWorkspaceGmailDrafts"
+        && (native.connectionId === "google-workspace" || /^emc_[0-9a-hjkmnp-tv-z]{26}$/.test(native.connectionId))
+        && result.content.length === 1) {
+        const part = result.content[0]
+        if (part?.type === "text") {
+          try {
+            if (gmailFileInputPreflightSchema.safeParse(JSON.parse(part.text)).success) {
+              return { ...result, isError: false }
+            }
+          } catch {
+          }
+        }
+      }
+      return result
+    }
+    const advertisesInstructions = method === "initialize" || method === "server/discover"
+    const listsSkillsNatively = nativeSkills && supportsConnectNativeSkills(c.req.header(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER))
+    const harnessFeedback = await harnessFeedbackAvailable(principal)
     const server = createAgentMcpServer({
+      harnessFeedbackInstructions: harnessFeedback ? HARNESS_FEEDBACK_INSTRUCTIONS : undefined,
       appServers: appServersEnabled,
-      remoteSessionEvents: remoteSessionEventsEnabled,
-      remoteSessionStatus: Boolean(memberIdentity && organizationFeatures.remoteSessionSubagents),
+      remoteSessionStatus: Boolean(memberIdentity),
+      remoteSessionEvents: organizationFeatures.mcpThreads,
+      canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
+      myAgent: Boolean(memberIdentity && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
+      skillsExtension,
+      nativeEvents: Boolean(auditPrincipal),
+      skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,
     })
-    if (remoteSessionEventsEnabled) registerRemoteSessionReceiptResources({ server, ...receiptStores, ...receiptScope })
+    if (auditPrincipal) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE), { poll: organizationFeatures.mcpThreads })
+    if (harnessFeedback) registerHarnessFeedbackTool(server, principal)
+    if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
+    if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true })) {
+      registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })
+    }
+    if (auditPrincipal) {
+      const eventThread = await eventThreadForPrincipal(principal)
+      if (eventThread) registerMcpEventTools(server, eventThread, [...principal.scopes], auditPrincipal)
+    }
     registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })
     if (appServersEnabled) {
       const appActor = async (): Promise<PluginArchActorContext> => {
@@ -545,7 +692,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           if (error instanceof McpAppError) throw new AppBuilderError(error.code, error.message)
           if (error instanceof PluginArchAuthorizationError) throw new AppBuilderError(error.error, error.message, error.reason)
           if (error instanceof PluginArchRouteFailure) {
-            throw new AppBuilderError(error.error, "The App could not be saved. Check the Plugin and your permissions.")
+            throw new AppBuilderError(error.error, "The artifact could not be saved. Check the Plugin and your permissions.")
           }
           throw error
         }
@@ -576,27 +723,23 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         notifyCatalogChanged: () => {
           mcpAppsPromise = null
           openableAppsPromise = null
-          handlers.notify.resourcesChanged(notificationScope)
+          handlers.notify.resourcesChanged(audience)
         },
       })
     }
-    // initialize and server/discover advertise static capabilities only, so the
-    // connection, App, skill and Automation resources load just for resource reads.
     if (method === "resources/list" || method === "resources/read") {
       if (memberIdentity) {
-        // Select before the per-member readiness probes so an ordinary client
-        // pays only for the connections it may actually see.
         const indexCandidates = selectConnectMcpServerIndexConnections({
           appHostClient: connectMcpAppHostSupported,
           connections: await listUsableExternalMcpConnections({
             organizationId,
             orgMembershipId: memberIdentity.orgMembershipId,
             teamIds: memberIdentity.teamIds,
+            withheldConnectionIds: memberIdentity.withheldConnectionIds,
           }),
         })
         registerConnectMcpServerIndex({
           server,
-          // Only the App host opens Apps; every other reader gets the connection index unchanged.
           ...(appServersEnabled && connectMcpAppHostSupported ? { apps: await loadMcpApps() } : {}),
           connections: await readyExternalMcpConnectionsForMember(indexCandidates, memberIdentity.orgMembershipId),
           publicOrigin: redirectUriBase,
@@ -607,12 +750,15 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         skills: await loadRemoteSkills(),
         organizationId: principal.organizationId,
         member: memberIdentity,
+        ...(nativeSkills ? { resolveSkills: loadResolvedSkills } : {}),
+        ...(indexSync ? { indexSync: { revision: inventoryRevision, known: indexSync.known } } : {}),
+        ...(skillFileReadUri ? { fileRead: { uri: skillFileReadUri, resolveSkills: loadResolvedSkills } } : {}),
+        ...(skillReadKey ? { onSkillRead: (uri: string, text: string) => {
+          if (uri === skillReadKey.uri) rememberSkillRead(skillReadKey, text)
+        } } : {}),
       })
       if (appServersEnabled) registerAppStarterResources(server)
       if (env.automations.runtimeEnabled) {
-        // Owner-scoped: the index only ever carries this member's own
-        // Automations. Without a resolved member there is no owner to scope to,
-        // and a failure here must not take the whole connection down.
         const automations = memberIdentity
           ? await automationService.list({
             organizationId: principal.organizationId,
@@ -635,15 +781,17 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         description: [
           "Search connection actions, saved Workflows, and skills by keyword.",
           appServersEnabled
-            ? "Direct tools such as create_skill, get_skill, and the App builders prepare_app, create_app, read_app, and update_app are outside this search; call them directly."
-            : "Direct MCP tools such as create_skill and save_artifact_view are outside this search; call an available direct tool itself. For an app, dashboard, or artifact view of Workflow results, use save_artifact_view and follow its prerequisites.",
+            ? "Direct tools such as create_skill, get_skill, and the artifact tools prepare_app, create_app, read_app, and update_app are outside this search; call them directly."
+            : "Direct MCP tools such as create_skill and save_artifact_view are outside this search; call an available direct tool itself. For an artifact or dashboard of Workflow results, use save_artifact_view and follow its prerequisites.",
           "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
           "Accessible Workflows appear as marketplace matches with kind workflow and execute through execute_capability like every other exact search result.",
           "Try 2-4 keyword variants before deciding a capability is unavailable.",
+          "Native API matches include a connector-namespaced name, pathParams, queryParams, querySchema, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField.",
           appServersEnabled
-            ? "Native API matches include a connector-namespaced name, pathParams, queryParams, querySchema, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField. A match with kind mcp_app is a standard MCP App launch capability, either an App built in OpenWork (its own MCP server at the match path) or an App from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource."
-            : "Native API matches include a connector-namespaced name, pathParams, queryParams, querySchema, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField. A match with kind mcp_app is a standard MCP App launch capability from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource.",
-          "Returns matches with exact name, summary, kind, invocation schemas, and connection status where available; optional hint explains coverage or next steps. connectionAction carries an explicit sign-in card; connectorCatalog contains setup suggestions, not executable tools. Built-in and marketplace skills return SKILL.md when executed; list_skills/get_skill reach them directly.",
+            ? "A match with kind mcp_app is a standard MCP App launch capability, for either an artifact built in OpenWork or an MCP App from a connected server. Execute it normally to render its advertised ui:// resource. An artifact also has its own MCP server, named in its description."
+            : "A match with kind mcp_app is a standard MCP App launch capability from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource.",
+          "Returns matches with exact name, summary, kind, invocation schemas, and connection status where available.",
+          "An optional hint explains coverage or next steps. connectionAction carries an explicit sign-in card; connectorCatalog contains setup suggestions, not executable tools. Built-in and marketplace skills return SKILL.md when executed; list_skills/get_skill reach them directly.",
         ].join(" "),
         annotations: SEARCH_CAPABILITIES_ANNOTATIONS,
         _meta: { ui: { visibility: ["model", "app"] } },
@@ -659,11 +807,10 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         if (type === "connectors") return connectorSetupToolResult()
         const boundedLimit = limit ?? 5
         const includeApps = appServersEnabled && (type === undefined || type === "all" || type === "mcp" || type === "marketplace")
-        // Generic Marketplace search excludes authored Apps in every rollout state.
         const result = await searchCapabilityRegistry(capabilityContext, { query, limit: boundedLimit, type })
         const openable = includeApps ? await loadOpenableApps() : []
         const matches = [...result.matches, ...searchMcpApps(openable, query, redirectUriBase)].sort(compareCapabilityMatches).slice(0, boundedLimit)
-        return capabilitySearchToolResult(matches, result.externalCoverageHint, intent === "connect" && (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query) : null, intent === "connect")
+        return capabilitySearchToolResult(matches, result.externalCoverageHint, intent === "connect" && (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query, false) : null, intent === "connect")
       },
     )
 
@@ -672,12 +819,11 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       {
         title: "Execute capability",
         description: [
-          "Call a capability found via search_capabilities, by its exact name.",
-          "Pass path/query/body only as described by that match's pathParams/queryParams/hasBody.",
+          "Call a capability found via search_capabilities, by its exact name. Pass path/query/body only as described by that match's pathParams/queryParams/hasBody.",
           "For external MCP capabilities, provider-advertised schema mismatches are returned as advisory schemaGuidance alongside the provider result; they do not block the downstream call.",
           "When the exact capability is a standard MCP App launch tool, this call preserves its originating tool and ui:// binding so compatible OpenWork hosts render it without requiring a generated direct-tool name.",
           "For skill capabilities listed in the remote skill catalog, this returns their authorized SKILL.md content; get_skill reads the same content by skill name without a search.",
-          "Returns the capability's content and, when supplied, its structuredContent unchanged: provider fields, Workflow results, skill content, or an App launch reference. Connection failures can include a connectionAction card; schemaGuidance is advisory. Other failures return error details in text with isError. Returns unknown_capability for stale names; search again.",
+          "Returns the capability's content and, when supplied, its structuredContent unchanged: provider fields, Workflow results, skill content, or an App launch reference. Connection failures can include a connectionAction card; schemaGuidance is advisory. Other failures return isError with the error as text and structuredContent; invalid_capability_arguments lists the issues to correct, and unknown_capability means search again.",
         ].join(" "),
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
         _meta: { ui: { visibility: ["model", "app"] } },
@@ -689,60 +835,34 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           body: z.unknown().optional().describe(appServersEnabled
             ? "For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema. For an App (kind mcp_app), an optional launch input object the App receives."
             : "For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema."),
+          arguments: z.unknown().optional().describe("Alternative to path/query/body: one object holding them for a native API capability, or the arguments object for an external MCP capability."),
         }),
       },
-      async ({ name, schemaDigest, path, query, body }) => {
-        // A built App opens through its own server; anything unavailable falls
-        // through to ordinary execution and its normal error.
-        const plugin = appServersEnabled ? parseMarketplaceCapabilityName(name) : null
-        const definition = plugin && await isActiveMcpApp({ organizationId: principal.organizationId, appId: plugin.configObjectId })
-          ? await loadMcpAppServerDefinition({ ...appAccess, appId: plugin.configObjectId }).catch(() => null)
-          : null
-        if (definition) {
-          const canOpen = (await loadOpenableApps()).some((app) => app.appId === definition.app.appId)
-          return mcpAppLaunchResult({ app: definition.app, publicOrigin: redirectUriBase, message: `Opened ${definition.app.title}.`, launchInput: body, canOpen })
-        }
-        const result = await executeCapabilityWithBudget({
-          capability: name,
-          invoke: async (): Promise<ExecuteCapabilityToolResult> => (
-            executeCapability(capabilityContext, { name, schemaDigest, path, query, body })
-          ),
-        })
-        // Only this direct call may hand off to the host's fixed Gmail upload
-        // action. Keep the explicit no-draft failure body; scripts stay errors.
-        const native = parseNativeCapabilityName(name)
-        if (result.isError === true
-          && native?.toolName === "postCapabilitiesGoogleWorkspaceGmailDrafts"
-          && (native.connectionId === "google-workspace" || /^emc_[0-9a-hjkmnp-tv-z]{26}$/.test(native.connectionId))
-          && result.content.length === 1) {
-          const part = result.content[0]
-          if (part?.type === "text") {
-            try {
-              if (gmailFileInputPreflightSchema.safeParse(JSON.parse(part.text)).success) {
-                return { ...result, isError: false }
-              }
-            } catch {
-              // Non-JSON and unrelated errors retain their original transport.
-            }
-          }
-        }
-        return result
-      },
+      executeCapabilityTool,
     )
+    if (organizationFeatures.mcpThreads && memberIdentity && !firstPartyToken && (method === "tools/list" || method === "tools/call")) {
+      registerConnectFullTools({
+        server,
+        tools: remoteSessionDirectTools({ answer: capabilityContext.remoteSessionAnswersAllowed, attach: capabilityContext.remoteSessionAttachAllowed }),
+        execute: executeCapabilityTool,
+      })
+    }
 
     registerAgentSkillCatalogTools({
       server,
       listSkills: loadRemoteSkills,
-      readSkill: (skill) => readRemoteSkillSource({
+      readSkill: (skill, read) => readRemoteSkillSource({
         skill,
         organizationId: principal.organizationId,
         member: memberIdentity,
+        recordUse: read.file === undefined,
       }),
+      readFile: (file) => readSkillFileBytes(principal.organizationId, file),
     })
 
     registerAgentSkillTools({
       server,
-      create: async ({ pluginName, skillMarkdown }) => {
+      create: async ({ pluginName, skillMarkdown, files }) => {
         if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
           return {
             ok: false,
@@ -759,20 +879,23 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           }
         }
         try {
-          const plugin = await runMcpServiceAction("plugin.bundle.create", auditPrincipal, null, async () => {
-            await requirePluginArchCapability(skillContext, "plugin.create")
-            await requirePluginArchCapability(skillContext, "config_object.create")
-            return createPluginBundle({
-              context: skillContext,
-              name: pluginName,
-              components: [{ type: "skill", value: { rawSourceText: skillMarkdown } }],
+          const { plugin, memberships } = await withPrimaryReads(async () => {
+            const plugin = await runMcpServiceAction("plugin.bundle.create", auditPrincipal, null, async () => {
+              await requirePluginArchCapability(skillContext, "plugin.create")
+              await requirePluginArchCapability(skillContext, "config_object.create")
+              return createPluginBundle({
+                context: skillContext,
+                name: pluginName,
+                components: [{ type: "skill", value: { rawSourceText: skillMarkdown, ...(files ? { normalizedPayloadJson: { files } } : {}) } }],
+              })
             })
-          })
-          const memberships = await listPluginMemberships({
-            context: skillContext,
-            pluginId: plugin.id,
-            includeConfigObjects: true,
-            onlyActive: true,
+            const memberships = await listPluginMemberships({
+              context: skillContext,
+              pluginId: plugin.id,
+              includeConfigObjects: true,
+              onlyActive: true,
+            })
+            return { plugin, memberships }
           })
           const skill = memberships.items
             .map((membership) => membership.configObject)
@@ -806,7 +929,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           throw error
         }
       },
-      update: async ({ skillId, skillMarkdown, reason }) => {
+      update: async ({ skillId, skillMarkdown, files, reason }) => {
         if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
           return {
             ok: false,
@@ -824,7 +947,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         }
         try {
           const configObjectId = normalizeDenTypeId("configObject", skillId)
-          const versioned = await runMcpServiceAction("skill.version.create", auditPrincipal, serviceAuditResourceId(configObjectId), async () => {
+          const versioned = await withPrimaryReads(() => runMcpServiceAction("skill.version.create", auditPrincipal, serviceAuditResourceId(configObjectId), async () => {
             const existing = await getConfigObjectDetail(skillContext, configObjectId)
             if (existing.objectType !== "skill") return { created: false as const, objectType: existing.objectType }
             return {
@@ -833,10 +956,10 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
                 context: skillContext,
                 configObjectId,
                 reason,
-                value: { rawSourceText: skillMarkdown },
+                value: { rawSourceText: skillMarkdown, ...(files ? { normalizedPayloadJson: { files } } : {}) },
               }),
             }
-          }, { result: (value) => value.created ? null : 400 })
+          }, { result: (value) => value.created ? null : 400 }))
           if (!versioned.created) {
             return {
               ok: false,
@@ -917,7 +1040,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           }
           const execution = await runMcpServiceAction("workflow.execute", auditPrincipal, serviceAuditResourceId(configObjectId), () => executeLiveArtifactWorkflow({
             context: artifactContext, configObjectId, expectedOutputSchemaDigest, timeZone,
-            buildTools: () => buildCapabilityToolTree(withUsageSource(capabilityContext, "artifact")),
+            buildTools: (required) => buildCapabilityToolTree(withUsageSource(capabilityContext, "artifact"), required),
             describeUnavailable: (missing) => liveArtifactConnectionFailure(capabilityContext, missing),
           }), { result: workflowExecutionAuditStatus, error: serviceErrorStatus })
           if (!execution.ok) return execution
@@ -1008,7 +1131,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       }
     }
 
-    // Keep the generic MCP App tool as the interoperable baseline.
     registerAgentWorkflowArtifactApp({
       server,
       load: loadWorkflowArtifact,
@@ -1029,9 +1151,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       },
     })
 
-    // This server deploys independently from Desktop. Do not advertise or
-    // serve bridge-dependent generated views until the compatible Desktop
-    // MCP Apps host has been released and the operator enables the rollout.
     const listsOrCallsGeneratedViews = method === "tools/list" || method === "tools/call"
       || method === "resources/list" || method === "resources/read"
     const artifactContext = env.generatedArtifactViewsEnabled && auditPrincipal && listsOrCallsGeneratedViews
@@ -1060,8 +1179,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         retire: (request) => runMcpServiceAction("artifact_view.deactivate", artifactAuditPrincipal, serviceAuditResourceId(request.artifactViewId),
           () => retireArtifactView({ context: artifactContext, ...request }), { error: serviceErrorStatus }),
         notifyCatalogChanged: () => {
-          handlers.notify.toolsChanged(notificationScope)
-          handlers.notify.resourcesChanged(notificationScope)
+          handlers.notify.toolsChanged(audience)
+          handlers.notify.resourcesChanged(audience)
         },
         legacyViewsWritable: !appServersEnabled,
       })
@@ -1078,14 +1197,16 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       }
     }
 
+    const workflowLanguage = method === "tools/list" || method === "tools/call" ? await newWorkflowLanguage() : "codemode-js"
     server.registerTool(
       EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME,
       {
         title: "Execute capability script",
         description: [
-          "Test a confined JavaScript function body; end with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls.",
+          workflowCodeRules(workflowLanguage),
           "mode defaults to adhoc with optional input parameters. Explicit live mode can call the same tools as adhoc (including connection tools), rejects all caller input, and supplies only input.runtime.{now,today,dayStart,dayEnd,timeZone} from the server; optional IANA timeZone defaults to UTC and is live-only.",
           "Use exact scriptPath from search_capabilities, never guessed namespaces or operation names. For a discovered Den/native path call it with {path:{...},query:{...},body:{...}} only as advertised; native query parameters must be wrapped in query, e.g. {query:{q:input.query}}. External MCP paths take their argumentsSchema object directly.",
+          WORKFLOW_SAVE_INSTRUCTIONS,
           "Example adhoc code: return 1 + 1. Example live code: return {today:input.runtime.today}. tools.$codemode.search({query}) is for adhoc exploration; saved Workflows must call discovered paths directly.",
           "Optional inputSchema is checked before dispatch and outputSchema after execution; inspect discovered outputSchema rather than guessing. Returns value and metadata: receiptId, mode, executionType, verification, executedAt/fetchedAt, optional timeZone, and retention (scope, ttlMs, available, canSaveByReceipt, and any error/message). Retention determines whether saveWorkflow can reuse the receipt. This is an authoring test, not a saved Workflow artifact snapshot. " + (appServersEnabled
             ? "To back an App with a reusable live procedure: test with mode:live and outputSchema, saveWorkflow with receiptId and the same schemas (omit code/currentInput), then bind that saved Workflow in create_app with mode live."
@@ -1105,6 +1226,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             return await runMcpServiceAction("workflow_run.record", auditPrincipal, null, () => executeWorkflowAuthoringTest(request, {
               organizationId,
               orgMembershipId: memberIdentity?.orgMembershipId,
+              runtime: workflowLanguage === "ecmascript" ? "standard" : "openwork",
               buildTools: () => buildCapabilityToolTree(capabilityContext),
               recordRun: (receipt) => recordWorkflowRun(db, receipt),
             }), { result: toolResultStatus })
@@ -1116,22 +1238,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       }),
     )
 
-    const receiptStreamKey = Symbol("remote-session-receipt-stream")
-    return await receiptSubscriptions.fetch({
-      request: c.req.raw,
-      method,
-      scopeKey: notificationScope,
-      enabled: remoteSessionEventsEnabled,
-      expiresAt: typeof principal.payload.exp === "number" ? principal.payload.exp * 1_000 : 0,
-      read: (uri) => readRemoteSessionReceipt({ ...receiptStores, ...receiptScope, uri }),
-      revalidate: async (hasReceipts, signal) => {
-        const current = await verifyMcpSubscriptionRequest(c.req.raw.headers, getMcpResourceContext(c.req.raw, "agent", requestId), signal)
-        signal.throwIfAborted()
-        if (!current || current.userId !== principal.userId || current.organizationId !== principal.organizationId) return false
-        return !hasReceipts || (await getOrganizationFeatures(organizationId)).remoteSessionEvents
-      },
-      notify: (uri) => handlers.notify.resourceUpdated(notificationScope, uri, receiptStreamKey),
-      serve: (request) => handlers.fetch(notificationScope, request, server, receiptStreamKey),
-    })
+    return await handlers.fetch(audience, c.req.raw, server)
   })
 }

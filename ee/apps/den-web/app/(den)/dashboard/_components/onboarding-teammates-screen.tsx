@@ -10,6 +10,9 @@ import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { getDesktopGrant } from "../../_lib/desktop-handoff";
 import {
+  freePlanUserLimitMessage,
+  getOrgLimitError,
+  getOrgPaymentRequiredError,
   getRequestError,
   normalizeAuthIntentParam,
   PENDING_AUTH_INTENT_STORAGE_KEY,
@@ -127,14 +130,18 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, canInvite 
         try {
           await runReauthableAction(`onboarding-invite-${row.id}`, async () => {
             if (!alive.current) throw new Error("Your workspace changed. Review the remaining invitations before sending again.");
-            // Pin the organization even if a background account refresh changes
-            // the ambient scope while a fresh sign-in is being confirmed.
             const { response, payload } = await requestJson("/v1/invitations", {
               method: "POST",
               headers: { [ORG_SCOPE_HEADER]: orgId },
               body: JSON.stringify({ email: row.email, role: "member" }),
             }, 12000);
-            if (!response.ok) throw getRequestError(payload, response, "Could not send this invitation. Try again.");
+            if (!response.ok) {
+              const freePlanLimit = getOrgPaymentRequiredError(payload);
+              if (freePlanLimit) throw new Error(freePlanUserLimitMessage(freePlanLimit.freeSeatCount));
+              const planLimit = getOrgLimitError(payload);
+              if (planLimit) throw new Error(planLimit.message);
+              throw getRequestError(payload, response, "Could not send this invitation. Try again.");
+            }
           });
           updateRow(row.id, { email: row.email, status: "sent", error: null });
         } catch (error) {
@@ -182,9 +189,7 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, canInvite 
     setRows((current) => [...current, { id, email: "", status: "draft", error: null }]);
     setFocusId(id);
   };
-  // Titles in this flow end with a period like the sign-up panel's; avoid "Inc.."
   const workspaceName = organizationName.trim().replace(/\.+$/, "");
-  // One primary action (P7): Send while addresses wait, otherwise opening the workspace.
   const finishButton = <DenButton type="button" variant={pendingRows.length > 0 ? "secondary" : "primary"} loading={completing} disabled={sending} onClick={() => void continueSetup()}>
     {desktopAuthRequested ? "Complete and open the app" : sentCount > 0 ? "Open workspace" : "Skip and open workspace"}
   </DenButton>;
@@ -204,7 +209,6 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, canInvite 
                     disabled={interactionBusy || row.status === "sent"} aria-invalid={row.status === "error"} aria-describedby={row.error ? `teammate-error-${row.id}` : undefined}
                     onChange={(event) => updateRow(row.id, { email: event.target.value, status: "draft", error: null })}
                     className={`pr-11 ${row.status === "error" ? "border-red-300" : ""}`} />
-                  {/* One trailing slot per row: spinner, sent check, or remove. */}
                   <span className="absolute inset-y-0 right-1.5 flex items-center">
                     {row.status === "sending" ? <LoaderCircle aria-hidden className="mx-1.5 size-4 animate-spin text-gray-500 motion-reduce:animate-none" />
                       : row.status === "sent" ? <Check aria-hidden className="mx-1.5 size-4 text-gray-700" />

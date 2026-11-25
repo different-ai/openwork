@@ -9,7 +9,6 @@ const PREVIEW_ARGUMENTS = {};
 
 export type GeneratedAppPreviewGeometry = { scopeKey: string; entryId: string };
 
-/** Chat previews and dashboard apps use the same MCP renderer. */
 export function GeneratedAppPreview({ html, payload, title, revision, presentation = "inline", geometry }: {
   presentation?: "inline" | "dashboard";
   geometry?: GeneratedAppPreviewGeometry;

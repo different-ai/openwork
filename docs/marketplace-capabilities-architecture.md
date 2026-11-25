@@ -101,6 +101,8 @@ export type CapabilityMatch = {
 }
 ```
 
+`execute_capability` takes `path`, `query`, and `body` as these fields describe, or one `arguments` object holding them.
+
 Marketplace match shape:
 
 ```ts

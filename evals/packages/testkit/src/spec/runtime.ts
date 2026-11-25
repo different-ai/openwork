@@ -20,6 +20,7 @@ import {
   callFunctionOnSurface,
   CdpPageError,
   addInitScript,
+  attachFiles,
   callFunction, connect, debuggerUrlFor, listTargets,
   clickTarget,
   dumpScreenState,
@@ -43,6 +44,8 @@ import {
   mcpMock,
   server,
   requestBrowserTask,
+  requestPrivateValues,
+  requestComputerProgram,
   readBrowserFixtureState,
   setBrowserFixtureDiscovery,
   requireWorldResource,
@@ -842,9 +845,13 @@ export class UserChannel implements User {
   #click(target: Target, clickCount: number, verb: "click" | "dblclick", options: ClickOptions = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
     const hitTestDetail = options.hitTest === false ? ", hitTest=false" : "";
-    return this.#runtime.call("user", verb, `${verb}(${targetDetail(target)}${hitTestDetail})`, surface, async () => {
-      if (this.#runtime.adapters.user?.click) return this.#runtime.adapters.user.click(surface, target, clickCount);
-      const clicked = await clickTarget(surface, target, { mustHitTest: options.hitTest !== false, clickCount });
+    const modifierDetail = options.modifiers?.length ? `, modifiers=${options.modifiers.join("+")}` : "";
+    return this.#runtime.call("user", verb, `${verb}(${targetDetail(target)}${hitTestDetail}${modifierDetail})`, surface, async () => {
+      if (this.#runtime.adapters.user?.click) {
+        if (options.modifiers?.length) throw new Error(`${verb} with held keys is not supported on this surface.`);
+        return this.#runtime.adapters.user.click(surface, target, clickCount);
+      }
+      const clicked = await clickTarget(surface, target, { mustHitTest: options.hitTest !== false, clickCount, modifiers: options.modifiers });
       this.#runtime.emit({ stage: this.#runtime.stage, channel: "user", verb: "target", detail: targetDetail(target), surface: surfaceName(surface), ok: true, target: clicked.rect });
     });
   }
@@ -897,6 +904,12 @@ export class UserChannel implements User {
         throw new Error("Typed field did not retain the expected value");
       }
     });
+  }
+
+  attachFiles(selector: string, files: string[]): Promise<void> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("user", "attachFiles", `attachFiles(${selector}, ${files.length} files)`, surface,
+      () => attachFiles(surface, selector, files));
   }
 
   press(key: string): Promise<void> {
@@ -1007,10 +1020,22 @@ export class AgentChannel implements Agent {
     return new AgentChannel(this.#runtime, surface);
   }
 
+  computerProgram(input: { sessionId: string; surface: "computer" | "browser"; code: string; tabId?: string; timeoutMs?: number }) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "computerProgram", `computerProgram(${input.surface}, session=${input.sessionId})`, surface,
+      () => requestComputerProgram(surface, input));
+  }
+
   browserTask(input: import("@openwork/behaviors").BrowserTaskInput) {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "browserTask", `browserTask(${input.operation}, session=${input.sessionId}, tab=${input.args?.tabId ?? "owned"})`, surface,
       () => requestBrowserTask(surface, input));
+  }
+
+  privateValues(input: import("@openwork/behaviors").PrivateValuesInput) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "privateValues", `privateValues(session=${input.sessionId}, ${input.args.run ? "run" : "request"})`, surface,
+      () => requestPrivateValues(surface, input));
   }
 
   run(action: string, args?: unknown): Promise<unknown> {

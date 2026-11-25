@@ -12,6 +12,7 @@ export type {
   OpencodeCommandDraft,
   WorkspaceOpenworkConfig,
   AppBuildInfo,
+  DesktopStartupTimings,
   DesktopDistributionInfo,
   BrandIconApplyResult,
   BrandIconState,
@@ -39,6 +40,7 @@ import type {
   DesktopCommandInvokers,
   DesktopCommandName,
   DesktopCommandResult,
+  DesktopFetchInit,
   DesktopFetchResult,
   EvalRelaunchResult,
   NukeManifestPreview,
@@ -47,12 +49,17 @@ import type {
   WorkspaceList,
 } from "./desktop-types";
 import type {
+  AgentViewportKey,
   BrowserPanelOwnerPayload,
   BrowserPanelTab,
   BrowserStatePayload,
   OpenBrowserUrlResult,
 } from "@openwork/browser-tabs";
+import type { RemoteSessionAccessMode } from "@openwork/types/automations";
+import type { ComputerRequest } from "@openwork/types/desktop-ipc";
 export type { BrowserStatePayload } from "@openwork/browser-tabs";
+
+export type BrowserPresentationMode = "hidden" | "floating" | "side" | "fullscreen";
 
 export type BrowserProxyState = {
   proxy: { rules: string; authenticated: boolean } | null;
@@ -71,9 +78,21 @@ export type RecoveryActionResult = {
   reason?: string;
 };
 
-// ---------------------------------------------------------------------------
-// Electron bridge surface
-// ---------------------------------------------------------------------------
+export type RemoteSessionAccessState = {
+  mode: RemoteSessionAccessMode | null;
+  ceiling: RemoteSessionAccessMode | null;
+  effective: RemoteSessionAccessMode;
+  supported: boolean;
+  optIn: boolean;
+  connected: boolean;
+};
+
+export type SpeechDictationEvent =
+  | { id: string; type: "ready" | "end" }
+  | { id: string; type: "result"; segments: string[] }
+  | { id: string; type: "level"; level: number }
+  | { id: string; type: "status"; status: "installing"; progress?: number }
+  | { id: string; type: "error"; code: string };
 
 declare global {
   interface Window {
@@ -86,14 +105,31 @@ declare global {
         command: C,
         ...args: DesktopCommandArgs<C>
       ) => Promise<DesktopCommandResult<C>>;
+      sessionPins?: {
+        read: () => { ok: true; pins: string[] | null } | { ok: false; error: string };
+        update: (change: { previous: string[]; next: string[] }) => { ok: true; pins: string[] } | { ok: false; error: string };
+      };
+      computer?: {
+        onRequest?: (callback: (payload: { sessionId: string; request: ComputerRequest | null }) => void) => () => void;
+      };
+      dictation?: {
+        onEvent?: (callback: (payload: SpeechDictationEvent) => void) => () => void;
+      };
       automationRunner?: {
-        onCredentialRejected?: (callback: () => void) => () => void;
+        onRunLifecycle?: (callback: (event: unknown) => void) => () => void;
+        onCredentialRejected?: (
+          callback: (rejection?: { reason: "computer_disconnected" | "credential_rejected" }) => void,
+        ) => () => void;
+      };
+      remoteSessionAccess?: {
+        get?: () => Promise<RemoteSessionAccessState>;
+        set?: (mode: RemoteSessionAccessMode) => Promise<RemoteSessionAccessState>;
       };
       fileSystem?: {
         getPathForFile?: (file: File) => string;
       };
       shell?: {
-        openExternal?: (url: string) => Promise<{ ok: boolean; error?: string } | void>;
+        openExternal?: (url: string) => Promise<{ ok: boolean; pending?: boolean; error?: string } | void>;
         relaunch?: () => Promise<void>;
       };
       system?: {
@@ -183,6 +219,9 @@ declare global {
           options?: { sessionId?: string | null },
         ) => Promise<OpenBrowserUrlResult>;
         setVisibleSession?: (sessionId: string | null) => Promise<string | null>;
+        setPresentation?: (sessionId: string | null, mode: BrowserPresentationMode) => Promise<boolean>;
+        focusWindow?: () => Promise<boolean>;
+        claimDraftTabs?: (sessionId: string) => Promise<boolean>;
         navigate?: (url: string) => Promise<void>;
         back?: () => Promise<void>;
         forward?: () => Promise<void>;
@@ -198,21 +237,21 @@ declare global {
         closeSessionTabs?: (sessionId: string) => Promise<string[]>;
         selectTab?: (tabId: string) => Promise<string>;
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
-        approve?: (tabId: string, approvalId: string, allowed: boolean) => Promise<boolean>;
         taskControl?: (tabId: string, action: "pause" | "resume") => Promise<void>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
-        listWebMcpTools?: (args?: { tabId?: string }) => Promise<unknown>;
-        executeWebMcpTool?: (args: { toolId: string; input?: unknown }) => Promise<unknown>;
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
         setControlEnabled?: (enabled: boolean) => Promise<boolean>;
-        /** The member's agent permission rules for websites, applied to every page the built-in browser opens; null while they are being verified for an organization that uses them, which opens none. */
+        setTabPageSize?: (tabId: string, key: AgentViewportKey) => Promise<boolean>;
+        startAgentTurn?: (sessionId: string) => Promise<boolean>;
+        endAgentTurn?: (sessionId: string) => Promise<boolean>;
         setAgentPermissionRules?: (rules: DesktopAgentPermissionRule[] | null) => Promise<boolean>;
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;
         destroy?: () => Promise<void>;
         onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;
         onPanelOpened?: (callback: (payload?: BrowserPanelOwnerPayload) => void) => () => void;
         onPanelClosed?: (callback: (payload?: BrowserPanelOwnerPayload) => void) => () => void;
+        onPresentationExit?: (callback: (payload: { sessionId: string | null; tabId: string }) => void) => () => void;
       };
       terminal?: {
         create?: (options: { cwd: string; cols: number; rows: number }) => Promise<{ terminalId: string }>;
@@ -227,6 +266,8 @@ declare global {
         distribution?: DesktopDistributionInfo;
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
+        arch?: string;
+        isPackaged?: boolean;
         version?: string;
         evalFatalBootstrapFailure?: string | null;
       };
@@ -234,16 +275,11 @@ declare global {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 export async function closeSessionBrowserTabs(sessionId: string): Promise<void> {
   if (typeof window === "undefined" || !sessionId.trim()) return;
   try {
     await window.__OPENWORK_ELECTRON__?.browser?.closeSessionTabs?.(sessionId);
   } catch {
-    // Cleanup is idempotent and must not undo a confirmed session deletion.
   }
 }
 
@@ -258,23 +294,11 @@ async function invokeElectronHelper<C extends DesktopCommandName>(
   return (await invokeDesktop(command, ...args)) as DesktopCommandResult<C>;
 }
 
-// Pure utility — resolves the selected workspace ID from a workspace list
-// payload, handling legacy fields.
 export function resolveWorkspaceListSelectedId(
   list: Pick<WorkspaceList, "selectedId" | "activeId"> | null | undefined,
 ): string {
   return list?.selectedId?.trim() || list?.activeId?.trim() || "";
 }
-
-// ---------------------------------------------------------------------------
-// Desktop bridge (Electron IPC proxy)
-// ---------------------------------------------------------------------------
-
-// All bridge methods are implemented via invokeDesktop IPC. The Proxy
-// automatically maps property access to `invokeDesktop(propertyName, ...args)`.
-// Per-command signatures come from the shared DesktopCommandMap contract
-// (packages/types/src/desktop-ipc.ts), so every destructured export below is
-// precisely typed against what the Electron main process implements.
 
 type DesktopBridge = DesktopCommandInvokers & {
   resolveWorkspaceListSelectedId: typeof resolveWorkspaceListSelectedId;
@@ -284,14 +308,10 @@ type DesktopBridgeFn = (...args: unknown[]) => Promise<unknown>;
 
 const electronBridge: Record<string, DesktopBridgeFn> = {};
 
-// The cast is inherent to the Proxy pattern: the target is an empty cache and
-// members are fabricated on access. The contract typing above is what keeps
-// it honest (command names + signatures are checked on both sides).
 export const desktopBridge = new Proxy(electronBridge, {
   get(target, prop) {
     if (typeof prop !== "string") return undefined;
 
-    // resolveWorkspaceListSelectedId is a pure function, not an IPC call
     if (prop === "resolveWorkspaceListSelectedId") {
       return resolveWorkspaceListSelectedId;
     }
@@ -304,9 +324,6 @@ export const desktopBridge = new Proxy(electronBridge, {
       if (!invokeDesktop) {
         throw new Error(`Electron desktop helper is unavailable: ${prop}`);
       }
-      // The Proxy is the one dynamic point in the bridge: `prop` is whatever
-      // property was accessed, already constrained by the DesktopBridge
-      // surface this Proxy is exported as.
       return invokeDesktop(
         prop as DesktopCommandName,
         ...(args as DesktopCommandArgs<DesktopCommandName>),
@@ -316,14 +333,6 @@ export const desktopBridge = new Proxy(electronBridge, {
     return fn;
   },
 }) as unknown as DesktopBridge;
-
-// ---------------------------------------------------------------------------
-// desktopFetch — proxies non-loopback requests through the Electron main
-// process. Loopback hosts (the local opencode/openwork server) use the
-// renderer's own fetch, which works against same-machine services. Cross-origin
-// requests that need CORS headers the target does not send (e.g. the Den API on
-// a different control plane) should instead use `desktopFetchViaMain` directly.
-// ---------------------------------------------------------------------------
 
 function isLoopbackUrl(input: RequestInfo | URL): boolean {
   const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -367,6 +376,10 @@ async function runCancellableDesktopTransfer<T>(
   }
 }
 
+export type DesktopFetchRequestInit = RequestInit & {
+  cancellable?: boolean;
+};
+
 type DesktopFetchMainOptions = {
   timeoutMs?: number;
   agentContextDiagnosticsDeadlineAtMs?: number;
@@ -374,13 +387,9 @@ type DesktopFetchMainOptions = {
 
 async function desktopFetchThroughMain(
   input: RequestInfo | URL,
-  init?: RequestInit,
+  init?: DesktopFetchRequestInit,
   options: DesktopFetchMainOptions = {},
 ): Promise<Response> {
-  // Extract method/headers/body from either a Request object or the (input, init)
-  // pair. The OpenCode SDK calls fetch(request) (no init), so reading these only
-  // from `init` would silently drop the Authorization header and the POST body
-  // — the remote would then reject every request with "Invalid bearer token".
   let url: string;
   let method: string | undefined;
   let headers: Record<string, string> | undefined;
@@ -394,8 +403,6 @@ async function desktopFetchThroughMain(
     if (typeof init?.body === "string") {
       body = init.body;
     } else if (input.body) {
-      // Request body is a stream — buffer to text so it survives the IPC hop
-      // to the Electron main process.
       body = await input.clone().text();
     }
   } else {
@@ -407,16 +414,19 @@ async function desktopFetchThroughMain(
 
   const diagnosticsDeadlineAtMs = options.agentContextDiagnosticsDeadlineAtMs;
   const requestMethod = (method ?? "GET").toUpperCase();
-  // Stop must retain its transport deadline when archive uses IPC. Prompt and
-  // command POSTs keep their distinct admission/unknown-outcome contract.
   const cancellable = ["GET", "PATCH"].includes(requestMethod)
     || (requestMethod === "POST" && /\/session\/[^/]+\/abort$/.test(new URL(url).pathname))
-    || isPermissionReplyRequest(url, { method: requestMethod });
+    || isPermissionReplyRequest(url, { method: requestMethod })
+    || init?.cancellable === true;
   const signal = cancellable && diagnosticsDeadlineAtMs === undefined
     ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
     : undefined;
   const transferId = signal ? desktopTransferId() : undefined;
-  const fetchResponse = () => invokeElectronHelper("__fetch", url, {
+  const fetchInit: DesktopFetchInit = {
+    ...((init?.redirect ?? (input instanceof Request ? input.redirect : undefined)) === "error"
+      ? { redirect: "error" satisfies RequestRedirect }
+      : {}),
+    cancellable,
     transferId,
     method,
     headers,
@@ -425,7 +435,8 @@ async function desktopFetchThroughMain(
     agentContextDiagnostics: diagnosticsDeadlineAtMs === undefined
       ? undefined
       : { deadlineAtMs: diagnosticsDeadlineAtMs },
-  });
+  };
+  const fetchResponse = () => invokeElectronHelper("__fetch", url, fetchInit);
   let result: DesktopFetchResult;
   try {
     result = transferId && signal
@@ -437,8 +448,6 @@ async function desktopFetchThroughMain(
     throw error;
   }
 
-  // Response constructor rejects bodies for null-body status codes, so we
-  // must pass null instead of an empty string for those.
   const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
   const responseBody = NULL_BODY_STATUSES.has(result.status) ? null : result.body;
 
@@ -456,7 +465,7 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
   return desktopFetchThroughMain(input, init);
 };
 
-export async function desktopFetchViaMain(input: RequestInfo | URL, init?: RequestInit, timeoutMs?: number): Promise<Response> {
+export async function desktopFetchViaMain(input: RequestInfo | URL, init?: DesktopFetchRequestInit, timeoutMs?: number): Promise<Response> {
   return desktopFetchThroughMain(input, init, { timeoutMs });
 }
 
@@ -473,10 +482,6 @@ export async function desktopFetchAgentContextDiagnostics(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Convenience wrappers
-// ---------------------------------------------------------------------------
-
 export function assertDesktopWebUrl(url: string): string {
   let parsed: URL;
   try {
@@ -490,18 +495,35 @@ export function assertDesktopWebUrl(url: string): string {
   return parsed.toString();
 }
 
-export async function openDesktopUrl(url: string): Promise<void> {
+export type DesktopUrlOpenStatus = "opened" | "opening";
+
+export async function openDesktopUrlWithStatus(url: string): Promise<DesktopUrlOpenStatus> {
   const safeUrl = assertDesktopWebUrl(url);
   const openExternal = window.__OPENWORK_ELECTRON__?.shell?.openExternal;
   if (openExternal) {
     const result = await openExternal(safeUrl);
     if (result && result.ok === false) {
+      if (result.pending) return "opening";
       throw new Error(result.error ?? "Failed to open browser");
     }
-    return;
+    return "opened";
   }
   if (typeof window !== "undefined") {
     window.open(safeUrl, "_blank", "noopener,noreferrer");
+  }
+  return "opened";
+}
+
+export async function openDesktopUrl(url: string): Promise<void> {
+  await openDesktopUrlWithStatus(url);
+}
+
+export async function resolveDesktopChatFilePath(target: string): Promise<string | null> {
+  if (typeof window === "undefined" || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return null;
+  try {
+    return await invokeElectronHelper("__resolveChatFilePath", target);
+  } catch {
+    return null;
   }
 }
 
@@ -512,13 +534,8 @@ export async function openDesktopPath(target: string): Promise<void> {
   }
 }
 
-/**
- * Open a chat-referenced workspace file with its default application. The desktop resolves
- * the path on disk and launches only a real file inside the real workspace; a path that
- * resolves outside (for example through a symlink) is revealed in its folder instead.
- */
-export async function openDesktopWorkspaceFile(workspaceRoot: string, target: string): Promise<"opened" | "revealed"> {
-  const result = await invokeElectronHelper("__openWorkspaceFile", workspaceRoot, target);
+export async function openDesktopWorkspaceFile(workspaceRoot: string, target: string, options?: { reveal?: boolean }): Promise<"opened" | "revealed" | "unavailable"> {
+  const result = await invokeElectronHelper("__openWorkspaceFile", workspaceRoot, target, options);
   if (!result || typeof result !== "object" || !("ok" in result)) {
     throw new Error("Could not open this file.");
   }
@@ -582,6 +599,19 @@ export async function getDesktopHomeDir(): Promise<string> {
   return invokeElectronHelper("__homeDir");
 }
 
+let cachedHomeDir: Promise<string | null> | null = null;
+
+export function getCachedDesktopHomeDir(): Promise<string | null> {
+  if (typeof window === "undefined" || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return Promise.resolve(null);
+  cachedHomeDir ??= getDesktopHomeDir()
+    .then((home) => (typeof home === "string" && home.trim() ? home : null))
+    .catch(() => {
+      cachedHomeDir = null;
+      return null;
+    });
+  return cachedHomeDir;
+}
+
 export async function joinDesktopPath(...parts: string[]): Promise<string> {
   return invokeElectronHelper("__joinPath", ...parts);
 }
@@ -628,10 +658,6 @@ export function readDesktopDistributionInfo(): DesktopDistributionInfo {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Re-export bridge methods as named functions (preserves existing import API)
-// ---------------------------------------------------------------------------
-
 const {
   engineStart,
   workspaceBootstrap,
@@ -644,6 +670,7 @@ const {
   engineStop,
   engineRestart,
   appBuildInfo,
+  startupTimings,
   getDesktopBootstrapConfig,
   debugDesktopBootstrapConfig,
   clearDesktopBootstrapConfig,
@@ -655,6 +682,7 @@ const {
   openworkServerInfo,
   openworkServerRestart,
   runtimeBootstrap,
+  runtimeStatus,
   engineInfo,
   pickDirectory,
   pickFile,
@@ -684,6 +712,7 @@ export {
   engineStop,
   engineRestart,
   appBuildInfo,
+  startupTimings,
   getDesktopBootstrapConfig,
   debugDesktopBootstrapConfig,
   clearDesktopBootstrapConfig,
@@ -695,6 +724,7 @@ export {
   openworkServerInfo,
   openworkServerRestart,
   runtimeBootstrap,
+  runtimeStatus,
   engineInfo,
   pickDirectory,
   pickFile,

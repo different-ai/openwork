@@ -47,7 +47,6 @@ export type FakeOperationName =
 
 export type FakeOperation = {
   name: FakeOperationName
-  /** Per-operation-name call count, starting at 1. */
   attempt: number
   sandboxId?: string
   idempotencyKey?: string
@@ -60,14 +59,8 @@ export type FakeProviderOptions = {
   region?: string
   endpointTtlSeconds?: number
   now?: () => number
-  /** Decide what a command does; defaults to exit 0 with no output. */
   onRun?: (spec: RunSpec) => Promise<RunResult> | RunResult
   onExec?: (input: { sandboxId: string; spec: ExecSpec }) => FakeExecResult | Promise<FakeExecResult>
-  /**
-   * Consulted before every operation. Throw to fail the operation (typically a
-   * `RuntimeProviderError`); mutate the fake through `provider.fake` to model
-   * a host that changes state underneath the orchestrator.
-   */
   onOperation?: (operation: FakeOperation) => void | Promise<void>
 }
 
@@ -81,18 +74,14 @@ export type FakeSandboxRecord = {
 }
 
 export type FakeProvider = SandboxProvider & {
-  /** Test-side controls that no production caller sees. */
   readonly fake: {
     sandboxes(): FakeSandboxRecord[]
     sandbox(idempotencyKey: string): FakeSandboxRecord | null
-    /** Register an instance the host already has, bypassing hooks and counters. */
     seed(input: { idempotencyKey: string; state: SandboxState; workerId?: string; labels?: Record<string, string>; hidden?: boolean }): FakeSandboxRecord
     setState(sandboxId: string, state: SandboxState): void
-    /** Hidden instances are invisible to `find`, `list`, and `get` (read-after-write lag). */
     setVisible(sandboxId: string, visible: boolean): void
     count(operation: FakeOperationName, sandboxId?: string): number
     volumeFiles(volumeName: string): Set<string>
-    /** Simulate a file the bootstrap wrote onto a persistent volume. */
     writeVolumeFile(volumeName: string, path: string): void
     calls: string[]
   }

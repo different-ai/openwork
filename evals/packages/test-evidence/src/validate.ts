@@ -1,6 +1,6 @@
 import { timed } from "@openwork/timeline";
-import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -317,7 +317,15 @@ export async function judgeVision(
       cached: false,
     };
     await mkdir(CACHE_DIR, { recursive: true });
-    await writeFile(cachePath, `${JSON.stringify(visualEvidence, null, 2)}\n`, "utf8");
+    // Publish only complete JSON, even when separate judge processes share a key.
+    const temporaryPath = `${cachePath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporaryPath, `${JSON.stringify(visualEvidence, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      await rename(temporaryPath, cachePath);
+    } catch (error) {
+      await rm(temporaryPath, { force: true }).catch(() => {});
+      throw error;
+    }
   }
   return visualEvidence;
 }

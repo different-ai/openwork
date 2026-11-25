@@ -6,8 +6,6 @@ export function automaticDownloadHref(
   userAgent: string,
   maxTouchPoints: number
 ): string | null {
-  // The shared card detector defaults unknown devices to macOS. That is not
-  // safe for starting a download, including iPads using a desktop user agent.
   if (/android|iphone|ipad|ipod|mobile|cros/i.test(userAgent)) return null;
   if (/macintosh/i.test(userAgent) && maxTouchPoints > 1) return null;
   const os = /windows nt/i.test(userAgent) ? "windows"
@@ -24,6 +22,5 @@ export function automaticDownloadHref(
         ? [installers.linux.appImageArm64, installers.linux.tarArm64]
         : [installers.linux.appImageX64, installers.linux.tarX64];
 
-  // Release-page fallbacks must stay visible choices, never hidden navigations.
   return candidates.find((href) => /\.(dmg|exe|appimage|tar\.gz)$/i.test(href)) ?? null;
 }

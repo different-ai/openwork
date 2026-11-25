@@ -26,8 +26,9 @@ concurrency:
 
 jobs:
   cleanup:
-    # Both provider keys are in this job's environment: only reviewed code on the
-    # default branch may run it, including manual runs.
+    # Only reviewed code on the default branch may run this job, including manual
+    # runs. The provider keys are repository secrets; this check does not limit
+    # which workflows can read them.
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -39,12 +40,12 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - uses: pnpm/action-setup@v4
         with:
           version: 11.4.0
       - name: Install the evidence controllers only
-        run: pnpm --filter @openwork/freestyle... --filter @openwork/daytona-evidence... install --frozen-lockfile --ignore-scripts
+        run: pnpm --filter @openwork/world-freestyle... --filter @openwork/evidence-daytona... install --frozen-lockfile --ignore-scripts
       - name: Delete snapshots OpenWork no longer needs
         env:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}

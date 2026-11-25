@@ -3,9 +3,7 @@ import type { ReactNode } from "react";
 export type DenSectionHeaderProps = {
   title: string;
   description?: ReactNode;
-  /** Right-aligned slot for the section's primary action. */
   action?: ReactNode;
-  /** "center" stacks the header and centers text (used on onboarding). */
   align?: "start" | "center";
   className?: string;
 };

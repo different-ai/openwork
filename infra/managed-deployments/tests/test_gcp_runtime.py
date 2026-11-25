@@ -32,6 +32,7 @@ ENV = {
     "CONTROL_PLANE_ORIGIN": "https://control.example.com", "VERSION": "0.18.0",
     "STATE_BUCKET": "ow-123456781234-123456789012-state",
     "RUNNER_SERVICE_ACCOUNT": "ow-123456781234-runner@test-project.iam.gserviceaccount.com",
+    "BUILD_ID": "0f0e0d0c-1111-4222-8333-444455556666",
 }
 
 
@@ -76,7 +77,9 @@ class RuntimeIsolationTests(unittest.TestCase):
             self.assertFalse(any(key.startswith("GOOGLE_BACKEND_") for key in result))
             for key in ("GOOGLE_CREDENTIALS", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_OAUTH_ACCESS_TOKEN"):
                 self.assertNotIn(key, result)
-            self.assertEqual(result["GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"], ENV["RUNNER_SERVICE_ACCOUNT"])
+            # Terraform and its backend run as the build's own identity: nothing
+            # inherited may select or impersonate another one.
+            self.assertFalse(any("IMPERSONATE" in key for key in result))
             config = Path(result["TF_CLI_CONFIG_FILE"])
             self.assertEqual(config.parent, root)
             self.assertEqual(config.stat().st_mode & 0o777, 0o600)
@@ -101,7 +104,7 @@ class ImagePinTests(unittest.TestCase):
                 "images": {kind: repository + "@sha256:" + character * 64 for (kind, repository), character in
                            zip(install.IMAGE_REPOSITORIES.items(), "abc")}}
 
-    def mirror(self, manifest, destination_mismatch=False, bad_local=False):
+    def mirror(self, manifest, destination_mismatch=False, bad_local=False, docker_hub_alias=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             if manifest is not None:
@@ -115,7 +118,7 @@ class ImagePinTests(unittest.TestCase):
                 if command[:3] == ["docker", "image", "inspect"]:
                     return Mock(stdout=json.dumps([{"Id": "sha256:" + "d" * 64,
                         "Os": "linux", "Architecture": "arm64" if bad_local else "amd64",
-                        "RepoDigests": [command[-1]]}]))
+                        "RepoDigests": [command[-1].removeprefix("docker.io/library/") if docker_hub_alias and command[-1].startswith("docker.io/library/") else command[-1]]}]))
                 return Mock(stdout="private-token")
             def cloud(*arguments):
                 if arguments[:4] == ("artifacts", "docker", "images", "describe"):
@@ -127,6 +130,7 @@ class ImagePinTests(unittest.TestCase):
                          "DOCKER_HOST": "tcp://evil.test:2375"}
             with patch.dict(os.environ, inherited, clear=True), patch.object(runner, "__file__", str(root / "infra/managed-deployments/gcp/runner/runner.py")), \
                     patch.object(Path, "cwd", return_value=root), patch.object(runner, "gcloud", side_effect=cloud) as remote, \
+                    patch.object(runner, "access_token", return_value="private-token"), patch.object(runner, "docker_binary", return_value="docker"), \
                     patch.object(subprocess, "run", side_effect=execute):
                 if manifest is None or manifest.get("images") is None:
                     with self.assertRaises((ValueError, FileNotFoundError)):
@@ -147,6 +151,24 @@ class ImagePinTests(unittest.TestCase):
                         self.assertEqual(ref.split("@")[1], manifest["images"][kind].split("@")[1])
                     self.assertTrue(all(command[2] == "sha256:" + "d" * 64 for command in calls if command[:2] == ["docker", "tag"]))
 
+    def test_docker_hub_familiar_health_digest_survives_actual_mirror_guard(self):
+        self.mirror(self.inventory(), docker_hub_alias=True)
+
+    def test_docker_hub_reference_aliases_keep_the_exact_repository_and_digest(self):
+        digest = "@sha256:" + "c" * 64
+        for full, familiar in [("docker.io/library/x", "x"), ("index.docker.io/library/x", "library/x"),
+                               ("docker.io/user/x", "user/x"), ("index.docker.io/user/x", "docker.io/user/x")]:
+            with self.subTest(full=full, familiar=familiar):
+                self.assertTrue(runner.image_source_matches(full + digest, [familiar + digest]))
+        ghcr = "ghcr.io/different-ai/x" + digest
+        self.assertEqual(runner.canonical_image_reference(ghcr), ghcr)
+        self.assertFalse(runner.image_source_matches(ghcr, ["different-ai/x" + digest]))
+        self.assertFalse(runner.image_source_matches("docker.io/library/x" + digest, ["x@sha256:" + "e" * 64]))
+        self.assertFalse(runner.image_source_matches("docker.io/library/x" + digest, ["other/x" + digest]))
+        self.assertFalse(runner.image_source_matches("docker.io/library/x" + digest, ["evil.example/library/x" + digest]))
+        for observed in (None, [], [None], ["x:latest"], ["x@sha256:bad"]):
+            self.assertFalse(runner.image_source_matches("docker.io/library/x" + digest, observed))
+
     def test_reads_release_inventory_and_ignores_source_env_overrides(self):
         self.mirror(self.inventory())
 
@@ -159,6 +181,7 @@ class ImagePinTests(unittest.TestCase):
 
     def test_wrong_local_platform_rejected_before_tag_push(self):
         self.mirror(self.inventory(), bad_local=True)
+        self.mirror(self.inventory(), bad_local=True, docker_hub_alias=True)
 
     def test_mutable_wrong_repo_or_wrong_version_inventory_rejected(self):
         variants = []
@@ -195,7 +218,7 @@ class OrchestrationMutexTests(unittest.TestCase):
                 live = None
                 return b""
             self.assertEqual(query["ifGenerationMatch"], ["0"])
-            self.assertEqual(json.loads(data), {"runId": ENV["RUN_ID"]})
+            self.assertEqual(json.loads(data), {"runId": ENV["RUN_ID"], "buildId": ENV["BUILD_ID"]})
             if live is not None:
                 raise urllib.error.HTTPError(url, 412, "Precondition Failed", {}, None)
             live = "17"
@@ -252,15 +275,21 @@ class OrchestrationMutexTests(unittest.TestCase):
                 order.append("release")
 
         with patch.dict(os.environ, ENV, clear=True), patch.object(runner, "enroll", return_value="run-token"), \
+                patch.object(runner, "refuse_ejected_run", side_effect=lambda: order.append("ejected-check")), \
+                patch.object(runner, "customer_overrides", side_effect=lambda: order.append("overrides")), \
+                patch.object(runner, "write_applied", side_effect=lambda *args: order.append("applied-kit")), \
                 patch.object(runner, "report", side_effect=lambda token, seq, *args: order.append("report-" + str(seq))), \
                 patch.object(runner, "verify_target"), patch.object(runner, "orchestration_mutex", side_effect=mutex), \
                 patch.object(runner, "mirror_images", side_effect=lambda: order.append("mirror") or {}), \
                 patch.object(runner, "apply", side_effect=lambda *args: order.append("migration-and-rollout") or {"health_agent": "health"}), \
                 patch.object(runner, "verify_services", side_effect=lambda *args: order.append("services")), \
                 patch.object(runner, "verify_health", side_effect=lambda *args: order.append("https")), \
-                patch.object(runner, "gcloud", side_effect=lambda *args: order.append("signed-health-receipt")), patch("builtins.print"):
+                patch.object(runner, "verify_health_job", side_effect=lambda *args: order.append("signed-health-receipt")), patch("builtins.print"):
             runner.main()
-        self.assertEqual(order, ["report-1", "report-2", "report-3", "acquire", "mirror", "migration-and-rollout", "report-4", "services", "report-5", "https", "signed-health-receipt", "release", "report-6"])
+        # The marker and the tuning file are checked before "project verified" and
+        # before the lock; the applied record is stored before "infrastructure installed".
+        self.assertEqual(order, ["report-1", "report-2", "ejected-check", "overrides", "report-3", "acquire", "mirror", "migration-and-rollout",
+                                 "applied-kit", "report-4", "services", "report-5", "https", "signed-health-receipt", "release", "report-6"])
 
 
 class TrafficAttributionTests(unittest.TestCase):
@@ -270,6 +299,53 @@ class TrafficAttributionTests(unittest.TestCase):
                 "template": {"containers": [{"image": "expected@sha256:abc"}]},
                 "latestCreatedRevision": revision, "latestReadyRevision": revision,
                 "trafficStatuses": [{"percent": 100, "revision": "ow-api-00002"}]}
+
+    def tagged_service(self):
+        # Neutralized selected live wire: the old tagged target omits its
+        # proto3 int32 default percent=0; this is not explicit null.
+        service = self.service()
+        current = "ow-api-expcurrent"
+        old = "ow-api-00001-old"
+        service.update(generation="3", observedGeneration="3", latestCreatedRevision=current, latestReadyRevision=current)
+        service["traffic"] = [
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100},
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": old, "tag": "exp-test-old"},
+        ]
+        service["trafficStatuses"] = [
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": old, "tag": "exp-test-old"},
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "revision": current, "percent": 100},
+        ]
+        return service
+
+    def test_tagged_zero_percent_omitted_by_protojson_is_healthy(self):
+        service = self.tagged_service()
+        self.assertNotIn("percent", service["trafficStatuses"][0])
+        self.assertTrue(health.serving_expected_revision(service, "expected@sha256:abc"))
+        service["trafficStatuses"][0]["percent"] = 0
+        self.assertTrue(health.serving_expected_revision(service, "expected@sha256:abc"))
+
+    def test_explicit_malformed_traffic_percent_is_never_defaulted(self):
+        for percent in (None, True, False, "0", "100", 0.0, 100.0, -1, 101):
+            for target in (0, 1):
+                service = self.tagged_service()
+                service["trafficStatuses"][target]["percent"] = percent
+                with self.subTest(percent=percent, target=target):
+                    self.assertFalse(health.serving_expected_revision(service, "expected@sha256:abc"))
+
+    def test_omitted_zero_does_not_relax_totals_or_ready_revision_attribution(self):
+        for old_percent, current_percent in [(None, 99), (1, 100), (1, 99), (100, 0)]:
+            service = self.tagged_service()
+            if old_percent is not None:
+                service["trafficStatuses"][0]["percent"] = old_percent
+            service["trafficStatuses"][1]["percent"] = current_percent
+            with self.subTest(old=old_percent, current=current_percent):
+                self.assertFalse(health.serving_expected_revision(service, "expected@sha256:abc"))
+        service = self.tagged_service()
+        service["trafficStatuses"][1].pop("percent")
+        self.assertFalse(health.serving_expected_revision(service, "expected@sha256:abc"))
+        service = self.tagged_service()
+        service["trafficStatuses"][1]["revision"] = "ow-api-00001-old"
+        self.assertFalse(health.serving_expected_revision(service, "expected@sha256:abc"))
 
     def test_actual_latest_ready_revision_must_serve_all_traffic(self):
         good = self.service()
@@ -317,10 +393,10 @@ class RuntimeReadinessTests(unittest.TestCase):
                       "status": {"observedGeneration": observed, "conditions": [{"type": "Ready", "status": "True"}]}}
             with self.subTest(generation=generation, observed=observed), patch.dict(os.environ, ENV, clear=True), patch.object(runner, "gcloud", return_value=status):
                 if accepted:
-                    runner.verify_services({"service_names": {"den_api": "ow-api"}})
+                    runner.verify_services({"service_names": {"den_api": "ow-api"}}, timeout=0)
                 else:
                     with self.assertRaises(ValueError):
-                        runner.verify_services({"service_names": {"den_api": "ow-api"}})
+                        runner.verify_services({"service_names": {"den_api": "ow-api"}}, timeout=0)
 
     def test_html_and_api_health_are_not_web_upstream_readiness(self):
         outputs = {"web_url": "https://openwork.example.com", "api_url": "https://api.openwork.example.com"}

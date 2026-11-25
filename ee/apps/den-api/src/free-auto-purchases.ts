@@ -4,13 +4,13 @@ import { FreeAutoPurchaseTable, MemberTable, OrgSubscriptionTable } from "@openw
 import { db } from "./db.js"
 import { appLogger } from "./observability/logger.js"
 
-/** Called only with positive payment evidence read from Stripe, never an admin plan override or checkout creation. */
 export async function recordFreeAutoPurchase(input: {
   subscription: Stripe.Subscription; row: typeof OrgSubscriptionTable.$inferSelect | null; paidAt: Date;
 }) {
   try {
     const { subscription, row, paidAt } = input
     if (!row || row.stripe_subscription_id !== subscription.id || !row.created_by_org_membership_id) return
+    if (row.type === "enterprise") return
     const [member] = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(
       eq(MemberTable.id, row.created_by_org_membership_id), eq(MemberTable.organizationId, row.organization_id))).limit(1)
     if (!member?.userId) return

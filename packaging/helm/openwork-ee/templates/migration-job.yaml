@@ -52,6 +52,26 @@ spec:
           args:
             {{- toYaml .Values.migrations.args | nindent 12 }}
           env:
+            - name: DEN_DEPLOYMENT
+              value: {{ .Values.config.deployment | quote }}
+            {{- range $key, $value := .Values.config.features }}
+            {{- if ne (toString $value) "" }}
+            - name: DEN_FEATURE_{{ $key | snakecase | upper }}
+              value: {{ toString $value | quote }}
+            {{- end }}
+            {{- end }}
+            - name: DEN_ADMINISTRATOR_RECOVERY_MODE
+              value: {{ .Values.config.administratorRecovery.mode | quote }}
+            - name: DEN_ADMINISTRATOR_RECOVERY_ORGANIZATION
+              value: {{ .Values.config.administratorRecovery.organization | quote }}
+            - name: DEN_ADMINISTRATOR_RECOVERY_TEAM
+              value: {{ .Values.config.administratorRecovery.team | quote }}
+            - name: DEN_ADMINISTRATOR_RECOVERY_TEAMS
+              value: {{ .Values.config.administratorRecovery.teams | toJson | quote }}
+            {{- if ne .Values.config.administratorRecovery.expectedMembers nil }}
+            - name: DEN_ADMINISTRATOR_RECOVERY_EXPECTED_MEMBERS
+              value: {{ .Values.config.administratorRecovery.expectedMembers | quote }}
+            {{- end }}
             {{- if .Values.migrations.writersStoppedFor0097 }}
             - name: DEN_DB_0097_WRITERS_STOPPED
               value: "1"

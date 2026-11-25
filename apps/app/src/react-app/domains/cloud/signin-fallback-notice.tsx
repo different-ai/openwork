@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { t } from "../../../i18n";
 
 export function SignInFallbackNotice({ url }: { url: string }) {
-  // Presentation-only copy feedback; DenSignInSurface stays stateless.
   const [copied, setCopied] = useState(false);
 
   const copyLink = () => {

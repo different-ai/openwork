@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import type { SurfaceHandle } from "@openwork/cdp";
-import { createLocalHost, electronProfilePaths, preserveSurfaceLog, pruneStaleSurfaceProfiles } from "./local.ts";
+import { createLocalHost, electronLaunchEnv, electronProfilePaths, electronSurfaceEnv, preserveSurfaceLog, pruneStaleSurfaceProfiles } from "./local.ts";
 
 const roots: string[] = [];
 const previousLogsDir = process.env.OPENWORK_EVAL_SURFACE_LOGS_DIR;
@@ -40,6 +40,16 @@ async function workspace() {
     logsDir: join(root, "logs", "desktop-updater-gate-enterprise"),
   };
 }
+
+test("an isolated desktop keeps OpenCode discovery out of the host's home", () => {
+  const paths = electronProfilePaths(join(tmpdir(), "openwork-isolated-engine"));
+  const env = electronLaunchEnv({ HOME: "/host-home", OPENCODE_TEST_HOME: "/host-engine-home", OPENCODE_DB: "/host.db" },
+    electronSurfaceEnv(paths, { appIdentifier: "test.openwork", appName: "OpenWork test", cdpPort: 0, port: 0 }));
+  expect(env.HOME).toBe(paths.homeDir);
+  expect(env.OPENCODE_TEST_HOME).toBe(paths.homeDir);
+  expect(env.OPENCODE_CONFIG_DIR).toBe(paths.opencodeConfigDir);
+  expect(env.OPENCODE_DB).toBeUndefined();
+});
 
 test("disposal keeps a host-owned desktop's log outside the profile it removes", async () => {
   const { root, surfacesDir, logsDir } = await workspace();

@@ -18,7 +18,7 @@ import { PageTitlebarRegion } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
-import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
+import { openBrowserAuthUrl, type BrowserAuthOpenStatus } from "./open-browser-auth";
 
 function subscribeToBootstrap(onStoreChange: () => void) {
   if (typeof window === "undefined") return () => {};
@@ -28,7 +28,7 @@ function subscribeToBootstrap(onStoreChange: () => void) {
 
 type PendingServerConfirmation =
   | { kind: "browser"; baseUrl: string }
-  | { kind: "manual"; baseUrl: string; grant: string };
+  | { kind: "manual"; baseUrl: string; grant: string; pasted: string };
 
 export function useEnterpriseActivationRequired() {
   const bootstrap = useSyncExternalStore(
@@ -47,17 +47,17 @@ function EnterpriseActivationPage() {
   const [browserBusy, setBrowserBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [browserHandoff, setBrowserHandoff] = useState<{ url: string; status: BrowserAuthOpenStatus } | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const submitServer = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    // The address field quietly accepts a pasted openwork:// sign-in link as
-    // the recovery path when the browser round trip cannot come back.
     const pastedLink = parseManualAuthInput(serverInput);
     if (pastedLink?.baseUrl && pastedLink.grant) {
       const linkBaseUrl = normalizeOrganizationServerInput(pastedLink.baseUrl);
       if (linkBaseUrl) {
-        setPendingConfirmation({ kind: "manual", baseUrl: linkBaseUrl, grant: pastedLink.grant });
+        setPendingConfirmation({ kind: "manual", baseUrl: linkBaseUrl, grant: pastedLink.grant, pasted: serverInput });
         setServerError(null);
         setAuthError(null);
         setStatusMessage(`Confirm ${linkBaseUrl} before continuing.`);
@@ -84,9 +84,6 @@ function EnterpriseActivationPage() {
     setServerError(null);
     setStatusMessage("Finishing OpenWork Enterprise sign-in…");
     try {
-      // The confirmed server, session, and activation stamp commit in one
-      // handoff transaction, so activation can never leave the bootstrap and
-      // the session pointing at different servers.
       const result = await exchangeHandoffAndSignIn(grant, {
         baseUrl,
         desktopInitiated: true,
@@ -119,11 +116,12 @@ function EnterpriseActivationPage() {
     if (!pending || browserBusy || authBusy) return;
 
     setPendingConfirmation(null);
-    setServerInput(pending.baseUrl);
     if (pending.kind === "manual") {
+      setServerInput(pending.pasted);
       await exchangeConfirmedGrant(pending.grant, pending.baseUrl);
       return;
     }
+    setServerInput(pending.baseUrl);
 
     setBrowserBusy(true);
     setServerError(null);
@@ -131,13 +129,19 @@ function EnterpriseActivationPage() {
     try {
       await setDenBootstrapConfig({ baseUrl: pending.baseUrl, requireSignin: true });
       markDesktopSignInInitiated();
-      const opened = await tryOpenBrowserAuthUrl(buildDenAuthUrl(pending.baseUrl, "sign-in"));
-      if (!opened) {
+      const signInUrl = buildDenAuthUrl(pending.baseUrl, "sign-in");
+      const status = await openBrowserAuthUrl(signInUrl);
+      setBrowserHandoff({ url: signInUrl, status });
+      setLinkCopied(false);
+      setServerInput("");
+      if (status === "failed") {
         setStatusMessage(null);
-        setAuthError("We couldn't open your browser automatically. Try again, or paste the sign-in link from your browser into the address field.");
+        setAuthError("We couldn't open your browser. Copy the sign-in link below into your browser, sign in, then paste the sign-in code from that page here.");
         return;
       }
-      setStatusMessage("Finish signing in in your browser, then return to OpenWork.");
+      setStatusMessage(status === "opening"
+        ? "Your browser is taking a while to open. Sign in when the page appears. If OpenWork doesn't open afterwards, copy the sign-in code from that page and paste it here."
+        : "Finish signing in in your browser. If OpenWork doesn't open afterwards, copy the sign-in code from that page and paste it here.");
     } catch (error) {
       setStatusMessage(null);
       setServerError(
@@ -148,8 +152,6 @@ function EnterpriseActivationPage() {
     }
   };
 
-  // While the origin confirmation is on screen it is the only decision; the
-  // redundant "Confirm X before continuing" status would repeat its question.
   const liveMessage = serverError ?? authError ?? (pendingConfirmation ? null : statusMessage);
 
   return (
@@ -205,7 +207,7 @@ function EnterpriseActivationPage() {
                   className="text-sm font-medium text-foreground"
                   htmlFor="organization-server-input"
                 >
-                  Workspace address
+                  {browserHandoff ? "Sign-in code or workspace address" : "Workspace address"}
                 </label>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
@@ -213,7 +215,7 @@ function EnterpriseActivationPage() {
                     data-testid="organization-server-input"
                     value={serverInput}
                     onChange={(event) => setServerInput(event.currentTarget.value)}
-                    placeholder="openwork.acme.com"
+                    placeholder={browserHandoff ? "Paste the sign-in code from your browser" : "openwork.acme.com"}
                     autoCapitalize="none"
                     autoCorrect="off"
                     spellCheck={false}
@@ -229,6 +231,25 @@ function EnterpriseActivationPage() {
                     Continue
                   </Button>
                 </div>
+                {browserHandoff ? (
+                  <div className="flex flex-wrap items-center gap-2 pt-1 text-xs leading-5 text-muted-foreground">
+                    <span>Browser didn't open?</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-testid="organization-copy-sign-in-link"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(browserHandoff.url).then(
+                          () => setLinkCopied(true),
+                          () => setLinkCopied(false),
+                        );
+                      }}
+                    >
+                      {linkCopied ? "Link copied" : "Copy sign-in link"}
+                    </Button>
+                  </div>
+                ) : null}
               </form>
             )}
 

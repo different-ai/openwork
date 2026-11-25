@@ -3,7 +3,6 @@ const preciseUsd = new Intl.NumberFormat("en-US", { style: "currency", currency:
 const whole = new Intl.NumberFormat("en-US");
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 
-/** Micro-USD to dollars. Small non-zero amounts keep enough digits to stay visible. */
 export function formatUsd(microUsd: number): string {
   const dollars = microUsd / 1_000_000;
   return dollars > 0 && dollars < 0.01 ? preciseUsd.format(dollars) : usd.format(dollars);
@@ -17,7 +16,6 @@ export function formatTokens(value: number): string {
   return value < 10_000 ? whole.format(value) : compact.format(value);
 }
 
-/** "12%" of a whole; empty wholes read as a dash rather than 0%. */
 export function formatShare(part: number, total: number): string {
   if (total <= 0) return "—";
   const share = part / total;

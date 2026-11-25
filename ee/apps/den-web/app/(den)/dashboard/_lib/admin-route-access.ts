@@ -4,6 +4,8 @@ import {
   getAiGatewayRoute,
   getApiKeysRoute,
   getBillingRoute,
+  getConfigRoute,
+  getComputersRoute,
   getCustomLlmProvidersRoute,
   getAnalyticsRoute,
   getDeploymentsRoute,
@@ -22,22 +24,24 @@ import {
 } from "../../_lib/den-org";
 import { canOpenGatewayArea } from "./gateway-dashboard-access";
 
-/**
- * What each page in the admin area needs, matching the Den API route it reads
- * (docs/permissions/route-inventory.md). Pages not listed here only need the
- * admin area itself (`canViewSettings`) and gate their own controls.
- */
 type AdminRouteRule = {
-  /** Route prefix the rule covers; the longest match wins. */
   prefix: string;
   allowed: (access: DenOrgAccessFlags) => boolean;
-  /** Permissions named in the locked state; holding any one is enough unless `allowed` says otherwise. */
   needs: readonly PermissionKey[];
 };
 
 const MEMBERS_AREA_KEYS: readonly PermissionKey[] = [
   "invitations.manage", "members.update", "members.delete", "teams.view", "teams.manage", "teams.manage_admin",
 ];
+
+const DIAGNOSTICS_KEYS: readonly PermissionKey[] = [
+  "desktop_policies.view", "gateway_providers.view", "llm_providers.view", "connections.view",
+];
+
+export function canViewDiagnostics(access: DenOrgAccessFlags): boolean {
+  return access.canViewDesktopPolicies || access.canViewGatewayProviders || access.canViewAllLlmProviders
+    || access.canViewAllConnections;
+}
 
 const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   {
@@ -49,11 +53,12 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: getApiKeysRoute(), allowed: (access) => access.canViewApiKeys, needs: ["api_keys.view"] },
   { prefix: getBillingRoute(), allowed: (access) => access.canViewBilling, needs: ["billing.view"] },
   { prefix: getCustomLlmProvidersRoute(), allowed: (access) => access.canViewAllLlmProviders, needs: ["llm_providers.view"] },
+  { prefix: getComputersRoute(), allowed: (access) => access.canViewComputers, needs: ["computers.view"] },
   { prefix: getDesktopPoliciesRoute(), allowed: (access) => access.canViewDesktopPolicies, needs: ["desktop_policies.view"] },
-  { prefix: getWorkbotSettingsRoute(), allowed: (access) => access.canViewModelsSettings, needs: ["inference.view"] },
+  { prefix: getWorkbotSettingsRoute(), allowed: (access) => access.canViewModelsSettings || access.canManageModelsSettings, needs: ["inference.view", "inference.manage"] },
   { prefix: getDeploymentsRoute(), allowed: (access) => access.canViewDeployments, needs: ["deployments.view"] },
   { prefix: getAnalyticsRoute(), allowed: (access) => access.canViewUsageAnalytics, needs: ["usage_analytics.view"] },
-  { prefix: getDiagnosticsRoute(), allowed: (access) => access.canViewEgressDiagnostics, needs: ["egress_diagnostics.view"] },
+  { prefix: getDiagnosticsRoute(), allowed: canViewDiagnostics, needs: DIAGNOSTICS_KEYS },
   { prefix: getIntegrationsRoute(), allowed: (access) => access.canManageSyncSources, needs: ["connectors.manage"] },
   {
     prefix: getMembersRoute(),
@@ -62,7 +67,6 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
     needs: MEMBERS_AREA_KEYS,
   },
   { prefix: `${getMembersRoute()}/teams`, allowed: (access) => access.canViewTeams, needs: ["teams.view"] },
-  // Creating a role makes a team and its permission set.
   { prefix: getNewRoleRoute(), allowed: (access) => access.canManageTeams && access.canManagePermissions, needs: ["teams.manage", "permissions.manage"] },
   {
     prefix: `${getOrgDashboardRoute()}/manage-members`,
@@ -70,7 +74,6 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
       || access.canViewTeams || access.canManageTeams || access.canManageAdminTeams,
     needs: MEMBERS_AREA_KEYS,
   },
-  // Feature-off and read-only states are shown by the Permissions screens themselves.
   { prefix: getPermissionsRoute(), allowed: (access) => access.canViewPermissions, needs: ["permissions.view"] },
   { prefix: `${getPermissionsRoute()}/new`, allowed: (access) => access.canManagePermissions, needs: ["permissions.manage"] },
   { prefix: getMcpConnectionsRoute(), allowed: (access) => access.canViewAllConnections, needs: ["connections.view"] },
@@ -81,6 +84,7 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
     needs: ["sharing.manage_all", "connectors.manage", "plugins.import"],
   },
   { prefix: getImportPluginRoute(), allowed: (access) => access.canImportPlugins, needs: ["plugins.import"] },
+  { prefix: getConfigRoute(), allowed: (access) => access.canManageSettings, needs: ["organization.update"] },
   { prefix: getToolTesterRoute(), allowed: (access) => access.canManageConnections, needs: ["connections.manage"] },
 ];
 
@@ -96,14 +100,13 @@ function ruleFor(pathname: string): AdminRouteRule | null {
   return match;
 }
 
-/** Whether the member can open this admin-area page. */
-export function canOpenAdminRoute(pathname: string, access: DenOrgAccessFlags): boolean {
+export function canOpenAdminRoute(pathname: string, access: DenOrgAccessFlags, canManageDeploymentServices = false): boolean {
+  if (pathname === getDiagnosticsRoute() && canManageDeploymentServices === true) return true;
   if (!access.canViewSettings) return false;
   const rule = ruleFor(pathname);
   return rule ? rule.allowed(access) : true;
 }
 
-/** Plain reason for a locked admin page (DESIGN.md P4). */
 export function adminRouteLockedMessage(pathname: string): string {
   const labels = (ruleFor(pathname)?.needs ?? []).map((key) => `“${getPermissionDefinition(key).label}”`);
   const needs = labels.length === 0

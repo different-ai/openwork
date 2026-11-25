@@ -1,3 +1,6 @@
+import { AUTO_ROUTER_PROVIDER_ID, autoRouterIdFromModel } from "@openwork/types/den/auto-router";
+import { FAST_DEFAULT_VARIANT } from "@openwork/types/cloud-model-fast";
+import { getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
 import type { ModelOption, ModelRef } from "@/app/types";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import { modelRefKey, nextFavoriteModel } from "../session/models/model-collections-store";
@@ -23,11 +26,40 @@ export function retainedModelCopy(reason: RetainedModelSelection["reason"]) {
   }
 }
 export function nonDefaultModelSummary(model: ModelRef, value: string | null, label: string) {
-  return !isAutoModel(model) && value !== null ? label : null;
+  return !managesOwnBehavior(model) && value !== null ? label : null;
+}
+
+export function modelTriggerSettings(input: {
+  model: ModelRef;
+  named: boolean;
+  verified: boolean;
+  options: readonly { value: string | null; label: string; description?: string }[];
+  value: string | null;
+}): { summary: string | null; fast: boolean } {
+  if (!input.named || managesOwnBehavior(input.model)) return { summary: null, fast: false };
+  const selection = getModelBehaviorSelection(input.options, input.value);
+  const controls = getModelBehaviorControls(selection.options, selection.value);
+  if (controls.fast) {
+    return { fast: true, summary: input.value === FAST_DEFAULT_VARIANT ? null : controls.options.find((option) => option.value === input.value)?.label ?? null };
+  }
+  const listed = selection.options.some((option) => option.value === input.value);
+  return { fast: false, summary: listed || input.verified ? nonDefaultModelSummary(input.model, input.value, selection.label) : null };
 }
 
 export const AUTO_MODEL_ID = "openai/gpt-6-luna";
 export const AUTO_PROVIDER_ID = "openwork-free";
+export const FREE_MODEL_NAME = "OpenWork Free";
+export const FREE_MODEL_ENGINE_TITLE = "GPT-6 Luna";
+export const AUTO_ROUTER_GROUP = "Smart";
+export const SMART_MODEL_FALLBACK_NAME = "Smart";
+
+export function isAutoRouterModel(model: ModelRef | null | undefined) {
+  return model?.providerID === AUTO_ROUTER_PROVIDER_ID;
+}
+
+export function managesOwnBehavior(model: ModelRef | null | undefined) {
+  return isAutoModel(model) || isAutoRouterModel(model);
+}
 export const EXPLICIT_MODEL_CHOICE_KEY = "openwork.modelChoice.explicit";
 export function shouldSelectInitialAuto(input: { available: readonly ModelRef[]; current: ModelRef | null; empty: boolean; explicit: boolean }) {
   return input.empty && !input.explicit && Boolean(starterModel(input.available))
@@ -41,27 +73,22 @@ export const MODEL_SOURCE_LABELS: Record<ModelSource, string> = {
   gateway: "OpenWork Gateway", local: "Local", organization: "Organization",
 };
 
-/** Free Auto, as opposed to the same model served by an organization's OpenWork Models. */
 export function isFreeAutoModel(model: ModelRef | null | undefined) {
   return model?.providerID === AUTO_PROVIDER_ID && model.modelID === AUTO_MODEL_ID;
 }
 
-/** The organization has OpenWork Models, so its members pick those models instead of free Auto. */
 export function freeAutoCoveredByOpenWorkModels(options: readonly (ModelRef & { disabled?: boolean })[]) {
   return options.some((option) => option.providerID === "openwork" && !option.disabled);
 }
 
-/** The organization's OpenWork Models serve Auto's model under its own name; members use it instead of free Auto. */
 export function openWorkModelsLuna<T extends ModelRef & { disabled?: boolean }>(available: readonly T[]): T | undefined {
   return available.find((model) => model.providerID === "openwork" && model.modelID === AUTO_MODEL_ID && !model.disabled);
 }
 
-/** The model a new member starts on: Luna from OpenWork Models when the organization has them, free Auto otherwise. */
 export function starterModel<T extends ModelRef & { disabled?: boolean }>(available: readonly T[]): T | undefined {
   return freeAutoCoveredByOpenWorkModels(available) ? openWorkModelsLuna(available) : available.find(isAutoModel);
 }
 
-/** A saved free Auto choice moves to Luna from OpenWork Models once the organization has it. */
 export function openWorkModelsLunaReplacement<T extends ModelRef & { disabled?: boolean }>(current: ModelRef | null | undefined, available: readonly T[]): T | undefined {
   return isAutoModel(current) ? openWorkModelsLuna(available) : undefined;
 }
@@ -70,42 +97,66 @@ export function isAutoModel(model: ModelRef | null | undefined) {
   return isFreeAutoModel(model);
 }
 
+export function fixedModelTitle(model: ModelRef & { title?: string }): string | undefined {
+  if (isAutoModel(model)) return model.title?.trim() && model.title.trim() !== model.modelID ? undefined : FREE_MODEL_ENGINE_TITLE;
+  if (isAutoRouterModel(model)) {
+    const title = model.title?.trim();
+    return title && title !== model.modelID && autoRouterIdFromModel(title) === null ? title : undefined;
+  }
+  return undefined;
+}
+
 export function modelSource(model: ModelRef & { source?: ModelOption["source"] }): ModelSource {
-  if (isAutoModel(model) || model.providerID === "openwork" || model.source === "gateway" || model.providerID.startsWith("ipr_")) return "gateway";
+  if (isAutoModel(model) || isAutoRouterModel(model) || model.providerID === "openwork" || model.source === "gateway" || model.providerID.startsWith("ipr_")) return "gateway";
   if (model.source === "cloud" || model.providerID.startsWith("lpr_")) return "organization";
   return "local";
 }
 
-/** Gateway ids (`gwm_…`, `ipr_…`) are long and opaque: never a name a person reads. */
 function isOpaqueModelId(value: string) {
   return /^(gwm|ipr)_/.test(value);
 }
 
-/** A model's display name: its title, never an opaque gateway id (then "<Provider> model"). */
 export function modelTitle(model: ModelRef & { title?: string; description?: string }) {
-  if (isAutoModel(model)) return "Auto";
+  const fixed = fixedModelTitle(model);
+  if (fixed) return fixed;
+  if (isAutoRouterModel(model)) return SMART_MODEL_FALLBACK_NAME;
   const name = model.title?.trim() || model.modelID;
   if (!isOpaqueModelId(name)) return name;
   const provider = model.description?.trim();
   return provider ? `${provider} model` : "Model";
 }
 
-/** A name safe to show as a value: the public title, never an opaque provider/model id. */
 export function publicModelTitle(model: ModelRef & { title?: string }): string | undefined {
-  if (isAutoModel(model)) return "Auto";
+  const fixed = fixedModelTitle(model);
+  if (fixed) return fixed;
+  if (isAutoRouterModel(model)) return SMART_MODEL_FALLBACK_NAME;
   const title = model.title?.trim();
   if (!title || title === model.modelID || isOpaqueModelId(title)) return undefined;
   return title;
 }
 
-/** The OpenWork Models row's meta line, the same in Settings and the Connect a provider sheet. */
 export function autoProviderSubtitle() {
-  return "Auto";
+  return FREE_MODEL_NAME;
 }
 
-export function modelSubtitle(model: ModelOption, exhausted = false) {
-  if (isAutoModel(model)) return exhausted ? "Limit used up" : "OpenWork picks the model";
-  // Gateway models assigned to the member that wait on their own provider sign-in.
+const MODEL_MAKERS: readonly [RegExp, string][] = [
+  [/\bclaude\b/, "anthropic"], [/\b(gpt|codex|o[1-9])(\b|-|\d)/, "openai"], [/\b(gemini|gemma)\b/, "google"],
+  [/\bgrok\b/, "xai"], [/\bllama\b/, "meta"], [/\b(mistral|codestral|devstral|magistral)\b/, "mistral"], [/\bdeepseek\b/, "deepseek"],
+];
+
+export function modelMakerId(model: ModelRef & { title?: string }): string | null {
+  const text = `${model.title ?? ""} ${model.modelID}`.toLowerCase();
+  return MODEL_MAKERS.find(([pattern]) => pattern.test(text))?.[1] ?? null;
+}
+
+export function modelStateLabel(model: ModelOption): string | null {
+  if (model.gatewayAuthorization) return "Sign-in required";
+  if (model.organizationPinOrder !== undefined) return "Pinned by your org";
+  return null;
+}
+
+export function modelSubtitle(model: ModelOption) {
+  if (isAutoRouterModel(model)) return "Picks the best model for each task";
   if (model.gatewayAuthorization) return [model.description?.trim(), "Sign-in required"].filter(Boolean).join(" · ");
   return [model.description?.trim(), model.organizationPinOrder !== undefined ? "pinned by your org" : null].filter(Boolean).join(" · ");
 }
@@ -133,7 +184,6 @@ export function withAutoDefaultPin(options: readonly ModelOption[], status?: { p
 }
 
 export function immutableModelPin(model: ModelCatalogOption) {
-  // Auto is pinned for everyone only when an organization admin pins it; otherwise it pins like any model.
   return (isAutoModel(model) && model.defaultPinned === true) || model.organizationPinOrder !== undefined;
 }
 
@@ -168,17 +218,19 @@ export function modelGroups(options: readonly ModelOption[], personal: readonly 
   const shown = new Set<string>();
   const search = query.trim().toLowerCase();
   const available = options.filter((option) => !option.disabled);
-  const add = (value: string, candidates: readonly ModelOption[]) => {
+  const add = (value: string, candidates: readonly ModelOption[], claim = true) => {
     const items = candidates.filter((option) => {
       const key = modelRefKey(option);
       if (shown.has(key) || (search && !`${modelTitle(option)} ${modelSubtitle(option)} ${key}`.toLowerCase().includes(search))) return false;
-      shown.add(key);
+      if (claim) shown.add(key);
       return true;
     });
     if (items.length) groups.push({ value, items });
   };
+  add(AUTO_ROUTER_GROUP, available.filter(isAutoRouterModel)
+    .sort((a, b) => modelTitle(a).localeCompare(modelTitle(b)) || a.modelID.localeCompare(b.modelID)));
   add("Pinned", orderedModelPins(available, personal));
-  add("Recent", recent.flatMap((model) => available.filter((option) => modelRefKey(option) === modelRefKey(model))));
+  add("Recent", recent.flatMap((model) => available.filter((option) => modelRefKey(option) === modelRefKey(model))), false);
   add("OpenWork Models", available.filter((option) => option.providerID === "openwork" || option.providerID === AUTO_PROVIDER_ID));
   const providers = [...new Set(available.map((option) => option.providerID))].sort((a, b) => {
     const name = (id: string) => available.find((option) => option.providerID === id)?.description || id;
@@ -189,6 +241,18 @@ export function modelGroups(options: readonly ModelOption[], personal: readonly 
     add(models[0]?.description || id, models);
   }
   return groups;
+}
+
+export function nextAvailableModel(
+  options: readonly ModelOption[],
+  personal: readonly ModelRef[],
+  recent: readonly ModelRef[],
+  unavailable: ModelRef,
+  usable: (model: ModelOption) => boolean = () => true,
+): ModelOption | null {
+  const skip = modelRefKey(unavailable);
+  return modelGroups(options, personal, recent).flatMap((group) => group.items)
+    .find((option) => modelRefKey(option) !== skip && usable(option)) ?? null;
 }
 
 export function isPinModelShortcut(event: { key: string; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; altKey: boolean }) {

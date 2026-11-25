@@ -1,18 +1,3 @@
-/**
- * Persisted registry of managed OpenCode engine processes.
- *
- * The engine URL/port live only in memory (ServerConfig), so an unclean
- * OpenWork server exit orphans its engine child with no record to clean up.
- * Packaged desktop builds have a `ps`-based sweep, but dev builds and Windows
- * have nothing. This registry records every managed spawn on disk so the next
- * server boot can reap provable orphans — and nothing else.
- *
- * Reaping errs toward NOT killing: a leaked orphan is recoverable on a later
- * boot, killing a stranger's process is not. A recorded pid is only killed
- * when its owning server is gone, the pid still looks like the engine we
- * spawned (command match), and the recorded per-spawn credentials do not
- * prove the port now belongs to someone else.
- */
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -25,23 +10,15 @@ import type { ServerConfig } from "./types.js";
 export type EngineInstanceRole = "starting" | "primary" | "draining";
 
 export type EngineInstanceRecord = {
-  /** Unique per spawn. */
   id: string;
-  /** Engine child process id. */
   pid: number;
-  /** Loopback port the engine reported at readiness. */
   port: number;
-  /** Base URL parsed from the engine's readiness line. */
   url: string;
   startedAt: number;
   role: EngineInstanceRole;
-  /** Unique per OpenWork server boot that spawned this engine. */
   serverRunId: string;
-  /** Pid of the OpenWork server process that owns this engine. */
   ownerPid: number;
-  /** `Basic <base64>` header for this spawn's random engine credentials. */
   authProbe: string;
-  /** Binary the engine was spawned from. */
   bin: string;
 };
 
@@ -109,14 +86,10 @@ async function readRegistryFile(path: string): Promise<EngineInstanceRecord[]> {
       .map(parseEntry)
       .filter((entry): entry is EngineInstanceRecord => entry !== null);
   } catch {
-    // A corrupt registry must never block startup; treat it as empty and let
-    // the next write replace it.
     return [];
   }
 }
 
-// Serialize writes per path so concurrent register/remove calls can never
-// interleave a stale read-modify-write over a newer one.
 const registryWriteQueue = new Map<string, Promise<unknown>>();
 
 async function mutateRegistry(
@@ -129,7 +102,6 @@ async function mutateRegistry(
     const payload: EngineRegistryFile = { version: 1, entries };
     await mkdir(runtimeStorageDir(config), { recursive: true });
     const tmp = `${path}.${randomUUID()}.tmp`;
-    // 0600: the auth probe header embeds this spawn's engine credentials.
     await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     await rename(tmp, path).catch(async (error) => {
       await rm(tmp, { force: true }).catch(() => undefined);
@@ -177,15 +149,10 @@ function processAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    // EPERM means the pid exists but belongs to another user.
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
-/**
- * Best-effort command line for a pid. Returns null when it cannot be read —
- * callers must treat null as "unknown", never as "not the engine".
- */
 function processCommand(pid: number): string | null {
   try {
     if (process.platform === "win32") {
@@ -236,7 +203,6 @@ async function probeEngineIdentity(entry: EngineInstanceRecord, timeoutMs: numbe
 
 function killEngineProcess(pid: number): void {
   if (process.platform === "win32") {
-    // /T kills the tree so engine-spawned children (stdio MCPs, LSPs) go too.
     spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { encoding: "utf8" });
     return;
   }
@@ -251,14 +217,6 @@ async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Kill engine processes recorded by dead OpenWork servers, drop entries that
- * can no longer be verified, and keep entries whose owning server is alive.
- *
- * Kill requires all of: the recorded owner process is gone, the recorded pid
- * is alive AND its command still looks like the engine we spawned, and the
- * identity probe did not prove the port belongs to a different process.
- */
 export async function reapOrphanEngineInstances(
   config: ServerConfig,
   options?: { logger?: EngineRegistryLogger; probeTimeoutMs?: number; killWaitMs?: number },
@@ -271,8 +229,6 @@ export async function reapOrphanEngineInstances(
 
   for (const entry of await readEngineRegistry(config)) {
     if (entry.ownerPid === process.pid || processAlive(entry.ownerPid)) {
-      // A live OpenWork server (possibly the CLI next to the desktop) still
-      // owns this engine.
       kept.push(entry);
       result.spared.push(entry.pid);
       continue;
@@ -283,19 +239,15 @@ export async function reapOrphanEngineInstances(
     }
     const command = processCommand(entry.pid);
     if (command !== null && !commandMatchesEngine(command, entry.bin)) {
-      // Pid was reused by an unrelated process.
       result.dropped.push(entry.pid);
       continue;
     }
     const probe = await probeEngineIdentity(entry, probeTimeoutMs);
     if (probe === "stranger") {
-      // The port answers with different credentials, so we cannot prove the
-      // recorded pid is still ours. Drop the record rather than risk a kill.
       result.dropped.push(entry.pid);
       continue;
     }
     if (command === null && probe !== "ours") {
-      // No command evidence and no credential evidence: never kill blind.
       result.dropped.push(entry.pid);
       continue;
     }
@@ -312,7 +264,6 @@ export async function reapOrphanEngineInstances(
         try {
           process.kill(entry.pid, "SIGKILL");
         } catch {
-          // Exited between the check and the kill.
         }
       }
     }
@@ -330,7 +281,6 @@ export async function reapOrphanEngineInstances(
   await mutateRegistry(config, (entries) => {
     const removed = new Set([...result.killed, ...result.dropped]);
     const surviving = entries.filter((entry) => !removed.has(entry.pid));
-    // Preserve records added while the reap was scanning.
     const known = new Set(kept.map((entry) => entry.id));
     return [...kept, ...surviving.filter((entry) => !known.has(entry.id))];
   }).catch(() => undefined);

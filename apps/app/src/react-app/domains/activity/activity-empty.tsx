@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { t } from "@/i18n";
 
-/** A4: a quiet bell, one state line and a short hint. The page adds the one next step. */
 export function ActivityEmpty({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate();
   return (

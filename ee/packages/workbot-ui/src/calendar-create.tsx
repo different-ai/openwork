@@ -15,6 +15,7 @@ import { useMemo, useRef, useState } from "react";
 import type { AutomationModel } from "@openwork/types/automations";
 import { CLOUD_DEFAULT_MODEL, useAutomationModels, useCreateAutomation } from "./calendar-data";
 import { ModelPicker } from "./model-picker";
+import { useRetainedSurface } from "./host";
 
 /**
  * "New automation" from an empty slot or the toolbar (Paper: "4c · Calendar — add an automation from an empty
@@ -30,18 +31,15 @@ export function CreateAutomationCard({ anchor, assistantName, canSchedule, onClo
   onClose: () => void;
   onCreated: (automationId: string) => void;
 }) {
+  const surface = useRetainedSurface(true);
   const [instructions, setInstructions] = useState("");
   const [repeat, setRepeat] = useState<SlotRepeat>(DEFAULT_SLOT_REPEAT);
   const create = useCreateAutomation();
-  // The cloud default first, as Workbot's own scheduling uses; any model this member may use can replace it.
   const { models, isLoading: modelsLoading } = useAutomationModels({ includeCloudDefault: true });
   const [model, setModel] = useState<AutomationModel>(CLOUD_DEFAULT_MODEL);
   const field = useRef<HTMLTextAreaElement | null>(null);
   const options = slotScheduleOptions(anchor.slot);
   const chosen = options.find((option) => option.id === repeat) ?? options[0];
-  // The clicked slot is a virtual anchor; Base UI tracks viewport changes and shifts the actual card, not
-  // a guessed height. Shift on both axes lets a short screen use its full height instead of half of it.
-  // The card stays touching its anchor, so a slot point left outside a rotated or resized window is pulled back inside the 12px inset.
   const positionAnchor = useMemo(() => ({
     getBoundingClientRect: () => new DOMRect(
       Math.max(12, Math.min(anchor.x, window.innerWidth - 12)),
@@ -50,7 +48,7 @@ export function CreateAutomationCard({ anchor, assistantName, canSchedule, onClo
       0,
     ),
   }), [anchor.x, anchor.y]);
-  const ready = canSchedule && instructions.trim().length > 0 && !create.isPending;
+  const ready = !surface.blocked && canSchedule && instructions.trim().length > 0 && !create.isPending;
   const submit = () => {
     if (!ready || !chosen) return;
     create.mutate({ name: automationNameFrom(instructions), instructions: instructions.trim(), schedule: chosen.schedule, model }, {
@@ -58,8 +56,8 @@ export function CreateAutomationCard({ anchor, assistantName, canSchedule, onClo
     });
   };
   return (
-    <Popover.Root open modal onOpenChange={(open) => { if (!open) onClose(); }}>
-      <Popover.Portal>
+    <Popover.Root open={surface.open} modal onOpenChange={(open) => { if (!surface.blocked && !open) onClose(); }}>
+      <Popover.Portal {...surface.portal}>
         <Popover.Backdrop className="fixed inset-0 z-40" />
         <Popover.Positioner anchor={positionAnchor} positionMethod="fixed" side="bottom" align="start" collisionPadding={12} collisionAvoidance={{ side: "shift", align: "shift" }} className="z-50">
           <Popover.Popup initialFocus={field} data-calendar-create className="workbot flex max-h-[min(calc(100dvh-24px),var(--available-height,calc(100dvh-24px)))] w-[min(22rem,calc(100vw-24px))] flex-col rounded-xl bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[var(--wb-panel-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">

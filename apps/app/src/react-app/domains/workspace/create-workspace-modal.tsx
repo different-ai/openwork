@@ -99,14 +99,11 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     }
   })();
 
-  // Reset state when the modal opens.
   useEffect(() => {
     if (!props.open) return;
     dispatchLocal({ type: "reset" });
   }, [props.open]);
 
-  // The modal remains mounted when closed. Only publish elapsed-time updates
-  // while its progress UI is both visible and backed by a real start time.
   useEffect(() => {
     if (!submitting) {
       setShowProgressDetails(false);
@@ -132,8 +129,6 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       const next = await props.onPickFolder();
       if (next) setSelectedFolder(next);
     } catch {
-      // Folder picker cancellation or bridge errors should never leave the
-      // modal in a busy state.
     } finally {
       setPickingFolder(false);
     }

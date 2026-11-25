@@ -12,7 +12,7 @@ export function instrument(provider: SandboxProvider, observe: (event: SandboxOp
         outcome = "ok"
         return result
       } finally {
-        try { observe({ providerId: provider.id, operation: name, durationMs: now() - started, outcome }) } catch { /* observers are best-effort */ }
+        try { observe({ providerId: provider.id, operation: name, durationMs: now() - started, outcome }) } catch {}
       }
     }
   }
@@ -45,6 +45,7 @@ export function instrument(provider: SandboxProvider, observe: (event: SandboxOp
         stat: method("files.stat", b.files.stat.bind(b.files)),
       } } : {}),
       ...(b?.pause ? { pause: method("pause", b.pause) } : {}),
+      ...(b?.activity ? { activity: method("activity", b.activity) } : {}),
       ...(b?.snapshots ? { snapshots: { create: method("snapshots.create", b.snapshots.create.bind(b.snapshots)), destroy: method("snapshots.destroy", b.snapshots.destroy.bind(b.snapshots)) } } : {}),
     },
   }

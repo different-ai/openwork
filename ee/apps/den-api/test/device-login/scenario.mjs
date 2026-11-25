@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
+import { serializeSignedCookie } from "better-call";
 import { installClock } from "./clock.mjs";
 import { runCliCase, runAbuseIsolationCase } from "./cases.mjs";
 
@@ -55,11 +56,11 @@ function secondsHeader(headers, name) {
   const value = headers.get(name);
   return value !== null && /^\d+$/.test(value) ? Number(value) : null;
 }
-async function request(path, { body, session, ip = "192.0.2.10" } = {}) {
+async function request(path, { body, session, cookie, ip = "192.0.2.10" } = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: body === undefined ? "GET" : "POST",
     headers: { "content-type": "application/json", origin: baseUrl, "x-forwarded-for": ip,
-      ...(session ? { authorization: `Bearer ${session.token}` } : {}) },
+      ...(session ? { authorization: `Bearer ${session.token}` } : {}), ...(cookie ? { cookie } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   return { status: response.status, headers: response.headers, body: await response.json().catch(() => null) };
@@ -194,6 +195,13 @@ try {
   const fixture = {
     report, browserA, createBrowser, readCode, validateToken, sessionRows, snapshotCounters, decide,
     getCliCode: () => cliCode,
+    // Better Auth's own verify-then-approve/deny flow, called with the browser's signed session cookie.
+    async rawDecide(code, browser, decision) {
+      const cookie = (await serializeSignedCookie(context.authCookies.sessionToken.name, browser.session.token, context.secret)).split(";")[0];
+      const claim = await request(`/api/auth/device?user_code=${encodeURIComponent(code.user_code)}`, { cookie, ip: browser.ip });
+      assert.equal(claim.status, 200, "Better Auth's verification endpoint must accept the signed-in browser.");
+      return request(`/api/auth/device/${decision}`, { body: { userCode: code.user_code }, cookie, ip: browser.ip });
+    },
     advanceTo(seconds) {
       assert.ok(clock, "Direct clock steps require virtual mode.");
       clock.set(epoch + seconds * 1000);

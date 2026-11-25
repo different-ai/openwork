@@ -1,7 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises"
+import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from "undici"
 
-// This bounds admission, backoff and the second attempt; it does not change
-// the SDK's first-attempt timeout or retry a response body after headers arrive.
 const RETRY_BUDGET_MS = 250
 const SOCKET_ERROR_CODES = new Set(["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"])
 
@@ -14,7 +13,6 @@ function isSocketFailure(error: unknown): boolean {
   let socketFailure = false
   while (isRecord(error) && !seen.has(error)) {
     seen.add(error)
-    // Cancellation and explicit provider responses take precedence over causes.
     if (error.name === "AbortError" || error.name === "TimeoutError" || typeof error.status === "number") return false
     if (typeof error.code === "string" && SOCKET_ERROR_CODES.has(error.code)) socketFailure = true
     error = error.cause
@@ -27,8 +25,6 @@ function isStandaloneRead(body: unknown): boolean {
   try {
     const parsed: unknown = JSON.parse(body)
     if (!isRecord(parsed) || parsed.session !== null || typeof parsed.query !== "string") return false
-    // Conservative admission, not an SQL parser. Ambiguous SQL passes through
-    // once, including functions, comments, multi-statements and locking reads.
     for (const [, word] of parsed.query.matchAll(/([\w$`]+)\s*\(/g)) {
       if (!word || !["where", "and", "or", "not", "in", "exists"].includes(word.toLowerCase())) return false
     }
@@ -39,12 +35,21 @@ function isStandaloneRead(body: unknown): boolean {
   }
 }
 
-export function createRetryingPlanetScaleFetch() {
+export const PLANETSCALE_KEEP_ALIVE_MS = 30_000
+
+/** One socket pool per driver client, so separate clients never queue behind each other. */
+export function createPlanetScaleDispatcher(): Agent {
+  return new Agent({ keepAliveTimeout: PLANETSCALE_KEEP_ALIVE_MS, keepAliveMaxTimeout: 10 * 60_000 })
+}
+
+export function createRetryingPlanetScaleFetch(dispatcher: Agent = createPlanetScaleDispatcher()) {
+  const send = (input: string, init?: RequestInit) =>
+    undiciFetch(input, { ...(init as UndiciRequestInit), dispatcher }) as unknown as Promise<Response>
   return async (input: string, init?: RequestInit): Promise<Response> => {
     const started = performance.now()
     init?.signal?.throwIfAborted()
     try {
-      return await globalThis.fetch(input, init)
+      return await send(input, init)
     } catch (originalError) {
       init?.signal?.throwIfAborted()
       if (!isStandaloneRead(init?.body) || !isSocketFailure(originalError)) throw originalError
@@ -58,7 +63,7 @@ export function createRetryingPlanetScaleFetch() {
         const deadline = AbortSignal.timeout(remaining)
         const signal = init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline
         console.warn("[db] retrying standalone PlanetScale read after socket failure")
-        return await globalThis.fetch(input, { ...init, signal })
+        return await send(input, { ...init, signal })
       } catch {
         init?.signal?.throwIfAborted()
         throw originalError

@@ -14,6 +14,14 @@
       },
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./workbot-routing": {
+      "types": {
+        "openwork-build": "./dist/types/src/workbot-routing.d.ts",
+        "default": "./src/workbot-routing.ts"
+      },
+      "development": "./src/workbot-routing.ts",
+      "default": "./dist/workbot-routing.js"
     }
   },
   "scripts": {
@@ -21,7 +29,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "zod": "^4.3.6"
+    "zod": "^4.6.6",
+    "@openwork/types": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.5.0",

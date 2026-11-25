@@ -1,8 +1,3 @@
-/**
- * Free Auto runs in the same Gateway process and database as paid Den Gateway traffic. This bounds how much free
- * work one instance runs at once, so a surge of public traffic waits here, or is turned away, instead of piling up
- * behind database locks where it would slow paying customers. Settlement never goes through it.
- */
 export class FreeAutoBusyError extends Error {
   readonly status = 503 as const
   readonly code = "free_auto_busy"

@@ -5,17 +5,14 @@ import { getPermissionDefinition, isPermissionKey } from "@openwork/types/den/pe
 import { z } from "zod";
 import { getErrorMessage, getReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
-import { orgFeatureEnabled } from "../../_lib/den-org";
+import { getOrgAccessFlags, isSuperAdminRole } from "../../_lib/den-org";
+import { roleList } from "../../_lib/role-catalog";
+import type { MemberRoleState, TeamRoleState } from "./team-roles";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { permissionsQueryKeys } from "./permissions-query-keys";
 
-/**
- * Den API Permissions endpoints (ee/apps/den-api/src/routes/org/permissions.ts).
- * Response shapes mirror that file's zod schemas.
- */
-
 const statusSchema = z.enum(["allow", "deny"]);
-const setKindSchema = z.enum(["member_default", "admin_default", "team"]);
+const setKindSchema = z.enum(["member_default", "admin_default", "billing_manager_default", "super_admin_default", "team"]);
 const sourceKindSchema = z.enum(["user", "seed", "reconcile", "migration"]);
 
 const teamReferenceSchema = z.object({ id: z.string(), name: z.string().nullable() });
@@ -26,13 +23,14 @@ const adminTeamSchema = z.object({ id: z.string(), name: z.string(), memberCount
 const appliesToSummarySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("everyone"), memberCount: z.number() }),
   z.object({ kind: z.literal("admins"), directAdminCount: z.number(), adminTeams: z.array(adminTeamSchema) }),
+  z.object({ kind: z.literal("super_admins"), superAdminCount: z.number() }),
   z.object({ kind: z.literal("team"), team: teamReferenceSchema.nullable(), teams: z.array(teamReferenceSchema).default([]), memberCount: z.number() }),
 ]);
 
 const appliesToDetailSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("everyone"), memberCount: z.number() }),
-  // People's names and emails come only with teams.view; the counts always do.
   z.object({ kind: z.literal("admins"), directAdminCount: z.number(), directAdmins: z.array(personSchema).nullable(), adminTeams: z.array(adminTeamSchema) }),
+  z.object({ kind: z.literal("super_admins"), superAdminCount: z.number(), superAdmins: z.array(personSchema).nullable() }),
   z.object({ kind: z.literal("team"), team: teamReferenceSchema.nullable(), teams: z.array(teamReferenceSchema).default([]), memberCount: z.number(), members: z.array(personSchema).nullable() }),
 ]);
 
@@ -41,8 +39,8 @@ const setSummarySchema = z.object({
   name: z.string(),
   kind: setKindSchema,
   team: teamReferenceSchema.nullable(),
-  /** Every team the set applies to (several only with sharedRoles). */
   teams: z.array(teamReferenceSchema).default([]),
+  directMemberIds: z.array(z.string()).default([]),
   allowedCount: z.number(),
   createdAt: z.string(),
   appliesTo: appliesToSummarySchema,
@@ -63,6 +61,7 @@ const setDetailSchema = z.object({
   kind: setKindSchema,
   team: teamReferenceSchema.nullable(),
   teams: z.array(teamReferenceSchema).default([]),
+  directMemberIds: z.array(z.string()).default([]),
   allowedCount: z.number(),
   createdAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -108,7 +107,6 @@ const sourceSchema = z.object({
   label: z.string(),
   setId: z.string().optional(),
   teamId: z.string().optional(),
-  // Read so teamRoles can name the source as a role ("Admin via Sales").
   via: z.string().optional(),
   teamName: z.string().optional(),
   setName: z.string().optional(),
@@ -119,6 +117,7 @@ const memberPermissionsSchema = z.object({
   memberId: z.string(),
   featureEnabled: z.boolean(),
   isOwner: z.boolean(),
+  isSuperAdmin: z.boolean().optional().default(false),
   isAdmin: z.boolean(),
   permissions: z.array(z.object({ key: z.string(), label: z.string(), sources: z.array(sourceSchema) })),
 });
@@ -141,7 +140,6 @@ export type PermissionKeyStatus = z.infer<typeof keyStatusSchema>;
 export type MemberPermissions = z.infer<typeof memberPermissionsSchema>;
 export type PermissionChange = { key: string; status: PermissionStatus };
 
-/** A Permissions request that failed with a code the screens explain. */
 export class PermissionsRequestError extends Error {
   readonly status: number;
   readonly code: string | null;
@@ -158,7 +156,6 @@ export class PermissionsRequestError extends Error {
   }
 }
 
-/** Catalog labels for keys, quoted, for error messages. Unknown keys stay as sent. */
 export function permissionLabels(keys: readonly string[]): string {
   return keys.map((key) => `“${isPermissionKey(key) ? getPermissionDefinition(key).label : key}”`).join(", ");
 }
@@ -247,21 +244,26 @@ export function usePermissionSets(orgId: string | null, enabled = true) {
   });
 }
 
-/**
- * Teams that carry a custom role (their own permission set), keyed by team.
- * Empty until loaded, or when the viewer can't read permission sets.
- */
-export function useCustomRoleTeams(orgId: string | null, enabled: boolean) {
+export function useOrganizationRoles(orgId: string | null, enabled: boolean) {
   const query = usePermissionSets(orgId, enabled);
-  const setByTeam = new Map<string, PermissionSetSummary>();
-  for (const set of query.data ?? []) {
-    if (set.kind !== "team") continue;
-    // A shared role (sharedRoles) applies to every team in `teams`.
-    const teams = set.teams.length > 0 ? set.teams : set.team ? [set.team] : [];
-    for (const team of teams) setByTeam.set(team.id, set);
+  const sets = enabled ? query.data ?? [] : [];
+  const roles = roleList({ sets });
+  const setIdByTeam = new Map<string, string>();
+  const setIdByMember = new Map<string, string>();
+  for (const role of roles) {
+    if (!role.setId) continue;
+    for (const team of role.teams) setIdByTeam.set(team.id, role.setId);
+    for (const memberId of role.directMemberIds) setIdByMember.set(memberId, role.setId);
   }
-  const nameByTeam = new Map([...setByTeam].map(([teamId, set]) => [teamId, set.name]));
-  return { setByTeam, nameByTeam, teamIds: new Set(setByTeam.keys()), loading: enabled && query.isPending };
+  const memberRoleState = (member: { id: string; role: string; isOwner: boolean }): MemberRoleState => ({
+    role: member.isOwner ? "owner" : isSuperAdminRole(member.role) ? "super-admin" : getOrgAccessFlags(member.role, false).isAdmin ? "admin" : "member",
+    setId: setIdByMember.get(member.id) ?? null,
+  });
+  const teamRoleState = (team: { id: string; grantsOrganizationAdmin: boolean }): TeamRoleState => ({
+    admin: team.grantsOrganizationAdmin,
+    setId: setIdByTeam.get(team.id) ?? null,
+  });
+  return { sets, roles, setIdByTeam, setIdByMember, memberRoleState, teamRoleState, loading: enabled && query.isPending, error: enabled && query.isError ? query.error : null };
 }
 
 export function usePermissionSet(orgId: string | null, setId: string, enabled = true) {
@@ -351,10 +353,6 @@ export function useMemberPermissions(orgId: string | null, memberId: string, ena
   });
 }
 
-/**
- * Writes run through runReauthableAction: permissions.manage needs a recent
- * sign-in, and the dashboard's reauth dialog retries the write after it.
- */
 function useReauthableWrite() {
   const { runReauthableAction } = useOrgDashboard();
   return async <T>(label: string, write: () => Promise<T>): Promise<T> => {
@@ -410,123 +408,10 @@ export function useCreateTeamPermissions(orgId: string) {
   });
 }
 
-/** A new role was half made: its team exists, its permissions don't. */
-export class RolePermissionsNotSavedError extends Error {
-  readonly teamId: string;
-
-  constructor(message: string, teamId: string) {
-    super(message);
-    this.name = "RolePermissionsNotSavedError";
-    this.teamId = teamId;
-  }
-}
-
-/**
- * Creates a role: a team with its people (POST /v1/teams), then that team's
- * permission set (POST /v1/permissions/sets). Both are the existing calls the
- * Teams and Permissions screens make; nothing new is stored.
- */
-export function useCreateRole(orgId: string) {
-  const queryClient = useQueryClient();
-  const write = useReauthableWrite();
-  const { refreshOrgData } = useOrgDashboard();
-  return useMutation({
-    mutationKey: [...permissionsQueryKeys.sets(orgId), "create-role"],
-    retry: false,
-    mutationFn: async (input: { name: string; memberIds: string[]; permissions: PermissionChange[] }) => {
-      const teamId = await write("create-role-team", async () => {
-        const { response, payload } = await requestJson(
-          "/v1/teams",
-          {
-            method: "POST",
-            headers: { [ORG_SCOPE_HEADER]: orgId },
-            body: JSON.stringify({ name: input.name, memberIds: input.memberIds }),
-          },
-          15000,
-        );
-        if (!response.ok) {
-          const reauth = getReauthRequiredError(payload, response);
-          if (reauth) throw reauth;
-          throw new Error(getErrorMessage(payload, `Couldn't create the role (${response.status}).`));
-        }
-        const parsed = z.object({ team: z.object({ id: z.string() }) }).safeParse(payload);
-        if (!parsed.success) throw new Error("Couldn't create the role: unexpected response.");
-        return parsed.data.team.id;
-      });
-      try {
-        const set = await write("create-role-permissions", async () => required(await permissionsRequest({
-          orgId,
-          path: "/v1/permissions/sets",
-          method: "POST",
-          body: { teamId, permissions: input.permissions },
-          schema: z.object({ set: setDetailSchema }),
-          fallback: "Couldn't save the role's permissions",
-        })).set);
-        return { teamId, set };
-      } catch (cause) {
-        throw new RolePermissionsNotSavedError(cause instanceof Error ? cause.message : "Couldn't save the role's permissions.", teamId);
-      }
-    },
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: permissionsQueryKeys.all(orgId) });
-      await refreshOrgData();
-    },
-  });
-}
-
 export type TeamRoleWrite =
   | { kind: "set-admin"; value: boolean }
   | { kind: "create-custom"; keys: string[] }
   | { kind: "remove-custom"; setId: string };
-
-/**
- * Applies a team role change as the existing calls, in the given order:
- * PATCH /v1/teams/:id (Admin team), POST /v1/permissions/sets and
- * DELETE /v1/permissions/sets/:id. Returns the new set's id when one was made.
- */
-export function useApplyTeamRole(orgId: string, teamId: string) {
-  const queryClient = useQueryClient();
-  const write = useReauthableWrite();
-  const { updateTeam, refreshOrgData } = useOrgDashboard();
-  return useMutation({
-    mutationKey: [...permissionsQueryKeys.sets(orgId), "team-role", teamId],
-    retry: false,
-    mutationFn: async (steps: TeamRoleWrite[]) => {
-      let createdSetId: string | null = null;
-      for (const step of steps) {
-        if (step.kind === "set-admin") {
-          await updateTeam(teamId, { grantsOrganizationAdmin: step.value });
-        } else if (step.kind === "create-custom") {
-          const set = await write("create-team-permissions", async () => required(await permissionsRequest({
-            orgId,
-            path: "/v1/permissions/sets",
-            method: "POST",
-            body: { teamId, permissions: step.keys.map((key) => ({ key, status: "allow" })) },
-            schema: z.object({ set: setDetailSchema }),
-            fallback: "Couldn't create team permissions",
-          })).set);
-          createdSetId = set.id;
-        } else {
-          await write("remove-team-permissions", async () => {
-            await permissionsRequest({
-              orgId,
-              path: `/v1/permissions/sets/${encodeURIComponent(step.setId)}`,
-              method: "DELETE",
-              schema: null,
-              fallback: "Couldn't remove team permissions",
-            });
-            return step.setId;
-          });
-        }
-      }
-      return createdSetId;
-    },
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: permissionsQueryKeys.all(orgId) });
-      await refreshOrgData();
-    },
-  });
-}
 
 export function useRemoveTeamPermissions(orgId: string, setId: string) {
   const queryClient = useQueryClient();
@@ -548,11 +433,6 @@ export function useRemoveTeamPermissions(orgId: string, setId: string) {
   });
 }
 
-/**
- * sharedRoles: gives a team one custom role, replacing its current one, or
- * none (PUT /v1/teams/:teamId/permission-set). The team's Admin designation is
- * a separate call (PATCH /v1/teams/:id).
- */
 export function useSetTeamRole(orgId: string) {
   const queryClient = useQueryClient();
   const write = useReauthableWrite();
@@ -578,14 +458,38 @@ export function useSetTeamRole(orgId: string) {
   });
 }
 
-/** sharedRoles: creates a named role, given to the teams now (each team's custom role is replaced). */
+export function useSetMemberRole(orgId: string) {
+  const queryClient = useQueryClient();
+  const write = useReauthableWrite();
+  const { refreshOrgData } = useOrgDashboard();
+  return useMutation({
+    mutationKey: [...permissionsQueryKeys.sets(orgId), "set-member-role"],
+    retry: false,
+    mutationFn: (input: { memberId: string; permissionSetId: string | null }) => write("set-member-role", async () => {
+      await permissionsRequest({
+        orgId,
+        path: `/v1/members/${encodeURIComponent(input.memberId)}/permission-set`,
+        method: "PUT",
+        body: { permissionSetId: input.permissionSetId },
+        schema: null,
+        fallback: "Couldn't change the person's role",
+      });
+      return input.memberId;
+    }),
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: permissionsQueryKeys.all(orgId) });
+      await refreshOrgData();
+    },
+  });
+}
+
 export function useCreateSharedRole(orgId: string) {
   const queryClient = useQueryClient();
   const write = useReauthableWrite();
   return useMutation({
     mutationKey: [...permissionsQueryKeys.sets(orgId), "create-shared-role"],
     retry: false,
-    mutationFn: (input: { name: string; teamIds: string[]; permissions: PermissionChange[] }) => write("create-shared-role", async () => required(await permissionsRequest({
+    mutationFn: (input: { name: string; teamIds: string[]; memberIds?: string[]; permissions: PermissionChange[] }) => write("create-shared-role", async () => required(await permissionsRequest({
       orgId,
       path: "/v1/permissions/sets",
       method: "POST",
@@ -600,7 +504,6 @@ export function useCreateSharedRole(orgId: string) {
   });
 }
 
-/** sharedRoles: renames a custom role. */
 export function useRenameRole(orgId: string, setId: string) {
   const queryClient = useQueryClient();
   const write = useReauthableWrite();
@@ -620,11 +523,4 @@ export function useRenameRole(orgId: string, setId: string) {
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: permissionsQueryKeys.all(orgId) }),
   });
-}
-
-/** sharedRoles is on, with the Team roles and Permissions it builds on. */
-export function useSharedRolesOn(): boolean {
-  const { orgContext } = useOrgDashboard();
-  if (!orgContext) return false;
-  return orgFeatureEnabled(orgContext, "sharedRoles") && orgFeatureEnabled(orgContext, "teamRoles") && orgFeatureEnabled(orgContext, "permissions");
 }

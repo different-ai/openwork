@@ -2,10 +2,15 @@ import { z } from "zod"
 
 export const MCP_APP_CONFIG_SCHEMA_VERSION = "openwork.mcp-app/1"
 export const MCP_APP_PAYLOAD_KIND = "authored_mcp_app"
-export const MCP_APP_MAX_STORAGE_BYTES = 1024 * 1024
-export const MCP_APP_MAX_HTML_BYTES = 768 * 1024
+export const MCP_APP_MAX_STORAGE_BYTES = 2 * 1024 * 1024
+export const MCP_APP_MAX_HTML_BYTES = 1536 * 1024
 /** Every App's own MCP server opens it with this one tool. */
 export const MCP_APP_LAUNCH_TOOL_NAME = "open_app"
+/**
+ * Launch result _meta key holding what the App's read-only tools that need no
+ * input returned as it opened, each with the exact arguments it ran with.
+ */
+export const MCP_APP_INITIAL_RESULTS_META = "openwork/initialResults"
 export const MCP_APP_MAX_TOOLS = 20
 
 export const mcpAppIdSchema = z.string().length(30).regex(/^cob_[0-7][0-9a-hjkmnp-tv-z]{25}$/u)
@@ -16,6 +21,9 @@ const titleSchema = z.string().trim().min(1).max(120)
 const descriptionSchema = z.string().trim().max(2_000)
 const textFallbackSchema = z.string().trim().min(1).max(8_000)
 const byteLength = (value: string) => new TextEncoder().encode(value).byteLength
+
+/** A public App's friendly URL name: 3 to 48 lowercase letters, digits and hyphens. It can never look like an App id. */
+export const mcpAppPublicNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$/u)
 
 export const mcpAppSourceSchema = z.object({
   reactSource: z.string().trim().min(1).max(200_000).refine((value) => byteLength(value) <= 200_000),
@@ -30,26 +38,30 @@ export const mcpAppToolNameSchema = z.string()
  * A tool the App's MCP server exposes under a clear name. It runs one exact
  * capability from search_capabilities as the person using the App. `live`
  * runs a saved Workflow read-only with server-supplied time inputs.
+ * `loadOnOpen` is the author's judgment that the tool only reads data the
+ * person asked for, so it may run without a click even when its provider does
+ * not mark it read-only, for everyone who opens the App. Den refuses it for
+ * anything known to write, and for a connection tool bound directly and marked
+ * destructive; a saved Workflow may read through one.
  */
 export const mcpAppToolDeclarationSchema = z.object({
   name: mcpAppToolNameSchema,
   description: z.string().trim().min(1).max(1_000),
   capability: z.string().trim().min(1).max(512),
   mode: z.enum(["input", "live"]).optional(),
+  loadOnOpen: z.boolean().optional(),
 }).strict()
 
 const toolDeclarationsSchema = z.array(mcpAppToolDeclarationSchema).max(MCP_APP_MAX_TOOLS)
   .refine((tools) => new Set(tools.map((tool) => tool.name)).size === tools.length, "Tool names must be unique.")
 
-// No per-tool size cap: provider schemas (e.g. Notion's query tool) can be
-// large. The revision storage cap and transport limits bound the total.
 const jsonSchemaObject = z.record(z.string(), z.json())
   .refine((schema) => schema.type === "object", "Tool input schemas must describe an object.")
 
 /**
  * A declared tool resolved when the revision was published: how its arguments
- * reach the capability, the schema it advertises, and whether Den verified it
- * as read-only.
+ * reach the capability, the schema it advertises, whether Den verified it
+ * as read-only, and whether its author chose to load it on open.
  */
 export const mcpAppToolBindingSchema = z.object({
   name: mcpAppToolNameSchema,
@@ -59,6 +71,7 @@ export const mcpAppToolBindingSchema = z.object({
   mode: z.enum(["input", "live"]),
   inputSchema: jsonSchemaObject,
   readOnly: z.boolean(),
+  loadOnOpen: z.boolean().optional(),
   schemaDigest: digestSchema.optional(),
 }).strict()
 
@@ -68,6 +81,9 @@ export const mcpAppAuthoringSchema = mcpAppSourceSchema.extend({
   cssSource: mcpAppSourceSchema.shape.cssSource.optional(),
   textFallback: textFallbackSchema,
   tools: toolDeclarationsSchema.optional(),
+  public: z.boolean().optional(),
+  site: z.boolean().optional(),
+  publicName: mcpAppPublicNameSchema.optional(),
 })
 
 /** Correlates preparation and publication in chat; it grants no access or validation. */
@@ -116,6 +132,9 @@ export const mcpAppCompiledRevisionSchema = z.object({
   compilerName: z.literal("openwork-react-mcp-app"),
   compilerVersion: z.string().min(1).max(64),
   reactVersion: z.string().min(1).max(64),
+  loadsWithLaunch: z.literal(true).optional(),
+  public: z.literal(true).optional(),
+  site: z.literal(true).optional(),
 }).strict().refine((value) => byteLength(JSON.stringify(value)) <= MCP_APP_MAX_STORAGE_BYTES)
 
 export const mcpAppToolSummarySchema = z.object({
@@ -124,6 +143,7 @@ export const mcpAppToolSummarySchema = z.object({
   capability: z.string(),
   mode: z.enum(["input", "live"]),
   readOnly: z.boolean(),
+  loadOnOpen: z.boolean().optional(),
 }).strict()
 
 export const mcpAppSummarySchema = z.object({
@@ -135,7 +155,6 @@ export const mcpAppSummarySchema = z.object({
   textFallback: textFallbackSchema,
   toolName: z.literal(MCP_APP_LAUNCH_TOOL_NAME),
   resourceUri: z.string(),
-  /** Path of the App's own MCP server, relative to the Den API origin. */
   serverPath: z.string(),
   tools: z.array(mcpAppToolSummarySchema),
 }).strict()
@@ -171,6 +190,11 @@ export type ReadMcpAppOutput = z.infer<typeof readMcpAppOutputSchema>
  */
 export function mcpAppServerPath(appId: string): string {
   return `/mcp/agent/connections/${mcpAppIdSchema.parse(appId)}`
+}
+
+/** Where an App marked public is served to anyone, outside the /mcp/agent OAuth resource. */
+export function mcpAppPublicPath(appIdOrName: string): string {
+  return `/mcp/public/apps/${z.union([mcpAppIdSchema, mcpAppPublicNameSchema]).parse(appIdOrName)}`
 }
 
 export function mcpAppResourceUri(appId: string, revisionId: string): string {
@@ -225,6 +249,7 @@ export function summarizeMcpAppRevision(input: {
       capability: tool.capability,
       mode: tool.mode,
       readOnly: tool.readOnly,
+      ...(tool.loadOnOpen ? { loadOnOpen: true } : {}),
     })),
   }
 }

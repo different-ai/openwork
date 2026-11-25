@@ -12,9 +12,11 @@ export type ExternalMcpOAuthStateIdentitySource = {
   authType: ExternalMcpAuthType
   credentialMode: ExternalMcpCredentialMode
   apiKeyAuthScheme?: "bearer" | "token"
+  oauthConfiguration?: { manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } } | null
 }
 
 type NonSecretExternalMcpOAuthStateIdentity =
+  | readonly [url: string, authType: "oauth", credentialMode: ExternalMcpCredentialMode, authorizationEndpoint: string, tokenEndpoint: string]
   | readonly [url: string, authType: ExternalMcpAuthType, credentialMode: ExternalMcpCredentialMode]
   | readonly [url: string, authType: "apikey", credentialMode: ExternalMcpCredentialMode, apiKeyAuthScheme: "bearer" | "token"]
   | readonly [nativeProviderId: string, url: string, authType: ExternalMcpAuthType, credentialMode: ExternalMcpCredentialMode]
@@ -30,7 +32,7 @@ export function normalizeExternalMcpIdentityUrl(value: string): string {
   }
 }
 
-function connectionIdentityFields(source: ExternalMcpOAuthStateIdentitySource): NonSecretExternalMcpOAuthStateIdentity {
+function legacyConnectionIdentityFields(source: Omit<ExternalMcpOAuthStateIdentitySource, "oauthConfiguration">): NonSecretExternalMcpOAuthStateIdentity {
   const url = normalizeExternalMcpIdentityUrl(source.url)
   const authType: ExternalMcpAuthType = source.authType === "oauth"
     ? "oauth"
@@ -45,11 +47,14 @@ function connectionIdentityFields(source: ExternalMcpOAuthStateIdentitySource): 
   return [url, authType, credentialMode]
 }
 
-/**
- * Binds signed OAuth state to connection identity fields without embedding
- * them in the state. The deployment-stable state-signing secret makes URL
- * query values opaque even when they have low entropy.
- */
+function connectionIdentityFields(source: ExternalMcpOAuthStateIdentitySource): NonSecretExternalMcpOAuthStateIdentity {
+  const manual = source.oauthConfiguration?.manualOAuthEndpoints
+  if (source.kind === "external_mcp" && source.authType === "oauth" && manual) {
+    return [new URL(source.url).href, "oauth", source.credentialMode, manual.authorizationEndpoint, manual.tokenEndpoint]
+  }
+  return legacyConnectionIdentityFields(source)
+}
+
 export function createExternalMcpIdentityBinding(
   source: ExternalMcpOAuthStateIdentitySource,
   secret: string,
@@ -60,15 +65,19 @@ export function createExternalMcpIdentityBinding(
     .digest("base64url")
 }
 
-/**
- * Accepts the SHA-256 and reversible bindings emitted before keyed binding.
- * Call only after the containing OAuth state token's signature is verified.
- */
 export function matchesLegacyExternalMcpOAuthStateIdentityBinding(
   source: ExternalMcpOAuthStateIdentitySource,
   signedStateBinding: string,
 ): boolean {
-  const serializedIdentity = JSON.stringify(connectionIdentityFields(source))
+  if (source.oauthConfiguration?.manualOAuthEndpoints) return false
+  const serializedIdentity = JSON.stringify(legacyConnectionIdentityFields({
+    id: source.id,
+    kind: source.kind,
+    url: source.url,
+    authType: source.authType,
+    credentialMode: source.credentialMode,
+    apiKeyAuthScheme: source.apiKeyAuthScheme,
+  }))
   const previousDigest = createHash("sha256").update(serializedIdentity).digest("base64url")
   if (signedStateBinding === previousDigest) return true
 

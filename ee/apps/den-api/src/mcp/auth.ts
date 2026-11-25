@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto"
-import { and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthSessionTable, MemberTable, OAuthAccessTokenTable, OAuthConsentTable } from "@openwork-ee/den-db/schema"
+import { eq } from "@openwork-ee/den-db/drizzle"
+import { OAuthAccessTokenTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { verifyJwsAccessToken } from "better-auth/oauth2"
 import {
@@ -54,20 +54,11 @@ export type McpAuthResourceContext = {
 const MCP_JWT_SIGNING_ALGORITHMS = [DEN_JWT_SIGNING_ALGORITHM]
 
 export function getMcpResourceUrl(request: Request) {
-  // Parent/internal MCP resources derive public candidates from the request
-  // origin for multi-origin deployments, but only honor static boot-time
-  // allowlist entries so a Host header cannot mint an arbitrary audience.
-  // /mcp/agent overlays the exact external OAuth resource in
-  // getMcpResourceContext; /mcp/admin keeps using this parent resource.
   return resolveMcpResourceFromRequest(publicRequestUrl(request).toString(), DEN_MCP_FIRST_PARTY_RESOURCES, DEN_MCP_RESOURCE)
 }
 
 export function getMcpResourceContext(request: Request, route: McpResourceRoute, requestId?: string): McpAuthResourceContext {
   const parentResource = getMcpResourceUrl(request)
-  // Public OAuth has exactly one allowed audience, DEN_MCP_OAUTH_RESOURCE (the
-  // advertised /mcp/agent resource), and those JWTs authenticate only on the
-  // agent route. Parent/admin routes keep using the internal/legacy resource
-  // aliases below for first-party opaque desktop tokens.
   const resourceUrl = mcpRouteResource({
     route,
     parentResource,
@@ -97,11 +88,6 @@ function readBearerToken(headers: Headers) {
   return match?.[1]?.trim() || null
 }
 
-/**
- * Hash an opaque MCP token secret (the part after the `ow_mcp_at_` prefix)
- * for storage/lookup. Shared with the first-party mint route so the formats
- * cannot drift.
- */
 export function hashOpaqueMcpSecret(secret: string) {
   return crypto.createHash("sha256").update(secret).digest("base64url")
 }
@@ -111,7 +97,6 @@ function readStoredScopes(scopes: string) {
     const parsed = JSON.parse(scopes) as unknown
     if (Array.isArray(parsed)) return parsed.filter((entry): entry is string => typeof entry === "string")
   } catch {
-    // Older rows or custom stores may keep scopes as a space-delimited string.
   }
   return scopes.split(/\s+/).filter(Boolean)
 }
@@ -134,11 +119,6 @@ function readStringClaim(payload: Record<string, unknown>, claim: string) {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
-/**
- * Non-secret identifier of the credential behind a principal, for audit
- * attribution: the OAuth grant id, else the headless-run token row id, else the
- * OAuth client id (JWT `client_id`/`azp`). Never token material.
- */
 export function mcpPrincipalCredentialId(principal: McpPrincipal): string | null {
   const payload = principal.payload
   const grantId = readStringClaim(payload, DEN_MCP_GRANT_ID_CLAIM)
@@ -197,6 +177,11 @@ function isFirstPartyMcpToken(payload: Record<string, unknown>, source: McpToken
   }
 
   const clientId = readStringClaim(payload, "client_id")
+  return clientId !== null && FIRST_PARTY_OPAQUE_CLIENT_IDS.has(clientId)
+}
+
+export function isFirstPartyMcpPrincipal(principal: McpPrincipal): boolean {
+  const clientId = readStringClaim(principal.payload, "client_id")
   return clientId !== null && FIRST_PARTY_OPAQUE_CLIENT_IDS.has(clientId)
 }
 
@@ -292,17 +277,12 @@ class McpSigningKeysUnavailable extends Error {}
 
 async function getJwks() {
   try {
-    // Internal verification must not consume the public auth HTTP rate limit.
     return await auth.api.getJwks()
   } catch (cause) {
     throw new McpSigningKeysUnavailable("Unable to load auth JWKS", { cause })
   }
 }
 
-// Better Auth keeps the signing keys under this key for five minutes and
-// refetches at once when a token names a key it has not seen, so a rotated key
-// verifies immediately. Without it the keys are read from the database on
-// every MCP request.
 const MCP_JWKS_CACHE_KEY = {}
 
 async function verifyJwtMcpToken(token: string) {
@@ -320,11 +300,13 @@ async function verifyOpaqueMcpToken(token: string) {
   }
 
   const storedToken = hashOpaqueMcpSecret(token.slice(DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX.length))
-  const [accessToken] = await db
+  const lookup = (database: typeof db.$primary) => database
     .select()
     .from(OAuthAccessTokenTable)
     .where(eq(OAuthAccessTokenTable.token, storedToken))
     .limit(1)
+  const fromReplica = await lookup(db)
+  const [accessToken] = fromReplica[0] ? fromReplica : await lookup(db.$primary)
 
   if (!accessToken || accessToken.expiresAt <= new Date()) {
     return null
@@ -332,8 +314,6 @@ async function verifyOpaqueMcpToken(token: string) {
 
   const storedScopes = readStoredScopes(accessToken.scopes)
   const resource = FIRST_PARTY_OPAQUE_CLIENT_IDS.has(accessToken.clientId) ? DEN_MCP_RESOURCE : DEN_MCP_OAUTH_RESOURCE
-  // Only first-party opaque tokens are accepted below. Those skip OAuth consent,
-  // so they intentionally remain session-coupled through the compatibility path.
   return {
     sub: accessToken.userId,
     scope: storedScopes.join(" "),
@@ -344,7 +324,6 @@ async function verifyOpaqueMcpToken(token: string) {
     [DEN_MCP_RESOURCE_CLAIM]: resource,
     ...(accessToken.sessionId ? { sid: accessToken.sessionId } : {}),
     ...(accessToken.referenceId ? { [DEN_MCP_ORG_ID_CLAIM]: accessToken.referenceId } : {}),
-    // Lets work started by a headless run find the run it belongs to (for example its Slack thread).
     ...(accessToken.clientId === DEN_MCP_HEADLESS_RUN_CLIENT_ID ? { [DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM]: accessToken.id } : {}),
   }
 }
@@ -496,36 +475,4 @@ export async function verifyMcpRequest(headers: Headers, optionsInput?: string |
   }
 
   return { userId, organizationId, scopes, payload }
-}
-
-/** Long-lived streams must not extend cached membership, grant or session liveness. */
-export async function verifyMcpSubscriptionRequest(headers: Headers, options: McpAuthResourceContext, signal: AbortSignal): Promise<McpPrincipal | null> {
-  signal.throwIfAborted()
-  const principal = await verifyMcpRequest(headers, options)
-  signal.throwIfAborted()
-  if (principal instanceof Response) return null
-  const userId = normalizeDenTypeId("user", principal.userId)
-  const organizationId = normalizeDenTypeId("organization", principal.organizationId)
-  const [member] = await db.select({ id: MemberTable.id }).from(MemberTable).where(and(
-    eq(MemberTable.userId, userId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt),
-  )).limit(1)
-  signal.throwIfAborted()
-  if (!member) return null
-  const grantId = readStringClaim(principal.payload, DEN_MCP_GRANT_ID_CLAIM)
-  if (grantId) {
-    const [grant] = await db.select({ id: OAuthConsentTable.id }).from(OAuthConsentTable).where(and(
-      eq(OAuthConsentTable.id, normalizeDenTypeId("oauthConsent", grantId)), eq(OAuthConsentTable.userId, userId),
-    )).limit(1)
-    if (!grant) return null
-  } else {
-    const sessionId = readStringClaim(principal.payload, "sid")
-    if (sessionId) {
-      const [session] = await db.select({ id: AuthSessionTable.id }).from(AuthSessionTable).where(and(
-        eq(AuthSessionTable.id, normalizeDenTypeId("session", sessionId)), eq(AuthSessionTable.userId, userId), gt(AuthSessionTable.expiresAt, new Date()),
-      )).limit(1)
-      if (!session) return null
-    }
-    // Session-less headless credentials were already verified by verifyMcpRequest.
-  }
-  return principal
 }

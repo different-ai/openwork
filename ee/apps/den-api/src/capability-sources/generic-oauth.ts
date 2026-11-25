@@ -2,23 +2,17 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { env } from "../env.js"
+import { workbotOAuthReturnSchema, type WorkbotOAuthReturn } from "../workbot/connect-return-schema.js"
 import { publicRequestUrl } from "../request-url.js"
 import { clientSelectedFeatures, resolveProviderScopes, type NativeOAuthProviderConfig } from "./provider-registry.js"
 import { readProviderTenantId, resolveTenantEndpointTemplate } from "./oauth-tenant.js"
 import {
   getConnectedAccount,
   getOrgOAuthClient,
-  refreshConnectedAccountForActiveMember,
+  refreshConnectedAccountExclusively,
   type ConnectedAccountRow,
   type OrgOAuthClientRow,
 } from "./oauth-credentials.js"
-
-/**
- * A single, provider-agnostic classic-OAuth2 (authorization code + PKCE)
- * driver. Every native provider (google-workspace today, anything else we
- * implement natively later) goes through this exact same code — only the
- * registry entry (authorizeUrl/tokenUrl/scopes) differs per provider.
- */
 
 const TOKEN_EXPIRY_SAFETY_WINDOW_MS = 60_000
 const TOKEN_REQUEST_TIMEOUT_MS = 15_000
@@ -29,17 +23,6 @@ function base64UrlEncode(input: Buffer | string) {
   return buffer.toString("base64url")
 }
 
-/**
- * The public API base URL an external OAuth server should redirect back to.
- * A configured pathname is preserved for self-hosted deployments that expose
- * Den behind a prefix such as `/api/den`. Behind a
- * reverse proxy (e.g. Daytona's port-forwarding proxy), `request.url`
- * reflects the *internal* bind address (http://127.0.0.1:8788) rather than
- * the public URL the browser actually called, since the proxy doesn't
- * rewrite the request's own URL — `x-forwarded-proto` can correct the
- * scheme, while `DEN_API_PUBLIC_URL`, when set, is still needed when the
- * proxy does not preserve the public host.
- */
 export function resolvePublicApiBaseUrl(request: Request, apiPublicUrl: string | undefined): string {
   if (apiPublicUrl) {
     const url = new URL(apiPublicUrl)
@@ -49,7 +32,6 @@ export function resolvePublicApiBaseUrl(request: Request, apiPublicUrl: string |
   return publicRequestUrl(request, { trustedOrigins: env.publicUrlTrustedOrigins }).origin
 }
 
-/** Compatibility name retained for existing callback and webhook builders. */
 export const resolvePublicOrigin = resolvePublicApiBaseUrl
 
 export function createPkcePair() {
@@ -67,6 +49,7 @@ export type OAuthStatePayload = {
   callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
   authorizationServerIssuer?: string
   authorizationResponseIssuerRequired?: boolean
+  workbotReturn?: WorkbotOAuthReturn
   nonce: string
   iat?: number
   exp: number
@@ -81,6 +64,7 @@ export function createOAuthStateToken(input: {
   callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
   authorizationServerIssuer?: string
   authorizationResponseIssuerRequired?: boolean
+  workbotReturn?: WorkbotOAuthReturn
   secret: string
   ttlSeconds?: number
   now?: number
@@ -97,6 +81,7 @@ export function createOAuthStateToken(input: {
     ...(input.authorizationResponseIssuerRequired !== undefined
       ? { authorizationResponseIssuerRequired: input.authorizationResponseIssuerRequired }
       : {}),
+    ...(input.workbotReturn ? { workbotReturn: workbotOAuthReturnSchema.parse(input.workbotReturn) } : {}),
     nonce: randomUUID(),
     iat: Math.floor(nowMs / 1000),
     exp: Math.floor(nowMs / 1000) + (input.ttlSeconds ?? 10 * 60),
@@ -130,6 +115,7 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       || (payload.callbackMode !== undefined && payload.callbackMode !== "shared-v1" && payload.callbackMode !== "isolated-v1" && payload.callbackMode !== "legacy-v1")
       || (payload.authorizationServerIssuer !== undefined && typeof payload.authorizationServerIssuer !== "string")
       || (payload.authorizationResponseIssuerRequired !== undefined && typeof payload.authorizationResponseIssuerRequired !== "boolean")
+      || (payload.workbotReturn !== undefined && !workbotOAuthReturnSchema.safeParse(payload.workbotReturn).success)
       || typeof payload.nonce !== "string"
       || (payload.iat !== undefined && typeof payload.iat !== "number")
       || typeof payload.exp !== "number"
@@ -367,7 +353,11 @@ export function resolveOAuthEndpointUrl(input: {
   client: OrgOAuthClientRow
   endpoint: "authorize" | "token"
 }): string {
-  const template = input.endpoint === "authorize" ? input.provider.authorizeUrl : input.provider.tokenUrl
+  const sandbox = input.client.sandboxEndpoints
+  if (sandbox?.status === "unavailable") throw new OAuthClientConfigurationError(sandbox.message)
+  const template = sandbox
+    ? input.endpoint === "authorize" ? sandbox.authorizeUrl : sandbox.tokenUrl
+    : input.endpoint === "authorize" ? input.provider.authorizeUrl : input.provider.tokenUrl
   const tenantIdExtraKey = input.provider.tenantIdExtraKey
   if (!tenantIdExtraKey) return template
 
@@ -464,12 +454,6 @@ function isRevokedGrant(error: unknown): boolean {
     && (error.code === "oauth_invalid_grant" || error.code === "oauth_reauthentication_required")
 }
 
-/**
- * Returns a valid, unexpired access token for the calling member's
- * connected account, refreshing it (and persisting the refresh) if needed.
- * This is the one function every native capability route calls — none of
- * them touch tokens, expiry, or the client credential directly.
- */
 export async function getValidAccessToken(input: {
   provider: NativeOAuthProviderConfig
   credentialProviderId: string
@@ -499,57 +483,28 @@ export async function getValidAccessToken(input: {
     return { error: "client_not_configured" }
   }
 
-  let refreshed: TokenResponse
-  try {
-    refreshed = await refreshTokens({ provider: input.provider, client, refreshToken: account.refreshToken })
-  } catch (error) {
-    if (!isRevokedGrant(error)) throw error
-    // The provider no longer honors this grant (revoked access, password
-    // change, expired consent). Clear it so later requests ask the member to
-    // connect again instead of retrying a dead refresh token.
-    await refreshConnectedAccountForActiveMember({
-      organizationId: input.organizationId,
-      orgMembershipId: input.orgMembershipId,
-      providerId: input.credentialProviderId,
-      expectedAccountId: account.id,
-      expectedAccessToken: account.accessToken,
-      expectedRefreshToken: account.refreshToken,
-      accessToken: null,
-      refreshToken: null,
-      expiresAt: null,
-    })
-    return { error: "not_connected" }
-  }
-  const expiresAt = refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000) : null
-  const updated = await refreshConnectedAccountForActiveMember({
+  const updated = await refreshConnectedAccountExclusively({
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     providerId: input.credentialProviderId,
     expectedAccountId: account.id,
-    expectedAccessToken: account.accessToken,
-    expectedRefreshToken: account.refreshToken,
-    accessToken: refreshed.access_token,
-    // Most providers (Google included) omit refresh_token on refresh responses; keep the existing one.
-    refreshToken: refreshed.refresh_token ?? account.refreshToken,
-    tokenType: refreshed.token_type ?? account.tokenType,
-    expiresAt,
+    isAccessTokenFresh: (expiresAt) => !expiresAt || expiresAt.getTime() - TOKEN_EXPIRY_SAFETY_WINDOW_MS > Date.now(),
+    async refresh(refreshToken) {
+      try {
+        const refreshed = await refreshTokens({ provider: input.provider, client, refreshToken })
+        return {
+          accessToken: refreshed.access_token,
+          refreshToken: refreshed.refresh_token,
+          tokenType: refreshed.token_type,
+          expiresAt: refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000) : null,
+        }
+      } catch (error) {
+        if (!isRevokedGrant(error)) throw error
+        return null
+      }
+    },
   })
-  if (updated?.accessToken) {
-    return { accessToken: updated.accessToken, account: updated }
-  }
-
-  // Another in-flight refresh may have won the compare-and-set. Reuse its
-  // fresh token, but never recreate a row deleted by disconnect/removal/rotation.
-  const current = await getConnectedAccount({
-    organizationId: input.organizationId,
-    orgMembershipId: input.orgMembershipId,
-    providerId: input.credentialProviderId,
-  })
-  if (
-    current?.accessToken
-    && (!current.expiresAt || current.expiresAt.getTime() - TOKEN_EXPIRY_SAFETY_WINDOW_MS > Date.now())
-  ) {
-    return { accessToken: current.accessToken, account: current }
-  }
-  return { error: "not_connected" }
+  return updated?.accessToken
+    ? { accessToken: updated.accessToken, account: updated }
+    : { error: "not_connected" }
 }

@@ -6,8 +6,8 @@ import { adminDataEndpoint, type AdminDataSection } from "./admin-list-location"
 import { useAdminSessionCookie } from "./admin-shell";
 import { requestAdmin, withStoredBearer, type AdminResult } from "./admin-request";
 
-// The signed-out path never downloads or mounts the dashboard and its controls.
-const DenAdminPanel = lazy(() => import("../den-admin-panel").then((module) => ({ default: module.DenAdminPanel })));
+const loadPanel = () => import("../den-admin-panel");
+const DenAdminPanel = lazy(() => loadPanel().then((module) => ({ default: module.DenAdminPanel })));
 
 type OverviewState = AdminResult<unknown> | { access: "checking" };
 
@@ -20,14 +20,13 @@ export function AdminDataPage({ section }: { section: AdminDataSection }) {
     const controller = new AbortController();
     controllerRef.current = controller;
     const fixture = process.env.NODE_ENV !== "production" && new URLSearchParams(window.location.search).get("adminScaleFixture") === "1";
-    // Drop the legacy persisted snapshot. Never render admin records before a
-    // successful access check, including on a shared browser after sign-out.
-    try { window.sessionStorage.removeItem("den-admin-overview-cache"); } catch { /* Storage is optional. */ }
+    try { window.sessionStorage.removeItem("den-admin-overview-cache"); } catch {}
     if (!force && !hasSessionCookie && !withStoredBearer({}).Authorization && !fixture) {
       setState({ access: "signed-out", message: "" });
       return;
     }
     setState({ access: "checking" });
+    void loadPanel().catch(() => undefined);
     try {
       const path = adminDataEndpoint(section, new URLSearchParams(window.location.search));
       const result = fixture

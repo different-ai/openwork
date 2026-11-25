@@ -23,7 +23,6 @@ export function safeMcpAuthorizationUrl(rawUrl: string): string {
 }
 
 export type McpAuthorizationDebugDetails = {
-  /** "unavailable" when the browser never let the page read a response (network failure or CORS-blocked answer). */
   httpStatus: number | "unavailable"
   errorCode?: string
   diagnosticCode?: string
@@ -175,6 +174,19 @@ export function describeMcpAuthorizationFailure(input: {
     }
   }
 
+  if (details?.phase === "AUTH_CLIENT_REGISTRATION" && (details.diagnosticCode === "MCP_HTTP_403" || details.providerStatus === 403)) {
+    return {
+      title: `${connectionName} only lets approved apps sign in`,
+      description: `${connectionName} refused to register OpenWork as a sign-in app. It only accepts apps it has approved, and OpenWork isn't on its list yet, so trying again won't help.`,
+      advice: [
+        `Ask a workspace admin whether ${connectionName} offers an OAuth app your organization can create. If it does, the admin can add its client ID to this connector.`,
+        "Otherwise, share the reference below with OpenWork support so we can follow up with the provider.",
+      ],
+      retryable: false,
+      copyable: details.diagnosticReference ? [{ label: "Reference", value: details.diagnosticReference }] : [],
+    }
+  }
+
   if (details?.errorCode === "response_unreadable") {
     return {
       title: "OpenWork couldn't read its own API's answer",
@@ -230,7 +242,6 @@ export function showMcpAuthorizationFailure(
     }), window.location.origin)
     tab.location.replace(failureUrl.toString())
   } catch {
-    // Leave an isolated provider tab open so its own error remains available.
   }
 }
 

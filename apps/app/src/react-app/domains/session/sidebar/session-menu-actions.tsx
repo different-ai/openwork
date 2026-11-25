@@ -1,0 +1,115 @@
+import { Archive, ArchiveRestore, Columns2, FolderPlus, Pencil, Pin, PinOff, Tag, Trash2, X } from "lucide-react";
+
+import type { MenuAction } from "@/components/ui/action-menu-model";
+import { getDisplaySessionTitle } from "@/app/lib/session-title";
+import { t } from "@/i18n";
+
+export type SessionActionTarget = { workspaceId: string; sessionId: string; title: string };
+
+export function captureSessionActionTarget(
+  groups: readonly { workspace: { id: string }; sessions: readonly { id: string; title?: string }[] }[],
+  sessionId: string,
+  workspaceId: string,
+): SessionActionTarget | null {
+  const session = groups.find((group) => group.workspace.id === workspaceId)?.sessions.find((entry) => entry.id === sessionId);
+  return session ? { sessionId, workspaceId, title: getDisplaySessionTitle(session.title) } : null;
+}
+
+type GroupActionsOptions = {
+  groups: readonly { id: string; label: string }[];
+  assignedGroupId: string | null;
+  onAssignGroup: (groupId: string | null) => void;
+  onCreateGroup?: () => void;
+};
+
+export function buildSessionGroupActions(options: GroupActionsOptions): MenuAction[] {
+  return [
+    { type: "item", id: "ungroup", label: t("session_management.no_group"), disabled: !options.assignedGroupId,
+      onSelect: () => options.onAssignGroup(null) },
+    ...options.groups.map((group): MenuAction => ({
+      type: "item", id: `group:${group.id}`, label: group.label, disabled: options.assignedGroupId === group.id,
+      onSelect: () => options.onAssignGroup(group.id),
+    })),
+    ...(options.onCreateGroup ? [{ type: "separator" }, {
+      type: "item", id: "new-group", label: t("session_management.new_group"), icon: <FolderPlus className="size-4" />,
+      onSelect: options.onCreateGroup,
+    }] satisfies MenuAction[] : []),
+  ];
+}
+
+export function buildSessionMenuActions(options: GroupActionsOptions & {
+  isPinned: boolean;
+  isArchived: boolean;
+  onTogglePin: () => void;
+  onOpenSplit?: () => void;
+  onCloseSplit?: () => void;
+  onRename?: () => void;
+  onArchive?: () => void;
+  onDelete?: () => void;
+}): MenuAction[] {
+  const actions: MenuAction[] = [{
+    type: "item", id: "pin", label: options.isPinned ? t("session_management.unpin_session") : t("session_management.pin_session"),
+    icon: options.isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />, onSelect: options.onTogglePin,
+  }];
+  if (options.onOpenSplit) actions.push({
+    type: "item", id: "open-split", label: t("session_management.open_in_split_view"), icon: <Columns2 className="size-4" />,
+    dataAttributes: { "data-session-menu-open-split": true }, onSelect: options.onOpenSplit,
+  });
+  if (options.onCloseSplit) actions.push({
+    type: "item", id: "close-split", label: t("session_management.close_split_view"), icon: <Columns2 className="size-4" />,
+    dataAttributes: { "data-session-menu-close-split": true }, onSelect: options.onCloseSplit,
+  });
+  if (options.onRename) actions.push({
+    type: "item", id: "rename", label: t("workspace_list.rename_session"), icon: <Pencil className="size-4" />, onSelect: options.onRename,
+  });
+  actions.push({
+    type: "item", id: "move-to-group", label: t("session_management.move_to_group"), icon: <Tag className="size-4" />,
+    submenu: buildSessionGroupActions(options), submenuClassName: { dropdown: "w-52" },
+  });
+  if (options.onArchive) actions.push({
+    type: "item", id: "archive", label: options.isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session"),
+    icon: options.isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />, onSelect: options.onArchive,
+  });
+  if (options.onDelete) actions.push({ type: "separator" }, {
+    type: "item", id: "delete", label: t("workspace_list.delete_session"), icon: <Trash2 className="size-4" />,
+    variant: "destructive", onSelect: options.onDelete,
+  });
+  return actions;
+}
+
+export function buildSelectedSessionsMenuActions(options: {
+  count: number;
+  archivedCount: number;
+  pinnedCount: number;
+  onArchive?: (archived: boolean) => void;
+  onPin: (pinned: boolean) => void;
+  group?: Omit<GroupActionsOptions, "assignedGroupId" | "onCreateGroup">;
+  onClear: () => void;
+}): MenuAction[] {
+  const { count } = options;
+  const allArchived = options.archivedCount === count;
+  const allPinned = options.pinnedCount === count;
+  const actions: MenuAction[] = [{
+    type: "item", id: "selection-pin",
+    label: allPinned ? t("session_management.unpin_sessions", { count }) : t("session_management.pin_sessions", { count: count - options.pinnedCount }),
+    icon: allPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />,
+    onSelect: () => options.onPin(!allPinned),
+  }];
+  if (options.group) actions.push({
+    type: "item", id: "selection-move-to-group", label: t("session_management.move_to_group"), icon: <Tag className="size-4" />,
+    submenu: buildSessionGroupActions({ ...options.group, assignedGroupId: null }), submenuClassName: { dropdown: "w-52" },
+  });
+  const onArchive = options.onArchive;
+  if (onArchive) actions.push({
+    type: "item", id: "selection-archive",
+    label: allArchived ? t("session_management.unarchive_sessions", { count }) : t("session_management.archive_sessions", { count: count - options.archivedCount }),
+    icon: allArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />,
+    dataAttributes: { "data-session-selection-archive": true },
+    onSelect: () => onArchive(!allArchived),
+  });
+  actions.push({ type: "separator" }, {
+    type: "item", id: "selection-clear", label: t("session_management.clear_selection"), icon: <X className="size-4" />,
+    onSelect: options.onClear,
+  });
+  return actions;
+}

@@ -1,5 +1,3 @@
-// Provider-specific server-side routing features can select a second model
-// after the gateway's check. These are not covered by a grant for body.model.
 export function hasAlternateModelSelection(body: Record<string, unknown>, providerId: string): boolean {
   if (["modelId", "model_id", "deployment", "deployment_id", "models", "fallbacks"].some((key) => Object.hasOwn(body, key))) return true
   if (providerId !== "openrouter") return false

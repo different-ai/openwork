@@ -2,7 +2,6 @@
 
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 
-// shadcn/ui's Base UI tooltip composition, styled for the Den dashboard.
 export function TooltipProvider({ delay = 0, ...props }: TooltipPrimitive.Provider.Props) {
   return <TooltipPrimitive.Provider data-slot="tooltip-provider" delay={delay} {...props} />;
 }

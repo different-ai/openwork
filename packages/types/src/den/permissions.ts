@@ -1,24 +1,37 @@
 import { z } from "zod"
 
 /**
- * Organization permission catalog shared by den-api (enforcement) and den-web
- * (editors and gating). See docs/permissions/overview.md, sections 4 and 7.
- *
- * Rules:
- * - Keys are permanent. Never reuse a key for a different meaning.
- * - Actions only the owner can ever do (delete organization, transfer
- *   ownership) are not here.
- * - Baseline member actions (things every member can do today) are not here.
- * - `defaultOn` reproduces the role checks from before Permissions: a key is
- *   `["admin"]` only when every action it gates was open to plain admins.
- *   Actions that needed super-admin (now removed) are owner-only by default:
- *   `defaultOn: []`. The owner holds every key, and with the Permissions
- *   feature on can grant owner-only keys to Admin or team permissions.
- * - `sensitive` matches the old recent sign-in requirement of what it gates.
+ * The organization's built-in permission sets, in the order roles are listed:
+ * Member (every member), Admin (effective admins), Billing manager (the people
+ * and teams it is given to) and Super admin (direct super-admin role, and the
+ * teams it is given to). Each is a stored, editable set seeded from the
+ * catalog, kept current as the catalog grows, and never renamed or deleted.
  */
-
-export const PERMISSION_DEFAULT_SET_KEYS = ["member", "admin"] as const
+export const PERMISSION_DEFAULT_SET_KEYS = ["member", "admin", "billing-manager", "super-admin"] as const
 export type PermissionDefaultSetKey = (typeof PERMISSION_DEFAULT_SET_KEYS)[number]
+
+export const PERMISSION_DEFAULT_SET_LABELS: Readonly<Record<PermissionDefaultSetKey, string>> = {
+  member: "Member",
+  admin: "Admin",
+  "billing-manager": "Billing manager",
+  "super-admin": "Super admin",
+}
+
+/**
+ * Built-in sets that apply through an organization role: every member holds
+ * Member, effective admins hold Admin and direct super-admins hold Super
+ * admin. The others (Billing manager) apply only to the people and teams they
+ * are given to, like a custom role.
+ */
+export const ROLE_PERMISSION_DEFAULT_SET_KEYS = ["member", "admin", "super-admin"] as const satisfies readonly PermissionDefaultSetKey[]
+export type RolePermissionDefaultSetKey = (typeof ROLE_PERMISSION_DEFAULT_SET_KEYS)[number]
+
+/**
+ * Built-in sets that can be given to a person or a team the way a custom role
+ * is: Billing manager, and Super admin (to a team; a person holds it through
+ * the super-admin role).
+ */
+export const ASSIGNABLE_PERMISSION_DEFAULT_SET_KEYS = ["billing-manager", "super-admin"] as const satisfies readonly PermissionDefaultSetKey[]
 
 export const PERMISSION_AREAS = {
   organization: { label: "Organization" },
@@ -39,29 +52,34 @@ export type PermissionAreaKey = keyof typeof PERMISSION_AREAS
 
 export type PermissionDefinition = {
   area: PermissionAreaKey
-  /** Short, user-facing label, e.g. "Delete providers". */
   label: string
   description?: string
-  /** Code defaults (feature off) and seed/reconcile targets (feature on). */
   defaultOn: readonly PermissionDefaultSetKey[]
-  /** Can never be denied in these default sets. No key uses it today: the owner can always restore access. */
   lockedOn?: readonly "admin"[]
-  /** Requires a recent sign-in (PRIVILEGED_SESSION_MAX_AGE_MS). */
   sensitive?: boolean
-  /**
-   * Reconciliation only allows this key in a default set where `follows` is
-   * currently allowed. Must name another catalog key; checked at compile time
-   * by `PermissionFollowsTarget` and at runtime by `permissionCatalogProblems`.
-   */
   follows?: string
 }
 
 const ADMIN = ["admin"] as const
-/** Owner-only by default: formerly super-admin (or owner) actions. */
 const OWNER_ONLY = [] as const
+const ADMIN_AND_BILLING_MANAGER = ["admin", "billing-manager"] as const
+const BILLING_MANAGER_ONLY = ["billing-manager"] as const
 
 export const PERMISSIONS = {
-  // Organization
+  "computers.view": {
+    area: "desktop",
+    label: "View team computers",
+    description: "View the team's computer inventory, owners, versions, availability and reported readiness. Does not grant control or access to files or screen content.",
+    defaultOn: ADMIN,
+  },
+  "computers.disconnect": {
+    area: "desktop",
+    label: "Disconnect team computers",
+    description: "Disconnect a member's signed-in computer from the organization, which signs OpenWork out there, and remove computers from the team list. Does not grant control or access to files, sessions or screen content.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+
   "organization.update": {
     area: "organization",
     label: "Edit organization settings",
@@ -89,7 +107,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Members and teams
   "invitations.manage": {
     area: "members",
     label: "Invite people",
@@ -131,7 +148,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Permissions
   "permissions.view": {
     area: "access",
     label: "View permissions",
@@ -159,7 +175,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Sharing
   "sharing.manage_all": {
     area: "sharing",
     label: "Manage everything shared",
@@ -173,7 +188,6 @@ export const PERMISSIONS = {
     defaultOn: ADMIN,
   },
 
-  // Security and sign-in
   "sso.view": {
     area: "security",
     label: "View single sign-on",
@@ -222,20 +236,7 @@ export const PERMISSIONS = {
     defaultOn: ADMIN,
     sensitive: true,
   },
-  "egress_diagnostics.view": {
-    area: "security",
-    label: "View network diagnostics",
-    defaultOn: ADMIN,
-  },
-  "egress_diagnostics.manage": {
-    area: "security",
-    label: "Run network diagnostics",
-    description: "Configure and run outbound network diagnostics.",
-    defaultOn: OWNER_ONLY,
-    sensitive: true,
-  },
 
-  // Desktop app
   "desktop_policies.view": {
     area: "desktop",
     label: "View desktop policies",
@@ -249,7 +250,20 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Deployments
+  "prompts.view": {
+    area: "desktop",
+    label: "View prompts",
+    description: "See the system prompts that steer members' agents, for everyone and per team.",
+    defaultOn: ADMIN,
+  },
+  "prompts.manage": {
+    area: "desktop",
+    label: "Manage prompts",
+    description: "Write, change and remove the system prompts that steer members' agents, for everyone and per team.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+
   "deployments.view": {
     area: "deployments",
     label: "View deployments",
@@ -264,28 +278,33 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Billing
   "billing.view": {
     area: "billing",
     label: "View billing",
-    defaultOn: ADMIN,
+    defaultOn: ADMIN_AND_BILLING_MANAGER,
   },
   "billing.manage": {
     area: "billing",
     label: "Start a subscription",
     description: "Start paid billing in checkout and refresh its status afterwards.",
-    defaultOn: ADMIN,
+    defaultOn: ADMIN_AND_BILLING_MANAGER,
     sensitive: true,
   },
   "billing_portal.use": {
     area: "billing",
     label: "Open the billing portal",
     description: "Change payment details, see invoices and change or cancel the subscription.",
-    defaultOn: OWNER_ONLY,
+    defaultOn: BILLING_MANAGER_ONLY,
+    sensitive: true,
+  },
+  "billing_invoices.view": {
+    area: "billing",
+    label: "View invoices",
+    description: "See and download the organization's invoices. Does not open the billing portal or change payment details.",
+    defaultOn: ADMIN_AND_BILLING_MANAGER,
     sensitive: true,
   },
 
-  // Models and providers
   "inference.view": {
     area: "models",
     label: "View OpenWork Models settings",
@@ -345,7 +364,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // AI Gateway
   "gateway_providers.view": {
     area: "gateway",
     label: "View Gateway providers",
@@ -362,7 +380,7 @@ export const PERMISSIONS = {
   "gateway_usage.view": {
     area: "gateway",
     label: "View Gateway usage",
-    defaultOn: ADMIN,
+    defaultOn: ADMIN_AND_BILLING_MANAGER,
   },
   "gateway_limits.view": {
     area: "gateway",
@@ -377,7 +395,6 @@ export const PERMISSIONS = {
     defaultOn: ADMIN,
   },
 
-  // Connections
   "connections.view": {
     area: "connections",
     label: "View all connections",
@@ -424,7 +441,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Plugins and marketplaces
   "marketplaces.manage": {
     area: "library",
     label: "Create and remove marketplaces",
@@ -464,18 +480,40 @@ export function getPermissionDefinition(key: PermissionKey): PermissionDefinitio
   return PERMISSIONS[key]
 }
 
-export function permissionDefaultKeys(set: PermissionDefaultSetKey): PermissionKey[] {
-  return PERMISSION_KEYS.filter((key) => getPermissionDefinition(key).defaultOn.includes(set))
+/**
+ * Whether a catalog entry starts on in a default set: always for Super admin
+ * (it holds every key, including owner-only ones, like the owner), otherwise
+ * when its `defaultOn` names the set. Seeding, reconciliation, code defaults
+ * and the "restore a shipped default" edit rule all read this.
+ */
+export function isPermissionDefaultOn(definition: Pick<PermissionDefinition, "defaultOn">, set: PermissionDefaultSetKey): boolean {
+  return set === "super-admin" || definition.defaultOn.includes(set)
 }
+
+export function permissionDefaultKeys(set: PermissionDefaultSetKey): PermissionKey[] {
+  return PERMISSION_KEYS.filter((key) => isPermissionDefaultOn(getPermissionDefinition(key), set))
+}
+
+/**
+ * What the built-in Billing manager role starts with: see the plan, seats and
+ * usage, see and download invoices, open the billing portal (payment method,
+ * billing details, change or cancel the subscription) and start a
+ * subscription. Nothing else: no members, teams, permissions, connections,
+ * plugins, models, security or organization settings. Deleting the
+ * organization and transferring ownership stay owner-only and are not catalog
+ * keys at all.
+ */
+export const BILLING_MANAGER_PERMISSION_KEYS: readonly PermissionKey[] = permissionDefaultKeys("billing-manager")
 
 export function isPermissionLockedOn(key: PermissionKey, set: PermissionDefaultSetKey): boolean {
   if (set !== "admin") return false
   return getPermissionDefinition(key).lockedOn?.includes(set) ?? false
 }
 
-/** No default set includes it: only the owner holds it until someone grants it with Permissions on. */
+/** Neither Member nor Admin includes it: only the owner and the Super admin set hold it until someone grants it. */
 export function isPermissionOwnerOnlyByDefault(key: PermissionKey): boolean {
-  return getPermissionDefinition(key).defaultOn.length === 0
+  const definition = getPermissionDefinition(key)
+  return !isPermissionDefaultOn(definition, "member") && !isPermissionDefaultOn(definition, "admin")
 }
 
 export function isPermissionSensitive(key: PermissionKey): boolean {

@@ -1,66 +1,42 @@
 import { permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions"
 import type { MemberPermissions } from "./effective.js"
 
-/**
- * Who may assign the organization admin role (docs/permissions/overview.md,
- * section 9). Pure, with no relative runtime imports, so plain `node --test`
- * can load it. team-grants.ts reads the roles and the Admin default set and
- * calls in.
- *
- * With the Permissions feature on (the owner bypasses all of these):
- * - Nobody may change their own role.
- * - Making someone an admin needs the caller to be an effective admin and to
- *   hold every key in the Admin default set (you can't grant what you don't
- *   hold). Only a member who already holds the admin role directly is exempt: a direct admin role outlives removal from
- *   an Admin team (e.g. by SCIM), so making a team-granted admin a direct
- *   admin still grants something durable and needs the full check.
- * - Changing a direct admin's role to member needs the caller to be an
- *   effective admin, so a team-granted `members.update` can't demote admins.
- *
- * With the feature off only the owner holds `members.update` (it was
- * super-admin only before Permissions), so these rules are skipped and the
- * owner decides every role change.
- */
+export type RoleAssignmentCaller = Pick<MemberPermissions, "isOwner" | "isSuperAdmin" | "isAdmin" | "has">
 
-export type RoleAssignmentCaller = Pick<MemberPermissions, "featureEnabled" | "isOwner" | "isAdmin" | "has">
+export function hasOwnerAuthority(held: Pick<MemberPermissions, "isOwner" | "isSuperAdmin">): boolean {
+  return held.isOwner || held.isSuperAdmin
+}
 
-/** The member whose role changes. Null for a new invitation. */
 export type RoleAssignmentTarget = {
   memberId: string
-  /** The stored `member.role` names admin (or legacy super-admin). Admin-team membership does not count. */
   isDirectAdmin: boolean
+  isDirectSuperAdmin: boolean
 }
 
 export type RoleAssignmentInput = {
   caller: RoleAssignmentCaller
   callerMemberId: string
   target: RoleAssignmentTarget | null
-  /** The requested role names admin. */
   nextIsAdmin: boolean
+  nextIsSuperAdmin: boolean
 }
 
 export type RoleAssignmentDenial = {
-  reason: "own_role" | "admin_permissions_missing" | "admin_grant_requires_admin" | "admin_role_change_requires_admin" | "permission_not_held"
+  reason: "own_role" | "admin_permissions_missing" | "admin_grant_requires_admin" | "admin_role_change_requires_admin" | "super_admin_requires_super_admin" | "permission_not_held"
   message: string
-  /** The first Admin default key the caller lacks, when that is the reason. */
   requiredPermission: PermissionKey | null
 }
 
 export const OWN_ROLE_CHANGE_MESSAGE = "You can't change your own role. Ask the owner or another admin."
+export const SUPER_ADMIN_GRANT_REQUIRES_SUPER_ADMIN_MESSAGE = "Only the owner or a super admin can make someone a super admin."
+export const SUPER_ADMIN_ROLE_CHANGE_REQUIRES_SUPER_ADMIN_MESSAGE = "Only the owner or a super admin can change a super admin's role."
+export const SUPER_ADMIN_REMOVAL_REQUIRES_SUPER_ADMIN_MESSAGE = "Only the owner or a super admin can remove a super admin from the organization."
 export const ADMIN_ROLE_GRANT_FORBIDDEN_MESSAGE = "You can't make someone an admin because admins have permissions you don't have."
 export const ADMIN_ROLE_CHANGE_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can change an admin's role."
 export const ADMIN_GRANT_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can make someone an admin."
 
-/**
- * Granting admin status (the role, an admin invitation, an Admin team, or a
- * place in one) with the feature on. Admins carry powers beyond the catalog
- * (changing Admin permissions, changing and removing admins), so the caller
- * must be the owner or an effective admin, and must also hold every Admin
- * default key (you can't grant what you don't hold). Returns "requires_admin",
- * the first missing key, or null when allowed.
- */
 export function adminGrantDenial(
-  caller: Pick<MemberPermissions, "isOwner" | "isAdmin" | "has">,
+  caller: Pick<MemberPermissions, "isOwner" | "isSuperAdmin" | "isAdmin" | "has">,
   adminDefaultKeys: Iterable<PermissionKey>,
 ): PermissionKey | "requires_admin" | null {
   if (caller.isOwner) return null
@@ -68,33 +44,36 @@ export function adminGrantDenial(
   return firstMissingPermission(caller, adminDefaultKeys)
 }
 
-/** The first key (in sorted order) the caller lacks, or null when they hold all of them. The owner holds everything. */
 export function firstMissingPermission(held: Pick<MemberPermissions, "isOwner" | "has">, keys: Iterable<PermissionKey>): PermissionKey | null {
   if (held.isOwner) return null
   const sorted = [...new Set(keys)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
   return sorted.find((key) => !held.has(key)) ?? null
 }
 
-/** Whether deciding needs the organization's Admin default keys (so callers skip the read otherwise). */
 export function roleAssignmentNeedsAdminDefaultKeys(input: RoleAssignmentInput): boolean {
-  if (input.caller.isOwner || !input.caller.featureEnabled) return false
+  if (input.caller.isOwner) return false
+  if ((input.nextIsSuperAdmin || input.target?.isDirectSuperAdmin) && !hasOwnerAuthority(input.caller)) return false
   if (input.target && input.target.memberId === input.callerMemberId) return false
   return input.nextIsAdmin && !(input.target?.isDirectAdmin ?? false)
 }
 
-/**
- * Null when the caller may assign the requested role to the target. `adminDefaultKeys`
- * is the organization's Admin default set; when omitted the Admin code
- * defaults are used.
- */
 export function decideRoleAssignment(
   input: RoleAssignmentInput & { adminDefaultKeys?: Iterable<PermissionKey> | null },
 ): RoleAssignmentDenial | null {
   const { caller, target } = input
-  if (caller.isOwner || !caller.featureEnabled) return null
+  if (caller.isOwner) return null
 
   if (target && target.memberId === input.callerMemberId) {
     return { reason: "own_role", message: OWN_ROLE_CHANGE_MESSAGE, requiredPermission: null }
+  }
+
+  if (!hasOwnerAuthority(caller)) {
+    if (input.nextIsSuperAdmin && !(target?.isDirectSuperAdmin ?? false)) {
+      return { reason: "super_admin_requires_super_admin", message: SUPER_ADMIN_GRANT_REQUIRES_SUPER_ADMIN_MESSAGE, requiredPermission: null }
+    }
+    if (target?.isDirectSuperAdmin && !input.nextIsSuperAdmin) {
+      return { reason: "super_admin_requires_super_admin", message: SUPER_ADMIN_ROLE_CHANGE_REQUIRES_SUPER_ADMIN_MESSAGE, requiredPermission: null }
+    }
   }
 
   if (input.nextIsAdmin && !(target?.isDirectAdmin ?? false)) {
@@ -112,13 +91,6 @@ export function decideRoleAssignment(
   return null
 }
 
-/**
- * The permission a route required, re-checked inside its write transaction
- * against the caller's permissions resolved there. A route that passes no
- * `requiredPermission` (invitation cancellation, SCIM deprovisioning) has its
- * own authorization and is not checked here; a required permission with no
- * caller fails closed. Null means allowed.
- */
 export function decideRequiredPermission(input: {
   actor: Pick<MemberPermissions, "has"> | null
   requiredPermission: PermissionKey | undefined
@@ -130,53 +102,46 @@ export function decideRequiredPermission(input: {
 
 export const ADMIN_REMOVAL_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can remove an admin from the organization."
 
-/**
- * Removing an admin: someone who holds the admin role directly, or is an
- * effective admin through an Admin team (authoritative membership, the same
- * rule permission resolution uses). With the Permissions feature on,
- * `members.delete` and `teams.manage_admin` can be granted to non-admins
- * through team sets, so removing an admin also needs the actor to be the
- * owner or an effective admin (the same rule as demoting one).
- * Pending-invitation placeholders hold no access yet and stay governed by the
- * invitation rules. With the feature off only admins hold `members.delete`,
- * so nothing changes. Null means allowed.
- */
 export function decideMemberRemoval(input: {
-  actor: Pick<MemberPermissions, "featureEnabled" | "isOwner" | "isAdmin">
+  actor: Pick<MemberPermissions, "isOwner" | "isSuperAdmin" | "isAdmin">
+  targetIsDirectSuperAdmin?: boolean
   targetIsDirectAdmin: boolean
-  /** The target is a member of an Admin team through a membership that carries authority. */
   targetIsAdminViaTeam: boolean
   targetIsPendingInvitation: boolean
-}): { reason: "admin_removal_requires_admin"; message: string } | null {
-  if (!input.actor.featureEnabled || input.actor.isOwner || input.actor.isAdmin) return null
+}): { reason: "admin_removal_requires_admin" | "super_admin_removal_requires_super_admin"; message: string } | null {
+  if (hasOwnerAuthority(input.actor)) return null
+  if (input.targetIsDirectSuperAdmin && !input.targetIsPendingInvitation) {
+    return { reason: "super_admin_removal_requires_super_admin", message: SUPER_ADMIN_REMOVAL_REQUIRES_SUPER_ADMIN_MESSAGE }
+  }
+  if (input.actor.isAdmin) return null
   if (!(input.targetIsDirectAdmin || input.targetIsAdminViaTeam) || input.targetIsPendingInvitation) return null
   return { reason: "admin_removal_requires_admin", message: ADMIN_REMOVAL_REQUIRES_ADMIN_MESSAGE }
+}
+
+export const SCIM_SUPER_ADMIN_REMOVAL_MESSAGE = "SCIM can remove a super admin only when the SCIM connection was set up by the owner or a super admin. Ask the owner to remove them, or to set up SCIM again."
+
+export function decideActorlessSuperAdminRemoval(input: {
+  targetIsDirectSuperAdmin: boolean
+  targetIsPendingInvitation: boolean
+  authority: Pick<MemberPermissions, "isOwner" | "isSuperAdmin"> | null
+}): { reason: "scim_super_admin_removal_requires_super_admin"; message: string } | null {
+  if (!input.targetIsDirectSuperAdmin || input.targetIsPendingInvitation) return null
+  if (input.authority && hasOwnerAuthority(input.authority)) return null
+  return { reason: "scim_super_admin_removal_requires_super_admin", message: SCIM_SUPER_ADMIN_REMOVAL_MESSAGE }
 }
 
 export const ADMIN_TEAM_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can make a team an Admin team or add people to one."
 export const ADMIN_TEAM_REMOVAL_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can delete an Admin team, turn it off, or remove people from it."
 
-/**
- * Any change to who is admin through an Admin team. Membership of an Admin
- * team makes someone an effective admin, which carries powers beyond the
- * catalog (changing Admin permissions, changing and removing admins). With the
- * Permissions feature on, `teams.manage_admin` can be granted to non-admins
- * through team sets, so both granting admin status (making a team an Admin
- * team, adding people to one) and taking it away (turning an Admin team off,
- * removing people from one, deleting one) also need the actor to be the owner
- * or an effective admin, the same as changing or removing an admin directly.
- * SCIM writes Admin-team membership through scim-groups.ts, not this rule.
- * With the feature off nothing changes. Null means allowed.
- */
 export function decideAdminTeamChange(input: {
-  actor: Pick<MemberPermissions, "featureEnabled" | "isOwner" | "isAdmin">
+  actor: Pick<MemberPermissions, "isOwner" | "isSuperAdmin" | "isAdmin">
   makesAdminTeam?: boolean
   addsMembersToAdminTeam?: boolean
   unmakesAdminTeam?: boolean
   removesMembersFromAdminTeam?: boolean
   deletesAdminTeam?: boolean
 }): { reason: "admin_team_requires_admin"; message: string } | null {
-  if (!input.actor.featureEnabled || input.actor.isOwner || input.actor.isAdmin) return null
+  if (hasOwnerAuthority(input.actor) || input.actor.isAdmin) return null
   if (input.makesAdminTeam || input.addsMembersToAdminTeam) return { reason: "admin_team_requires_admin", message: ADMIN_TEAM_REQUIRES_ADMIN_MESSAGE }
   if (input.unmakesAdminTeam || input.removesMembersFromAdminTeam || input.deletesAdminTeam) {
     return { reason: "admin_team_requires_admin", message: ADMIN_TEAM_REMOVAL_REQUIRES_ADMIN_MESSAGE }

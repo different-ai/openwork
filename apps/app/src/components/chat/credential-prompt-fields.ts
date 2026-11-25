@@ -4,12 +4,10 @@ import type { CredentialPromptTarget } from "@openwork/types/den/credential-prom
 export type PromptField = {
   id: string
   label: string
-  /** identifier: not secret (an access key ID); secret: masked; json: a pasted key file, masked. */
   kind: "identifier" | "secret" | "json"
   optional?: boolean
 }
 
-/** The fields the host draws for a target. Fixed per kind, never taken from a tool result. */
 export function promptFields(target: CredentialPromptTarget): PromptField[] {
   if (target.type !== "gateway_provider_credential") return [{ id: "apiKey", label: "API key", kind: "secret" }]
   if (target.credentialKind === "aws_keys") {
@@ -20,11 +18,9 @@ export function promptFields(target: CredentialPromptTarget): PromptField[] {
     ]
   }
   if (target.credentialKind === "gcp_service_account") return [{ id: "serviceAccount", label: "Service account key (JSON)", kind: "json" }]
-  // One key per variable the provider reads; at least one is needed.
   return (target.envNames ?? []).map((name) => ({ id: name, label: name, kind: "secret", optional: true }))
 }
 
-/** Plain, value-free direction when what was entered can't be right. */
 export function promptFieldsProblem(target: CredentialPromptTarget, values: Record<string, string>): string | null {
   const fields = promptFields(target)
   if (target.type === "gateway_provider_credential" && target.credentialKind === "api_key_map") {
@@ -48,7 +44,6 @@ export type GatewayCredentialBody =
   | { credential: { kind: "aws_keys" | "gcp_service_account"; secret: string } }
   | { apiKeys: Record<string, string> }
 
-/** The credential-set PATCH body for a structured target, in the shape the dashboard sends. */
 export function gatewayCredentialBody(target: Extract<CredentialPromptTarget, { type: "gateway_provider_credential" }>, values: Record<string, string>): GatewayCredentialBody {
   if (target.credentialKind === "aws_keys") {
     return { credential: { kind: "aws_keys", secret: JSON.stringify({

@@ -1,5 +1,7 @@
-import { readFile } from "node:fs/promises";
-import { expect, test } from "vitest";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect, onTestFinished, test } from "vitest";
 import {
   checkContrast,
   checkLaneDrift,
@@ -11,7 +13,10 @@ import {
   loadDesignRubric,
   parseCritique,
 } from "./index.ts";
-import type { LayoutBox, LayoutSnapshot } from "./layout.ts";
+import type { AskVision } from "./critique.ts";
+import { layoutFileName, type LayoutBox, type LayoutSnapshot } from "./layout.ts";
+import { DESIGN_REVIEW_FILE, parseDesignReviewFile } from "./notes.ts";
+import { reviewTestRunDesign } from "./review.ts";
 
 function box(text: string, x: number, y: number, width: number, extra: Partial<LayoutBox> = {}): LayoutBox {
   return {
@@ -151,6 +156,173 @@ test("hostile colours and model replies are parsed in linear time", () => {
   expect(() => parseCritique(`\`\`\`${"\t".repeat(50_000)}`)).toThrow("Design review response was not valid JSON");
   expect(parseCritique("```json\n{\"findings\":[]}\n```")).toEqual([]);
   expect(performance.now() - started).toBeLessThan(1_000);
+});
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => { throw new Error("Promise not initialized"); };
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function reviewFixture(count: number) {
+  const directory = await mkdtemp(join(tmpdir(), "design-review-concurrency-"));
+  onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const artifacts = Array.from({ length: count }, (_, index) => ({
+    fileName: `${index}.png`, caption: `capture ${index}`, hash: `image-${index}`, route: `/screen/${index}`,
+  }));
+  await writeFile(join(directory, "test-run.json"), JSON.stringify({ artifacts, gitSha: "fixture", specFile: "fixture.test.ts" }));
+  for (const artifact of artifacts) {
+    const index = Number(artifact.fileName.split(".")[0]);
+    await writeFile(join(directory, artifact.fileName), String(index));
+    // A distinct measured finding on EVERY screenshot, including queued ones.
+    await writeFile(join(directory, layoutFileName(artifact.fileName)), JSON.stringify(layout([
+      box(`Faint label ${index}`, 10, 10, 100, { color: "rgb(205, 208, 214)" }),
+    ])));
+  }
+  const readReview = async () => {
+    const review = parseDesignReviewFile(JSON.parse(await readFile(join(directory, DESIGN_REVIEW_FILE), "utf8")));
+    if (!review) throw new Error("Invalid saved review");
+    return review;
+  };
+  return { directory, artifacts, readReview };
+}
+
+const testRubric = { text: "Fixture rubric", hash: "fixture" };
+
+function critiqueReply(index: number) {
+  return JSON.stringify({ findings: [
+    { rule: "S2", severity: "low", title: `Unique critique ${index}`, evidence: `Critique for capture ${index}`, where: null },
+    { rule: "OW-LIST-HEADER", severity: "medium", title: "Repeated header finding", evidence: 'Header "Shared column" repeats', where: null },
+  ] });
+}
+
+test("critiques at most three screenshots and checkpoints out-of-order completions in capture order", async () => {
+  const { directory, artifacts, readReview } = await reviewFixture(6);
+  const gates = artifacts.map(() => deferred<string>());
+  const started = artifacts.map(() => deferred<void>());
+  const calls: number[] = [];
+  let active = 0;
+  let peak = 0;
+  const ask: AskVision = async ({ png, prompt }) => {
+    const index = Number(png.toString());
+    const gate = gates[index];
+    const signal = started[index];
+    if (!gate || !signal) throw new Error("Unexpected screenshot");
+    expect(prompt).toContain(`Faint label ${index}`);
+    calls.push(index);
+    active += 1;
+    peak = Math.max(peak, active);
+    signal.resolve();
+    try { return await gate.promise; } finally { active -= 1; }
+  };
+  const running = reviewTestRunDesign(directory, { vision: { ask, model: "fixture" }, rubric: testRubric, bypassCache: true, checkpoint: true });
+  try {
+    await Promise.all(started.slice(0, 3).map((entry) => entry.promise));
+    expect(active).toBe(3);
+    expect(calls.toSorted()).toEqual([0, 1, 2]);
+    const initial = await readReview();
+    expect(Object.keys(initial.notes)).toEqual(artifacts.map((artifact) => artifact.fileName));
+    expect(initial.errors).toEqual(artifacts.map((artifact) => `${artifact.caption}: advisory critique not completed`));
+    for (const entries of Object.values(initial.notes)) expect(entries.map((entry) => entry.rule)).toEqual(["layout.contrast"]);
+
+    gates[1]?.resolve(critiqueReply(1));
+    // A worker only starts its next critique AFTER the completed one is durable.
+    await started[3]?.promise;
+    const partial = await readReview();
+    expect(Object.keys(partial.screens)).toEqual(artifacts.map((artifact) => artifact.fileName));
+    expect(Object.keys(partial.notes)).toEqual(artifacts.map((artifact) => artifact.fileName));
+    expect(partial.notes["1.png"]?.map((note) => note.rule)).toEqual(["layout.contrast", "OW-LIST-HEADER", "S2"]);
+    expect(partial.errors).toEqual([0, 2, 3, 4, 5].map((index) => `capture ${index}: advisory critique not completed`));
+    // The other five critiques remain blocked: disk already contains all layout
+    // measurements plus capture 1's finished critique if the process dies now.
+    expect(active).toBe(3);
+    gates[2]?.resolve(critiqueReply(2));
+    await started[4]?.promise;
+    gates[0]?.resolve(critiqueReply(0));
+    await started[5]?.promise;
+    // Simultaneous completions exercise the serialized atomic-save queue.
+    for (const index of [5, 4, 3]) gates[index]?.resolve(critiqueReply(index));
+    const result = await running;
+    expect(peak).toBe(3);
+    expect(active).toBe(0);
+    expect(calls.toSorted()).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(result.errors).toEqual([]);
+    expect(Object.keys(result.notes)).toEqual(artifacts.map((artifact) => artifact.fileName));
+    for (let index = 0; index < artifacts.length; index += 1) {
+      const entries = result.notes[`${index}.png`] ?? [];
+      expect(entries.filter((entry) => entry.source === "layout")).toHaveLength(1);
+      expect(entries.find((entry) => entry.rule === "S2")?.title).toBe(`Unique critique ${index}`);
+    }
+    const repeat = result.notes["0.png"]?.find((entry) => entry.rule === "OW-LIST-HEADER");
+    expect(repeat?.detail).toBe('Header "Shared column" repeats Also on 5 later screenshots.');
+    expect(Object.values(result.notes).flat().filter((entry) => entry.rule === "OW-LIST-HEADER")).toHaveLength(1);
+    expect(await readReview()).toEqual(result);
+  } finally {
+    gates.forEach((gate, index) => gate.resolve(critiqueReply(index)));
+    await running;
+  }
+});
+
+test("critique failures preserve measurements, checkpoint errors, and do not abandon later screenshots", async () => {
+  const { directory, artifacts, readReview } = await reviewFixture(6);
+  // Missing images are advisory errors too, not a reason to omit DOM checks.
+  await rm(join(directory, "4.png"));
+  const gates = artifacts.map(() => deferred<string>());
+  const started = artifacts.map(() => deferred<void>());
+  const calls: number[] = [];
+  const ask: AskVision = async ({ png }) => {
+    const index = Number(png.toString());
+    const gate = gates[index];
+    if (!gate) throw new Error("Unexpected screenshot");
+    calls.push(index);
+    started[index]?.resolve();
+    const reply = await gate.promise;
+    if (index === 1) throw new Error("provider unavailable");
+    return reply;
+  };
+  const running = reviewTestRunDesign(directory, { vision: { ask, model: "fixture" }, rubric: testRubric, bypassCache: true, checkpoint: true });
+  try {
+    await Promise.all(started.slice(0, 3).map((entry) => entry.promise));
+    gates[2]?.resolve("not JSON");
+    await started[3]?.promise;
+    const partial = await readReview();
+    expect(partial.errors[0]).toBe("capture 0: advisory critique not completed");
+    expect(partial.errors[1]).toBe("capture 1: advisory critique not completed");
+    expect(partial.errors[2]).toContain("capture 2: Design review response was not valid JSON");
+    expect(partial.notes["2.png"]?.map((note) => note.rule)).toEqual(["layout.contrast"]);
+    gates[1]?.resolve(critiqueReply(1));
+    // The same worker records the missing image before advancing to capture 5.
+    await started[5]?.promise;
+    const failed = await readReview();
+    expect(failed.errors[1]).toBe("capture 1: provider unavailable");
+    expect(failed.errors[2]).toContain("capture 2: Design review response was not valid JSON");
+    expect(failed.errors[4]).toContain("capture 4: ENOENT");
+    gates.forEach((gate, index) => gate.resolve(critiqueReply(index)));
+    const result = await running;
+    expect(result.errors).toHaveLength(3);
+    expect(result.errors[0]).toBe("capture 1: provider unavailable");
+    expect(result.errors[1]).toContain("capture 2: Design review response was not valid JSON");
+    expect(result.errors[2]).toContain("capture 4: ENOENT");
+    expect(calls.toSorted()).toEqual([0, 1, 2, 3, 5]);
+    for (const entries of Object.values(result.notes)) expect(entries.filter((entry) => entry.source === "layout")).toHaveLength(1);
+    for (const index of [0, 3, 5]) expect(result.notes[`${index}.png`]?.some((entry) => entry.rule === "S2")).toBe(true);
+    expect(await readReview()).toEqual(result);
+  } finally {
+    gates.forEach((gate, index) => gate.resolve(critiqueReply(index)));
+    await running;
+  }
+});
+
+test("layout-only and empty reviews need no critique and retain every screenshot", async () => {
+  for (const count of [0, 2]) {
+    const { directory, artifacts, readReview } = await reviewFixture(count);
+    const result = await reviewTestRunDesign(directory, { checkpoint: true });
+    expect(result.model).toBeNull();
+    expect(result.errors).toEqual([]);
+    expect(Object.keys(result.notes)).toEqual(artifacts.map((artifact) => artifact.fileName));
+    for (const entries of Object.values(result.notes)) expect(entries.map((entry) => entry.rule)).toEqual(["layout.contrast"]);
+    expect(await readReview()).toEqual(result);
+  }
 });
 
 test("the committed rubric names every plugin skill it packs", async () => {

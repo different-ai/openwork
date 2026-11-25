@@ -43,7 +43,6 @@ function readSyncChange(value: unknown): OpenworkDesktopCloudSyncChange | null {
   };
 }
 
-/** Read all pending changes from a persisted desktop-cloud-sync state (GET response). */
 export function readPendingCloudSyncChanges(state: OpenworkDesktopCloudSyncState): OpenworkDesktopCloudSyncChange[] {
   return Object.values(state.entries).flatMap((entry) => {
     if (!isRecord(entry) || !Array.isArray(entry.pendingChanges)) return [];
@@ -54,12 +53,6 @@ export function readPendingCloudSyncChanges(state: OpenworkDesktopCloudSyncState
   });
 }
 
-/**
- * Derive a map of installed cloud plugin id -> pending change.
- * "modified" means an update is available; "removed" means the plugin was
- * removed upstream. Stale changes (already applied locally or for plugins
- * no longer installed) are filtered out.
- */
 export function derivePendingCloudPluginChanges(input: {
   changes: OpenworkDesktopCloudSyncChange[];
   installedPlugins: Record<string, InstalledCloudPluginLike>;

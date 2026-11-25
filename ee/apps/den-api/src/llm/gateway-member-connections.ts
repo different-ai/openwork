@@ -5,7 +5,7 @@ import { db } from "../db.js"
 import { GatewayWriteError, type GatewayMemberId, type GatewayProvider } from "./gateway-matrix.js"
 import { gatewayConfigurationError } from "./inference-provider-config.js"
 import { GOOGLE_OAUTH_MAX_EXPIRY_SECONDS, googleBearerTokenSchema } from "./inference-provider-google-oauth.js"
-import { gatewayMemberSignInMethod, memberSignInCredentialKind, memberSignInCredentialUsable } from "./gateway-member-sign-in.js"
+import { memberSignInCredentialKind, memberSignInCredentialUsable, providerMemberSignInMethod, providerMemberSignInScope } from "./gateway-member-sign-in.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 
 export async function gatewayMemberConnections(input: { organizationId: GatewayProvider["organization_id"]; memberId: GatewayMemberId; userId: string }): Promise<GatewayMemberConnectionsResponse> {
@@ -13,7 +13,7 @@ export async function gatewayMemberConnections(input: { organizationId: GatewayP
     const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt))).for("update")
     if (!member?.userId || member.userId !== input.userId) throw new GatewayWriteError(403, "forbidden")
     const providers = (await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, input.organizationId)))
-      .filter((provider) => gatewayMemberSignInMethod(provider.provider_id) !== null)
+      .filter((provider) => providerMemberSignInMethod(provider) !== null)
     if (!providers.length) return { connections: [] }
     const providerIds = providers.map((provider) => provider.id)
     const sets = await tx.select().from(GatewayCredentialSetTable).where(and(inArray(GatewayCredentialSetTable.gateway_provider_id, providerIds), eq(GatewayCredentialSetTable.credential_mode, "member")))
@@ -36,7 +36,7 @@ export async function gatewayMemberConnections(input: { organizationId: GatewayP
       const accessible = effectiveGatewayGrants(grants.filter((grant) => grant.gateway_provider_id === provider.id
         && groups.some((group) => group.id === grant.model_group_id && group.gateway_provider_id === provider.id)
         && sets.some((set) => set.id === grant.credential_set_id && set.gateway_provider_id === provider.id && set.status === "active")), input.memberId, teams.map((team) => team.id))
-      const method = gatewayMemberSignInMethod(provider.provider_id)
+      const method = providerMemberSignInMethod(provider)
       if (!method) continue
       for (const set of sets.filter((set) => set.gateway_provider_id === provider.id)) {
         const credential = credentials.find((row) => row.credential_set_id === set.id && row.gateway_provider_id === provider.id && row.kind === memberSignInCredentialKind(method))
@@ -54,7 +54,7 @@ export async function gatewayMemberConnections(input: { organizationId: GatewayP
           && (parsed.token.tokenType === undefined || /^Bearer$/i.test(parsed.token.tokenType))
           && typeof expiry === "number" && expiry > 0 && expiry <= now + GOOGLE_OAUTH_MAX_EXPIRY_SECONDS * 1000)
         const ready = !configurationRequired && hasAccess && credential?.status === "active" && parsed !== null && googleTokenValid
-          && memberSignInCredentialUsable(method, set, credential, parsed, now)
+          && memberSignInCredentialUsable(method, set, credential, parsed, now, providerMemberSignInScope(provider))
           && !gatewayConfigurationError(provider.provider_config, provider.settings)
         const identity = parsed?.kind === "oauth_google" ? { revision: parsed.token.googleIdentity?.authorizationRevision ?? null, account: parsed.token.googleIdentity?.emailVerified === true ? parsed.token.googleIdentity.email : null }
           : parsed?.kind === "oauth_azure" ? { revision: parsed.token.microsoftIdentity?.authorizationRevision ?? null, account: parsed.token.microsoftIdentity?.userName ?? null }

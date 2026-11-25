@@ -3,12 +3,6 @@
 import { useEffect, useState } from "react"
 import { codeToHtml } from "shiki"
 
-/**
- * One-line shell command with real syntax highlighting instead of
- * monochrome blue. Highlighting is async (Shiki), so the plain command
- * renders first and upgrades in place; results are cached so repeated
- * commands and re-renders never flash.
- */
 const highlightCache = new Map<string, string>()
 
 type ShellCommandTextProps = {
@@ -36,7 +30,6 @@ export function ShellCommandText({ command, className }: ShellCommandTextProps) 
         if (!cancelled) setHtml(highlighted)
       })
       .catch(() => {
-        // Highlighting is progressive enhancement; the plain text stays.
       })
     return () => {
       cancelled = true
@@ -51,7 +44,6 @@ export function ShellCommandText({ command, className }: ShellCommandTextProps) 
     <code
       className={className}
       data-shell-command-highlighted=""
-      // Shiki escapes the command text; only its own span markup is injected.
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )

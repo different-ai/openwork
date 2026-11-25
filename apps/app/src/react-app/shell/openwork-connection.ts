@@ -25,17 +25,6 @@ function hasUsableConnection(url: string, token: string) {
   return url.trim().length > 0 && token.trim().length > 0;
 }
 
-/**
- * Stored settings for a desktop-managed local server are snapshots of
- * ephemeral state: the server mints a fresh loopback port and tokens on every
- * (re)start. When the live desktop runtime definitively reports that the
- * server is not ready, any stored loopback connection is from a previous
- * server lifetime — resolving it would point the route at a dead port and
- * make a restart look like a broken connection instead of a transient gap.
- * Stored non-loopback URLs (remote/manual servers) stay usable as fallbacks,
- * and a failing desktop bridge (no definitive answer) keeps today's fallback
- * behavior.
- */
 export function isStaleStoredDesktopConnection(input: {
   desktopRuntime: boolean;
   desktopServerReportedNotReady: boolean;
@@ -50,14 +39,6 @@ export function isStaleStoredDesktopConnection(input: {
   );
 }
 
-/**
- * Resolve the OpenWork server connection for routes that consume the server API.
- *
- * Local desktop-hosted servers expose ephemeral loopback ports and freshly
- * minted tokens on every boot, so live runtime info is the source of truth
- * there. Stored settings remain the fallback for remote/manual server
- * connections and for desktop cases where the runtime bridge is unavailable.
- */
 export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConnection> {
   const gatewayOrigin = getOpenworkGatewayOrigin();
   if (gatewayOrigin) {
@@ -89,12 +70,9 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
           source: "desktop-runtime",
         };
       }
-      // Definitive live answer: the local server is booting/restarting and
-      // has not republished a usable connection yet.
       desktopServerReportedNotReady = true;
       staleDesktopRuntimeBaseUrl = normalizedBaseUrl;
     } catch {
-      // Fall through to stored settings for remote/manual connections.
     }
   }
 

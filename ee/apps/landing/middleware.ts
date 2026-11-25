@@ -7,11 +7,14 @@ export const config = {
   matcher: [
     "/",
     "/connect",
+    "/ai-gateway",
+    "/desktop",
     "/cloud",
     "/pricing",
     "/enterprise",
+    "/shadow-ai",
+    "/ai-governance",
     "/download",
-    "/trust",
     "/glm-5.2",
     "/alternatives/claude-cowork",
     "/alternatives/claude-cowork-3p",
@@ -31,8 +34,6 @@ export function middleware(request: NextRequest, event?: NextFetchEvent) {
   const body = agentMarkdown[pathname]
   const markdownRequested = prefersMarkdown(accept)
 
-  // Stage 1 of the AEO funnel: record which AI crawlers and live assistants fetch
-  // which pages. Browsers run the client SDK; bots don't, so count them here.
   const crawler = detectAiCrawler(request.headers.get("user-agent") ?? "")
   if (crawler && event && process.env.VERCEL_ENV === "production") {
     event.waitUntil(captureCrawlerHit(crawler, pathname, markdownRequested))
@@ -83,7 +84,6 @@ async function captureCrawlerHit(
       }),
     })
   } catch {
-    // Analytics must never affect the response.
   }
 }
 

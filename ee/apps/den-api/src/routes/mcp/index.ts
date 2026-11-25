@@ -20,21 +20,6 @@ import {
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
-/**
- * First-party MCP token exchange.
- *
- * A signed-in Den session can mint an org-scoped opaque MCP access token
- * without the browser OAuth dance. This is not a privilege escalation: the
- * caller already holds a full session token for the same user, which can do
- * strictly more than the resulting `mcp:*`-scoped token. The org is the
- * session's active organization, validated for membership and API-key scope by
- * `resolveOrganizationContextMiddleware`.
- *
- * These first-party tokens are stored as opaque grants (sha256 of the secret
- * in OAuthAccessTokenTable, org in referenceId), so `verifyOpaqueMcpToken`
- * accepts them without changing the public OAuth JWT access-token contract.
- */
-
 const mintMcpTokenSchema = z.object({
   scopes: z.array(z.enum(["mcp:read", "mcp:write"])).min(1).optional(),
 })
@@ -62,8 +47,6 @@ export function registerMcpTokenRoutes<T extends { Variables: McpRouteVariables 
   app.post(
     "/v1/mcp/token",
     describeRoute({
-      // Session-equivalent credential minting must never be exposed as an MCP
-      // tool; the Authentication tag is blocked by the MCP exposure policy.
       tags: ["Authentication"],
       security: [{ bearerAuth: [] }],
       summary: "Mint MCP access token",

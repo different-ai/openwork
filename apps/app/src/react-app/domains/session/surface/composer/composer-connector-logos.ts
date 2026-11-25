@@ -23,7 +23,6 @@ function isPublicServiceUrl(serviceUrl: string): boolean {
   }
 }
 
-/** Candidate logo URLs, best first. An empty list means callers render a generic icon. */
 export function composerConnectorLogoUrls(input: { name: string; serviceUrl?: string | null }): string[] {
   const serviceUrl = input.serviceUrl?.trim() ?? "";
   const bundled = BUNDLED_LOGOS.find((logo) => logo.match.test(input.name) || (serviceUrl && logo.match.test(serviceUrl)));

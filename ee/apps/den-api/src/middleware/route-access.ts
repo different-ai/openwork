@@ -8,6 +8,7 @@ import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { getOrganizationContextForUser } from "../orgs.js"
 import { organizationRoleValueSatisfies } from "../organization-role-hierarchy.js"
 import { checkMemberPermission } from "../permissions/check.js"
+import { organizationPrivilegedSessionMaxAgeMs } from "../privileged-session.js"
 import type { AuthContextVariables } from "../session.js"
 import { requireAdminMiddleware } from "./admin.js"
 import { requireUserMiddleware, requireUserSessionMiddleware } from "./current-user.js"
@@ -74,14 +75,6 @@ const explicitAuthGuardHandlers = new WeakSet<object>([
   cloudTransportReadRouteHandler,
 ])
 
-/**
- * Den API routes are deny-by-default: every `app.get/post/patch/delete/all/on`
- * registration must include one explicit access policy marker from this file.
- * Public routes use `publicRoute`; token, webhook, and delegated proxy routes
- * use their named markers and perform their specialized verification in the
- * handler. Common user/org/admin markers execute the shared guard middleware.
- */
-
 export function verifyOrgRole(input: { roles: readonly string[]; userContext: OrgRoleContext }) {
   if (input.roles.includes("member")) {
     return true
@@ -109,7 +102,6 @@ export function cloudTransportRoute(): typeof cloudTransportRouteHandler {
   return cloudTransportRouteHandler
 }
 
-/** Host file transport that only reads from the provider, so `mcp:read` is enough. */
 export function cloudTransportReadRoute(): typeof cloudTransportReadRouteHandler {
   return cloudTransportReadRouteHandler
 }
@@ -177,12 +169,6 @@ export function orgRoleRoute(roles: readonly string[]): MiddlewareHandler<{ Vari
 
 type RouteAccessContext = Parameters<MiddlewareHandler<{ Variables: RouteAccessVariables }>>[0]
 
-/**
- * The shared permission check behind orgPermissionRoute and
- * requireOrgPermission: resolves the caller's permissions once (sets
- * `c.var.memberPermissions`) and returns the 403 / 404 response when `key` is
- * not usable, or undefined when the request may continue.
- */
 async function enforceOrgPermission(c: RouteAccessContext, key: PermissionKey): Promise<Response | undefined> {
   const payload = c.get("organizationContext")
   if (!payload) return c.json({ error: "organization_not_found" }, 404)
@@ -191,7 +177,9 @@ async function enforceOrgPermission(c: RouteAccessContext, key: PermissionKey): 
     ?? await memberPermissionsForOrganizationContext(payload, c.get("memberTeams"))
   c.set("memberPermissions", permissions)
 
-  const check = checkMemberPermission({ apiKey: c.get("apiKey"), session: c.get("session") }, permissions, key)
+  const check = checkMemberPermission({ apiKey: c.get("apiKey"), session: c.get("session") }, permissions, key, {
+    maxAgeMs: organizationPrivilegedSessionMaxAgeMs(payload),
+  })
   if (check.ok) return undefined
   if (check.response.error === "forbidden") {
     c.header("WWW-Authenticate", INSUFFICIENT_SCOPE_CHALLENGE)
@@ -199,18 +187,6 @@ async function enforceOrgPermission(c: RouteAccessContext, key: PermissionKey): 
   return c.json(check.response, 403)
 }
 
-/**
- * Route marker for organization routes gated by one catalog permission
- * (docs/permissions/overview.md, section 7). Resolves the organization context
- * exactly like orgRoleRoute, resolves the caller's permissions once (sets
- * `c.var.memberPermissions`), then requires `key`. A sensitive key also needs
- * a recent sign-in, with the same `reauth` response as ensureOrganizationAdmin.
- *
- * Denied: 403 `{ error: "forbidden", code: "requires_admin", message,
- * retryable, action_url, requiredPermission }` with the insufficient-scope
- * challenge header. Replaces orgRoleRoute([...]) plus any unconditional
- * in-handler ensure* call on the same route.
- */
 export function orgPermissionRoute(key: PermissionKey): MiddlewareHandler<{ Variables: RouteAccessVariables }> {
   const handler: MiddlewareHandler<{ Variables: RouteAccessVariables }> = async (c, next) => {
     let permissionResponse: Response | undefined
@@ -226,13 +202,6 @@ export function orgPermissionRoute(key: PermissionKey): MiddlewareHandler<{ Vari
   return handler
 }
 
-/**
- * The permission check of orgPermissionRoute as a plain middleware (not a
- * route marker), for routes that must run another guard first, e.g.
- * `orgMemberRoute(), requireFeature("permissions"), requireOrgPermission(key)`
- * so a disabled feature answers 404 before any 403 or reauth. Same responses
- * and sensitivity rule as orgPermissionRoute. Needs the organization context.
- */
 export function requireOrgPermission(key: PermissionKey): MiddlewareHandler<{ Variables: RouteAccessVariables }> {
   return async (c, next) => {
     const response = await enforceOrgPermission(c, key)

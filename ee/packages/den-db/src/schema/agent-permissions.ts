@@ -13,7 +13,6 @@ export const AgentPermissionPolicyTable = mysqlTable(
   {
     id: denTypeIdColumn("agentPermissionPolicy", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    /** The team it applies to, or null for everyone. */
     teamId: denTypeIdColumn("team", "team_id"),
     scopeKey: varchar("scope_key", { length: 64 }).notNull(),
     updatedByOrgMemberId: denTypeIdColumn("member", "updated_by_org_member_id"),

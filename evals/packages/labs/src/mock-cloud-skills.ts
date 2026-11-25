@@ -30,7 +30,7 @@ export interface MockCloudSkill {
   body: string;
   /** Defaults to a synthetic `plugin:<...>:<...>` capability. */
   capability?: string;
-  /** Mirrors the default-off Den rollout in discovery metadata. */
+  /** Whether this skill is eligible for model discovery in its published metadata. */
   modelDiscovery?: boolean;
 }
 

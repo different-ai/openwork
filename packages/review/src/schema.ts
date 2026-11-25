@@ -33,9 +33,7 @@ export const designNoteSchema = z.object({
   detail: z.string().max(1_000),
   source: z.enum(["layout", "vision"]),
   region: z.object({ x: fraction, y: fraction, width: fraction, height: fraction }).optional(),
-  /** Where in the code: DOM hooks such as `[data-library-row="docs-helper"]`. */
   anchors: z.array(z.string().max(200)).max(3).optional(),
-  /** Class lists of the boxes involved, as grep targets. */
   classes: z.array(z.string().max(160)).max(3).optional(),
 });
 export type DesignNote = z.infer<typeof designNoteSchema>;
@@ -50,10 +48,36 @@ export const designReviewFileSchema = z.object({
   notes: z.record(z.string(), z.array(designNoteSchema)),
 });
 
+/** A region of a screenshot as fractions of its width and height. */
+export const evidenceBoxSchema = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  width: z.number().min(0).max(1),
+  height: z.number().min(0).max(1),
+});
+
+/** What differs from the previous screenshot of the same test, as the harness measured it. */
+export const screenChangeSchema = z.object({
+  since: z.string().max(200).nullable(),
+  actions: z.array(z.string().max(240)).max(20),
+  ratio: z.number().min(0).max(1),
+  boxes: z.array(evidenceBoxSchema).max(8),
+  added: z.array(z.string().max(200)).max(6),
+  addedCount: z.number().int().min(0),
+  removed: z.array(z.string().max(200)).max(6),
+  removedCount: z.number().int().min(0),
+});
+
+/** An element the test verified just before the screenshot. */
+export const evidenceFocusSchema = z.object({ label: z.string().max(120), box: evidenceBoxSchema });
+
+const step = z.string().max(500).optional();
+
 export const reviewSchema = z
   .object({
     schemaVersion: z.literal(1),
     title: z.string().min(1),
+    notice: z.string().optional(),
     gitSha: sha,
     createdAt: z.iso.datetime(),
     gaps: z.array(z.string()),
@@ -84,6 +108,7 @@ export const reviewSchema = z
         evidence.extend({
           kind: z.literal("assertion"),
           judgments: z.array(judgment).min(1),
+          step,
         }),
         evidence.extend({
           kind: z.literal("image"),
@@ -91,10 +116,15 @@ export const reviewSchema = z
           description: z.string(),
           judgments: z.array(judgment),
           checkpoint: checkpointSchema.optional(),
-          // "exact": the screen did not change while the checkpoint was captured.
           checkpointMatch: z.enum(["exact", "approximate"]).optional(),
           checkpointError: z.string().max(200).optional(),
           designNotes: z.array(designNoteSchema).max(20).optional(),
+          step,
+          size: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).optional(),
+          change: screenChangeSchema.optional(),
+          focus: z.array(evidenceFocusSchema).max(8).optional(),
+          settled: z.boolean().optional(),
+          failure: z.boolean().optional(),
         }),
       ]),
     ),
@@ -126,6 +156,7 @@ export const reviewSchema = z
   });
 
 export type ReviewReport = z.infer<typeof reviewSchema>;
+export type EvidenceBox = z.infer<typeof evidenceBoxSchema>;
 export type ReviewEvidence = ReviewReport["evidence"][number];
 
 export const docShotReceiptSchema = z.object({

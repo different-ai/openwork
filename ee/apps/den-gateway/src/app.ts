@@ -98,6 +98,7 @@ const proxyPathNamespaces = [
   "/files",
 ]
 const alwaysProxyPathPrefixes = [
+  "/cloud-computer/",
   "/opencode/",
   "/w/",
   "/runtime/",
@@ -261,8 +262,6 @@ export function shouldProxyToInstance(request: Request) {
     return true
   }
 
-  // /workspace/ is ambiguous: openwork-server owns API routes here, while the
-  // BrowserRouter SPA owns reloadable session/settings deep links under it.
   return pathname.startsWith(workspacePathPrefix) && !isDocumentNavigation(request)
 }
 
@@ -361,7 +360,6 @@ function escapeScriptJson(json: string) {
 
 type GatewayMarkerFields = {
   buildVersion?: string
-  /** Den web origin the app signs in with; the published image bakes none in. */
   denWebUrl?: string
 }
 
@@ -710,6 +708,11 @@ export function createGatewayApp(options: GatewayAppOptions = {}) {
   const config = createConfig(options)
   const cache = new Map<string, ReadyCacheEntry>()
   const app = new Hono()
+
+  app.use("*", async (c, next) => {
+    await next()
+    if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive")
+  })
 
   app.use("*", async (c, next) => {
     const startedAtMs = Date.now()

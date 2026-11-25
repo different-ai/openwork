@@ -3,12 +3,15 @@ import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationScimConnection, getOrganizationScimConnection, getOrganizationScimHealth, getScimBaseUrl, reconcileOrganizationScimDrift, rotateOrganizationScimToken } from "../../scim.js"
 import { setScimGroupMappingMode } from "../../scim-groups.js"
+import { db } from "../../db.js"
 import { hasEnabledOrganizationSsoConnection } from "../../sso.js"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
 import { scimReconciledEvent, scimTokenRotatedEvent } from "../../audit/domain/scim.js"
-import { auditChangeCapture } from "../../audit/request-capture.js"
+import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
+import { checkEntitlement } from "../../entitlements.js"
+import { enterprisePlanRequiredSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { permissionDeniedResponse, permissionFailureHeaders } from "./shared.js"
 import { PermissionRevokedError } from "../../permissions/in-transaction.js"
@@ -103,6 +106,32 @@ function serializeHealth(health: Awaited<ReturnType<typeof getOrganizationScimHe
     nextRetryAt: health.nextRetryAt?.toISOString() ?? null,
     lastSuccessfulSyncAt: health.lastSuccessfulSyncAt?.toISOString() ?? null,
   }
+}
+
+type ScimConnection = NonNullable<Awaited<ReturnType<typeof getOrganizationScimConnection>>>
+type ScimOrganizationPayload = NonNullable<OrgRouteVariables["organizationContext"]>
+
+export async function updateScimGroupMappingMode(input: {
+  payload: ScimOrganizationPayload
+  connection: ScimConnection
+  mode: "metadata_only" | "create_teams"
+  capture: AuditChangeCapture | null
+}): Promise<{ ok: true } | { ok: false; permission: PermissionRevokedError["key"] }> {
+  const { payload, capture } = input
+  let auditEventIds: string[]
+  try {
+    auditEventIds = await setScimGroupMappingMode({ provider: input.connection, mode: input.mode, actorMemberId: payload.currentMember.id }, capture)
+  } catch (error) {
+    if (!(error instanceof PermissionRevokedError)) throw error
+    return { ok: false, permission: error.key }
+  }
+  await finishLegacyAuditAction(capture, {
+    organizationId: payload.organization.id,
+    actorUserId: payload.currentMember.userId,
+    action: ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated,
+    payload: { groupMappingMode: input.mode },
+  }, auditEventIds)
+  return { ok: true }
 }
 
 export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -215,6 +244,14 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
             },
           },
         },
+        402: {
+          description: "SCIM provisioning requires an Enterprise plan.",
+          content: {
+            "application/json": {
+              schema: resolver(enterprisePlanRequiredSchema),
+            },
+          },
+        },
         409: {
           description: "An enabled SSO connection is required before creating or rotating a SCIM token.",
           content: {
@@ -236,6 +273,10 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     orgPermissionRoute("scim.manage"),
     async (c) => {
       const payload = c.get("organizationContext")
+      const entitlement = checkEntitlement(payload.organization.metadata, "scim")
+      if (!entitlement.ok) {
+        return c.json(entitlement.response, entitlement.status)
+      }
       const ssoReady = await hasEnabledOrganizationSsoConnection(payload.organization.id)
       if (!ssoReady) {
         return c.json({
@@ -248,8 +289,6 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         organizationId: payload.organization.id,
         headers: c.req.raw.headers,
       })
-      // better-auth wrote the token on its own adapter: the after-snapshot (no
-      // token, rotation marker only) is appended in a fresh transaction.
       const capture = auditChangeCapture(c)
       const auditEventIds = await appendDomainChangesAfterCommit(capture, "scim_connection.token_rotated", async () => [
         scimTokenRotatedEvent(payload.organization.id, rotated.previous, rotated.connection),
@@ -303,24 +342,14 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const input = c.req.valid("json")
-      const capture = auditChangeCapture(c)
-      let auditEventIds: string[]
-      try {
-        auditEventIds = await setScimGroupMappingMode({ provider: connection, mode: input.groupMappingMode, actorMemberId: payload.currentMember.id }, capture)
-      } catch (error) {
-        if (!(error instanceof PermissionRevokedError)) throw error
-        const denied = permissionDeniedResponse(error.key)
+      const mappingUpdated = await updateScimGroupMappingMode({ payload, connection, mode: input.groupMappingMode, capture: auditChangeCapture(c) })
+      if (!mappingUpdated.ok) {
+        const denied = permissionDeniedResponse(mappingUpdated.permission)
         return c.json(denied, 403, permissionFailureHeaders(denied))
       }
-      await finishLegacyAuditAction(capture, {
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
-        action: ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated,
-        payload: { groupMappingMode: input.groupMappingMode },
-      }, auditEventIds)
 
       const [updated, health, ssoReady] = await Promise.all([
-        getOrganizationScimConnection(payload.organization.id),
+        getOrganizationScimConnection(payload.organization.id, db.$primary),
         getOrganizationScimHealth(payload.organization.id),
         hasEnabledOrganizationSsoConnection(payload.organization.id),
       ])
@@ -382,7 +411,6 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
       const result = await reconcileOrganizationScimDrift(payload.organization.id)
-      // Repairs are individual autocommit writes; the run summary is appended after them.
       const capture = auditChangeCapture(c)
       const auditEventIds = await appendDomainChangesAfterCommit(capture, "scim_connection.reconciled", async () => [
         capture ? scimReconciledEvent(capture, await getOrganizationScimConnection(payload.organization.id), result) : null,

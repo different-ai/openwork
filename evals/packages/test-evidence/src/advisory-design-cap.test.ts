@@ -63,20 +63,3 @@ test("a worker that exits early cannot leave a model subprocess running", async 
     await rm(directory, { recursive: true, force: true });
   }
 });
-
-test("the workflow caps only advisory review and still uploads authoritative judged records afterward", async () => {
-  const workflow = await readFile(new URL("../../../../.github/workflows/pr-proof.yml", import.meta.url), "utf8");
-  const claims = workflow.slice(workflow.indexOf("      - name: Judge deferred vision claims"), workflow.indexOf("      # Advisory design review"));
-  expect(claims).toContain("node evals/scripts/judge-journeys.mjs || status=$?");
-  expect(claims).toContain('if [ "$status" -gt 2 ]; then exit "$status"; fi');
-  expect(claims).not.toContain("run-advisory");
-  expect(claims).not.toContain("continue-on-error");
-  const advisory = workflow.slice(workflow.indexOf("      - name: Review the design"), workflow.indexOf("      - name: Replace the proof records"));
-  expect(advisory).toContain("timeout-minutes: 3");
-  expect(advisory).toContain("continue-on-error: true");
-  expect(advisory).toContain("node evals/scripts/run-advisory-design-review.mjs");
-  const upload = workflow.slice(workflow.indexOf("      - name: Replace the proof records"), workflow.indexOf("  # Packaged specs"));
-  expect(upload).toContain("evals/results/test-runs/");
-  expect(upload).toContain("overwrite: true");
-  expect(upload).not.toContain("continue-on-error");
-});

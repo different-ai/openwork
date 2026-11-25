@@ -7,7 +7,6 @@ import type { MockAgentToolStep } from "@openwork/labs";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { configureProvider } from "./chat.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 import { isRecord, records } from "./library.ts";
 
 /** One permission's setting as Den's Agent permissions page saves it. */
@@ -17,8 +16,6 @@ export type AgentPermissionMember = "riley" | "morgan";
 
 type OrganizationOptions = {
   web: boolean;
-  /** A platform admin has turned agent permissions on for the organization. */
-  feature?: boolean;
   /** Each team's name and members. */
   teams?: Record<string, AgentPermissionMember[]>;
   /** Morgan is an organization admin, but not an owner. */
@@ -28,7 +25,7 @@ type OrganizationOptions = {
 /**
  * An organization Avery owns, with Riley and Morgan as members and the given
  * teams (by default Riley alone in Contractors). Nothing is set yet, as for
- * an organization that has just been given the feature.
+ * an organization that has not configured any agent permissions.
  */
 async function agentPermissionsOrganization(seed: Seed, options: OrganizationOptions) {
   const den = await seed.den({
@@ -71,8 +68,6 @@ async function agentPermissionsOrganization(seed: Seed, options: OrganizationOpt
     });
     if (!promoted.response.ok) throw new Error(`Making Morgan an admin failed: HTTP ${promoted.response.status} ${promoted.text.slice(0, 300)}`);
   }
-  const enableFeature = () => enableOrganizationCapabilities(seed, den.admin, { agentPermissions: true }, organizationId);
-  if (options.feature !== false) await enableFeature();
   const scopePath = (team?: string) => team === undefined
     ? "/v1/agent-permissions/everyone"
     : `/v1/agent-permissions/teams/${encodeURIComponent(teamIds[team] ?? team)}`;
@@ -93,7 +88,6 @@ async function agentPermissionsOrganization(seed: Seed, options: OrganizationOpt
     teamIds,
     /** The Contractors team's id, the team most journeys change. */
     teamId: teamIds.Contractors ?? "",
-    enableFeature,
     save,
     saveContractors: (settings: AgentPermissionSettings) => save(settings, "Contractors"),
     saveStatus,
@@ -172,9 +166,9 @@ export async function agentPermissionsAdminView(seed: Seed) {
   };
 }
 
-/** The owner on Contractors' Agents tab in an organization that does not have agent permissions yet. */
-export async function agentPermissionsFeatureOff(seed: Seed) {
-  const world = await agentPermissionsOrganization(seed, { web: true, feature: false });
+/** The owner on Contractors' Agents tab before any permissions are configured. */
+export async function agentPermissionsUnconfigured(seed: Seed) {
+  const world = await agentPermissionsOrganization(seed, { web: true });
   return { ...world, web: await ownerOn(seed, world, teamAgents(world.teamId), 1100) };
 }
 
@@ -259,24 +253,24 @@ function browserTabs(state: unknown): BrowserTab[] {
  * report. The model is a witness that calls the tool each prompt names.
  */
 export function agentPermissionsDesktop(seed: Seed, { place }: { place: Place }) {
-  return desktopWorld(seed, place, { feature: true });
+  return desktopWorld(seed, place, { configured: true });
 }
 
 /**
- * The same desktop setup for an organization that has not turned agent
- * permissions on: Riley's app gets no rules, so nothing about the agent, the
+ * The same desktop setup for an organization without configured agent
+ * permissions: Riley's app gets no rules, so nothing about the agent, the
  * folder's skills and MCP server, or the built-in browser changes.
  */
-export function agentPermissionsDesktopFeatureOff(seed: Seed, { place }: { place: Place }) {
-  return desktopWorld(seed, place, { feature: false });
+export function agentPermissionsDesktopUnconfigured(seed: Seed, { place }: { place: Place }) {
+  return desktopWorld(seed, place, { configured: false });
 }
 
-async function desktopWorld(seed: Seed, place: Place, { feature }: { feature: boolean }) {
+async function desktopWorld(seed: Seed, place: Place, { configured }: { configured: boolean }) {
   const stack = new AsyncDisposableStack();
   try {
     const engine = resolveEvalEngine();
-    const world = await agentPermissionsOrganization(seed, { web: true, feature });
-    if (feature) await world.saveContractors(contractorDesktopPermissions);
+    const world = await agentPermissionsOrganization(seed, { web: true });
+    if (configured) await world.saveContractors(contractorDesktopPermissions);
     // The witness model, and the MCP server the folder adds.
     const mock = (await seed.mock({ isolatedProcessEnv: true, allowUnauthenticatedMcp: true }).boot(place)).handle;
     stack.defer(() => mock.stop());
@@ -364,25 +358,34 @@ async function desktopWorld(seed: Seed, place: Place, { feature }: { feature: bo
        * does, so it boots with the Contractors rules already stored. Resolves
        * once the engine is running again, or with the reason it did not start.
        */
-      async restartEngine(): Promise<{ running: boolean; error: string | null }> {
+      async restartEngine(): Promise<{ running: boolean; error: string | null; previousPid?: number; pid?: number }> {
         if (engine === "v1") {
           const { status, body } = await localServer(app, `/workspace/${encodeURIComponent(app.workspaceId)}/engine/reload`, { method: "POST" });
           return { running: status === 200, error: status === 200 ? null : `HTTP ${status} ${JSON.stringify(body)}` };
         }
-        // Stop routing before stopping the process; start the process before routing to it.
-        const stopped = await localServer(app, "/experimental/engine-v2-preview", { method: "PUT", body: { enabled: false, chatRouting: false } });
-        if (stopped.status !== 200) return { running: false, error: `Stopping the engine failed: HTTP ${stopped.status}` };
-        const started = await localServer(app, "/experimental/engine-v2-preview", { method: "PUT", body: { enabled: true, chatRouting: true } });
-        if (started.status !== 200) return { running: false, error: `Starting the engine failed: HTTP ${started.status}` };
+        const before = await localServer(app, "/experimental/engine-v2-preview/status");
+        if (before.status !== 200 || !isRecord(before.body) || before.body.running !== true || typeof before.body.pid !== "number") {
+          return { running: false, error: `Reading the engine before restart failed: HTTP ${before.status} ${JSON.stringify(before.body)}` };
+        }
+        const previousPid = before.body.pid;
+        // Disabling v2 is a switch to v1, not a restart: adopted v2 history
+        // correctly rejects it. Use the desktop's real runtime restart instead,
+        // leaving the selected engine, history and stored policy untouched.
+        await seed.evalIn(app, browserScript(() => window.__OPENWORK_ELECTRON__.invokeDesktop("engineRestart"), []), {
+          awaitPromise: true, timeoutMs: 180_000,
+        });
         const deadline = Date.now() + 120_000;
         while (Date.now() < deadline) {
-          const { body } = await localServer(app, "/experimental/engine-v2-preview/status");
+          const { status, body } = await localServer(app, "/experimental/engine-v2-preview/status");
           const lastError = isRecord(body) && typeof body.lastError === "string" ? body.lastError : null;
-          if (isRecord(body) && body.running === true) return { running: true, error: lastError };
-          if (lastError) return { running: false, error: lastError };
+          const pid = isRecord(body) && typeof body.pid === "number" ? body.pid : undefined;
+          if (status === 200 && isRecord(body) && body.running === true && body.chatRouting === true && pid !== undefined && pid !== previousPid) {
+            return { running: true, error: lastError, previousPid, pid };
+          }
+          if (lastError) return { running: false, error: lastError, previousPid, pid };
           await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
         }
-        return { running: false, error: "The engine did not report running within 120 s" };
+        return { running: false, error: "A replacement v2 engine did not report running and routed within 120 s", previousPid };
       },
       /** The folder's local MCP server as the engine reports it: its status, or null when absent. */
       async notesServerStatus() {
@@ -411,11 +414,11 @@ async function desktopWorld(seed: Seed, place: Place, { feature }: { feature: bo
 }
 
 /**
- * The owner on Members › Teams before agent permissions are on, with Riley in
+ * The owner on Members › Teams before agent permissions are configured, with Riley in
  * Contractors and Morgan in Engineering.
  */
 export async function agentPermissionsTeamsList(seed: Seed) {
-  const world = await agentPermissionsOrganization(seed, { web: true, feature: false, teams: { Contractors: ["riley"], Engineering: ["morgan"] } });
+  const world = await agentPermissionsOrganization(seed, { web: true, teams: { Contractors: ["riley"], Engineering: ["morgan"] } });
   const web = await seed.web({
     den: world.den,
     signedInAs: world.den.admin,
@@ -426,7 +429,7 @@ export async function agentPermissionsTeamsList(seed: Seed) {
   return { ...world, web };
 }
 
-/** The owner on the dashboard, with agent permissions on and Riley in Contractors. */
+/** The owner on the dashboard, with Riley in Contractors and agent permissions available. */
 export async function agentPermissionsMoved(seed: Seed) {
   const world = await agentPermissionsOrganization(seed, { web: true });
   const web = await seed.web({
@@ -443,8 +446,8 @@ export async function agentPermissionsMoved(seed: Seed) {
 export const LONG_TEAM_NAME = "Customer Success and Implementation Partners for Europe and the Middle East";
 
 /**
- * The owner on Members › Teams with agent permissions, team roles and shared
- * roles on, and names longer than the list's lanes: Sales Team has three
+ * The owner on Members › Teams with generally available agent permissions,
+ * team roles and shared roles, and names longer than the list's lanes: Sales Team has three
  * people with long names and its own "Sales Team Permissions" role, a second
  * team has a very long name, and Engineering asks before commands.
  */
@@ -467,7 +470,6 @@ export async function teamsListLongNames(seed: Seed) {
   if (!context.response.ok || typeof organization?.id !== "string") throw new Error(`Reading the organization failed: ${context.text.slice(0, 500)}`);
   const organizationId = organization.id;
   const scope = { "x-openwork-org-id": organizationId };
-  await enableOrganizationCapabilities(seed, den.admin, { agentPermissions: true, permissions: true, teamRoles: true, sharedRoles: true }, organizationId);
   const members = isRecord(context.body) ? records(context.body.members) : [];
   const memberId = (name: string) => {
     const id = members.find((member) => isRecord(member.user) && member.user.name === name)?.id;

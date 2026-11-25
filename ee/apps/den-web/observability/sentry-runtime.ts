@@ -81,7 +81,6 @@ export function initSentryRuntime(sentry: SentrySdk, env: ObservabilityEnv = pro
       const sanitized = scrubScimProxyFailureEvent(event, hint);
       return sanitized === null ? null : {
         ...sanitized,
-        // Only deployment configuration, never inherited event/scope metadata.
         environment: config.sentryBuild.values.SENTRY_ENVIRONMENT,
         release: config.sentryBuild.values.SENTRY_RELEASE,
         dist: config.sentryBuild.values.SENTRY_DIST,
@@ -107,7 +106,6 @@ export function initSentryRuntime(sentry: SentrySdk, env: ObservabilityEnv = pro
   sentry.setAttributes?.({ service: config.serviceName });
   setStructuredLogSink({
     log: (level, message, fields) => logToSentry(sentry, level, message, fields),
-    // captureEvent is independent of tracesSampleRate; never pass the thrown error.
     captureScimProxyFailure: (fields) => {
       sentry.captureEvent(scimProxyFailureEvent(fields));
     },

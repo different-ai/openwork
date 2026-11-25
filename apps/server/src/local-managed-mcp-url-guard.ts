@@ -137,11 +137,6 @@ function validateResolvedAddresses(hostname: string, addresses: LookupAddress[])
   }
 }
 
-/**
- * Resolves and validates the address inside the socket connector's lookup
- * callback. The exact validated answer is handed to net.connect, so a later
- * DNS answer cannot replace it between validation and connection.
- */
 export function createLocalManagedMcpPublicLookup(
   resolver: ResolveAddresses = resolveAddresses,
 ): LookupFunction {
@@ -193,10 +188,6 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const guardedDispatcher = new Agent({
   connect: {
     lookup: createLocalManagedMcpPublicLookup(),
-    // Node's 250 ms family-attempt default is too aggressive for otherwise
-    // healthy dual-stack MCP providers on some macOS networks. Keep fallback
-    // enabled, but give the first family enough time to establish TLS before
-    // trying the validated alternative address.
     autoSelectFamily: true,
     autoSelectFamilyAttemptTimeout: 1_000,
   },
@@ -226,8 +217,6 @@ function redirectedRequestInit(init: RequestInit | undefined, status: number, fr
 }
 
 async function guardedTransportFetch(input: string | URL, init?: RequestInit): Promise<Response> {
-  // DOM, Bun, and Undici publish structurally equivalent Fetch API types from
-  // different declarations. Keep the conversion isolated at this transport boundary.
   const requestInit = { ...init, dispatcher: guardedDispatcher } as unknown as UndiciRequestInit;
   return await undiciFetch(input, requestInit) as unknown as Response;
 }

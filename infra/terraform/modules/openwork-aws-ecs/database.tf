@@ -1,7 +1,7 @@
 # RDS MySQL ------------------------------------------------------------------
 
 resource "random_password" "db" {
-  count = var.create_database ? 1 : 0
+  count = var.create_database && !var.write_only_secrets ? 1 : 0
 
   length  = 32
   special = false # embedded in DATABASE_URL
@@ -46,10 +46,12 @@ resource "aws_db_instance" "this" {
   engine_version    = var.database.engine_version
   instance_class    = var.database.instance_class
 
-  db_name  = "openwork_den"
-  username = "openwork"
-  password = random_password.db[0].result
-  port     = 3306
+  db_name             = "openwork_den"
+  username            = "openwork"
+  password            = var.write_only_secrets ? null : random_password.db[0].result
+  password_wo         = var.write_only_secrets ? var.secret_values_wo.database_password : null
+  password_wo_version = var.write_only_secrets ? var.secrets_version : null
+  port                = 3306
 
   allocated_storage     = var.database.allocated_storage_gb
   max_allocated_storage = var.database.max_allocated_storage
@@ -62,7 +64,7 @@ resource "aws_db_instance" "this" {
   multi_az               = var.database.multi_az
 
   backup_retention_period   = var.database.backup_retention_days
-  deletion_protection       = var.database.deletion_protection
+  deletion_protection       = var.database.deletion_protection != null ? var.database.deletion_protection : var.deletion_protection
   skip_final_snapshot       = var.database.skip_final_snapshot
   final_snapshot_identifier = var.database.skip_final_snapshot ? null : "${var.name}-den-final"
   copy_tags_to_snapshot     = true

@@ -18,15 +18,6 @@ export type RestrictionNoticeModalProps = {
   onClose: () => void;
 };
 
-/**
- * React port of the Solid `RestrictionNoticeModal`
- * (`apps/app/src/app/components/restriction-notice-modal.tsx` on dev — added
- * as part of #1505 "enforce desktop restriction policies").
- *
- * Purposefully framework-free except for the shared Button: this is
- * a thin, declarative surface driven by the cloud domain when an org gates
- * a feature (allowZenModel, allowCustomProviders, allowMultipleWorkspaces).
- */
 export function RestrictionNoticeModal(props: RestrictionNoticeModalProps) {
   return (
     <Dialog

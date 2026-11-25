@@ -8,7 +8,6 @@ import { currentLocale, t } from "@/i18n";
 import { ACTIVITY_REFRESH_EVENT } from "@/react-app/kernel/activity-types";
 import { cn } from "@/lib/utils";
 
-/** Skeleton rows keep the icon, text, time and action lanes so nothing jumps when data lands (A6). */
 export function ActivityLoading({ compact = false }: { compact?: boolean }) {
   const widths = compact ? ["w-44", "w-36", "w-48"] : ["w-58", "w-50", "w-65"];
   const details = ["w-31", "w-26", "w-37"];
@@ -37,7 +36,6 @@ function verifiedTime(verifiedAt: number, now: number) {
     : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-/** Neutral, not red: nothing the person did failed. The last known list stays below (A6). */
 export function ActivityRefreshError({ verifiedAt, now, compact = false }: { verifiedAt: number | null; now: number; compact?: boolean }) {
   const message = verifiedAt === null
     ? t("activity.refresh_failed")
@@ -55,7 +53,6 @@ export function ActivityRefreshError({ verifiedAt, now, compact = false }: { ver
   );
 }
 
-/** Says what the filter hid, in the same row lanes, with the way back as the one action (A6). */
 export function ActivityNoMatches({ kind, onShowAll }: { kind: "skill" | "plugin" | "connection"; onShowAll: () => void }) {
   const noMatches = { skill: t("activity.no_matches_skill"), plugin: t("activity.no_matches_plugin"), connection: t("activity.no_matches_connection") };
   return (
@@ -69,7 +66,6 @@ export function ActivityNoMatches({ kind, onShowAll }: { kind: "skill" | "plugin
   );
 }
 
-/** First verification found nothing shared yet: one state line and one next step (A5 first week). */
 export function ActivityNothingShared({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {
   return (
     <div data-activity-nothing-shared className={cn("flex items-center", compact ? "mx-1.5 mb-1.5 h-9 gap-2.5 px-2" : "min-h-13 gap-3 px-3")}>
@@ -81,7 +77,6 @@ export function ActivityNothingShared({ compact = false, onNavigate }: { compact
   );
 }
 
-/** No unread: say so in one line and keep the last few in view (A5). */
 export function ActivityCaughtUp() {
   return (
     <div data-activity-caught-up className="flex h-8.5 items-center gap-2.5 px-2 text-sm">

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, type FocusEventHandler, type KeyboardEventHandler, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FocusEventHandler, type KeyboardEventHandler } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import {
   MASKED_SECRET,
@@ -12,22 +12,10 @@ import {
 
 import { DenButton } from "./button";
 
-/**
- * Whether secret fields offer "Show while typing" and the saved/Replace row.
- * Off by default so every field stays a plain masked input when the
- * `secureSecretFields` rollout is off.
- */
-const DenSecretRevealContext = createContext(false);
-
-export function DenSecretRevealProvider({ enabled, children }: { enabled: boolean; children: ReactNode }) {
-  return <DenSecretRevealContext.Provider value={enabled}>{children}</DenSecretRevealContext.Provider>;
-}
-
 type DataAttributes = { [key: `data-${string}`]: string | boolean | undefined };
 
 export type DenSecretInputProps = DataAttributes & {
   value: string;
-  /** Receives the new value. Called with "" when a replacement is cancelled. */
   onChange: (value: string) => void;
   id?: string;
   name?: string;
@@ -37,9 +25,7 @@ export type DenSecretInputProps = DataAttributes & {
   required?: boolean;
   minLength?: number;
   maxLength?: number;
-  /** Applied to the field itself, like DenInput / DenTextarea. */
   className?: string;
-  /** "new-password" keeps password managers from offering a sign-in password. */
   autoComplete?: "off" | "new-password";
   onBlur?: FocusEventHandler<HTMLInputElement | HTMLTextAreaElement>;
   onKeyDown?: KeyboardEventHandler<HTMLInputElement | HTMLTextAreaElement>;
@@ -48,22 +34,11 @@ export type DenSecretInputProps = DataAttributes & {
   "aria-describedby"?: string;
   "aria-invalid"?: boolean;
   "aria-required"?: boolean;
-  /** Pasted JSON credentials (service-account keys): a masked textarea. */
   multiline?: boolean;
   rows?: number;
-  /**
-   * A value is already stored. With the rollout on, the field shows a masked
-   * row with "Replace" until the person chooses to type a new one.
-   */
   saved?: boolean;
-  /** Placeholder for a saved field when it renders as a plain input (rollout off). */
-  savedPlaceholder?: string;
-  /** Show the saved row even with the rollout off (screens that already had one). */
-  alwaysShowSaved?: boolean;
-  /** Controlled replace state; omit to let the field manage it. */
   replacing?: boolean;
   onReplacingChange?: (replacing: boolean) => void;
-  /** data-testid for the Replace button. */
   replaceTestId?: string;
 };
 
@@ -80,7 +55,6 @@ const ICON_BUTTON = [
   "outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900/20",
 ].join(" ");
 
-/** Margin utilities from the caller's field classes, so the saved row sits where the field would. */
 function marginClasses(className: string | undefined) {
   return (className ?? "").split(/\s+/).filter((token) => /^-?m[trblxy]?-/.test(token)).join(" ");
 }
@@ -89,13 +63,6 @@ function joinClasses(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-/**
- * DenSecretInput
- *
- * The one field for typing a secret in Den (API keys, client secrets, tokens,
- * service-account JSON). Never a sign-in password: no autofill or password
- * manager, excluded from analytics and session replay.
- */
 export function DenSecretInput({
   value,
   onChange,
@@ -106,14 +73,11 @@ export function DenSecretInput({
   multiline: multilineRequested = false,
   rows = 4,
   saved = false,
-  savedPlaceholder,
-  alwaysShowSaved = false,
   replacing,
   onReplacingChange,
   replaceTestId,
   ...rest
 }: DenSecretInputProps) {
-  const enabled = useContext(DenSecretRevealContext);
   const multilineSupported = useMultilineSecretSupported();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -122,13 +86,11 @@ export function DenSecretInput({
   const [internalReplacing, setInternalReplacing] = useState(false);
   const [previousSaved, setPreviousSaved] = useState(saved);
   if (previousSaved !== saved) {
-    // A fresh save returns the field to its saved row.
     setPreviousSaved(saved);
     setInternalReplacing(false);
   }
   const isReplacing = replacing ?? internalReplacing;
-  const savedRowActive = saved && (enabled || alwaysShowSaved);
-  const showSavedRow = savedRowActive && !isReplacing && value === "";
+  const showSavedRow = saved && !isReplacing && value === "";
 
   const setReplacing = (next: boolean) => {
     if (replacing === undefined) setInternalReplacing(next);
@@ -137,10 +99,9 @@ export function DenSecretInput({
 
   const inputReveal = useSecretReveal<HTMLInputElement>({ field: inputRef, hasValue: value.length > 0, disabled });
   const textareaReveal = useSecretReveal<HTMLTextAreaElement>({ field: textareaRef, hasValue: value.length > 0, disabled });
-  // Only where the browser can mask a textarea; otherwise a password input.
   const multiline = multilineSupported && multilineRequested;
   const reveal = multiline ? textareaReveal : inputReveal;
-  const revealed = enabled && reveal.revealed;
+  const revealed = reveal.revealed;
 
   useEffect(() => {
     if (showSavedRow || !focusOnShow.current) return;
@@ -168,7 +129,6 @@ export function DenSecretInput({
           size="xs"
           disabled={disabled}
           data-testid={replaceTestId}
-          // Explicit, because callers wrap the field in a <label>.
           aria-label="Replace"
           className="outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900/20"
           onClick={() => {
@@ -182,8 +142,7 @@ export function DenSecretInput({
     );
   }
 
-  const fieldPlaceholder = saved && !savedRowActive ? savedPlaceholder ?? placeholder : placeholder;
-  const showCancel = savedRowActive;
+  const showCancel = saved;
   const cancelReplace = () => {
     reveal.hide();
     onChange("");
@@ -195,15 +154,15 @@ export function DenSecretInput({
     ...SECRET_INPUT_ATTRIBUTES,
     autoComplete: autoComplete ?? SECRET_INPUT_ATTRIBUTES.autoComplete,
     value,
-    placeholder: fieldPlaceholder,
+    placeholder,
     disabled,
   };
 
-  const toggle = enabled ? (
+  const toggle = (
     <button type="button" className={ICON_BUTTON} {...reveal.toggleProps}>
       {revealed ? <EyeOff size={16} strokeWidth={1.5} aria-hidden="true" /> : <Eye size={16} strokeWidth={1.5} aria-hidden="true" />}
     </button>
-  ) : null;
+  );
 
   const field = multiline ? (
     <span className="relative block w-full min-w-0">
@@ -218,12 +177,12 @@ export function DenSecretInput({
           ...FIELD_BASE,
           "px-4 py-2.5 font-mono resize-none",
           !revealed && "[-webkit-text-security:disc]",
-          enabled && "pr-11",
+          "pr-11",
           disabled && "cursor-not-allowed opacity-60",
           className,
         )}
       />
-      {toggle ? <span className="absolute bottom-1.5 right-1.5">{toggle}</span> : null}
+      <span className="absolute bottom-1.5 right-1.5">{toggle}</span>
     </span>
   ) : (
     <span className="relative block w-full min-w-0">
@@ -237,13 +196,12 @@ export function DenSecretInput({
         className={joinClasses(
           ...FIELD_BASE,
           "h-[42px] px-4 leading-5",
-          enabled && "pr-11",
+          "pr-11",
           disabled && "cursor-not-allowed opacity-60",
           className,
         )}
       />
-      {/* Anchored to the bottom so a caller's top margin on the field keeps it centred. */}
-      {toggle ? <span className="absolute bottom-[5px] right-1.5">{toggle}</span> : null}
+      <span className="absolute bottom-[5px] right-1.5">{toggle}</span>
     </span>
   );
 

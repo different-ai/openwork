@@ -11,7 +11,7 @@ import type { SavedAppDetail } from "@openwork/types/workflows";
 
 export function getAppUpdatePrompt(app?: SavedAppDetail): string | undefined {
   if (!app?.canManage || (!isLiveGeneratedApp(app.view) && (!app.previewNotice || (app.html && app.payload && app.revision)))) return undefined;
-  return `Update my existing saved app “${app.view.title}” (artifactViewId: ${app.view.id}, configObjectId: ${app.view.configObjectId}). Read its existing source with read_artifact_view before editing. Adapt the app to the latest workflow output for this configObjectId. Preserve the existing artifactViewId and configObjectId when saving the revised draft with save_artifact_view; do not recreate the app or workflow. Show a draft preview for me to review and explicitly choose Save. Do not autoactivate the draft or change the active revision without my explicit Save.`;
+  return `Update my existing saved artifact “${app.view.title}” (artifactViewId: ${app.view.id}, configObjectId: ${app.view.configObjectId}). Read its existing source with read_artifact_view before editing. Adapt the artifact to the latest workflow output for this configObjectId. Preserve the existing artifactViewId and configObjectId when saving the revised draft with save_artifact_view; do not recreate the artifact or workflow. Show a draft preview for me to review and explicitly choose Save. Do not autoactivate the draft or change the active revision without my explicit Save.`;
 }
 
 export function AppActionsMenu({ appId, title, canManage: appCanManage, canDelete, onDeleted, onRun, onEdit, onUpdate, onRemove, busy, onOpen, onRefresh, refreshing, badge }: {

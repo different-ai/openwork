@@ -126,3 +126,79 @@ test("an org-A API key sent with org B's organization header still acts in org A
   const teamsA = await den.as(ownerA, orgA)("GET", "/v1/org")
   assert.equal(teamsA.text.includes(teamName), true, "the team belongs to the key's organization")
 })
+
+const SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
+const SCIM_PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+
+/** Org A's owner connects an identity provider and issues its SCIM token, as the dashboard does. */
+async function scimTokenForOrgA(): Promise<{ bearer: string; domain: string }> {
+  const domain = `alpha-${den.stamp}.test`
+  const saml = await den.as(ownerA, orgA)("POST", "/v1/sso/saml", {
+    issuer: `http://127.0.0.1/idp/alpha-${den.stamp}`,
+    domain,
+    entryPoint: `https://login.example.test/alpha-${den.stamp}/saml2`,
+    cert: "idp-test-signing-certificate",
+    audience: "http://127.0.0.1:8790",
+  })
+  assert.equal(saml.status, 201, summary(saml))
+  await den.arrangeSsoConnectionEnabled(orgA)
+  const issued = await den.as(ownerA, orgA)("POST", "/v1/scim/token")
+  assert.equal(issued.status, 201, summary(issued))
+  return { bearer: text(field(issued.body, "scimToken"), "SCIM token"), domain }
+}
+
+function scim(bearer: string, method: "POST" | "PATCH" | "DELETE", pathname: string, body?: unknown) {
+  return den.request(null, method, `/api/auth/scim/v2${pathname}`, {
+    headers: { authorization: `Bearer ${bearer}`, accept: "application/scim+json, application/json", "content-type": "application/scim+json" },
+    rawBody: body === undefined ? undefined : JSON.stringify(body),
+  })
+}
+
+function scimCreate(bearer: string, email: string, externalId: string) {
+  return scim(bearer, "POST", "/Users", {
+    schemas: [SCIM_USER_SCHEMA], userName: email, name: { givenName: "Ada", familyName: "Alpha" },
+    emails: [{ primary: true, value: email, type: "work" }], externalId, active: true,
+  })
+}
+
+const deactivate = { schemas: [SCIM_PATCH_SCHEMA], Operations: [{ op: "replace", value: { active: false } }] }
+
+test("an organization's SCIM token cannot delete or deactivate people who are not its users", async () => {
+  const { bearer, domain } = await scimTokenForOrgA()
+  const stranger = await den.signUp("Sam Stranger")
+
+  // Someone with no tie to org A, and a member of org B only: neither id is org A's to act on.
+  for (const userId of [stranger.userId, ownerB.userId]) {
+    const deleted = await scim(bearer, "DELETE", `/Users/${userId}`)
+    assert.equal(deleted.status, 404, summary(deleted))
+    const deactivated = await scim(bearer, "PATCH", `/Users/${userId}`, deactivate)
+    assert.equal(deactivated.status, 404, summary(deactivated))
+  }
+  assert.equal((await den.signIn(stranger.email)).status, 200, "the stranger's account still exists")
+  assert.equal((await den.signIn(ownerB.email)).status, 200, "org B's owner still exists")
+  const rosterB = await den.as(ownerB, orgB)("GET", "/v1/org")
+  assert.equal(rosterB.status, 200, summary(rosterB))
+  assert.equal(list(field(rosterB.body, "members")).some((entry) => field(entry, "user", "email") === ownerB.email), true)
+
+  // A member who joined org A by invitation loses org A, not their account.
+  const invited = await den.newMember(ownerA, orgA, "Ivy Invited")
+  const removed = await scim(bearer, "DELETE", `/Users/${invited.userId}`)
+  assert.equal(removed.status, 204, summary(removed))
+  const rosterA = await den.as(ownerA, orgA)("GET", "/v1/org")
+  assert.equal(list(field(rosterA.body, "members")).some((entry) => field(entry, "user", "email") === invited.email), false, "removed from org A")
+  assert.equal((await den.signIn(invited.email)).status, 200, "the invited person keeps their own account")
+
+  // The user the identity provider created is still deprovisioned in full, and a repeat stays quiet.
+  const email = `ada@${domain}`
+  const created = await scimCreate(bearer, email, "idp-ada")
+  assert.equal(created.status, 201, summary(created))
+  const provisionedId = text(field(created.body, "id"), "SCIM user id")
+  const deprovisioned = await scim(bearer, "DELETE", `/Users/${provisionedId}`)
+  assert.equal(deprovisioned.status, 204, summary(deprovisioned))
+  assert.equal((await scim(bearer, "DELETE", `/Users/${provisionedId}`)).status, 204, "deleting again is not an error")
+  const afterA = await den.as(ownerA, orgA)("GET", "/v1/org")
+  assert.equal(list(field(afterA.body, "members")).some((entry) => field(entry, "user", "email") === email), false)
+  const again = await scimCreate(bearer, email, "idp-ada")
+  assert.equal(again.status, 201, summary(again))
+  assert.notEqual(field(again.body, "id"), provisionedId, "the deprovisioned account was deleted, so this is a new one")
+})

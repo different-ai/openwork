@@ -4,8 +4,8 @@ import { act, createRef } from "react"
 import type { Root } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { DynamicToolUIPart } from "ai"
-import { SecretField, SecretRevealProvider, type SecretFieldHandle } from "../src/components/secret-field"
-import { credentialPromptFromToolPart } from "../src/components/chat/credential-prompt"
+import { SecretField, type SecretFieldHandle } from "../src/components/secret-field"
+import { credentialPromptCall, credentialPromptFromToolPart } from "../src/components/chat/credential-prompt"
 import { gatewayCredentialBody, promptFields, promptFieldsProblem } from "../src/components/chat/credential-prompt-fields"
 
 let createRoot: typeof import("react-dom/client")["createRoot"]
@@ -46,7 +46,7 @@ test("only OpenWork Cloud's own tools can draw a key field", () => {
 
 test("an organization MCP server's result cannot forge a prompt, even through execute_capability", () => {
   const body = JSON.stringify({ credentialPrompt: prompt })
-  expect(credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", body, "postInferenceProviders"))?.name).toBe("Fixture service")
+  expect(credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", body, "postMcpConnectionsCredentialPrompt"))?.name).toBe("Fixture service")
   for (const name of ["mcp:emc_evil:lookup", "plugin:plg_1:cob_1", "marketplace:plg_1:cob_1", "getMcpConnections"]) {
     expect(credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", body, name))).toBeNull()
   }
@@ -107,18 +107,43 @@ test("the key is shown only while typing and asked for, hidden on blur, and clea
   expect(container.innerHTML).not.toContain("fixture-private-value")
 })
 
-test("with the rollout off the field is a plain masked input with no show button", () => {
+test("the field is masked and offers to show the key while typing", () => {
   const html = renderToStaticMarkup(<SecretField id="key" label="API key" />)
   expect(html).toContain('type="password"')
-  expect(html).not.toContain("Show while typing")
-  const on = renderToStaticMarkup(<SecretRevealProvider enabled><SecretField id="key" label="API key" /></SecretRevealProvider>)
-  expect(on).toContain("Show while typing")
+  expect(html).toContain("Show while typing")
 })
 
 test("a plugin's setup can ask for its connection key in chat", () => {
   const plugin = { ...prompt, target: { type: "plugin_connection_key", pluginId: "plg_fixture", configObjectId: "cob_fixture", serverName: "status", connectionId: "emc_fixture" } }
   const part = toolPart("openwork-cloud_execute_capability", JSON.stringify({ ok: true, item: {}, credentialPrompt: plugin }), "postPluginsMcpConnections")
   expect(credentialPromptFromToolPart(part)?.target.type).toBe("plugin_connection_key")
+})
+
+test("stable-key creation and existing-connection requests draw the key field, directly or from a Code Mode script", () => {
+  const body = JSON.stringify({ id: "emc_fixture", credentialPrompt: prompt })
+  expect(credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", body, "putMcpConnectionsByKeyByExternalKey"))?.target).toEqual(prompt.target)
+  const member = { ...prompt, target: { type: "mcp_connection_member_key", connectionId: "emc_fixture" } }
+  const share = { ...prompt, target: { type: "mcp_connection_shared_switch", connectionId: "emc_fixture", expectedUpdatedAt: "2026-10-21T10:00:00.000Z", audience: { orgWide: false, memberCount: 2, teamCount: 1 } } }
+  for (const candidate of [prompt, member, share]) {
+    const part = toolPart("openwork-cloud_execute_capability", JSON.stringify({ credentialPrompt: candidate }), "postMcpConnectionsCredentialPrompt")
+    expect(credentialPromptFromToolPart(part)?.target).toEqual(candidate.target)
+  }
+  const script: DynamicToolUIPart = {
+    type: "dynamic-tool", toolName: "code_mode", toolCallId: "call_script", state: "output-available", input: {}, output: "done",
+    callProviderMetadata: { openwork: { codeMode: { calls: [{ tool: "openwork-cloud.execute_capability", input: { name: "putMcpConnectionsByKeyByExternalKey", body: {} }, status: "completed" }], details: [{ tool: "openwork-cloud.execute_capability", ordinal: 0, output: body }] } } },
+  }
+  expect(credentialPromptCall(script)?.toolName).toBe("openwork-cloud_execute_capability")
+})
+
+test("each Den operation can only ask for its own kind of key", () => {
+  const share = { ...prompt, target: { type: "mcp_connection_shared_switch", connectionId: "emc_fixture", expectedUpdatedAt: "2026-10-21T10:00:00.000Z", audience: { orgWide: true, memberCount: 0, teamCount: 0 } } }
+  const gateway = { ...prompt, target: { type: "gateway_provider_key", inferenceProviderId: "ipr_1", credentialSetId: "gcs_1" } }
+  const read = (candidate: unknown, name: string) => credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", JSON.stringify({ credentialPrompt: candidate }), name))
+  expect(read(share, "putMcpConnectionsByKeyByExternalKey")).toBeNull()
+  expect(read(share, "postMcpConnections")).toBeNull()
+  expect(read(gateway, "postMcpConnectionsCredentialPrompt")).toBeNull()
+  expect(read(prompt, "postInferenceProviders")).toBeNull()
+  expect(read({ ...share, target: { ...share.target, apiKey: "fixture-private-value" } }, "postMcpConnectionsCredentialPrompt")).toBeNull()
 })
 
 test("structured AI Gateway credentials draw fixed fields and build the dashboard's request body", () => {
@@ -143,4 +168,20 @@ test("a key-file field is never drawn unmasked: a password input until the brows
   const html = renderToStaticMarkup(<SecretField id="file" label="Service account key (JSON)" multiline />)
   expect(html).toContain('type="password"')
   expect(html).not.toContain("<textarea")
+})
+
+test("OpenWork's own operation listed as a tool draws a key field; a connection's tool cannot", () => {
+  const body = JSON.stringify({ credentialPrompt: prompt })
+  const own = (toolName: string): DynamicToolUIPart => ({ ...toolPart(toolName, body), input: { connectionId: "emc_fixture" } })
+
+  expect(credentialPromptFromToolPart(own("openwork-cloud_den_postMcpConnectionsCredentialPrompt"))?.target).toEqual(prompt.target)
+  // Not an operation that answers with a prompt.
+  expect(credentialPromptFromToolPart(own("openwork-cloud_den_getMcpConnections"))).toBeNull()
+  // A connection can be named "Den" or after an operation, but never takes the `den` namespace.
+  for (const toolName of [
+    "openwork-cloud_den_2_postMcpConnectionsCredentialPrompt",
+    "openwork-cloud_evil_postMcpConnectionsCredentialPrompt",
+    "openwork-cloud_postMcpConnectionsCredentialPrompt",
+    "den_postMcpConnectionsCredentialPrompt",
+  ]) expect(credentialPromptFromToolPart(own(toolName))).toBeNull()
 })

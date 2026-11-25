@@ -6,6 +6,7 @@ import {
   ORGANIZATION_ADMIN_ROLE,
   ORGANIZATION_MEMBER_ROLE,
   ORGANIZATION_OWNER_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
   isAssignableOrganizationRole,
   normalizeOrganizationRoleName,
   splitOrganizationRoles,
@@ -20,12 +21,6 @@ const denOrganizationStatements = {
   [SECURITY_CONFIGURATION_PERMISSION_RESOURCE]: [SECURITY_CONFIGURATION_PERMISSION_ACTION],
 } as const
 
-/**
- * Better Auth's organization plugin needs an access-control object and static
- * roles. Den never authorizes through them: every Better Auth endpoint that
- * checks them is denied (getRawBetterAuthMutationDenial) and Den routes check
- * catalog permissions instead (src/permissions).
- */
 export const denOrganizationAccess = createAccessControl(denOrganizationStatements)
 
 const denOwnerStatements = {
@@ -41,12 +36,14 @@ const denAdminStatements = {
 
 export const denOrganizationStaticRoles = {
   owner: denOrganizationAccess.newRole(denOwnerStatements),
+  "super-admin": denOrganizationAccess.newRole(denOwnerStatements),
   admin: denOrganizationAccess.newRole(denAdminStatements),
   member: denOrganizationAccess.newRole(defaultRoles.member.statements),
 } as const
 
-/** Anything that answers "does this member hold this permission", e.g. MemberPermissions. */
 export type PermissionHolder = {
+  isOwner: boolean
+  isSuperAdmin: boolean
   has(key: PermissionKey): boolean
 }
 
@@ -57,25 +54,13 @@ export type InvitationRoleValidationResult = {
   ok: false
   error: "invalid_role" | "forbidden"
   message: string
-  /** Set when a missing permission is the reason. */
   requiredPermission?: PermissionKey
 }
 
-/**
- * Which role an invitation may carry, for the inviter's effective permissions.
- * Inviting needs `invitations.manage`; inviting an admin also needs
- * `members.update` and, with Permissions on, every Admin default permission.
- * `decideAdminAssignment` evaluates that rule (permissions/team-grants.ts
- * roleAssignmentDenial with no target and the admin role); it is required and
- * called whenever the normalized roles include admin, so an admin invitation
- * is never approved without the rule being evaluated. Only `member` and
- * `admin` can be assigned: owner moves by ownership transfer and custom roles
- * are removed. A legacy `super-admin` value is read as admin.
- */
 export async function validateInvitationRoleAssignment(input: {
   role: string
   permissions: PermissionHolder
-  decideAdminAssignment: () => Promise<RoleAssignmentDenial | null>
+  decideAdminAssignment: (role: typeof ORGANIZATION_ADMIN_ROLE | typeof ORGANIZATION_SUPER_ADMIN_ROLE) => Promise<RoleAssignmentDenial | null>
 }): Promise<InvitationRoleValidationResult> {
   const requestedRoles = [...new Set(splitOrganizationRoles(input.role || ORGANIZATION_MEMBER_ROLE)
     .map((role) => normalizeOrganizationRoleName(role))
@@ -101,12 +86,22 @@ export async function validateInvitationRoleAssignment(input: {
     return {
       ok: false,
       error: "invalid_role",
-      message: "Choose Member or Admin.",
+      message: "Choose Member, Admin or Super admin.",
     }
   }
 
-  if (!requestedRoles.includes(ORGANIZATION_ADMIN_ROLE)) {
+  const grantsSuperAdmin = requestedRoles.includes(ORGANIZATION_SUPER_ADMIN_ROLE)
+  if (!grantsSuperAdmin && !requestedRoles.includes(ORGANIZATION_ADMIN_ROLE)) {
     return { ok: true, role: ORGANIZATION_MEMBER_ROLE }
+  }
+  const role = grantsSuperAdmin ? ORGANIZATION_SUPER_ADMIN_ROLE : ORGANIZATION_ADMIN_ROLE
+
+  if (grantsSuperAdmin && !input.permissions.isOwner && !input.permissions.isSuperAdmin) {
+    return {
+      ok: false,
+      error: "forbidden",
+      message: "Only the owner or a super admin can invite someone as a super admin.",
+    }
   }
 
   if (!input.permissions.has("members.update")) {
@@ -117,7 +112,7 @@ export async function validateInvitationRoleAssignment(input: {
     }
   }
 
-  const adminAssignmentDenial = await input.decideAdminAssignment()
+  const adminAssignmentDenial = await input.decideAdminAssignment(role)
   if (adminAssignmentDenial) {
     return {
       ok: false,
@@ -127,5 +122,5 @@ export async function validateInvitationRoleAssignment(input: {
     }
   }
 
-  return { ok: true, role: ORGANIZATION_ADMIN_ROLE }
+  return { ok: true, role }
 }

@@ -1,10 +1,5 @@
 import type { DownloadCardInstallers } from "@openwork/ui/react";
 
-// Stable, versionless download URLs for agents and scripts:
-//   https://openworklabs.com/download/<platform>
-// Release asset names include the version (openwork-mac-arm64-0.18.54.dmg), so
-// a literal GitHub URL goes stale every release. These slugs redirect to the
-// current public installer resolved by getGithubData().
 export const downloadPlatforms = {
   "mac-arm64": { label: "macOS (Apple Silicon) .dmg", pick: (i: DownloadCardInstallers) => i.macos.appleSilicon },
   "mac-x64": { label: "macOS (Intel) .dmg", pick: (i: DownloadCardInstallers) => i.macos.intel },

@@ -6,17 +6,13 @@ export type DenAuthDeepLink = {
 };
 
 export type ConnectDeepLink = {
-  /** The full deep link, relayed verbatim to the main process for verification. */
   rawUrl: string;
   key: string;
 };
 
-/** `openwork://chat?prompt=…&connector=…` — open a new chat with a seeded composer. */
 export type ChatDeepLink = {
   prompt: string;
-  /** Connector the prompt is about (rendered as a chip ahead of the prompt). */
   connector: string | null;
-  /** Dedupe key so a replayed queue never seeds the same chat twice. */
   key: string;
 };
 
@@ -72,8 +68,6 @@ export function parseConnectDeepLink(rawUrl: string): ConnectDeepLink | null {
     return null;
   }
 
-  // Unlike sibling parsers, organization connect credentials only ride the
-  // dedicated desktop scheme, never ordinary web URLs.
   const protocol = url.protocol.toLowerCase();
   if (protocol !== "openwork:" && protocol !== "openwork-dev:") {
     return null;
@@ -107,8 +101,6 @@ export function parseChatDeepLink(rawUrl: string): ChatDeepLink | null {
     return null;
   }
 
-  // Chat seeding is a desktop handoff from Den; ordinary web URLs never
-  // pre-fill the composer.
   const protocol = url.protocol.toLowerCase();
   if (protocol !== "openwork:" && protocol !== "openwork-dev:") {
     return null;

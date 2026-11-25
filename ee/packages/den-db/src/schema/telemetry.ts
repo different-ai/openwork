@@ -8,15 +8,24 @@ import { denTypeIdColumn } from "../columns"
  * type strings are a wire contract with the desktop app and workers.
  */
 export const TelemetryEventType = [
-  // Layer 1 — who is using AI
   "user.active",
   "session.active",
-  // Layer 2 — how often
   "session.started",
   "session.ended",
   "task.started",
   "task.completed",
   "task.failed",
+  "workbot.signed_in",
+  "workbot.greeting_started",
+  "workbot.greeting_completed",
+  "workbot.greeting_failed",
+  "workbot.message_sent",
+  "workbot.turn_completed",
+  "connection.connected",
+  "activation.first_response",
+  "activation.use_skill",
+  "activation.own_provider",
+  "activation.dismissed",
 ] as const
 
 /**
@@ -27,6 +36,13 @@ export const TelemetryEventType = [
  * can only narrow by org and make the scan walk the org's whole history.
  */
 export const TELEMETRY_EVENT_ORG_WINDOW_INDEX = "telemetry_event_org_ts_window"
+
+/**
+ * Covering index for platform-wide windows (`event_timestamp >= ?` across every
+ * organization), used by the admin Control Center refresh job. Every other
+ * index leads with org or member, so those queries would otherwise scan the table.
+ */
+export const TELEMETRY_EVENT_PLATFORM_WINDOW_INDEX = "telemetry_event_ts_window"
 
 /**
  * One telemetry event, org-scoped and attributed to a member. Rows carry only
@@ -61,6 +77,13 @@ export const TelemetryEventTable = mysqlTable(
       table.session_id,
       table.source,
       table.duration_ms,
+    ),
+    index(TELEMETRY_EVENT_PLATFORM_WINDOW_INDEX).on(
+      table.event_timestamp,
+      table.event_type,
+      table.source,
+      table.member_id,
+      table.session_id,
     ),
   ],
 )

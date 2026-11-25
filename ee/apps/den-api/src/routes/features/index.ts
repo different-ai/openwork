@@ -4,21 +4,16 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { cache } from "../../cache.js"
 import { env } from "../../env.js"
+import { clientFeatures, clientFeaturesSchema } from "../../feature-response.js"
 import { publicRoute } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
 
 const publicFeaturesResponseSchema = z.object({
   version: z.literal(1),
   deployment: z.enum(["cloud", "self_hosted"]),
-  features: z.record(z.string(), z.boolean()),
+  features: clientFeaturesSchema,
 }).meta({ ref: "PublicFeatures" })
 
-/**
- * Which features are on for someone without an organization (for example a
- * desktop that is not signed in): the deployment-wide state after the kill
- * switch and operator locks. Signed-in clients read `features` from GET /v1/org,
- * which also applies their organization's overrides.
- */
 export function registerFeatureRoutes<T extends Env>(app: Hono<T>) {
   app.get(
     "/v1/features",
@@ -40,7 +35,7 @@ export function registerFeatureRoutes<T extends Env>(app: Hono<T>) {
         if (!featureAvailableOn(key, env.features.deployment)) continue
         features[key] = resolveFeature(key, { ...env.features, rollouts, overrides: {} }).enabled
       }
-      return c.json({ version: 1 as const, deployment: env.features.deployment, features })
+      return c.json({ version: 1 as const, deployment: env.features.deployment, features: clientFeatures(features) })
     },
   )
 }

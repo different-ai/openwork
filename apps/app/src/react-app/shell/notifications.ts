@@ -1,14 +1,3 @@
-// Entry points for the notification center.
-//
-// Delivery classes:
-// - notifyEvent: background/system events (cloud sync, reload receipts, …).
-//   Center entry + unread badge only — never a popup.
-// - notifyAlert: failures that need attention soon. Center entry plus one
-//   toast; bursts collapse into a single "N new notifications" summary toast
-//   instead of stacking.
-//
-// Direct feedback for user actions (e.g. "skill installed") should keep using
-// `toast` from @/components/ui/sonner and stay out of the center.
 import { toast } from "@/components/ui/sonner";
 import { t } from "@/i18n";
 import {
@@ -16,7 +5,6 @@ import {
   type NotificationInput,
 } from "@/react-app/kernel/notification-store";
 
-/** Window event that asks the notification bell to open its panel. */
 export const openNotificationCenterEvent = "openwork-open-notification-center";
 
 export function openNotificationCenter(): void {
@@ -35,8 +23,6 @@ let lastAlertAt = 0;
 let alertBurstCount = 0;
 
 type NotifyAlertOptions = {
-  /** Optional button on the immediate toast (closures are fine here; the
-   *  persistent center entry uses the serializable `action` instead). */
   toastAction?: { label: string; onClick: () => void };
 };
 

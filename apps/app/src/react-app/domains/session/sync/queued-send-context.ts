@@ -3,6 +3,7 @@ import type { ModelRef } from "@/app/types";
 import type { RejectedTurnOwner } from "./draft-store";
 
 export type QueuedSendContext = {
+  owner?: string;
   workspaceId: string;
   workspaceRoot: string;
   opencodeBaseUrl: string;
@@ -18,8 +19,6 @@ export type QueuedSendContext = {
   afterMessageId?: () => string | null;
 };
 
-// Context is registered by the mounted surface (enqueueing only happens there)
-// and consumed by the global drainer after the surface unmounts.
 const queuedSendContexts = new Map<string, QueuedSendContext>();
 const listeners = new Set<() => void>();
 

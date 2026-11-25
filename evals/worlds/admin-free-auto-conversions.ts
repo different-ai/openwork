@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { allocateFreePort } from "@openwork/cdp";
+import { invitationWitnesses } from "./org-invite.ts";
 import { freshSession, type DenSession } from "@openwork/behaviors";
 import { queryDenDatabase, type Place, type Seed } from "@openwork/env";
 import { adminFreeAutoConversionsSchema } from "@openwork/types/den/admin-free-auto";
@@ -106,6 +107,21 @@ export async function adminFreeAutoConversionsWorld(seed: Seed, { place }: { pla
       const response = await fetch(`${gatewayUrl}/api/anonymous/status`, { headers: { authorization: "Bearer public", "x-openwork-free-journey": journey } });
       return { status: response.status, body: record(await response.json()) };
     },
+    async exhaustedCheckWhileAnalyticsLocked(journey: string) {
+      const ip = createHmac("sha256", identityKey).update("ip:127.0.0.1").digest("hex");
+      const rateId = digest("free-auto-observation-rate", `${ip}:${Math.floor(Date.now() / 86_400_000)}`);
+      const rows = await sql("SELECT COUNT(*) AS total FROM anonymous_inference_rate_buckets WHERE id = ?", [rateId]);
+      if (Number(record(rows[0]).total) !== 1) throw new Error("Expected this network's guest observation bucket");
+      // Arrangement only: hold the analytics row lock for eight seconds, as a slow or contended analytics write would.
+      const lock = sql("SELECT SLEEP(8) AS held FROM anonymous_inference_rate_buckets WHERE id = ? FOR UPDATE", [rateId]);
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      const started = Date.now();
+      const response = await fetch(`${gatewayUrl}/api/anonymous/status`, { headers: { authorization: "Bearer public", "x-openwork-free-journey": journey } });
+      const body = record(await response.json());
+      const elapsedMs = Date.now() - started;
+      await lock;
+      return { status: response.status, state: body.state, elapsedMs };
+    },
     async createAccountAndReturn(journey: string) {
       const email = `conversion-new-${Date.now()}@example.test`;
       const response = await fetch(`${den.ref.apiUrl}/api/auth/sign-up/email`, { method: "POST", headers: { "content-type": "application/json", origin: den.ref.webUrl },
@@ -113,6 +129,11 @@ export async function adminFreeAutoConversionsWorld(seed: Seed, { place }: { pla
       if (!response.ok) throw new Error(`New customer signup failed (${response.status})`);
       const body = record(await response.json()); newUserId = text(record(body.user).id);
       newSession = { ...den.ref, token: text(body.token), email, password: den.admin.password };
+      const inbox = invitationWitnesses(newSession);
+      const sent = await inbox.api("/api/auth/email-otp/send-verification-otp", { method: "POST", body: JSON.stringify({ email, type: "email-verification" }) });
+      if (!sent.response.ok) throw new Error("Could not send the new customer's verification code");
+      const verified = await inbox.api("/api/auth/email-otp/verify-email", { method: "POST", body: JSON.stringify({ email, otp: await inbox.otp(email) }) });
+      if (!verified.response.ok) throw new Error("Could not verify the new customer's email");
       const created = await seed.api(newSession, "/v1/org", { method: "POST", body: JSON.stringify({ name: "New Customer Studio" }) });
       if (!created.response.ok) throw new Error("Could not create the new customer's organization");
       const context = record((await seed.api(newSession, "/v1/org")).body);

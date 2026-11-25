@@ -1,9 +1,12 @@
-/** Loaded only by the isolated DPA world, before application instrumentation. */
+/**
+ * Loaded before application instrumentation by isolated worlds (the DPA world,
+ * fake-stripe.ts): refuses non-loopback egress and, with MODELS_STRIPE_PORT,
+ * sends the Stripe SDK to a loopback fake.
+ */
 import http from "node:http";
 import https from "node:https";
 import { appendFileSync } from "node:fs";
-import { createRequire, syncBuiltinESMExports } from "node:module";
-import { fileURLToPath } from "node:url";
+import { syncBuiltinESMExports } from "node:module";
 
 function check(input) {
   const hostname = input instanceof URL ? input.hostname : input.hostname ?? input.host ?? "localhost";
@@ -31,17 +34,12 @@ syncBuiltinESMExports();
 if (process.env.MODELS_STRIPE_PORT) {
   // Redirect the SDK transport, not any Den billing function. Every response
   // still crosses HTTP and is produced by the independent provider witness.
-  const sdk = new URL("../../../../ee/apps/den-api/node_modules/stripe/", import.meta.url);
-  const esm = await import(new URL("esm/net/NodeHttpClient.js", sdk));
-  const cjs = createRequire(import.meta.url)(fileURLToPath(new URL("cjs/net/NodeHttpClient.js", sdk)));
-  for (const { NodeHttpClient } of [esm, cjs]) {
-    const makeRequest = NodeHttpClient.prototype.makeRequest;
-    NodeHttpClient.prototype.makeRequest = function (host, port, path, method, headers, body, protocol, timeout) {
-      const authorization = Object.entries(headers).find(([key]) => key.toLowerCase() === "authorization")?.[1];
-      if (host !== "api.stripe.com" || authorization !== "Bearer sk_test_models_dpa_fixture_not_real") {
-        throw new Error("DPA Stripe transport requires the synthetic credential and expected SDK host");
-      }
-      return makeRequest.call(this, "127.0.0.1", Number(process.env.MODELS_STRIPE_PORT), `/stripe${path}`, method, headers, body, "http", Math.min(timeout, 5_000));
-    };
-  }
+  // MODELS_STRIPE_KEY selects the synthetic key a world uses (fake-stripe.ts);
+  // the DPA world keeps its historical key.
+  const { redirectStripeSdk } = await import("./fake-stripe.mjs");
+  await redirectStripeSdk({
+    sdkRoot: new URL("../../../../ee/apps/den-api/node_modules/stripe/", import.meta.url),
+    port: Number(process.env.MODELS_STRIPE_PORT),
+    secretKey: process.env.MODELS_STRIPE_KEY || "sk_test_models_dpa_fixture_not_real",
+  });
 }

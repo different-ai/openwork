@@ -8,17 +8,13 @@ export type { ToolCall, ToolCallEnded, ToolCallHooks, ToolCallStarted, ToolDescr
 
 /** Resource budgets enforced independently during each CodeMode program execution. */
 export type ExecutionLimits = {
-  /** Maximum wall-clock execution time in milliseconds. No default: absent means no timeout. */
   readonly timeoutMs?: number
-  /** Maximum number of tool calls admitted by the runtime. No default: absent means unlimited. */
   readonly maxToolCalls?: number
-  /** Maximum UTF-8 bytes of model-facing output. No default: absent means no truncation. */
   readonly maxOutputBytes?: number
 }
 
 /** Controls how much of the tool catalog is inlined in agent instructions. */
 export type DiscoveryOptions = {
-  /** Approximate token budget (chars/4, default 2000) for full catalog entries. */
   readonly catalogBudget?: number
 }
 
@@ -34,18 +30,12 @@ export type ResolvedExecutionLimits = {
 
 /** Options for one CodeMode execution. */
 export type ExecuteOptions<Tools extends Record<string, unknown> = {}> = {
-  /** Source for one program in the supported JavaScript subset. */
   code: string
-  /** Plain-data values exposed as read-only variables in program scope. */
   bindings?: Record<string, DataValue>
   readonlyBindings?: boolean
-  /** Explicit tool tree exposed to the program as `tools`. */
   tools?: Tools & ToolTree<Services<Tools>>
-  /** Per-execution overrides for the default resource limits. */
   limits?: ExecutionLimits
-  /** Observes decoded tool input immediately before tool execution. */
   onToolCallStart?: (call: ToolRuntime.ToolCallStarted) => Effect.Effect<void, never, Services<Tools>>
-  /** Observes each admitted tool call as it settles, with outcome and duration. */
   onToolCallEnd?: (call: ToolRuntime.ToolCallEnded) => Effect.Effect<void, never, Services<Tools>>
 }
 
@@ -54,7 +44,6 @@ export type DataValue = Schema.Json
 
 /** Configuration shared by `CodeMode.make` and `CodeMode.execute`. */
 export type Options<Tools extends Record<string, unknown> = {}> = Omit<ExecuteOptions<Tools>, "code"> & {
-  /** Progressive-disclosure configuration for the agent-facing tool catalog. */
   readonly discovery?: DiscoveryOptions
 }
 

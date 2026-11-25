@@ -131,6 +131,8 @@ async function mirrorInstalledProductionRendererState(target: Surface): Promise<
     kind: "electron",
     hostKind: "local",
     cdpUrl,
+  }).catch((cause: unknown) => {
+    throw new Error(`Could not reach the installed production desktop at ${cdpUrl}. A packaged app opens no debug port unless asked: quit it, then start it with OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=9223 /Applications/OpenWork.app/Contents/MacOS/OpenWork.`, { cause });
   });
   const raw = await evaluateOnSurface(source, () => (({
     route: location.hash,

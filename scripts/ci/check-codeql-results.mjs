@@ -2,13 +2,62 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
+// Default setup keys, plus the advanced-setup workflow that replaced it.
+const advancedSetupAnalysisKey = ".github/workflows/codeql.yml:analyze";
+const defaultSetupAnalysisKeys = new Set([
+  "dynamic/github-code-scanning/codeql:upload",
+  "dynamic/github-code-scanning/codeql:analyze",
+  advancedSetupAnalysisKey,
+]);
+const codeqlWorkflowPaths = new Set(["dynamic/github-code-scanning/codeql", ".github/workflows/codeql.yml"]);
+
+function isCodeqlBaselineKey(key) {
+  return typeof key === "string" && (key.startsWith("dynamic/github-code-scanning/codeql:") || key === advancedSetupAnalysisKey);
+}
+
+function successfulDefaultSetupAnalysis(analysis) {
+  return analysis.tool?.name === "CodeQL" && !analysis.error &&
+    defaultSetupAnalysisKeys.has(analysis.analysis_key) &&
+    typeof analysis.category === "string" && /^\/language:[a-z][a-z-]*$/.test(analysis.category);
+}
+
+export function defaultSetupBaseline(analyses) {
+  const latest = analyses.find((analysis) => analysis.tool?.name === "CodeQL" && !analysis.error &&
+    isCodeqlBaselineKey(analysis.analysis_key));
+  if (!latest) throw new Error("No successful default-setup baseline found; inspect CodeQL on the default branch.");
+  if (!successfulDefaultSetupAnalysis(latest) || typeof latest.commit_sha !== "string" || !latest.commit_sha) {
+    throw new Error("Unsupported CodeQL default-setup baseline; inspect the latest uploaded analysis.");
+  }
+  const languages = [...new Set(analyses.filter((analysis) =>
+    successfulDefaultSetupAnalysis(analysis) && analysis.commit_sha === latest.commit_sha &&
+    analysis.analysis_key === latest.analysis_key
+  ).map((analysis) => analysis.category.slice("/language:".length)))];
+  return { commitSha: latest.commit_sha, analysisKey: latest.analysis_key, languages };
+}
+
 export function missingLanguages(languages, analyses, shas) {
   const canonical = (language) => ["javascript", "typescript"].includes(language) ? "javascript-typescript" : language;
   const expected = [...new Set(languages.map(canonical))];
   const uploaded = new Set(analyses.filter((analysis) =>
-    shas.includes(analysis.commit_sha) && analysis.tool.name === "CodeQL" && !analysis.error
+    shas.includes(analysis.commit_sha) && successfulDefaultSetupAnalysis(analysis)
   ).map((analysis) => analysis.category));
   return expected.filter((language) => !uploaded.has(`/language:${language}`));
+}
+
+/**
+ * Why a PR head's results did not match by commit. `active`: a CodeQL run is
+ * still going. `uploaded`: the checked-in workflow succeeded for this exact head;
+ * its results sit under the merge commit of that moment, which GitHub recomputes
+ * whenever dev moves, so they no longer match `merge_commit_sha`. `stale`: only
+ * the retired default setup ever ran; the next push uploads every category.
+ * `missing`: the checked-in workflow ran for this head and did not succeed.
+ */
+export function headCoverage(runs) {
+  const codeql = runs.filter((run) => codeqlWorkflowPaths.has(run.path?.split("@")[0]));
+  if (codeql.some((run) => run.status !== "completed")) return "active";
+  const advanced = codeql.filter((run) => run.path?.split("@")[0] === ".github/workflows/codeql.yml");
+  if (advanced.some((run) => run.conclusion === "success")) return "uploaded";
+  return advanced.length ? "missing" : "stale";
 }
 
 function api(path, paginate = false) {
@@ -25,17 +74,13 @@ async function main() {
   // to GITHUB_TOKEN. Use the successful baseline uploads that PRs must match.
   const repository = api(prefix);
   const baseline = api(`${prefix}/code-scanning/analyses?ref=${encodeURIComponent(`refs/heads/${repository.default_branch}`)}&tool_name=CodeQL&per_page=100`);
-  const latest = baseline.find((analysis) => !analysis.error && analysis.analysis_key === "dynamic/github-code-scanning/codeql:upload");
-  if (!latest) throw new Error("No successful default-setup baseline found; inspect CodeQL on the default branch.");
-  const languages = [...new Set(baseline.filter((analysis) =>
-    analysis.commit_sha === latest.commit_sha && !analysis.error &&
-    analysis.analysis_key === "dynamic/github-code-scanning/codeql:upload"
-  ).map((analysis) => analysis.category.replace(/^\/language:/, "")))];
+  const { languages } = defaultSetupBaseline(baseline);
   const number = process.argv[2];
   if (number && !/^\d+$/.test(number)) throw new Error("Usage: node scripts/ci/check-codeql-results.mjs [PR number]");
   const pulls = number ? [api(`${prefix}/pulls/${number}`)] : api(`${prefix}/pulls?state=open&per_page=100`, true);
   const lines = ["# CodeQL result coverage", "", `Default-branch baseline languages: ${languages.join(", ")}`, ""];
   let failures = 0;
+  let stale = 0;
   for (const pull of pulls) {
     if (pull.state !== "open" || pull.head.repo?.full_name !== repo || pull.base.ref !== repository.default_branch) continue;
     const refs = [`refs/pull/${pull.number}/head`, `refs/pull/${pull.number}/merge`];
@@ -43,18 +88,20 @@ async function main() {
     const missing = missingLanguages(languages, analyses, [pull.head.sha, pull.merge_commit_sha].filter(Boolean));
     // Only query workflow state when coverage is incomplete.
     const runs = missing.length ? api(`${prefix}/actions/runs?head_sha=${pull.head.sha}&per_page=100`, true) : [];
-    const active = runs.flatMap((page) => page.workflow_runs).some((run) =>
-      run.path === "dynamic/github-code-scanning/codeql" && run.status !== "completed"
-    );
-    if (!missing.length) {
+    const coverage = headCoverage(runs.flatMap((page) => page.workflow_runs));
+    if (!missing.length || coverage === "uploaded") {
       lines.push(`- #${pull.number} (${pull.head.sha.slice(0, 7)}): all language results uploaded.`);
-    } else if (active) {
+    } else if (coverage === "active") {
       lines.push(`- #${pull.number}: scan in progress; pending ${missing.join(", ")}.`);
+    } else if (coverage === "stale") {
+      stale++;
+      lines.push(`- #${pull.number} (${pull.head.sha.slice(0, 7)}): head predates the CodeQL workflow; the next push uploads ${missing.join(", ")}.`);
     } else {
       failures++;
       lines.push(`- #${pull.number} (${pull.head.sha.slice(0, 7)}): **missing ${missing.join(", ")}**. See docs/codeql-results.md for recovery.`);
     }
   }
+  if (stale) lines.push("", `${stale} PR head(s) were last pushed before the checked-in CodeQL workflow existed; they are listed, not failed.`);
   lines.push("", "Coverage only: existing security alerts and merge requirements still apply.");
   const report = `${lines.join("\n")}\n`;
   console.log(report);

@@ -2,12 +2,6 @@ import type { listExternalMcpTools } from "../capability-sources/external-mcp-cl
 
 type ExternalMcpTools = Awaited<ReturnType<typeof listExternalMcpTools>>
 
-/**
- * How long a tool call may trust a member's provider tool list (names, input
- * schemas and read-only labels) before listing it again. A provider that
- * drops a read-only label is noticed within this window; the call itself
- * still needs mcp:write, the member's grant and the tool policy every time.
- */
 export const EXTERNAL_TOOL_CATALOG_TTL_MS = 60_000
 export const EXTERNAL_TOOL_CATALOG_MAX_ENTRIES = 500
 
@@ -16,14 +10,11 @@ export type ExternalToolCatalogKey = {
   connectionId: string
   updatedAt: Date
   orgMembershipId: string
-  /** Changes when the connection's or member's credential is replaced or re-authorized. */
   credentialIdentity: string
 }
 
 type Entry = { expiresAt: number; tools: Promise<ExternalMcpTools> }
 
-// Only successful lists are kept, and only in this process. Concurrent calls
-// share one in-flight list.
 const entries = new Map<string, Entry>()
 
 function serialize(key: ExternalToolCatalogKey): string {
@@ -53,7 +44,6 @@ export function cachedExternalToolCatalog(
   return tools
 }
 
-/** Forget a member's list, e.g. after a call through it failed or named a tool it lacks. */
 export function forgetExternalToolCatalog(key: ExternalToolCatalogKey): void {
   entries.delete(serialize(key))
 }

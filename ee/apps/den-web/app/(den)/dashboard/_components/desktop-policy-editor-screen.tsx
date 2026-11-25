@@ -313,8 +313,6 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
           roles: isDefault ? [] : draft.roles,
         };
         if (isEditing && desktopPolicyId) {
-          // Preserve the current enabled state when saving form edits; the
-          // dedicated Enable/Disable button is the only way to flip it.
           payload.isEnabled = policy?.isEnabled ?? true;
           await updateDesktopPolicy(desktopPolicyId, payload);
         } else {

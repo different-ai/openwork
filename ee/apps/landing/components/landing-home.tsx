@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight } from "lucide-react";
+import Link from "next/link";
 
 import { LandingFaq } from "./landing-faq";
 import { LandingHeroPrompt } from "./landing-hero-prompt";
@@ -11,7 +12,7 @@ import { LpProductsShowcase } from "./lp-products-showcase";
 import { LpSectionHeader } from "./lp-primitives";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
-import { SocTypeIIBadge } from "./soc-type-ii-badge";
+import { LpTrustRow } from "./lp-trust-row";
 import { HeroDownloadButton } from "./hero-download-button";
 
 type Props = {
@@ -99,31 +100,14 @@ export function LandingHome(props: Props) {
               <div className="mt-4 flex flex-wrap items-center gap-x-1.5 gap-y-2 text-xs text-[var(--lp-muted)]">
                 <span>Free desktop app</span>
                 <span aria-hidden="true">·</span>
-                <a href="/download" className="underline-offset-4 hover:underline">macOS</a>
+                <Link href="/download" className="underline-offset-4 hover:underline">macOS</Link>
                 <span aria-hidden="true">·</span>
                 <a href={props.windowsDownloadHref} className="underline-offset-4 hover:underline">Windows</a>
                 <span aria-hidden="true">·</span>
                 <a href={props.linuxDownloadHref} className="underline-offset-4 hover:underline">Linux</a>
               </div>
 
-              <div className="mt-7 flex flex-wrap items-center gap-x-4 gap-y-4">
-                <div className="flex items-center gap-2 text-xs text-[var(--lp-muted)]">
-                <span>Backed by</span>
-                <span className="flex h-[18px] w-[18px] items-center justify-center rounded-[4px] bg-[#ff6600] text-[11px] text-white">Y</span>
-                <span className="font-medium">Combinator</span>
-                </div>
-                <a
-                  href="/trust"
-                  aria-label="SOC 2 Type II audit complete. View Trust Center"
-                  className="flex shrink-0 items-center gap-3 border-l border-[var(--lp-border)] pl-4 transition-opacity hover:opacity-80"
-                >
-                  <SocTypeIIBadge className="h-14 w-14" />
-                  <span className="flex flex-col leading-tight" aria-hidden="true">
-                    <span className="text-[13px] font-medium text-[var(--lp-ink)]">SOC 2 Type II</span>
-                    <span className="text-xs text-[var(--lp-muted)]">Audit complete</span>
-                  </span>
-                </a>
-              </div>
+              <LpTrustRow />
               </div>
             </div>
             {props.isMobileVisitor ? null : (

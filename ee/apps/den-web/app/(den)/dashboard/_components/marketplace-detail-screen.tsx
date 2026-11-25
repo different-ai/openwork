@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, MoreHorizontal, Pencil, Plug, Plus, Puzzle, Store, Trash2, Users, X } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
@@ -49,6 +49,8 @@ import {
 import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
 import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
 import { CatalogIdentityTile } from "./catalog-identity-tile";
+import { useFeatureIntro } from "../_features/feature-intros";
+import { COLLECTION_ADD_PLUGIN_PARAM } from "../_features/feature-intros/intros/collections";
 
 const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }> = {
   skill: { singular: "skill", plural: "skills" },
@@ -60,7 +62,7 @@ const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }
   lsp_server: { singular: "LSP server", plural: "LSP servers" },
   monitor: { singular: "monitor", plural: "monitors" },
   workflow: { singular: "Workflow", plural: "Workflows" },
-  app: { singular: "App", plural: "Apps" },
+  app: { singular: "Artifact", plural: "Artifacts" },
   settings: { singular: "setting", plural: "settings" },
 };
 
@@ -126,6 +128,24 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [actionsOpen]);
 
+  const pluginsIntro = useFeatureIntro(
+    "collections.plugins",
+    data ? { collectionPlugins: data.plugins.length, canAddPlugins: access.canManageAllShared, collections: null, ownCollections: null } : null,
+  );
+
+  const searchParams = useSearchParams();
+  const addPluginRequested = searchParams.get(COLLECTION_ADD_PLUGIN_PARAM) === "1";
+  useEffect(() => {
+    if (!orgContext || !addPluginRequested) return;
+    if (access.canManageAllShared) {
+      router.replace(`${getNewPluginRoute(orgSlug)}?marketplaceId=${encodeURIComponent(marketplaceId)}`);
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete(COLLECTION_ADD_PLUGIN_PARAM);
+    window.history.replaceState(null, "", url);
+  }, [orgContext, addPluginRequested, access.canManageAllShared, router, orgSlug, marketplaceId]);
+
   if (isLoading && !data) {
     return (
       <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
@@ -154,7 +174,6 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
       router.push(getMarketplacesRoute(orgSlug));
       router.refresh();
     } catch {
-      // The mutation error is rendered below the action.
     }
   }
   const tabs: readonly TabItem<MarketplaceDetailTab>[] = [
@@ -312,7 +331,9 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
                 </div>
               </div>
 
-              {plugins.length === 0 ? (
+              {plugins.length === 0 && pluginsIntro.size === "box" ? (
+                pluginsIntro.element
+              ) : plugins.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
                   <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
                     No plugins in this collection yet
@@ -418,7 +439,6 @@ function EditMarketplaceDialog({
       });
       onSaved();
     } catch {
-      // The mutation error is rendered in the dialog.
     }
   }
 
@@ -890,7 +910,6 @@ function MarketplaceConfigureSection({
 }: {
   connectError: { connectionId: string; message: string } | null;
   connectingConnectionId: string | null;
-  /** `connections.manage`: configure services and connect organization accounts. */
   canManageConnections: boolean;
   onConnect: (connectionId: string) => void;
   pollingConnectionId: string | null;
@@ -1039,10 +1058,6 @@ function MarketplacePluginRow({
   );
 }
 
-/**
- * Every plugin on Den is cloud ready, so saying so is noise. The badge only
- * appears for the states an administrator or member has to act on.
- */
 function renderCloudReadinessBadge(readiness?: MarketplacePluginCloudReadiness) {
   if (!readiness || readiness.state === "ready" || readiness.state === "desktop_only") return undefined;
 
@@ -1139,7 +1154,6 @@ export function PluginMcpSetupDialog({
       setResult(configured);
     } catch {
       setApiKey("");
-      // The mutation error is rendered below.
     }
   }
 

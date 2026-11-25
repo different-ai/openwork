@@ -91,7 +91,7 @@ function dockerRun(script, options = {}) {
     "-e",
     `DEN_API_E2E_BASE_URL=${denBaseUrl}`,
     ...(options.env ?? []),
-    "node:20-bookworm-slim",
+    "node:24.22.1-bookworm-slim",
     "bash",
     "-lc",
     script,
@@ -125,7 +125,7 @@ try {
 
   const linuxIdentity = dockerRun("node -p 'JSON.stringify({platform:process.platform,arch:process.arch,node:process.version})'")
   prove("The e2e runs inside Linux", {
-    action: "docker run node:20-bookworm-slim node -p process.platform",
+    action: "docker run node:24.22.1-bookworm-slim node -p process.platform",
     assert: "container reports platform linux",
     evidence: linuxIdentity,
   }, linuxIdentity.status === 0 && linuxIdentity.json?.platform === "linux")

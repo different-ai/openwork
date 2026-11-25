@@ -1,8 +1,9 @@
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
-// Relative so the pure grouping contract stays importable from alias-free
-// test workspaces (evals specs import this module directly).
 import { isAggregatableToolPart, type AggregateThought } from "../../lib/tool-aggregate"
+import { reasoningDurationMs } from "../../lib/text-activity"
+import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../app/types"
+import { parseLocalPathReference } from "../../react-app/domains/session/artifacts/local-path"
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -61,9 +62,6 @@ export function getMediaBadge(part: Pick<FileUIPart, "filename" | "mediaType">) 
   if (mime === PPTX_MIME) return "PPTX"
   if (mime === XLSX_MIME) return "XLSX"
 
-  // Prefer the filename extension: attachment mimes are transport details
-  // (e.g. everything text-like or binary travels as text/plain so providers
-  // accept it), while the extension reflects what the user actually attached.
   const fromExtension = extensionBadge(part.filename)
   if (fromExtension) return fromExtension
 
@@ -84,15 +82,8 @@ export function getSafeFileDownloadUrl(part: Pick<FileUIPart, "url">) {
 }
 
 export function getSafeFileRevealPath(part: Pick<FileUIPart, "url">) {
-  try {
-    const url = new URL(part.url)
-    if (url.protocol !== "file:") return null
-    const pathname = decodeURIComponent(url.pathname)
-    if (!pathname) return null
-    return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname
-  } catch {
-    return null
-  }
+  if (!/^file:\/\//i.test(part.url)) return null
+  return parseLocalPathReference(part.url)?.path ?? null
 }
 
 function getMessageOpencodeMetadata(message: UIMessage): object | null {
@@ -110,12 +101,53 @@ export function getMessageCreated(message: UIMessage): number | null {
   return typeof created === "number" ? created : null
 }
 
-/** When the assistant finished the turn (server timestamp), if known. */
 export function getMessageCompleted(message: UIMessage): number | null {
   const opencode = getMessageOpencodeMetadata(message)
   if (!opencode || !("completed" in opencode)) return null
   const completed: unknown = opencode.completed
   return typeof completed === "number" ? completed : null
+}
+
+export function getRunStartedAt(messages: UIMessage[]): number | null {
+  const newestReply = messages.findLast((message) => message.role === "assistant")
+  let startedAt: number | null = null
+  let followUp: UIMessage | null = null
+  let reply: UIMessage | null = null
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role === "assistant") {
+      if (followUp) reply ??= message
+      continue
+    }
+    if (message.role !== "user") continue
+    if (followUp && !(reply && replyUnfinishedAt(reply, getMessageCreated(followUp), reply === newestReply))) break
+    followUp = message
+    reply = null
+    startedAt = getMessageCreated(message) ?? startedAt
+  }
+  return startedAt
+}
+
+function replyUnfinishedAt(reply: UIMessage, sentAt: number | null, newest: boolean) {
+  if (reply.id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX)) return false
+  const completed = getMessageCompleted(reply)
+  if (completed === null) return newest
+  return sentAt !== null && completed > sentAt
+}
+
+export function getWaitedMs(waits: readonly { start: number; end?: number }[], from: number, now: number): number {
+  const spans = waits
+    .map((wait) => [Math.max(wait.start, from), Math.min(wait.end ?? now, now)] as const)
+    .filter(([start, end]) => end > start)
+    .sort((left, right) => left[0] - right[0])
+  let waited = 0
+  let cursor = from
+  for (const [start, end] of spans) {
+    if (end <= cursor) continue
+    waited += end - Math.max(start, cursor)
+    cursor = end
+  }
+  return waited
 }
 
 export function formatMessageTimestamp(timestampMs: number): string {
@@ -169,17 +201,11 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
 
 type AssistantRenderGroup =
   | { kind: "text"; text: string }
-  | { kind: "reasoning"; text: string; isStreaming: boolean }
+  | { kind: "reasoning"; text: string; isStreaming: boolean; durationMs?: number | null }
   | { kind: "file"; part: FileUIPart }
   | { kind: "tool"; part: ToolUIPart | DynamicToolUIPart }
   | { kind: "tool-aggregate"; parts: (ToolUIPart | DynamicToolUIPart)[]; thoughts: AggregateThought[] }
 
-/**
- * Steps often arrive as one assistant message per tool call. When a
- * message contains nothing but aggregatable tool parts (plus step
- * markers / hidden reasoning), return those parts so consecutive
- * messages can merge into one aggregate line. Prose breaks the run.
- */
 export function getAggregateOnlyParts(
   message: UIMessage,
   showThinking: boolean
@@ -204,14 +230,6 @@ export function getAggregateOnlyParts(
   return tools.length > 0 ? tools : null
 }
 
-/**
- * An OpenCode turn usually arrives as ONE assistant message with steps
- * (reasoning, tool calls, narration) and the final answer interleaved in
- * `parts`. Split at the last non-empty text part so the step portion can
- * fold into the "Worked for…" run while the answer stays visible. Returns
- * null when there is nothing to fold (pure prose, or no work before the
- * answer).
- */
 export function splitTurnAtAnswer(message: UIMessage): { steps: UIMessage; answer: UIMessage } | null {
   const parts = message.parts
   let answerStart = -1
@@ -232,6 +250,10 @@ export function splitTurnAtAnswer(message: UIMessage): { steps: UIMessage; answe
     steps: { ...message, id: `${message.id}:steps`, parts: stepParts },
     answer: { ...message, parts: parts.slice(answerStart) },
   }
+}
+
+function addDurations(left: number | null | undefined, right: number | null): number | null {
+  return typeof left === "number" && right !== null ? left + right : null
 }
 
 export function getAssistantRenderGroups(
@@ -259,14 +281,13 @@ export function getAssistantRenderGroups(
     if (!isReasoningUIPart(part)) {
       return
     }
+    const durationMs = reasoningDurationMs(part.providerMetadata)
 
     const previous = groups.at(-1)
     if (previous?.kind === "reasoning") {
-      // Each reasoning part is its own section (often opening with a bold
-      // "**Title**"); joining without a break glues that title onto the
-      // previous paragraph's last sentence.
       previous.text += previous.text && part.text.trim() ? `\n\n${part.text}` : part.text
       previous.isStreaming = previous.isStreaming || part.state === "streaming"
+      previous.durationMs = addDurations(previous.durationMs, durationMs)
       return
     }
 
@@ -274,26 +295,24 @@ export function getAssistantRenderGroups(
       return
     }
 
-    // A thought in the middle of an aggregate run embeds into the run at
-    // its chronological slot instead of opening a new top-level group.
-    // Alternating thought/command turns then read as ONE aggregate line
-    // that advertises its thoughts, not a ladder of repeated single lines.
     if (previous?.kind === "tool-aggregate") {
       const lastThought = previous.thoughts.at(-1)
       if (lastThought && lastThought.afterIndex === previous.parts.length) {
         lastThought.text += lastThought.text ? `\n\n${part.text}` : part.text
         lastThought.isStreaming = lastThought.isStreaming || part.state === "streaming"
+        lastThought.durationMs = addDurations(lastThought.durationMs, durationMs)
         return
       }
       previous.thoughts.push({
         afterIndex: previous.parts.length,
         text: part.text,
         isStreaming: part.state === "streaming",
+        durationMs,
       })
       return
     }
 
-    groups.push({ kind: "reasoning", text: part.text, isStreaming: part.state === "streaming" })
+    groups.push({ kind: "reasoning", text: part.text, isStreaming: part.state === "streaming", durationMs })
   }
 
   for (const part of filteredParts) {
@@ -315,13 +334,6 @@ export function getAssistantRenderGroups(
     }
 
     if (isToolUIPart(part)) {
-      // Paper aggregation rule: consecutive command/edit/read/search calls
-      // collapse into one aggregate group. Prose, files, and other tools
-      // break the run. A thought inside the run embeds at its chronological
-      // slot (see appendReasoning), so the run stays one compact line and
-      // still reads in the order the model produced it. A thought before
-      // any call — after prose or at the turn's start — remains its own
-      // top-level group and starts a fresh run.
       if (isAggregatableToolPart(part)) {
         const previous = groups.at(-1)
         if (previous?.kind === "tool-aggregate") {

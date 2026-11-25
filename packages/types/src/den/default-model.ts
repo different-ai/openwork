@@ -2,8 +2,8 @@ import { z } from "zod"
 
 /**
  * The model new desktop chats start with, chosen by organization admins for
- * everyone and optionally per team (feature `orgDefaultModel`, OpenCode v2
- * engine only). Members can still change the model in each chat.
+ * everyone and optionally per team (OpenCode v2 engine only).
+ * Members can still change the model in each chat.
  *
  * A choice names a provider the way the desktop does: `openwork` for OpenWork
  * Models, an `lpr_…` organization provider, or an `ipr_…` AI Gateway provider.
@@ -51,7 +51,6 @@ export const defaultModelOptionSchema = z
     modelId: z.string(),
     providerName: z.string(),
     modelName: z.string(),
-    /** The catalog provider family (for example `anthropic`) for the logo; the provider id is often opaque. */
     logoProviderId: z.string(),
     source: defaultModelSourceSchema,
   })
@@ -61,7 +60,6 @@ export type DefaultModelOption = z.infer<typeof defaultModelOptionSchema>
 export const defaultModelOptionsSchema = z
   .object({
     options: z.array(defaultModelOptionSchema),
-    /** Sources whose models could not be read just now; their models are missing from options. */
     unavailableSources: z.array(defaultModelSourceSchema),
   })
   .meta({ ref: "DefaultModelOptions" })
@@ -72,12 +70,7 @@ export const defaultModelTeamSchema = z
     teamId: z.string(),
     name: z.string(),
     memberCount: z.number().int().nonnegative(),
-    /** The team's own model, or null when the team uses the organization default. */
     model: defaultModelChoiceSchema.nullable(),
-    /**
-     * Members of this team who are also on another team that overrides the
-     * model differently; they start on the organization default.
-     */
     conflictingMemberCount: z.number().int().nonnegative(),
   })
   .meta({ ref: "DefaultModelTeam" })
@@ -85,10 +78,8 @@ export type DefaultModelTeam = z.infer<typeof defaultModelTeamSchema>
 
 export const defaultModelSettingsSchema = z
   .object({
-    /** The organization default, or null for none. */
     everyone: defaultModelChoiceSchema.nullable(),
     teams: z.array(defaultModelTeamSchema),
-    /** Whether the caller can change them (inference.manage). */
     canEdit: z.boolean(),
   })
   .meta({ ref: "DefaultModelSettings" })
@@ -96,7 +87,6 @@ export type DefaultModelSettings = z.infer<typeof defaultModelSettingsSchema>
 
 export const defaultModelWriteSchema = z
   .object({
-    /** The model, or null: no organization default, or (for a team) use the organization default. */
     model: defaultModelChoiceSchema.nullable(),
   })
   .strict()
@@ -105,7 +95,6 @@ export type DefaultModelWrite = z.infer<typeof defaultModelWriteSchema>
 
 export type ResolvedDefaultModel = {
   model: DefaultModelChoice
-  /** Where it came from: one team's override, or the organization default. */
   from: { kind: "team"; teamName: string } | { kind: "organization"; teamConflict: boolean }
 }
 

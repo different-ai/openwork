@@ -1,19 +1,11 @@
 import type { ReactNode } from "react";
 
 export type DenMarkTileProps = {
-  /** Short mark such as "4/5" or "4x". Rendered in mono so figures align. */
   label: string;
-  /** Solid tile when the thing is billing, muted when it is not. */
   active?: boolean;
   className?: string;
 };
 
-/**
- * DenMarkTile
- *
- * Small square that carries the number driving a row, matching the icon tile
- * geometry used by DenToggleRow.
- */
 export function DenMarkTile({ label, active = false, className = "" }: DenMarkTileProps) {
   return (
     <span
@@ -28,26 +20,16 @@ export function DenMarkTile({ label, active = false, className = "" }: DenMarkTi
 }
 
 export type DenLineItemRowProps = {
-  /** Usually a DenMarkTile. */
   leading?: ReactNode;
   title: string;
   description?: ReactNode;
   value: string;
   valueCaption?: string;
-  /** Usually a DenBadge. */
   badge?: ReactNode;
-  /** Emphasised summing row. Drops the badge slot and enlarges the value. */
   emphasis?: boolean;
   className?: string;
 };
 
-/**
- * DenLineItemRow
- *
- * Read-only counterpart to DenSelectableRow, for statements and receipts where
- * each row is a charge rather than a choice. Leading, value, and badge sit in
- * fixed-width slots so figures and status align down the column.
- */
 export function DenLineItemRow({
   leading,
   title,

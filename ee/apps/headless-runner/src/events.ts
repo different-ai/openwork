@@ -1,34 +1,53 @@
-/**
- * Live events for one session, so a caller can show a turn as it happens
- * instead of polling. Nothing here is stored: the transcript in SQLite stays
- * the source of truth, and a reader that misses an event re-reads the session.
- *
- * - `changed`: the stored transcript or a turn's status changed; re-read it.
- * - `text`: model text as it is written, for the model call `step` of a turn
- *   (0-based count of the turn's assistant messages). It is replaced by the
- *   stored assistant message once that step finishes.
- * - `tool`: the model started writing a tool call in that step, so a caller can show the work starting while
- *   the call's input is still being written (a long script can take a while).
- */
 export type SessionEvent =
   | { type: "changed"; messageId: string; status?: string }
-  /** `reset` drops the text streamed so far for this step: the model call was retried. */
   | { type: "text"; messageId: string; step: number; delta: string; reset?: boolean }
-  /** The model started writing a call to `tool` in model call `step`; the stored call follows when it finishes. */
-  | { type: "tool"; messageId: string; step: number; tool: string }
+  | { type: "tool"; messageId: string; step: number; tool: string; description?: string; view?: "browser" | "computer" }
 
 type Listener = (event: SessionEvent) => void
 
+export const READY_MESSAGE = JSON.stringify({ type: "ready" })
+
+export type EventSockets = {
+  accept(sessionId: string): Response
+  send(sessionId: string, data: string): void
+}
+
 export class SessionEvents {
   private readonly listeners = new Map<string, Set<Listener>>()
+  private readonly enders = new Map<string, Set<() => void>>()
+  private sockets: EventSockets | null = null
 
-  subscribe(sessionId: string, listener: Listener) {
+  useSockets(sockets: EventSockets) {
+    this.sockets = sockets
+  }
+
+  acceptSocket(sessionId: string): Response | null {
+    return this.sockets?.accept(sessionId) ?? null
+  }
+
+  subscribe(sessionId: string, listener: Listener, onEnd?: () => void) {
     const set = this.listeners.get(sessionId) ?? new Set()
     set.add(listener)
     this.listeners.set(sessionId, set)
+    const ends = this.enders.get(sessionId) ?? new Set()
+    if (onEnd) {
+      ends.add(onEnd)
+      this.enders.set(sessionId, ends)
+    }
     return () => {
       set.delete(listener)
       if (set.size === 0) this.listeners.delete(sessionId)
+      if (onEnd) ends.delete(onEnd)
+      if (ends.size === 0) this.enders.delete(sessionId)
+    }
+  }
+
+  end(sessionId: string) {
+    for (const onEnd of [...(this.enders.get(sessionId) ?? [])]) {
+      try {
+        onEnd()
+      } catch {
+      }
     }
   }
 
@@ -37,9 +56,12 @@ export class SessionEvents {
       try {
         listener(event)
       } catch {
-        // A broken reader never affects the turn.
       }
     }
+    if (!this.sockets) return
+    try {
+      this.sockets.send(sessionId, JSON.stringify(event))
+    } catch {
+    }
   }
-
 }

@@ -1,15 +1,4 @@
-/**
- * OpenWork AI Gateway providers → OpenCode V2 providers.
- *
- * Den returns, per gateway provider (`ipr_*`), an OpenCode V1-shaped provider
- * block (`providerConfig`) and a models.dev-shaped catalog config per model
- * (`models[].config`, ids `gwm_*`). The desktop materializes these as V1
- * config (apps/server/src/cloud-provider-sync.ts). Here they become V2
- * `Provider.Info` + `Model.Info`, following how OpenCode V2 itself ingests
- * models.dev entries (packages/core/src/models-dev.ts modelInfo/nativePackage)
- * and V1 config (packages/core/src/v1/config/migrate.ts).
- */
-import { DenRequestError, denRequest, isRecord, type DenSession, type Fetch } from "./den.ts"
+import { DenAuthError, DenRequestError, denRequest, isRecord, type DenSession, type Fetch } from "./den.ts"
 import type { ModelCost, ModelInfo, ModelVariant, ProviderInfo } from "./opencode.ts"
 
 type JsonRecord = Record<string, unknown>
@@ -40,7 +29,6 @@ export interface SkippedProvider {
 
 export interface GatewayInventory {
   readonly providers: readonly GatewayProvider[]
-  /** The member's `ow_gw_` key; one per member per organization, the same for every provider. */
   readonly apiKey: string | null
   readonly skipped: readonly SkippedProvider[]
 }
@@ -89,12 +77,16 @@ export function parseGatewayProvider(value: unknown): GatewayProvider | null {
  * The same two calls the desktop makes: the usable list, then `connect` per
  * provider with models (which carries the member's gateway key).
  */
-export async function fetchGatewayInventory(fetcher: Fetch, session: DenSession): Promise<GatewayInventory> {
+export async function fetchGatewayInventory(fetcher: Fetch, session: DenSession, signal?: AbortSignal, credentialScope: "den" | "desktop" = "den"): Promise<GatewayInventory> {
+  return fetchGatewayInventoryOnce(fetcher, session, signal, false, credentialScope)
+}
+
+async function fetchGatewayInventoryOnce(fetcher: Fetch, session: DenSession, signal: AbortSignal | undefined, relisted: boolean, credentialScope: "den" | "desktop"): Promise<GatewayInventory> {
   let listed: unknown
   try {
-    listed = await denRequest(fetcher, session, "/v1/inference-providers?scope=usable")
+    listed = await denRequest(fetcher, session, "/v1/inference-providers?scope=usable", { signal })
   } catch (error) {
-    // Deployments without the AI Gateway answer 404/405/501: no gateway providers.
+    if (error instanceof DenRequestError && error.status === 403) throw new DenAuthError(403, "/v1/inference-providers")
     if (error instanceof DenRequestError && [404, 405, 501].includes(error.status)) {
       return { providers: [], apiKey: null, skipped: [] }
     }
@@ -117,11 +109,20 @@ export async function fetchGatewayInventory(fetcher: Fetch, session: DenSession)
       })
       continue
     }
-    const connected = await denRequest(fetcher, session, `/v1/inference-providers/${encodeURIComponent(provider.id)}/connect`)
+    let connected: unknown
+    try {
+      connected = await denRequest(fetcher, session, `/v1/inference-providers/${encodeURIComponent(provider.id)}/connect`, { signal })
+    } catch (error) {
+      if (!(error instanceof DenRequestError) || error.status !== 403) throw error
+      if (!relisted) return fetchGatewayInventoryOnce(fetcher, session, signal, true, credentialScope)
+      skipped.push({ id: provider.id, name: provider.name, reason: "missing_credentials" })
+      continue
+    }
     const detail = isRecord(connected) ? connected.inferenceProvider : null
     const key = isRecord(detail) ? readString(detail.apiKey) : null
     const parsed = parseGatewayProvider(detail) ?? provider
-    if (!key || !key.startsWith("ow_gw_") || parsed.id !== provider.id) {
+    const allowedKey = credentialScope === "desktop" ? key === "ow_local_catalog" : key?.startsWith("ow_gw_")
+    if (!key || !allowedKey || parsed.id !== provider.id) {
       skipped.push({ id: provider.id, name: provider.name, reason: "missing_credentials" })
       continue
     }
@@ -132,9 +133,6 @@ export async function fetchGatewayInventory(fetcher: Fetch, session: DenSession)
   return { providers, apiKey, skipped }
 }
 
-// ---- V1 / models.dev → V2 ----
-
-/** AI SDK package → native OpenCode V2 package (packages/core/src/aisdk-native.ts PACKAGES). */
 const NATIVE_PACKAGES: Readonly<Record<string, string>> = {
   "@ai-sdk/amazon-bedrock": "@opencode/ai/providers/amazon-bedrock",
   "@ai-sdk/anthropic": "@opencode/ai/providers/anthropic",
@@ -203,7 +201,6 @@ function reasoningEfforts(config: JsonRecord): string[] {
   return [...new Set(values)]
 }
 
-/** Claude generations that only take a manual thinking budget (packages/core/src/variant.ts claudeInfo). */
 function manualClaude(upstreamModelId: string | null): boolean {
   const id = upstreamModelId ?? ""
   const familyFirst = /(?:claude-)?(opus|sonnet|haiku)-(\d+)(?:[.-](\d+))?/i.exec(id)
@@ -250,7 +247,41 @@ export function reasoningVariants(pkg: string, config: JsonRecord, upstreamModel
   }
 }
 
-/** Older Den responses append "(group / credential set)" to model names; the picker shows the plain name. */
+const FAST_VARIANT_PREFIX = "__openwork_fast_v1/"
+export const FAST_DEFAULT_VARIANT = `${FAST_VARIANT_PREFIX}default`
+function fastVariantId(effort: string): string {
+  return `${FAST_VARIANT_PREFIX}variant/${encodeURIComponent(effort)}`
+}
+
+function catalogOffersFast(providerNpm: string | null, config: JsonRecord): boolean {
+  const modelProvider = isRecord(config.provider) ? config.provider : {}
+  if (providerNpm !== "@ai-sdk/openai") return false
+  if (modelProvider.npm !== undefined && modelProvider.npm !== providerNpm) return false
+  const variants = isRecord(config.variants) ? config.variants : {}
+  if (Object.keys(variants).some((id) => id.startsWith(FAST_VARIANT_PREFIX))) return false
+  const experimental = isRecord(config.experimental) ? config.experimental : {}
+  const modes = isRecord(experimental.modes) ? experimental.modes : {}
+  const fast = isRecord(modes.fast) ? modes.fast : null
+  if (!fast || Object.keys(fast).some((key) => key !== "provider" && key !== "cost")) return false
+  const provider = isRecord(fast.provider) ? fast.provider : null
+  const body = provider && isRecord(provider.body) ? provider.body : null
+  return Boolean(provider && Object.keys(provider).length === 1 && body
+    && Object.keys(body).length === 1 && body.service_tier === "priority")
+}
+
+/**
+ * Fast mode for OpenAI catalog models that declare priority processing: one
+ * default Fast variant plus a Fast copy of each effort, the ids and settings
+ * the managed engine materializer writes for the same catalog entry.
+ */
+export function fastVariants(providerNpm: string | null, pkg: string, config: JsonRecord, efforts: readonly ModelVariant[]): ModelVariant[] {
+  if (pkg !== "@opencode/ai/providers/openai" || !catalogOffersFast(providerNpm, config)) return []
+  return [
+    { id: FAST_DEFAULT_VARIANT, settings: { serviceTier: "priority" } },
+    ...efforts.map((variant) => ({ id: fastVariantId(variant.id), settings: { ...variant.settings, serviceTier: "priority" } })),
+  ]
+}
+
 function displayName(model: GatewayModel): string {
   const selection = model.modelGroupName && model.credentialSetName
     ? ` (${model.modelGroupName} / ${model.credentialSetName})`
@@ -270,9 +301,10 @@ export function toModelInfo(provider: GatewayProvider, model: GatewayModel, prov
   const status = readString(config.status)
   const released = Date.parse(readString(config.release_date) ?? "")
   const settings = isRecord(config.options) ? { ...config.options } : undefined
+  const efforts = reasoningVariants(pkg, config, model.upstreamModelId)
+  const providerNpm = readString(provider.providerConfig.npm)
   return {
     id: model.id,
-    // Den sets config.id to the gwm alias; the gateway routes on it.
     modelID: readString(config.id) ?? model.id,
     providerID: provider.id,
     name: displayName(model),
@@ -285,7 +317,7 @@ export function toModelInfo(provider: GatewayProvider, model: GatewayModel, prov
       input: stringList(modalities.input, ["text", "image"]),
       output: stringList(modalities.output, ["text"]),
     },
-    variants: reasoningVariants(pkg, config, model.upstreamModelId),
+    variants: [...efforts, ...fastVariants(providerNpm, pkg, config, efforts)],
     time: { released: Number.isFinite(released) ? released : 0 },
     cost: costs(config.cost),
     status: status && STATUSES.has(status) ? (status as ModelInfo["status"]) : "active",
@@ -321,14 +353,12 @@ export function toProviderRecord(provider: GatewayProvider, apiKey: string): Pro
   const info: ProviderInfo = {
     id: provider.id,
     name: provider.name,
-    // Always available while signed in: the key is ours, not an integration credential.
     activation: "enabled",
     integrationID: GATEWAY_INTEGRATION_ID,
     package: pkg,
     settings: {
       ...optionSettings,
       ...(baseURL ? { baseURL } : {}),
-      // OpenCode names the provider-options namespace of an openai-compatible route after its provider.
       ...(pkg === "@opencode/ai/providers/openai-compatible" ? { provider: provider.id } : {}),
       apiKey,
     },

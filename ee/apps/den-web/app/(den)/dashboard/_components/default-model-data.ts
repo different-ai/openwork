@@ -9,7 +9,6 @@ import {
 } from "@openwork/types/den/default-model";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
-import { orgFeatureEnabled } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
@@ -24,13 +23,6 @@ function defaultModelOptionsQueryKey(orgId: string): string[] {
   return ["org-default-model", orgId, "options"];
 }
 
-/** Whether this organization has the default model feature on (`orgDefaultModel`). */
-export function useDefaultModelFeatureOn(): boolean {
-  const { orgContext } = useOrgDashboard();
-  return orgContext ? orgFeatureEnabled(orgContext, "orgDefaultModel") : false;
-}
-
-/** The organization default and every team's override. */
 export function useDefaultModelSettings(orgId: string, enabled = true) {
   return useQuery({
     queryKey: defaultModelQueryKey(orgId),
@@ -50,7 +42,6 @@ export function useDefaultModelSettings(orgId: string, enabled = true) {
   });
 }
 
-/** Every model the organization can choose, read live from its OpenWork Models, AI Gateway and providers. */
 export function useDefaultModelOptions(orgId: string, enabled = true) {
   return useQuery({
     queryKey: defaultModelOptionsQueryKey(orgId),
@@ -73,7 +64,6 @@ export function useDefaultModelOptions(orgId: string, enabled = true) {
 
 export type SaveDefaultModelInput = { teamId: string | null; model: DefaultModelChoice | null };
 
-/** Sets or clears the organization default (teamId null) or one team's override. */
 export function useSaveDefaultModel(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();

@@ -1,23 +1,26 @@
-/** Rollout-dependent visibility of Den API catalog operations to agents. Pure, so it is testable without a database. */
 export type CatalogAvailabilityContext = {
   generatedArtifactViewsEnabled: boolean
-  /** Managed deployment planning, launch preparation and status: both rollouts on. */
-  managedDeploymentsMcpEnabled: boolean
-  /** Secure keys in chat: agents may add AI Gateway providers and a person adds the key. */
-  secureSecretFieldsEnabled?: boolean
+  managedDeploymentsEnabled: boolean
+  usageSource?: string
 }
+
+const GMAIL_THREAD_READ_PATH = "/v1/capabilities/google-workspace/gmail-thread/{threadId}"
+
+export function filterGmailThreadRead<T extends { path: string }>(catalog: readonly T[], enabled?: boolean): readonly T[] {
+  return enabled ? catalog : catalog.filter((operation) => operation.path !== GMAIL_THREAD_READ_PATH)
+}
+
+export const AGENT_CONNECTION_REMOVAL_PATH = "/v1/mcp-connections/{connectionId}/removal-request"
 
 export function catalogOperationAvailableToCapabilities(
   context: CatalogAvailabilityContext,
   operation: { method: string; path: string },
 ) {
-  if (operation.method.toUpperCase() === "POST" && operation.path === "/v1/inference-providers") {
-    return context.secureSecretFieldsEnabled === true
-  }
-  // Hidden from search, enumeration and execution until the organization has
-  // both rollouts; the routes themselves still enforce permissions and features.
   if (operation.path === "/v1/managed-deployments" || operation.path.startsWith("/v1/managed-deployments/")) {
-    return context.managedDeploymentsMcpEnabled
+    return context.managedDeploymentsEnabled
+  }
+  if (operation.path === AGENT_CONNECTION_REMOVAL_PATH) {
+    return context.usageSource === "agent"
   }
   if (context.generatedArtifactViewsEnabled) return true
   return operation.path !== "/v1/workflows/{configObjectId}/views"

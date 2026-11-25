@@ -15,7 +15,6 @@ import {
   listDefaultModelSettings,
   saveDefaultModel,
 } from "../../default-model.js"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { isDuplicateEntry, type ResourceActionContext } from "./declarative.js"
@@ -57,7 +56,6 @@ async function save(c: SaveContext, input: { teamId: DenTypeId<"team"> | null; m
   try {
     await write()
   } catch (error) {
-    // A concurrent first save of the same scope created the row; replace it.
     if (!isDuplicateEntry(error)) throw error
     await write()
   }
@@ -73,11 +71,6 @@ const writeResponses = {
   503: jsonResponse("The model's provider could not be read to check the model.", sourceUnavailableSchema),
 }
 
-/**
- * The model new desktop chats start with (OpenCode v2 engine only): one
- * organization default and an optional override per team. Behind the
- * `orgDefaultModel` feature.
- */
 export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/default-model",
@@ -94,7 +87,6 @@ export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVar
       },
     }),
     orgMemberRoute(),
-    requireFeature("orgDefaultModel"),
     requireOrgPermission("inference.view"),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -117,7 +109,6 @@ export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVar
       },
     }),
     orgMemberRoute(),
-    requireFeature("orgDefaultModel"),
     requireOrgPermission("inference.view"),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -135,7 +126,6 @@ export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVar
       responses: writeResponses,
     }),
     orgMemberRoute(),
-    requireFeature("orgDefaultModel"),
     requireOrgPermission("inference.manage"),
     jsonValidator(defaultModelWriteSchema),
     async (c) => save(c, { teamId: null, model: c.req.valid("json").model }),
@@ -151,7 +141,6 @@ export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVar
       responses: writeResponses,
     }),
     orgMemberRoute(),
-    requireFeature("orgDefaultModel"),
     requireOrgPermission("inference.manage"),
     paramValidator(teamParamsSchema),
     jsonValidator(defaultModelWriteSchema),

@@ -1,7 +1,9 @@
 # Deploy OpenWork EE on Google Cloud Run
 
 Status: self-host operator guide (initial Cloud Run path)
-Related: `packaging/cloud-run`, `packaging/helm/openwork-ee`
+Related: `packaging/cloud-run`, `packaging/helm/openwork-ee`,
+`infra/terraform/modules/openwork-gcp-cloud-run` (draft Terraform module that
+creates the same resources, with the same environment, in one apply)
 
 This guide maps the existing OpenWork Helm release to three Cloud Run resources:
 Den API and Den Web services plus a one-shot database migration job. Use it when

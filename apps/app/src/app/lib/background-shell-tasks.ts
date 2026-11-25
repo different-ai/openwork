@@ -1,41 +1,13 @@
-/**
- * Commands the agent leaves running with the shell tool's `background: true`
- * (OpenCode v2 only). The engine reports each command's life on its event
- * stream (`shell.created` / `shell.exited` / `shell.deleted`), answers a
- * background tool call at once with `{ status: "running", shellID }`, and
- * tells the conversation when the command ends through a synthetic inbox item
- * whose metadata has `source: "shell"`.
- *
- * This module holds the pure readers for those shapes and the
- * `backgroundShellTasks` feature switch, so the engine adapter, the sync
- * layer and the chat agree on one meaning without importing each other.
- */
-
-/** Translated event types; the sync layer ignores them while the feature is off. */
 export const SHELL_CREATED_EVENT = "shell.created";
 export const SHELL_EXITED_EVENT = "shell.exited";
 export const SHELL_DELETED_EVENT = "shell.deleted";
 export const BACKGROUND_SHELL_STARTED_EVENT = "shell.background.started";
 export const BACKGROUND_SHELL_FINISHED_EVENT = "shell.background.finished";
 
-let featureEnabled = false;
-
-/** Whether `backgroundShellTasks` is on for this app. Off (the default) keeps the old chat. */
-export function backgroundShellTasksEnabled(): boolean {
-  return featureEnabled;
-}
-
-/** Set by the feature reader in the app shell; the store mirrors it for React. */
-export function setBackgroundShellTasksFlag(enabled: boolean): void {
-  featureEnabled = enabled;
-}
-
-/** One command the engine reports, from `Shell.Info`. */
 export type EngineShell = {
   id: string;
   status: "running" | "exited" | "timeout" | "killed";
   command: string;
-  /** The conversation that started it; absent for commands started outside a conversation. */
   sessionID: string | null;
   startedAt: number;
   exit: number | null;
@@ -43,7 +15,6 @@ export type EngineShell = {
 
 export type BackgroundShellOutcome = "finished" | "failed" | "timed-out" | "stopped";
 
-/** What the chat shows when a background command ends. */
 export type BackgroundShellNotice = {
   shellId: string;
   command: string;
@@ -51,7 +22,6 @@ export type BackgroundShellNotice = {
   exit: number | null;
 };
 
-/** The text part metadata key that marks a notice row in the transcript. */
 export const BACKGROUND_SHELL_NOTICE_KEY = "openworkBackgroundShell";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -76,7 +46,6 @@ function shellStatus(value: string | undefined): EngineShell["status"] | null {
   return SHELL_STATUSES.find((status) => status === value) ?? null;
 }
 
-/** Read one engine `Shell.Info`; anything without an id, status and command is not a shell. */
 export function readEngineShell(value: unknown): EngineShell | null {
   if (!isRecord(value)) return null;
   const id = readString(value, "id");
@@ -96,11 +65,6 @@ export function readEngineShell(value: unknown): EngineShell | null {
   };
 }
 
-/**
- * The shell id a tool result reports when the call moved its command to the
- * background. A foreground call reports `status: "completed"` and an exit
- * code instead, so it never matches.
- */
 export function backgroundShellIdFromToolMetadata(metadata: unknown): string | null {
   if (readString(metadata, "status") !== "running") return null;
   const shellID = readString(metadata, "shellID") ?? readString(metadata, "shellId");
@@ -114,11 +78,6 @@ export function backgroundShellOutcome(state: string | undefined, exit: number |
   return "finished";
 }
 
-/**
- * The completion notice inside a `session.inbox.enqueued` item or a stored
- * `synthetic` message: `metadata.source === "shell"` with the shell id. The
- * command comes from the item's description, never from its `<shell>` text.
- */
 export function readBackgroundShellCompletion(payload: unknown): BackgroundShellNotice | null {
   if (!isRecord(payload)) return null;
   const metadata = isRecord(payload.metadata) ? payload.metadata : null;
@@ -134,7 +93,6 @@ export function readBackgroundShellCompletion(payload: unknown): BackgroundShell
   };
 }
 
-/** A notice carried on a transcript part (engine part metadata or UI provider metadata). */
 export function readBackgroundShellNotice(value: unknown): BackgroundShellNotice | null {
   if (!isRecord(value)) return null;
   const shellId = readString(value, "shellId");
@@ -147,7 +105,6 @@ export function readBackgroundShellNotice(value: unknown): BackgroundShellNotice
   return { shellId, command, outcome, exit };
 }
 
-/** The row's words: what happened, in the person's terms. */
 export function backgroundShellNoticeLabel(notice: Pick<BackgroundShellNotice, "outcome" | "exit">): string {
   if (notice.outcome === "timed-out") return "Background task timed out";
   if (notice.outcome === "stopped") return "Background task stopped";

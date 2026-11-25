@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router";
 import type { RecoveryActionResult, RecoveryRelease } from "@/app/lib/desktop";
 import type { DenAppVersionMetadata, DenDesktopConfig } from "@/app/lib/den";
 import { readFreshDenAppVersionMetadata } from "@/app/lib/version-gate";
@@ -8,6 +9,7 @@ import { bootOverlayCanHide, useBootState, useBootOverlayVisible } from "./boot-
 import { useCloudWorkspaceStatus } from "./cloud-workspace-overlay";
 import { shouldSuppressBootOverlayForGateway } from "./cloud-workspace-status";
 import { OwDotTicker } from "./dot-ticker";
+import { useOrgOnboardingOnScreen } from "./org-onboarding-visibility";
 
 async function loadRecoveryPolicy(
   refreshDesktopConfig: () => Promise<DenDesktopConfig>,
@@ -21,15 +23,13 @@ async function loadRecoveryPolicy(
   ]);
 }
 
-/**
- * Quiet, opaque boot overlay. Solid surface fill so nothing bleeds through.
- * A minimal typographic beat plus a small dot ticker. Fades once both the
- * boot hook and the first route load are ready.
- */
 export function LoadingOverlay() {
+  const { pathname } = useLocation();
+  const permissionsOnScreen = /^(?:\/workspace\/[^/]+)?\/settings\/permissions(?:\/|$)/.test(pathname);
   const visible = useBootOverlayVisible();
   const { phase, routeReady, message, error } = useBootState();
   const cloudWorkspace = useCloudWorkspaceStatus();
+  const orgOnboardingOnScreen = useOrgOnboardingOnScreen();
   const suppressForGateway = shouldSuppressBootOverlayForGateway({
     gatewayMode: cloudWorkspace.gatewayMode,
     signedIn: cloudWorkspace.visible,
@@ -94,7 +94,7 @@ export function LoadingOverlay() {
 
   const useRelease = window.__OPENWORK_ELECTRON__?.recovery?.use;
 
-  if (!visible || (suppressForGateway && !error)) return null;
+  if (!visible || ((permissionsOnScreen || suppressForGateway || orgOnboardingOnScreen) && !error)) return null;
 
   const fading = bootOverlayCanHide(phase, routeReady);
 

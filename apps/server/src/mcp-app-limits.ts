@@ -1,0 +1,1 @@
+export const MCP_APP_RESOURCE_MAX_BYTES = 1536 * 1024;

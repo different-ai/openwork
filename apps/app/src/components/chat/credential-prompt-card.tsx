@@ -19,7 +19,6 @@ import { credentialPromptFromToolPart } from "./credential-prompt"
 
 export const CREDENTIAL_SAVED_CONTINUE_PROMPT = "I've saved the key. Go ahead."
 
-/** Keys saved in this window, so a remounting card stays saved before Den answers; never the value. */
 const savedHere = new Set<string>()
 const listeners = new Set<() => void>()
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }
@@ -33,9 +32,12 @@ function targetKey(prompt: CredentialPrompt) {
 
 function denDashboardUrl(baseUrl: string, prompt: CredentialPrompt): string | null {
   try {
-    const path = prompt.target.type === "mcp_connection_key" || prompt.target.type === "plugin_connection_key"
-      ? `/dashboard/mcp-connections/${encodeURIComponent(prompt.target.connectionId)}`
-      : DEN_DASHBOARD_LINKS.gatewayProviders
+    const target = prompt.target
+    const path = target.type === "gateway_provider_key" || target.type === "gateway_provider_credential"
+      ? DEN_DASHBOARD_LINKS.gatewayProviders
+      : target.type === "mcp_connection_member_key"
+        ? `/dashboard/your-connections?connectionId=${encodeURIComponent(target.connectionId)}`
+        : `/dashboard/mcp-connections/${encodeURIComponent(target.connectionId)}`
     const url = new URL(path, baseUrl)
     return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null
   } catch {
@@ -43,7 +45,18 @@ function denDashboardUrl(baseUrl: string, prompt: CredentialPrompt): string | nu
   }
 }
 
-/** Plain, value-free direction for each failure; the key is never repeated back. */
+function audienceLine(prompt: CredentialPrompt): string {
+  const target = prompt.target
+  if (target.type === "mcp_connection_member_key") return "Only for you"
+  if (target.type !== "mcp_connection_shared_switch") return `Shared with people who can use ${prompt.name}`
+  const { orgWide, memberCount, teamCount } = target.audience
+  const who = orgWide ? "everyone in your organization" : [
+    ...(memberCount ? [`${memberCount} ${memberCount === 1 ? "person" : "people"}`] : []),
+    ...(teamCount ? [`${teamCount} ${teamCount === 1 ? "team" : "teams"}`] : []),
+  ].join(" and ") || "no one yet"
+  return `Replaces each person's own key · shared with ${who}`
+}
+
 function failureState(error: unknown, name: string): { phase: Phase; message: string | null } {
   if (error instanceof DenApiError) {
     if (error.status === 403 && error.code === "reauth") return { phase: "reauth", message: "Confirm it's you, then enter the key again." }
@@ -57,14 +70,8 @@ function failureState(error: unknown, name: string): { phase: Phase; message: st
   return { phase: "entry", message: "OpenWork couldn't confirm the key was saved. Try again." }
 }
 
-/**
- * The private field an agent asks for, shown where the conversation is. The
- * key goes straight from this field to Den with the signed-in person's
- * session; the transcript, tool results and model only learn it was saved.
- */
 export function CredentialPromptCard({ part, continueToolCallId = part.toolCallId }: {
   part: DynamicToolUIPart
-  /** The transcript's own tool call; a Code Mode script's inner call is not a turn part. */
   continueToolCallId?: string
 }) {
   const prompt = credentialPromptFromToolPart(part)
@@ -72,7 +79,6 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
   const auth = useDenAuth()
   const queryClient = useQueryClient()
   const fieldId = useId()
-  // One handle per field; values are read once at save and never kept.
   const fields = useRef(new Map<string, SecretFieldHandle>())
   const identifiers = useRef(new Map<string, HTMLInputElement>())
   const filled = useRef(new Set<string>())
@@ -87,15 +93,6 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
   const signedIn = auth.isSignedIn && Boolean(token && organizationId)
   const key = prompt ? targetKey(prompt) : ""
   const local = useSyncExternalStore(subscribe, () => savedHere.has(key), () => false)
-  const enabled = useQuery({
-    queryKey: ["den", "org-features", organizationId],
-    queryFn: () => createDenClient({ baseUrl: settings.baseUrl, token }).getOrgFeatures(organizationId),
-    enabled: signedIn,
-    staleTime: 30_000,
-    retry: false,
-    select: (features: Record<string, boolean>) => features.secureSecretFields === true,
-  })
-  // Den's own answer, so a reopened conversation shows what is true now.
   const stored = useQuery({
     queryKey: ["den", "credential-prompt", organizationId, key],
     queryFn: async () => {
@@ -104,8 +101,11 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
       if (prompt.target.type === "gateway_provider_key" || prompt.target.type === "gateway_provider_credential") {
         return client.gatewayCredentialSetReady(organizationId, prompt.target.inferenceProviderId, prompt.target.credentialSetId)
       }
-      const connectionId = prompt.target.connectionId
-      return (await client.listMcpConnections(organizationId, "usable")).some((connection) => connection.id === connectionId && connection.connected)
+      const target = prompt.target
+      return (await client.listMcpConnections(organizationId, "usable")).some((connection) => connection.id === target.connectionId && (
+        target.type === "mcp_connection_member_key" ? connection.connectedForMe
+          : target.type === "mcp_connection_shared_switch" ? connection.credentialMode === "shared" && connection.connected
+            : connection.connected))
     },
     enabled: signedIn && Boolean(prompt),
     staleTime: 30_000,
@@ -117,10 +117,8 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
   const readOnly = messageList?.readOnly === true
   const saved = local || stored.data === true
   const dashboardUrl = denDashboardUrl(settings.baseUrl, prompt)
-  // The field, and its show control, appear only once the rollout is confirmed on.
-  const confirmed = enabled.data === true
-  const blocked = !signedIn ? "signed_out" : readOnly ? "read_only" : enabled.data === false ? "off" : enabled.isError ? "unverified" : phase === "denied" ? "denied" : phase === "gone" ? "gone" : null
-  const showField = confirmed && !blocked && phase !== "reauth" && (!saved || replacing)
+  const blocked = !signedIn ? "signed_out" : readOnly ? "read_only" : phase === "denied" ? "denied" : phase === "gone" ? "gone" : null
+  const showField = !blocked && phase !== "reauth" && (!saved || replacing)
 
   const specs = promptFields(prompt.target)
   const clearAll = () => {
@@ -153,6 +151,10 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
         await client.saveGatewayProviderCredential(organizationId, prompt.target.inferenceProviderId, prompt.target.credentialSetId, gatewayCredentialBody(prompt.target, values))
       } else if (prompt.target.type === "mcp_connection_key") {
         await client.saveMcpConnectionSharedKey(organizationId, prompt.target.connectionId, value)
+      } else if (prompt.target.type === "mcp_connection_shared_switch") {
+        await client.saveMcpConnectionSharedKey(organizationId, prompt.target.connectionId, value, { expectedUpdatedAt: prompt.target.expectedUpdatedAt })
+      } else if (prompt.target.type === "mcp_connection_member_key") {
+        await client.setMyMcpCredential(organizationId, prompt.target.connectionId, value)
       } else if (prompt.target.type === "plugin_connection_key") {
         const { pluginId, configObjectId, serverName } = prompt.target
         await client.savePluginConnectionKey(organizationId, { pluginId, configObjectId, serverName, apiKey: value })
@@ -166,7 +168,6 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
       setPhase("entry")
       markSaved(key)
       void queryClient.invalidateQueries({ queryKey: ["den", "credential-prompt", organizationId, key] })
-      // Picks the task up as if the person said so; the message carries no key.
       messageList?.continueAfterConnection?.(continueToolCallId, CREDENTIAL_SAVED_CONTINUE_PROMPT)
     } catch (cause) {
       values = {}
@@ -189,16 +190,15 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
     : blocked === "gone" ? `${name} is no longer available`
     : blocked ? `${plural ? "Credentials" : "API key"} for ${name}`
     : replacing ? `Replace the ${what} for ${name}`
+    : prompt.target.type === "mcp_connection_shared_switch" ? `Use one shared key for ${name}`
+    : prompt.target.type === "mcp_connection_member_key" ? `Add your ${what} for ${name}`
     : `Add the ${what} for ${name}`
   const blockedLine = blocked === "read_only" ? "This conversation is read-only."
     : blocked === "signed_out" ? "Sign in to OpenWork Cloud to add this key here."
-    : blocked === "off" ? "Adding keys in chat is off for your organization. Use OpenWork Cloud instead."
     : blocked === "denied" ? "You can't change this key. Ask an organization admin."
     : blocked === "gone" ? "Ask the agent to set it up again."
-    : blocked === "unverified" ? "OpenWork couldn't check whether keys can be added here. Use OpenWork Cloud instead."
     : null
-  // One state line: who uses the key and where it goes (P9).
-  const consent = `Shared with people who can use ${name}${prompt.destination ? ` · sent only to ${prompt.destination}` : ""} · never shown to the agent`
+  const consent = `${audienceLine(prompt)}${prompt.destination ? ` · sent only to ${prompt.destination}` : ""} · never shown to the agent`
   const Icon = settled ? Check : blocked ? Lock : KeyRound
 
   return (
@@ -243,7 +243,7 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
                     onChange={(event) => track(spec.id, event.currentTarget.value.length > 0)} />
                 </Field>
               ) : (
-                <SecretField key={spec.id} id={`${fieldId}-${spec.id}`} label={spec.label} revealable={confirmed} multiline={spec.kind === "json"}
+                <SecretField key={spec.id} id={`${fieldId}-${spec.id}`} label={spec.label} multiline={spec.kind === "json"}
                   disabled={phase === "saving"} onSubmit={() => void save()}
                   handleRef={(handle) => { if (handle) fields.current.set(spec.id, handle); else fields.current.delete(spec.id) }}
                   onValueChange={(has) => track(spec.id, has)} />
@@ -254,7 +254,7 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
           <div className="flex items-start gap-2">
             {specs.length === 1 && specs[0]?.kind === "secret" ? (
               <div className="min-w-0 flex-1">
-                <SecretField id={fieldId} label="API key" labelHidden revealable={confirmed} error={error} disabled={phase === "saving"}
+                <SecretField id={fieldId} label="API key" labelHidden error={error} disabled={phase === "saving"}
                   handleRef={(handle) => { if (handle) fields.current.set("apiKey", handle); else fields.current.delete("apiKey") }}
                   onSubmit={() => void save()} onValueChange={(has) => track("apiKey", has)} />
               </div>

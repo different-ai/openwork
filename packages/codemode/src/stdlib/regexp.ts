@@ -22,7 +22,7 @@ export const toHostRegex = (arg: unknown, method: string, node: AstNode, extraFl
   if (arg instanceof SandboxRegExp) return arg.regex
   if (typeof arg === "string") {
     try {
-      return new RegExp(arg, extraFlags)
+      return hostRegExp(arg, extraFlags)
     } catch (error) {
       throw new InterpreterRuntimeError(
         `String.${method} received the string ${JSON.stringify(arg)}, which is not a valid regular expression pattern (${regexFailureReason(error)}). ${escapeRegexHint}`,
@@ -68,6 +68,7 @@ export const invokeRegExpMethod = (
       throw new InterpreterRuntimeError(`RegExp method '${name}' is not available in CodeMode.`, node)
   }
 }
+import { hostRegExp } from "../host-regexp.js"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
 import { isBlockedMember, type SafeObject } from "../tool-runtime.js"
 import { SandboxRegExp } from "../values.js"

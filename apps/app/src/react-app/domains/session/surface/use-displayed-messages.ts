@@ -6,20 +6,16 @@ import type { ComposerSessionState } from "./composer-state-store";
 import { resolvePastedTextPlaceholders } from "./composer/pasted-text";
 import { composerPillFromPart, composerPillText } from "./composer/composer-pills";
 
-/**
- * Text parts for a pending user turn, built from the draft's parts so composer
- * pills and pasted text render as chips before the server echoes the message.
- * Returns undefined when the draft has neither and plain text is enough.
- */
 export function pendingDraftTextParts(parts: readonly ComposerPart[]): UIMessage["parts"] | undefined {
-  const hasChip = parts.some((part) => part.type === "skill" || part.type === "connect-skill" || part.type === "connector" || part.type === "computer" || part.type === "paste" || part.type === "agent" || part.type === "file");
+  const hasChip = parts.some((part) => part.type === "skill" || part.type === "connect-skill" || part.type === "connector" || part.type === "computer" || part.type === "session" || part.type === "paste" || part.type === "agent" || part.type === "file");
   if (!hasChip) return undefined;
   return parts.flatMap<UIMessage["parts"][number]>((part) => {
     switch (part.type) {
       case "skill":
       case "connect-skill":
       case "connector":
-      case "computer": {
+      case "computer":
+      case "session": {
         const pill = composerPillFromPart(part);
         return [{ type: "text", text: composerPillText(pill), state: "done", providerMetadata: { opencode: { composerPill: pill } } }];
       }
@@ -42,7 +38,6 @@ export function pendingMessageParts(text: string, attachments: ComposerAttachmen
   let attachmentsReady = true;
   for (const attachment of attachments) {
     const filename = resolveAttachmentFileMetadata(attachment.file).filename;
-    // Compression can change an image's extension, but never its submitted bytes here.
     const compressedFilename = attachment.kind === "image"
       ? resolveAttachmentFileMetadata({ name: `${attachment.file.name.replace(/\.[^.]+$/, "") || "image"}.jpg`, type: "image/jpeg" }).filename
       : filename;
@@ -73,8 +68,6 @@ export function useDisplayedMessages(input: {
   autoSendComposer?: DisplayComposer;
 }) {
   const { messages, extraMessages, sessionId } = input;
-  // Ordinary composer edits are not transcript inputs. A captured autosend
-  // likewise stays independent of the next draft being typed.
   const composer = input.autoSending ? input.autoSendComposer ?? input.composer : undefined;
   const draft = composer?.draft;
   const attachments = composer?.attachments;

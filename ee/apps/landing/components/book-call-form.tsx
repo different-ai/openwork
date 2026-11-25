@@ -1,7 +1,6 @@
 "use client";
 
-import { Mail } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 type FormState = "idle" | "loading" | "success" | "error";
 
@@ -17,7 +16,14 @@ const initialFields: FormFields = {
   message: ""
 };
 
+const fieldClassName =
+  "min-h-11 w-full rounded-lg border border-[var(--lp-border)] bg-[var(--lp-page)] px-4 py-3 text-sm text-[var(--lp-ink)] placeholder:text-[var(--lp-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-ink)] disabled:opacity-60";
+const labelClassName =
+  "mb-2 block text-sm font-medium text-[var(--lp-ink)]";
+const failureMessage = "Your message could not be sent. Try again.";
+
 export function BookCallForm() {
+  const id = useId();
   const [fields, setFields] = useState<FormFields>(initialFields);
   const [website, setWebsite] = useState("");
   const [startedAt, setStartedAt] = useState(() => Date.now());
@@ -62,131 +68,133 @@ export function BookCallForm() {
       if (!response.ok) {
         const data = await response.json().catch(() => null);
         setState("error");
-        setErrorMsg(
-          data?.message ?? data?.error ?? "Something went wrong. Please try again."
-        );
+        setErrorMsg(data?.message ?? data?.error ?? failureMessage);
         return;
       }
 
       setState("success");
       setFields(initialFields);
-    } catch (error) {
+    } catch {
       setState("error");
-      setErrorMsg(
-        error instanceof Error
-          ? error.message
-          : "Something went wrong. Please try again."
-      );
+      setErrorMsg(failureMessage);
     }
   };
 
   return (
-    <section id="book" className="rounded-[24px] border border-[var(--lp-border)] bg-white p-8">
-      <div>
-        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-[var(--lp-border)] bg-[var(--lp-tonal)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--lp-muted)]">
-          <Mail size={12} />
-          Get in touch with us
-        </div>
-        <h3 className="mb-3 text-2xl font-medium tracking-tight text-[#011627]">
-          Tell us what you need.
-        </h3>
-        <p className="mb-6 max-w-2xl text-[15px] leading-relaxed text-[var(--lp-body)]">
-          Share your team context and we&apos;ll get back to you over email.
-        </p>
+    <section
+      id="book"
+      aria-labelledby={`${id}-heading`}
+      className="scroll-mt-28 rounded-[14px] bg-white p-5 shadow-[0_0_0_1px_rgba(1,22,39,0.08),0_12px_24px_-16px_rgba(1,22,39,0.2)] md:p-7"
+    >
+      <h3
+        id={`${id}-heading`}
+        className="mb-5 text-[17px] font-medium tracking-[-0.015em] text-[var(--lp-ink)]"
+      >
+        Tell us what you need
+      </h3>
 
-        {state === "success" ? (
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 text-[14px] leading-relaxed text-emerald-800">
-            Thanks. We&apos;ve got your note and will follow up soon.
-            <button
-              type="button"
-              onClick={reset}
-              className="mt-3 block text-[13px] font-medium text-emerald-700 transition hover:text-emerald-900"
-            >
-              Send another message
-            </button>
-          </div>
-        ) : (
-          <form className="space-y-4" onSubmit={handleSubmit}>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="hidden" aria-hidden="true">
-                <label>
-                  Website
-                  <input
-                    value={website}
-                    onChange={event => setWebsite(event.target.value)}
-                    autoComplete="off"
-                    tabIndex={-1}
-                  />
-                </label>
-              </div>
-              <div>
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--lp-muted)]">
-                  Full name
-                </label>
-                <input
-                  value={fields.fullName}
-                  onChange={event => setField("fullName", event.target.value)}
-                  placeholder="Jeff Bezos"
-                  className="w-full rounded-2xl border border-[#F1F5F9] bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-[var(--lp-border)] focus:bg-white"
-                  autoComplete="name"
-                  required
-                  type="text"
-                  disabled={state === "loading"}
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--lp-muted)]">
-                  Company email
-                </label>
-                <input
-                  value={fields.companyEmail}
-                  onChange={event =>
-                    setField("companyEmail", event.target.value)
-                  }
-                  placeholder="jeff@amazon.com"
-                  className="w-full rounded-2xl border border-[#F1F5F9] bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-[var(--lp-border)] focus:bg-white"
-                  autoComplete="email"
-                  required
-                  type="email"
-                  disabled={state === "loading"}
-                />
-              </div>
+      <p role="status" aria-atomic="true" className="text-sm leading-relaxed text-[var(--lp-ink)]">
+        {state === "success"
+          ? "Message sent. We’ll follow up by email."
+          : state === "loading"
+            ? "Sending your message…"
+            : ""}
+      </p>
+      <p role="alert" aria-atomic="true" className="text-sm leading-relaxed text-[var(--lp-ink)]">
+        {state === "error" ? errorMsg : ""}
+      </p>
+
+      {state === "success" ? (
+        <button
+          type="button"
+          onClick={reset}
+          className="mt-3 min-h-11 rounded-lg px-3 text-sm font-medium text-[var(--lp-ink)] underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-ink)]"
+        >
+          Send another message
+        </button>
+      ) : (
+        <form
+          className="space-y-4"
+          onSubmit={handleSubmit}
+          aria-busy={state === "loading"}
+        >
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="hidden" aria-hidden="true">
+              <label htmlFor={`${id}-website`}>Website</label>
+              <input
+                id={`${id}-website`}
+                name="website"
+                value={website}
+                onChange={event => setWebsite(event.target.value)}
+                autoComplete="off"
+                tabIndex={-1}
+              />
             </div>
-
             <div>
-              <label className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--lp-muted)]">
-                How can we help?
+              <label htmlFor={`${id}-full-name`} className={labelClassName}>
+                Full name
               </label>
-              <textarea
-                value={fields.message}
-                onChange={event => setField("message", event.target.value)}
-                placeholder="Share more about what you want to accomplish"
-                className="min-h-[160px] w-full rounded-2xl border border-[#F1F5F9] bg-white/90 px-4 py-3 text-[14px] text-[#011627] outline-none transition focus:border-[var(--lp-border)] focus:bg-white"
+              <input
+                id={`${id}-full-name`}
+                name="fullName"
+                value={fields.fullName}
+                onChange={event => setField("fullName", event.target.value)}
+                placeholder="Your full name"
+                className={fieldClassName}
+                autoComplete="name"
                 required
+                type="text"
                 disabled={state === "loading"}
               />
             </div>
+            <div>
+              <label htmlFor={`${id}-company-email`} className={labelClassName}>
+                Company email
+              </label>
+              <input
+                id={`${id}-company-email`}
+                name="companyEmail"
+                value={fields.companyEmail}
+                onChange={event =>
+                  setField("companyEmail", event.target.value)
+                }
+                placeholder="you@example.com"
+                className={fieldClassName}
+                autoComplete="email"
+                autoCapitalize="none"
+                spellCheck={false}
+                required
+                type="email"
+                disabled={state === "loading"}
+              />
+            </div>
+          </div>
 
-            {state === "error" ? (
-              <div className="rounded-2xl border border-red-200 bg-red-50/80 px-4 py-3 text-[13px] leading-relaxed text-red-700">
-                {errorMsg}
-              </div>
-            ) : null}
+          <div>
+            <label htmlFor={`${id}-message`} className={labelClassName}>
+              How can we help?
+            </label>
+            <textarea
+              id={`${id}-message`}
+              name="message"
+              value={fields.message}
+              onChange={event => setField("message", event.target.value)}
+              placeholder="Share what your team wants to accomplish"
+              className={`${fieldClassName} min-h-40`}
+              required
+              disabled={state === "loading"}
+            />
+          </div>
 
-            <button
-              type="submit"
-              disabled={!hydrated || state === "loading"}
-              className="doc-button w-full sm:w-auto disabled:opacity-60"
-            >
-              {!hydrated
-                ? "Loading..."
-                : state === "loading"
-                  ? "Sending..."
-                  : "Get in touch"}
-            </button>
-          </form>
-        )}
-      </div>
+          <button
+            type="submit"
+            disabled={!hydrated || state === "loading"}
+            className="doc-button min-h-11 w-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-ink)] disabled:opacity-60 sm:w-auto"
+          >
+            {state === "loading" ? "Sending…" : "Send message"}
+          </button>
+        </form>
+      )}
     </section>
   );
 }

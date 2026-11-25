@@ -39,6 +39,11 @@ remote session lifecycle.
 - Runner tokens are time-limited, audience-bound credentials. Every runner
   request rechecks the owner's active membership. Credentials are not stored
   in execution journals.
+- A computer can be disconnected by its owner or an authorized admin
+  ([docs](features/remote-devices/README.md)). Den then refuses that install
+  at the token mint, on every runner route and on its device report with
+  `403 computer_disconnected`, ends the sign-in it used when known, and
+  accepts it again only after a new sign-in on that computer.
 - A standalone Location registers only its approved directory. The local
   ownership guard prevents two hosts from concurrently owning that target.
 - Remote-only registrations cannot advertise presence or claim scheduled
@@ -56,12 +61,13 @@ remote session lifecycle.
    the registered-target surface.
 3. `remote-session:read` with `commandId`: inspect durable delivery and progress.
    Delivery is not task completion. `session.status` distinguishes running,
-   waiting, idle and error. Approval remains in the native client.
+   waiting, idle and error. What it waits on is answered with `answer`
+   (see "Pending requests and answers").
 4. `remote-session:read/send/stop` with the native `sessionId` and workspace:
    route control requests back to the owning runner. A pending request returns
    `requestId`; reading that ID collects its eventual receipt.
 5. `remote-session:list`: inspect the caller's admitted local sessions.
-6. `remote-session:status` (behind `remoteSessionSubagents`): follow up to ten
+6. `remote-session:status`: follow up to ten
    sessions in one call, desktop and registered ones by `commandId`, Cloud ones
    by `sessionId`. Each result is a compact state (`starting`, `running`,
    `waiting` with `waitingFor`, `idle` with a short answer preview, `error`) and
@@ -71,6 +77,21 @@ remote session lifecycle.
    command is one indexed read of the receipt its runner already reports; a
    Cloud session is a small worker read of its last messages, run state and,
    only while it runs, pending requests. Use `read` for the transcript.
+   While a session runs or waits, `latestStep` is a short sentence for the
+   step it ran last (`Ran List the release notes`, `Read v1.1.md`). Desktop
+   runners compute it from the current turn's last tool call and send it with
+   their progress report (`latestStep`, ≤240 chars, optional on the wire;
+   Den stores it in `session_latest_step`); Den derives it for Cloud sessions
+   from the tail it already reads (`latestStep()` in
+   `packages/headless-threads`). Older runners omit it and Den answers null.
+   A new step changes the version, so followers see it on their next wait.
+7. `remote-session:answer`: answer the question
+   or permission a session waits on, with the `requestId` from `pending`.
+   Questions take the chosen option labels per question (free text only where
+   the question allows it); permissions take `once` or `reject`, never
+   `always`. Only the member's own chat lists it (never an Automation, Workflow
+   run or App), and its instructions require asking the person first, every
+   time, as a chat answering another local session's question does.
 
 Cloud remains the default create target and retains its existing access and
 worker lifecycle. `target: "desktop"` and legacy wire names stay compatible.
@@ -78,7 +99,8 @@ The native session ID is a local receipt, not a globally trusted routing key.
 
 Use a stable `idempotencyKey` for desktop/registered create retries. Den scopes
 it to the authenticated organization and user and refuses different arguments
-under the same key. Cloud creation does not currently support this argument;
+under the same key while its command can still be admitted (10 minutes). After
+that the key is released, so the same key from a later chat starts new work. Cloud creation does not currently support this argument;
 callers must not infer a guarantee from an ignored key.
 
 The desktop chat shows a session its agent started as a sub-agent row: where
@@ -86,15 +108,118 @@ it runs, whether it is working, waiting on the person or finished, and its
 answer. Its routes under `/v1/remote-sessions/` run these same capabilities
 with the member's own session. One loop in the app follows every shown
 session with one waiting `status` call at a time, not while the window is
-hidden or offline, and stops once they settle. The transcript is read only
-while the person has the session open, when its status changes; follow-ups
-and stop go through `send` and `stop`. Answering a pending permission or
-question stays on the computer that runs the session.
+hidden or offline, and stops once they settle. Stop on the row goes through
+`stop`. Answers are available from the row and conversation when the runner
+supports remote answers.
+
+Task rows, conversation views and answers are generally available. Their former
+`remoteSessionSubagents`, `remoteSessionThreadView` and `remoteSessionAnswers`
+rollouts are retired.
+
+The helper view is generally available on cloud and self-hosted; its former
+`remoteSessionHelperView` rollout is retired with no usage tracking or prerequisite
+rollout flag. The row reads as a sentence
+(`Working on <computer> · <task>`, then `<elapsed>, last ran: <latestStep>`)
+and opens the session in the main pane under the session route
+`remote:<threadKey>`, like a local helper. The app never treats that id as
+a local session: the route state reads it as "no local session" plus a
+remote task, so no engine call uses it. Enter sends a follow-up through
+`send`, Stop goes through `stop`, and Esc returns to the parent chat
+through the same `child-navigation.ts` return as local helpers. The task
+and its parent are kept per window in sessionStorage so a reload on the
+route still renders it. The generally available composer's Agents list
+shows the turn's remote tasks beside local helpers (computer,
+task, status word, Open, Stop) on either engine, from the same shared
+follower. The sidebar also lists followed tasks under their chat with a
+status word. `Open beside` and split panes retain the side-panel conversation.
+
+### Transcript steps
+
+A `read` page's messages keep `text` and `toolCalls` for older readers and,
+from current runners, add an ordered `parts` array plus `completedAt`:
+
+- `{ type: "text", text }`
+- `{ type: "reasoning", text, durationMs? }`
+- `{ type: "tool", id, name, status, title?, input, output, error, truncated, startedAt?, endedAt? }`
+
+Caps match the rest of the page: at most 200 parts per message, 2000
+characters per tool field (`truncated` marks a cut), text and reasoning
+sharing one 20,000-character budget per message (reasoning parts at most
+4,000), and the whole result under 256 KB. Desktop runners
+(`automation-runner.mjs`), the OpenCode plugin (`native-opencode.ts`) and the
+Cloud `read` (`remote-session-transcript.ts`, from `@openwork/headless-threads`
+part order and tool state) all send this shape; Den stores and returns it
+unchanged. A runner that omits `parts` still parses, and readers rebuild steps
+from `toolCalls` then `text`.
+
+The panel maps parts to the chat's message
+parts (`remoteTranscriptToUIMessages`) and renders them with the main chat's
+`MessageList`, read only: each tool step gets the local labels, the finished
+turn folds to "Worked for…", and a failed step stays open with its details.
+The agent's own status checks stay hidden, as in the chat.
 
 Slack uses the same capabilities and trusted run-token provenance to post a
 result back to its originating thread. A model cannot choose an arbitrary
 notification destination. Workbot and other MCP-backed chats use the same
 owner-scoped targets and receipts, without a separate registration mechanism.
+
+- The person answers the question or
+  permission a task waits on from its row (single-choice questions) or the card
+  above the conversation's follow-up box, through
+  `POST /v1/remote-sessions/answer` (owner-only).
+
+### Pending requests and answers
+
+A runner that registers `remote_session_answer_v1` reports what a waiting
+session waits on as `pending` in its progress and transcript reads:
+`{ kind: "question", requestId, questions: [{ header, question, options: [{ label, description }], multiple, custom }] }`
+or `{ kind: "permission", requestId, title, detail, command? }`. It is plain
+text from the other computer; clients never render it as links or run it. Den
+stores it with the command's progress, and `status` returns a short summary
+(question and option labels, or the permission's title) whose `requestId`
+changes the version. Cloud sessions read the same shape from the worker's
+pending lists while they run.
+
+An `answer` request reaches only such runners; older ones are refused with
+`answer_unsupported` before anything is queued. The runner journals it like a
+follow-up, idempotent by the pending `requestId`: the marker is durable before
+the native reply, and a replay that finds the request gone reports it answered
+rather than replying again (a native request is answered at most once). The
+adapter checks the answer against the live request and refuses a stale
+`requestId` (`stale_request`) or a misfit answer (`invalid_answer`). Desktop
+replies through the same native paths as a local chat: v1 question and
+permission replies, v2 form replies by field key and option value, v2 permission
+replies. The OpenCode plugin host has no question reply in 2.0.26, so
+`opencode-openwork` answers permissions only. An answer request that expires
+after its reply was dispatched settles as `ambiguous_answer`.
+
+A runner that also registers `remote_session_access_v1` lists every open item
+of a session in a transcript read as `pendingItems` (up to five, `pending`
+first; it also holds a question a finished turn left open). An answer may name
+any of them by its `requestId`, and `{ kind: "dismiss", requestId }` closes a
+question without answering it. A remote answer still never approves "always".
+
+### Session access and attach
+
+Feature `remoteSessionAccess` ([docs](features/remote-session-access/README.md)).
+Which sessions a caller can reach is a policy with two parts: the
+organization's ceiling in Den and the owner's choice on each computer, both
+`created` (only sessions started remotely, the default) or `all`. The narrower
+applies and the computer enforces it.
+
+The native session ID is still not a routing key. A session that was started
+on the computer is reached only after `remote-session:attach` (or
+`POST /v1/remote-sessions/attach`) queues a command of kind
+`remote_session_attach` for that computer. The runner checks its policy,
+verifies the session is in the named workspace, and journals a receipt without
+touching the session; from then on read, send, stop, answer and progress work
+as for a created session. The policy is read again on every request and
+progress report of an attached session. A newer attach to the same session
+replaces an older one. Den lets go of an attached session ("detach") when the
+computer reports `created`, the ceiling is lowered, or the computer no longer
+knows the receipt; the caller attaches again. While its access is `all` the
+computer reports its sessions (`PUT /v1/session-runners/sessions`) so the owner
+can find them in Den; nobody else can list them.
 
 ## Recovery and honest guarantees
 
@@ -144,17 +269,9 @@ and permission state rather than an in-memory event alone.
 Runner unload/account switch stops its control loop and releases ownership;
 normal native permission handling is never bypassed.
 
-## MCP events: optional observation, separate rollout
+## Following progress: polling, not events
 
-A separate stacked `remoteSessionEvents` feature adds caller-facing receipt
-resource invalidations, not runner dispatch. Current MCP `subscriptions/listen`
-uses a POST-response SSE stream with explicit URI filters; it is not a durable
-queue and has no `Last-Event-ID` replay. After acknowledgement or reconnect,
-read the current durable receipt. Polling remains a fallback.
-
-Notifications contain only an authorized resource URI. Ownership and live
-credential/membership checks are required for both subscription and read.
-Process-local notifications alone cannot establish multi-replica delivery;
-active watchers must observe the shared durable receipt. The OpenCode plugin's
-public MCP API does not expose arbitrary URI subscriptions, so this layer does
-not turn native runners into an event-driven dispatch system.
+MCP callers follow a remote session by polling its durable receipt
+(`remote-session:status` with `waitMs`, or `remote-session:read`). There are no
+receipt resource subscriptions or change notifications; reads always return the
+current durable state, which also covers reconnects and other replicas.

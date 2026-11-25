@@ -1,9 +1,10 @@
-import { eq, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import { maximumCompletionCost, memberSharedLimit, reserveMemberBudget, settleMemberBudget } from "../member/shared-budget.js"
+import { and, eq, gt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
-  DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
+  FreeAutoSafetyCaseTable as SafetyCase, FreeAutoSafetyMemberTable as SafetyMember, FreeAutoSafetyPauseTable as Pause, DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
   AnonymousInferenceUsageBucketTable as GuestBucket, AnonymousInferenceUsageTable as GuestUsage,
   InferenceFreeUsageBucketTable as MemberBucket, InferenceFreeUsageTable as MemberUsage,
-  recordFreeAutoLimit,
+  freeAutoLimitId, freeAutoObservationRateId, recordFreeAutoLimit,
 } from "@openwork-ee/den-db"
 import { freeInferenceWindow, INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, type DesktopFreeAccessStatus } from "@openwork/free-auto"
@@ -11,21 +12,19 @@ import { rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import { freeIdentityHash, freePrincipalHash, memberFreePrincipalAllowed, type FreePrincipal } from "./principal.js"
 import type { AutoConfig } from "./config.js"
 import { db, freeAutoDatabase } from "../../db.js"
-import { createFreeCapacity, type FreeCapacity } from "./capacity.js"
+import { createFreeCapacity, FreeAutoBusyError, type FreeCapacity } from "./capacity.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 export type FreeAllowanceFamily = "anonymous" | "member"
 export type FreeUsageReceipt = { eventId: string; model: string; amount: number; inputTokens: number; cachedInputTokens: number; outputTokens: number }
-/** A usage window, like one paid Models limit policy window. */
 export type FreeWindow = { id: string; scope: "member" | "installation" | "global"; identity: string;
   window: "weekly" | "daily" | "monthly"; start: Date; end: Date; limit: number }
-export type FreeAdmission = { ok: true; windows: FreeWindow[] } | { ok: false; code: string }
+export type FreeAdmission = { ok: true; windows: FreeWindow[]; reserved?: boolean } | { ok: false; code: string }
 
 export function freeUsageBucketId(scope: string, identity: string, window: string, start: Date) {
   return freeIdentityHash("free", ["usage", scope, identity, window, start.toISOString()].join(":"))
 }
 function stableId(parts: string[]) { return freeIdentityHash("free", parts.join(":")) }
-/** A receipt counts only if it is for the free model and its numbers are sane; otherwise the estimate is charged. */
 export function validFreeReceipt(receipt: FreeUsageReceipt | null): receipt is FreeUsageReceipt {
   return Boolean(receipt && receipt.eventId && receipt.eventId.length <= 255 && receipt.model === INFERENCE_FREE_MODEL_ID
     && [receipt.amount, receipt.inputTokens, receipt.cachedInputTokens, receipt.outputTokens].every((value) => Number.isSafeInteger(value) && value >= 0)
@@ -39,27 +38,28 @@ function isDuplicate(error: unknown): boolean {
 }
 
 let sharedCapacity: FreeCapacity | undefined
-/** One limit per process, shared by guests and members. */
 function processCapacity(config: AutoConfig) {
   sharedCapacity ??= createFreeCapacity({ maxActive: config.maxConcurrent, maxQueued: config.maxQueued })
   return sharedCapacity
 }
 
-/**
- * Free Auto accounting, on the paid Models pattern: before a request, refuse only when a window's used total has
- * reached its limit; after it, record the real cost once (keyed on OpenAI's completion id) and add it to each
- * window. Nothing is held up front, so parallel requests from one person run exactly as they do on paid Models.
- */
+const observationCapacity = createFreeCapacity({ maxActive: 4, maxQueued: 32 })
+const OBSERVATION_MEMORY = 20_000
+const OBSERVATION_WAIT_MS = 1_000
+const settledObservations = new Set<string>()
+function rememberObservation(key: string) {
+  settledObservations.add(key)
+  if (settledObservations.size > OBSERVATION_MEMORY) {
+    const oldest = settledObservations.values().next().value
+    if (oldest !== undefined) settledObservations.delete(oldest)
+  }
+}
+
 export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowanceFamily, database: typeof db = freeAutoDatabase(), capacity: FreeCapacity = processCapacity(config)) {
   const owns = (principal: FreePrincipal) => principal.kind === (family === "member" ? "member" : "installation")
 
-  /**
-   * Every signed guest request is a heartbeat: the time since the previous one is credited as
-   * active time, unless the gap is long enough to mean the app was closed. Returns the total.
-   */
   async function identityActivity(tx: Tx, principal: FreePrincipal, now: Date) {
     if (principal.kind !== "installation" || principal.deviceless) return 0
-    // Insert first, then lock the row that now exists: a locking read of a missing row takes a gap lock that deadlocks parallel requests.
     await tx.insert(Identity).values({ id: principal.id, first_seen_at: now, last_seen_at: now, active_ms: 0 }).onDuplicateKeyUpdate({ set: { id: sql`${Identity.id}` } })
     const [existing] = await tx.select().from(Identity).where(eq(Identity.id, principal.id)).limit(1).for("update")
     if (!existing) throw new Error("Free accounting identity unavailable")
@@ -68,17 +68,11 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     if (gap > 0) await tx.update(Identity).set({ last_seen_at: now, active_ms: activeMs }).where(eq(Identity.id, principal.id))
     return activeMs
   }
-  /**
-   * Members: their weekly allowance only. Guests: the machine's weekly allowance, which grows with time the app is
-   * open, and the global daily and monthly caps. Untagged guests also get their IP's daily budget and the shared
-   * untagged daily cap, since their machine id is only self-reported.
-   */
   function windows(principal: FreePrincipal, now: Date, activeMs: number): FreeWindow[] {
     const weekly = freeInferenceWindow(now)
     const day = { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
       end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)) }
     const identity = freePrincipalHash(principal)
-    // The untagged per-IP window is last among the personal ones, so an untagged build's status reports its daily budget.
     const untagged: Array<Omit<FreeWindow, "id">> = principal.kind === "installation" && principal.untaggedIpHash
       ? [{ scope: "installation", identity: freeIdentityHash("untagged-ip", principal.untaggedIpHash), window: "daily", ...day, limit: config.untaggedIpDailyAmount },
           { scope: "global", identity: "global-untagged", window: "daily", ...day, limit: config.untaggedGlobalDailyAmount }]
@@ -86,7 +80,6 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     const values: Array<Omit<FreeWindow, "id">> = principal.kind === "member"
       ? [{ scope: "member", identity, window: "weekly", ...weekly, limit: config.member.weeklyLimitAmount }]
       : [
-          // An open request has no machine, so only its IP's budget and the shared caps apply.
           ...(principal.deviceless ? [] : [{ scope: "installation" as const, identity, window: "weekly" as const, ...weekly, limit: rampedDeviceAmount(config, activeMs) }]),
           ...untagged,
           { scope: "global", identity: "global", window: "daily", ...day, limit: config.globalDailyAmount },
@@ -109,7 +102,6 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
         .onDuplicateKeyUpdate({ set: { used_amount: sql`${GuestBucket.used_amount} + ${amount}`, limit_amount: window.limit } })
     }
   }
-  /** Walks the windows in order: the personal allowance first, then the shared caps. */
   async function check(tx: Tx, principal: FreePrincipal, now: Date) {
     const all = windows(principal, now, await identityActivity(tx, principal, now))
     let allowance: DesktopFreeAccessStatus["allowance"] = null
@@ -126,25 +118,50 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
   }
 
   async function observeLimit(principal: FreePrincipal, result: Awaited<ReturnType<typeof check>>) {
-    if (!result.personalLimit) return
+    const window = result.personalLimit
+    if (!window) return
     const subjectHash = principal.kind === "member" ? freePrincipalHash(principal) : principal.journeyHash ?? (!principal.deviceless ? freePrincipalHash(principal) : null)
     if (!subjectHash) return
-    await recordFreeAutoLimit(database, { audience: principal.kind === "member" ? "member" : "guest", subjectHash,
+    const audience = principal.kind === "member" ? "member" : "guest"
+    const observationRateHash = principal.kind === "installation" ? principal.observationRateHash : undefined
+    if (audience === "guest" && !observationRateHash) return
+    const id = freeAutoLimitId({ audience, subjectHash, windowStart: window.start })
+    const rateKey = observationRateHash ? `rate:${freeAutoObservationRateId(observationRateHash, result.now)}` : null
+    if (settledObservations.has(id) || (rateKey && settledObservations.has(rateKey))) return
+    const work = observationCapacity.run(() => recordFreeAutoLimit(database, { audience, subjectHash,
       ...(principal.kind === "member" ? { userId: principal.id, organizationId: principal.organizationId } : {}),
-      ...(principal.kind === "installation" ? { observationRateHash: principal.observationRateHash } : {}),
-      windowStart: result.personalLimit.start, now: result.now }).catch(() => console.warn("[free-auto] limit behavior could not be recorded"))
+      observationRateHash, windowStart: window.start, now: result.now })).then((outcome) => {
+      if (outcome === "recorded" || outcome === "exists") rememberObservation(id)
+      else if (outcome === "capped" && rateKey) rememberObservation(rateKey)
+    }, (error: unknown) => {
+      if (!(error instanceof FreeAutoBusyError)) console.warn("[free-auto] limit behavior could not be recorded")
+    })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([work, new Promise<void>((resolve) => { timer = setTimeout(resolve, OBSERVATION_WAIT_MS); timer.unref?.() })])
+    clearTimeout(timer)
   }
 
   return {
     family,
-    /** A signed desktop proof is good once, and only close to the Gateway's clock. */
+    async safetyPaused(principal: FreePrincipal) {
+      const identifier = freePrincipalHash(principal)
+      if (principal.kind === "member") {
+        const [known] = await database.$primary.select({ identifier: SafetyMember.identifier }).from(SafetyMember)
+          .where(eq(SafetyMember.identifier, identifier)).limit(1)
+        if (!known) await database.insert(SafetyMember).values({ identifier, user_id: principal.id }).onDuplicateKeyUpdate({ set: { identifier } }).catch(() => undefined)
+      }
+      const [blocked] = await database.$primary.select({ key: SafetyCase.case_key }).from(SafetyCase)
+        .where(and(eq(SafetyCase.identifier, identifier), eq(SafetyCase.state, "blocked"))).limit(1)
+      if (blocked) return true
+      const [entry] = await database.$primary.select({ id: Pause.identifier }).from(Pause)
+        .where(and(eq(Pause.identifier, identifier), gt(Pause.expires_at, sql`current_timestamp(3)`))).limit(1)
+      return Boolean(entry)
+    },
     async consumeNonce(proof: { keyThumbprint: string; nonce: string; timestamp: number }): Promise<"accepted" | "replay" | "unavailable"> {
-      if (family !== "anonymous") return "unavailable"
       const now = new Date()
       if (Math.abs(now.getTime() - proof.timestamp) > DESKTOP_FREE_PROOF_CLOCK_SKEW_MS) return "unavailable"
       return capacity.run(async () => {
         await database.delete(Nonce).where(lte(Nonce.expires_at, now)).limit(1000).catch(() => undefined)
-        // The primary key is the replay check: a second insert of the same signature fails.
         try {
           await database.insert(Nonce).values({ id: stableId(["nonce", proof.keyThumbprint, proof.nonce.toLowerCase()]),
             expires_at: new Date(proof.timestamp + DESKTOP_FREE_PROOF_CLOCK_SKEW_MS + 1000) })
@@ -155,53 +172,58 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
         return "accepted"
       })
     },
-    /**
-     * Starts a guest session: records the machine (first seen, active time) for its allowance ramp. Machines are not
-     * counted per IP; opening the app costs nothing, and spend is bounded by the device ramp and the global caps.
-     */
     async consumeSession(installationHash: string): Promise<void> {
       if (family !== "anonymous") throw new Error("Guest sessions only")
       const now = new Date()
       await capacity.run(() => database.transaction(async (tx) => { await identityActivity(tx, { kind: "installation", id: installationHash }, now) }))
     },
-    async read(principal: FreePrincipal): Promise<Pick<DesktopFreeAccessStatus, "state" | "code" | "allowance">> {
+    async read(principal: FreePrincipal, desktopHash?: string): Promise<Pick<DesktopFreeAccessStatus, "state" | "code" | "allowance">> {
       if (!owns(principal)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
-      return capacity.run(async () => {
-        const result = await database.transaction(async (tx) => {
-        if (!await memberFreePrincipalAllowed(principal, tx)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
-        return check(tx, principal, new Date())
-        })
-        if (!("windows" in result)) return { state: "unavailable", code: result.code, allowance: null }
-        await observeLimit(principal, result)
-        const { allowance, code } = result
-        if (code === "anonymous_limit_exceeded") return { state: "exhausted", code, allowance }
-        if (code) return { state: "unavailable", code, allowance }
-        return { state: "ready", code: null, allowance }
-      })
+      const result = await capacity.run(() => database.transaction(async (tx) => {
+        if (!await memberFreePrincipalAllowed(principal, tx)) return null
+        const result = await check(tx, principal, new Date())
+        if (!result.code && principal.kind === "member") {
+          result.code = await memberSharedLimit(tx, principal, config, maximumCompletionCost(config, 1) ?? 1, result.now, { desktopHash })
+        }
+        return result
+      }))
+      if (!result) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
+      await observeLimit(principal, result)
+      const { allowance, code } = result
+      if (code === "free_founder_budget_exhausted" || code === "free_desktop_budget_exhausted") return { state: "exhausted", code, allowance: null }
+      if (code === "anonymous_limit_exceeded" || code === "free_org_budget_exhausted" || code === "free_platform_budget_exhausted") return { state: "exhausted", code, allowance }
+      if (code) return { state: "unavailable", code, allowance }
+      return { state: "ready", code: null, allowance }
     },
-    /** Before a request: the same "used is below the limit" check as paid Models' ensureUsableBuckets. */
-    async admit(principal: FreePrincipal): Promise<FreeAdmission> {
+    async admit(principal: FreePrincipal, requestId: string, choices: number, desktopHash?: string): Promise<FreeAdmission> {
       if (!owns(principal)) return { ok: false, code: "free_principal_rejected" }
-      return capacity.run(async () => {
-        const result = await database.transaction(async (tx) => {
-          if (!await memberFreePrincipalAllowed(principal, tx)) return null
-          return check(tx, principal, new Date())
-        })
-        if (!result) return { ok: false, code: "free_principal_rejected" }
-        await observeLimit(principal, result)
-        return result.code ? { ok: false, code: result.code } : { ok: true, windows: result.windows }
-      })
+      if (principal.kind === "member") {
+        const cost = maximumCompletionCost(config, choices)
+        if (cost === null) return { ok: false, code: "free_request_outside_budget" }
+        return capacity.run(() => database.transaction(async (tx): Promise<FreeAdmission> => {
+          const code = await reserveMemberBudget(tx, principal, config, requestId, cost, { desktopHash })
+          if (code) return { ok: false, code }
+          if (!await memberFreePrincipalAllowed(principal, tx)) throw new Error("Member eligibility changed")
+          return { ok: true, windows: [], reserved: true }
+        }))
+      }
+      const result = await capacity.run(() => database.transaction(async (tx) => {
+        if (!await memberFreePrincipalAllowed(principal, tx)) return null
+        return check(tx, principal, new Date())
+      }))
+      if (!result) return { ok: false, code: "free_principal_rejected" }
+      await observeLimit(principal, result)
+      return result.code ? { ok: false, code: result.code } : { ok: true, windows: result.windows }
     },
-    /**
-     * After a request: record its cost once and add it to each window it was admitted under. Without a usage
-     * report (the stream broke, or the client left) the fixed estimate is charged instead. Returns false when this
-     * request or completion was already charged.
-     */
-    async charge(input: { requestId: string; principal: FreePrincipal; windows: FreeWindow[]; receipt: FreeUsageReceipt | null }) {
+    async charge(input: { requestId: string; principal: FreePrincipal; windows: FreeWindow[]; receipt: FreeUsageReceipt | null; reserved?: boolean; release?: boolean }) {
       const receipt = validFreeReceipt(input.receipt) ? input.receipt : null
       const amount = receipt?.amount ?? config.unreportedUsageAmount
       const { principal } = input
       return database.transaction(async (tx) => {
+        if (input.reserved && principal.kind === "member") {
+          await settleMemberBudget(tx, principal, config, input.requestId, receipt, input.release === true)
+          return true
+        }
         const usage = family === "member" ? MemberUsage : GuestUsage
         const [existing] = await tx.select({ id: usage.request_id }).from(usage).where(or(eq(usage.request_id, input.requestId),
           receipt ? eq(usage.completion_id, receipt.eventId) : undefined)).limit(1)

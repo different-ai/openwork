@@ -3,8 +3,13 @@
 # ---------------------------------------------------------------------------
 
 variable "openwork_version" {
-  description = "Published OpenWork release, for example \"0.18.54\". Used as the tag for both images unless den_api_image / den_web_image are set."
+  description = "Release label. 0.18.57 and 0.18.58 have built-in digest pins; other releases require den_api_image and den_web_image digest overrides."
   type        = string
+
+  validation {
+    condition     = contains(["0.18.57", "0.18.58"], var.openwork_version) || (var.den_api_image != "" && var.den_web_image != "")
+    error_message = "For versions other than 0.18.57/0.18.58, supply both den_api_image and den_web_image pinned by @sha256 digest."
+  }
 }
 
 variable "vpc_id" {
@@ -111,7 +116,7 @@ variable "tags" {
 }
 
 variable "den_api_image" {
-  description = "Full den-api image reference. Empty uses ghcr.io/different-ai/openwork-den-api:<openwork_version>. Set this to an ECR mirror if tasks cannot reach ghcr.io."
+  description = "Full den-api image pinned with @sha256 digest (including ECR mirrors). Empty uses the built-in digest for 0.18.57/0.18.58."
   type        = string
   default     = ""
 }
@@ -123,7 +128,7 @@ variable "den_gateway_image" {
 }
 
 variable "den_web_image" {
-  description = "Full den-web image reference. Empty uses ghcr.io/different-ai/openwork-den-web:<openwork_version>."
+  description = "Full den-web image pinned with @sha256 digest. Empty uses the built-in digest for 0.18.57/0.18.58."
   type        = string
   default     = ""
 }
@@ -182,7 +187,7 @@ variable "api_domain_name" {
 }
 
 variable "certificate_arn" {
-  description = "ACM certificate (same region) covering domain_name, api_domain_name, and openwork_web_domain_name when openwork_web_enabled. Empty creates and DNS-validates one in route53_zone_id."
+  description = "ACM certificate (same region) covering Den and all enabled optional hosts, including ai_gateway_domain_name. Empty creates and DNS-validates one in route53_zone_id."
   type        = string
   default     = ""
 }
@@ -222,7 +227,7 @@ variable "org_slug" {
 }
 
 variable "initial_admin_bootstrap_code" {
-  description = "One-time /setup code. Empty generates one (see the bootstrap_code output)."
+  description = "Legacy compatibility /setup code. Empty generates one only with write_only_secrets = false. Write-only mode uses secret_values_wo.bootstrap_code and never exports this legacy input."
   type        = string
   default     = ""
   sensitive   = true
@@ -241,9 +246,9 @@ variable "require_email_verification" {
 }
 
 variable "automations_enabled" {
-  description = "Enable Automations."
+  description = "Automations for the whole install (on by default; organization admins can turn Desktop or Cloud Automations off in Settings)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "dashboards_enabled" {
@@ -315,7 +320,8 @@ variable "headless_runner" {
   description = <<-EOT
     The headless runner: Den's private agent service for Slack replies, headless
     Automations and Workbot. It calls the model directly (any Anthropic- or
-    OpenAI-compatible endpoint; key in headless_model_api_key) and reaches tools
+    OpenAI-compatible endpoint; key via headless_model_secret_arn or the legacy
+    headless_model_api_key input) and reaches tools
     through Den's /mcp/agent. Runs as one task with its SQLite database on EFS
     (one mount target per service subnet, so service_subnet_ids must be in
     different availability zones). Set external_url to use an already deployed
@@ -334,8 +340,8 @@ variable "headless_runner" {
   default = {}
 
   validation {
-    condition     = contains(["anthropic", "openai"], var.headless_runner.model_protocol)
-    error_message = "headless_runner.model_protocol must be anthropic or openai."
+    condition     = contains(["anthropic", "openai", "openai-responses"], var.headless_runner.model_protocol)
+    error_message = "headless_runner.model_protocol must be anthropic, openai or openai-responses."
   }
 
   validation {
@@ -355,7 +361,7 @@ variable "headless_runner_token" {
 }
 
 variable "headless_computer" {
-  description = "Optional computer tools for Workbot/headless turns. Off by default. Daytona reuses daytona_api_key/api_url/target but needs its own computer snapshot; Freestyle uses headless_computer_api_key."
+  description = "Optional computer tools for Workbot/headless turns. Off by default; no sandbox is provisioned during installation. Daytona uses daytona.api_url/target and its own computer snapshot. Use headless_computer_secret_arn for either provider, or the matching legacy raw-key input."
   type = object({
     provider      = optional(string, "off")
     snapshot      = optional(string, "")
@@ -382,6 +388,34 @@ variable "headless_model_api_key" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "headless_model_secret_arn" {
+  description = "Full ARN of an existing plain-string model API key secret. ECS reads it directly; Terraform never reads or copies its value. Mutually exclusive with headless_model_api_key. Uses the AWS-managed Secrets Manager key."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.headless_model_secret_arn == "" || can(regex("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}$", var.headless_model_secret_arn))
+    error_message = "headless_model_secret_arn must be a full plain-string Secrets Manager ARN, without a JSON-key or version suffix."
+  }
+  validation {
+    condition     = var.headless_model_secret_arn == "" || var.headless_model_api_key == ""
+    error_message = "Supply only one of headless_model_secret_arn and headless_model_api_key."
+  }
+}
+
+variable "headless_computer_secret_arn" {
+  description = "Full ARN of an existing plain-string Daytona or Freestyle API key secret, read directly by ECS. Mutually exclusive with the matching raw-key input. Uses the AWS-managed Secrets Manager key."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.headless_computer_secret_arn == "" || can(regex("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}$", var.headless_computer_secret_arn))
+    error_message = "headless_computer_secret_arn must be a full plain-string Secrets Manager ARN, without a JSON-key or version suffix."
+  }
+  validation {
+    condition     = var.headless_computer_secret_arn == "" || (var.headless_computer.provider == "daytona" ? var.daytona_api_key == "" : var.headless_computer_api_key == "")
+    error_message = "Supply only one computer secret reference or matching raw API key."
+  }
 }
 
 variable "headless_runner_image" {
@@ -493,16 +527,16 @@ variable "database_url" {
 variable "database" {
   description = "RDS settings."
   type = object({
-    instance_class        = optional(string, "db.t4g.micro")
+    instance_class        = optional(string, "db.t4g.small")
     engine_version        = optional(string, "8.4")
     allocated_storage_gb  = optional(number, 20)
     max_allocated_storage = optional(number, 100)
     multi_az              = optional(bool, false)
     backup_retention_days = optional(number, 7)
-    deletion_protection   = optional(bool, true)
+    deletion_protection   = optional(bool) # deprecated alias for top-level deletion_protection
     skip_final_snapshot   = optional(bool, false)
     apply_immediately     = optional(bool, false)
-    tls_query             = optional(string, "sslaccept=accept")
+    tls_query             = optional(string, "sslaccept=strict")
   })
   default = {}
 }
@@ -524,7 +558,7 @@ variable "redis_node_type" {
 # ---------------------------------------------------------------------------
 
 variable "den_api" {
-  description = "den-api task size and count. Keep desired_count = 1 until you have confirmed migrations: each task runs them on start."
+  description = "API-only task size and count. A dedicated migration task gates rollout regardless of replica count."
   type = object({
     cpu           = optional(number, 1024)
     memory        = optional(number, 2048)

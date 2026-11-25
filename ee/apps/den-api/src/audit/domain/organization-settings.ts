@@ -1,11 +1,6 @@
 import type { AuditChangeEventInput } from "../request-capture.js"
 import { auditChangeEvent, targetResource } from "./snapshot.js"
 
-// Platform-admin organization settings (origin platform_admin, actor the admin
-// user): organization.dpa_signed.updated, organization.complimentary_access.granted
-// / .revoked. Only the reserved metadata keys are read; the admin's free-text
-// `reason` is never stored, only `reasonProvided`.
-
 function organizationTarget(organizationId: string) {
   return [targetResource("organization", organizationId)]
 }

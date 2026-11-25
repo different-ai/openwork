@@ -1,14 +1,6 @@
 import type { CompareCard } from "./compare";
 import type { FaqEntry } from "./faq";
 
-/**
- * Answer-first guide pages for search engines and AI answer engines (SEO / GEO / AEO).
- *
- * Each guide renders as HTML at /guides/<slug>, as Markdown for agents that send
- * `Accept: text/markdown` (see middleware.ts), and as FAQPage + Article JSON-LD.
- * Keep the short answer under ~45 words: it is the passage answer engines quote.
- */
-
 export const SITE_URL = "https://openworklabs.com";
 export const GUIDES_PATH = "/guides";
 
@@ -29,7 +21,6 @@ export type GuideTable = {
 export type GuideSection = {
   id: string;
   heading: string;
-  /** Short status label shown next to the heading, e.g. "In preview". */
   badge?: string;
   paragraphs?: string[];
   bullets?: string[];
@@ -39,19 +30,12 @@ export type GuideSection = {
 
 export type Guide = {
   slug: string;
-  /** Short label for the guides index and footer. */
   label: string;
-  /** <title>; keep under 60 characters. */
   title: string;
-  /** Meta description; keep under 160 characters. */
   description: string;
-  /** The question the page answers, phrased the way people ask it. */
   heading: string;
-  /** Short, quotable answer shown under the heading. */
   answer: string;
-  /** ISO date of the last factual review. Shown on the page and in Article JSON-LD. */
   updated: string;
-  /** Concrete, verifiable facts (numbers, names, limits). Answer engines cite specifics. */
   keyFacts: string[];
   sections: GuideSection[];
   cards: CompareCard[];
@@ -220,7 +204,7 @@ export const guides: Guide[] = [
       "MCP URL: https://api.openworklabs.com/mcp/agent",
       "Sign-in: OAuth in the browser, per organization",
       "Setup guides for 10 MCP clients",
-      "First 5 OpenWork Cloud seats free"
+      "OpenWork Cloud Free plan: up to 5 users"
     ],
     sections: [
       {
@@ -308,7 +292,7 @@ export const guides: Guide[] = [
       },
       {
         question: "Do I need an OpenWork account?",
-        answer: "Yes, an OpenWork Cloud account. The first 5 seats are free."
+        answer: "Yes, an OpenWork Cloud account. The Free plan covers up to 5 users."
       },
       {
         question: "Can I use my company's AI Gateway models in Claude Code, Codex, or Cursor?",

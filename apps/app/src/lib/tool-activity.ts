@@ -9,6 +9,7 @@ import {
   isQuestionToolPart,
   isReadToolPart,
   isSkillToolPart,
+  skillDisplayName,
   isTaskToolPart,
   isTodoWriteToolPart,
   isWebFetchToolPart,
@@ -23,6 +24,13 @@ export function isToolPartInFlight(part: AnyToolPart): boolean {
   return part.state === "input-streaming" || part.state === "input-available"
 }
 
+export function sandboxRunningToolStep(part: AnyToolPart | undefined, running: boolean, step: string | null) {
+  if (!running || !step || !part || !isToolPartInFlight(part)) return null;
+  const name = part.type === "dynamic-tool" ? part.toolName : part.type.slice("tool-".length);
+  const metadata = part.callProviderMetadata?.openwork;
+  return name.startsWith("sandbox_") || metadata?.sandbox === true || metadata?.sandboxTool === true ? step : null;
+}
+
 function hostnameOf(url: string | undefined): string | undefined {
   if (!url) {
     return undefined
@@ -34,10 +42,6 @@ function hostnameOf(url: string | undefined): string | undefined {
   }
 }
 
-/**
- * Human-readable "what is this tool doing" label. Safe against partial
- * streamed input (fields may be missing despite the type contract).
- */
 export function getToolActivityLabel(part: AnyToolPart): string {
   if (isBashToolPart(part)) {
     const description = part.input?.description?.trim()
@@ -65,7 +69,7 @@ export function getToolActivityLabel(part: AnyToolPart): string {
     return `Inspecting ${parseFilename(part.input?.filePath)}`
   }
   if (isSkillToolPart(part)) {
-    const name = part.input?.name?.trim()
+    const name = skillDisplayName(part.input)
     return name ? `Loading ${name} skill` : "Loading a skill"
   }
   if (isTodoWriteToolPart(part)) {
@@ -94,4 +98,10 @@ export function getToolActivityLabel(part: AnyToolPart): string {
     return `Running ${part.toolName.replace(/[_-]+/g, " ")}`
   }
   return "Working"
+}
+
+export function sandboxGroupTag(ranInSandbox: readonly boolean[]): { kind: "all" } | { kind: "some"; count: number } | null {
+  const count = ranInSandbox.filter(Boolean).length;
+  if (count === 0) return null;
+  return count === ranInSandbox.length ? { kind: "all" } : { kind: "some", count };
 }

@@ -10,7 +10,7 @@ export interface ReviewDesignOptions {
   vision?: { ask: AskVision; model: string } | null;
   bypassCache?: boolean;
   rubric?: DesignRubric;
-  /** Atomically retain completed notes before each model call, even if CI kills this process. */
+  /** Atomically retain all measurements and each completed critique, even if CI kills this process. */
   checkpoint?: boolean;
 }
 
@@ -172,8 +172,12 @@ export async function reviewTestRunDesign(testRunDir: string, options: ReviewDes
     : null;
   const notes: Record<string, DesignNote[]> = {};
   const screens: Record<string, { caption: string; route: string }> = {};
-  const errors: string[] = [];
-  async function save(pending?: string): Promise<DesignReviewFile> {
+  const shots = screenshots(value);
+  const errors = new Map<number, string>();
+  const pending = new Set(vision ? shots.map((_, index) => index) : []);
+  let saves: Promise<unknown> = Promise.resolve();
+  function save(): Promise<DesignReviewFile> {
+    // Snapshot now, in capture order, not when this queued write eventually runs.
     // Collapse a copy: checkpointing must not repeatedly mutate earlier notes.
     const completed = structuredClone(notes);
     collapseRepeats(completed);
@@ -184,40 +188,69 @@ export async function reviewTestRunDesign(testRunDir: string, options: ReviewDes
       model: vision?.model ?? null,
       rubric: vision?.rubric.hash ?? null,
       specFile: typeof value.specFile === "string" ? value.specFile : null,
-      screens,
+      screens: structuredClone(screens),
       notes: completed,
-      errors: pending ? [...errors, `${pending}: advisory critique not completed`] : [...errors],
+      errors: shots.flatMap((shot, index) => {
+        const error = errors.get(index);
+        return error ? [error] : pending.has(index) ? [`${shot.caption}: advisory critique not completed`] : [];
+      }),
     };
-    const target = join(testRunDir, DESIGN_REVIEW_FILE);
-    const temporary = `${target}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(review, null, 2)}\n`, "utf8");
-    await rename(temporary, target);
-    return review;
+    // Every writer uses the same temporary path: never overlap writes or renames.
+    // A failed save also rejects subsequent saves rather than masking lost evidence.
+    const saved = saves.then(async () => {
+      const target = join(testRunDir, DESIGN_REVIEW_FILE);
+      const temporary = `${target}.tmp`;
+      await writeFile(temporary, `${JSON.stringify(review, null, 2)}\n`, "utf8");
+      await rename(temporary, target);
+      return review;
+    });
+    saves = saved;
+    return saved;
   }
-  for (const shot of screenshots(value)) {
+  // Measure and insert EVERY screenshot in capture order before model work. A
+  // hard kill during a slow critique still leaves all measured findings on disk.
+  const inputs: { shot: ScreenshotEntry; layout: LayoutSnapshot | null; measured: DesignNote[] }[] = [];
+  for (const shot of shots) {
     screens[shot.fileName] = { caption: shot.caption, route: shot.route };
     const layout = await readLayout(testRunDir, shot.fileName);
     const measured = layout ? checkLayout(layout) : [];
-    let judged: DesignNote[] = [];
     notes[shot.fileName] = measured;
-    if (options.checkpoint) await save(vision ? shot.caption : undefined);
-    if (vision) {
-      try {
-        const png = await readFile(join(testRunDir, shot.fileName));
-        judged = await critiqueScreenshot(
-          { png, hash: shot.hash, caption: shot.caption, route: shot.route, layout, measured },
-          vision.rubric,
-          { ask: vision.ask, model: vision.model, bypassCache: options.bypassCache },
-        );
-      } catch (error) {
-        errors.push(`${shot.caption}: ${errorMessage(error)}`);
+    inputs.push({ shot, layout, measured });
+  }
+  if (options.checkpoint) await save();
+  if (vision) {
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < inputs.length) {
+        const index = next++;
+        const input = inputs[index];
+        if (!input) continue;
+        const { shot, layout, measured } = input;
+        let judged: DesignNote[] = [];
+        try {
+          const png = await readFile(join(testRunDir, shot.fileName));
+          judged = await critiqueScreenshot(
+            { png, hash: shot.hash, caption: shot.caption, route: shot.route, layout, measured },
+            vision.rubric,
+            { ask: vision.ask, model: vision.model, bypassCache: options.bypassCache },
+          );
+        } catch (error) {
+          errors.set(index, `${shot.caption}: ${errorMessage(error)}`);
+        }
+        notes[shot.fileName] = [...measured, ...judged
+          .filter((note) => !note.rule.startsWith("layout.") && !restatesMeasured(note, measured) && !insideImage(note, layout))
+          .map((note) => withHooks(note, layout))]
+          .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+        pending.delete(index);
+        if (options.checkpoint) await save();
       }
+    };
+    // Only this record's screenshots overlap; callers still review records in
+    // sequence. Drain all workers even on a filesystem failure before returning.
+    const results = await Promise.allSettled(Array.from({ length: Math.min(3, inputs.length) }, () => worker()));
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
     }
-    notes[shot.fileName] = [...measured, ...judged
-      .filter((note) => !note.rule.startsWith("layout.") && !restatesMeasured(note, measured) && !insideImage(note, layout))
-      .map((note) => withHooks(note, layout))]
-      .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
-    if (options.checkpoint) await save();
   }
   return save();
 }

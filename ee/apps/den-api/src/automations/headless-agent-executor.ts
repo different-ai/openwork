@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { connectionBlockerFromToolCalls } from "@openwork/headless-threads"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -13,39 +14,27 @@ import {
   type RunnerRepeatLimits,
   type RunnerTurn,
 } from "../headless-runner/client.js"
+import { isModelAccessRefusal } from "../headless-runner/model-access-refusal.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
-import type { CloudAgentEvent, CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
+import { connectionBlockedExecution, type CloudAgentEvent, type CloudAgentExecution, type CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { cloudAutomationRuntime } from "./headless-runtime.js"
-import { organizationDefaultModel } from "../workbot/model.js"
-
-/**
- * Runs one cloud agent Automation on the shared headless runner.
- *
- * Cheap: no OpenWork Web computer is woken, provisioned or kept awake; a run
- * is one agent turn in its own runner session. Reliable: the receipt
- * (session + message id) is saved before the turn is sent, so a Den restart
- * resumes the same turn instead of starting a second one, and a runner restart
- * resumes it by re-sending the same message id. Safe: every send carries a
- * fresh MCP token scoped to the owner and to this run's lifetime.
- */
+import { organizationCloudModel } from "../workbot/model.js"
+import { cloudAgentGatewayCatalog } from "../workbot/gateway-model.js"
 
 const POLL_INTERVAL_MS = 2_000
+const RUNNER_UNREACHABLE = { ok: false as const, status: 503, error: "headless_send_unavailable" }
 const ABORT_SETTLE_TIMEOUT_MS = 15_000
 const MAX_CONSECUTIVE_READ_FAILURES = 30
 const RESULT_SUMMARY_LIMIT = 20_000
-/** The token outlives the run's own deadline a little, so the last steps never lose MCP mid-call. */
 const TOKEN_GRACE_MS = 5 * 60_000
 
-/**
- * Nobody is waiting on an Automation, but its run has a deadline: waiting on an unchanged answer gets a third of
- * it (5 of the default 15 minutes), so the agent still has time to report before the run is cut off.
- */
 export function automationRepeatLimits(maximumRuntimeMs: number): RunnerRepeatLimits {
   return { maxWaitingMs: Math.min(Math.max(Math.floor(maximumRuntimeMs / 3), 10_000), 24 * 3_600_000), maxIdenticalFailures: 3 }
 }
 
 export const HEADLESS_AUTOMATION_INSTRUCTIONS = [
   "This conversation is one run of a scheduled Automation. Nobody is watching while it runs.",
+  "OpenWork already decided this run should happen now, on its schedule or because someone chose Run now. Do the task now; never skip it because of a day, time or schedule written in the message, and use today's date for anything dated.",
   "Do the work the message describes, then reply with the result. Your reply is saved as the run's result, so lead with what matters and keep it short.",
   "If something you need is missing (a connection, access, or information), say exactly what is missing instead of guessing.",
 ].join("\n")
@@ -55,10 +44,10 @@ type OwnerScope = { organizationId: string; ownerMemberId: string }
 export type HeadlessAgentExecutorDeps = {
   client: HeadlessRunnerClient | null
   ownerUserId: (scope: OwnerScope) => Promise<string | null>
-  /** Live check that the organization still runs Automations headless. */
   stillHeadless: (organizationId: string) => Promise<boolean>
-  /** The organization's default model for runs on the cloud default; null: the runner's. */
-  defaultModel: (organizationId: string) => Promise<string | null>
+  cloudModel: typeof organizationCloudModel
+  gatewayCatalog: typeof cloudAgentGatewayCatalog
+  stepTurns: (organizationId: string) => Promise<boolean>
   sleep: (ms: number, signal: AbortSignal) => Promise<void>
   pollIntervalMs: number
 }
@@ -73,7 +62,6 @@ export function parseHeadlessReceipt(value: unknown): HeadlessReceipt | null {
   return { runtime: "headless", sessionId: value.sessionId, messageId: value.messageId }
 }
 
-/** Stable per run, so every Den replica and every resume names the same turn. */
 export function headlessMessageIdForRun(runId: string) {
   return `auto_${createHash("sha256").update(`automation:${runId}`).digest("hex").slice(0, 32)}`
 }
@@ -103,12 +91,14 @@ async function ownerUserId(scope: OwnerScope) {
 }
 
 function defaultDeps(): HeadlessAgentExecutorDeps {
-  const runner = defaultHeadlessRunnerDeps()
+  const runner = defaultHeadlessRunnerDeps(process.env, { indexKind: "automation" })
   return {
     client: runner ? createHeadlessRunnerClient(runner) : null,
     ownerUserId,
     stillHeadless: async (organizationId) => (await cloudAutomationRuntime(organizationId)) === "headless",
-    defaultModel: (organizationId) => organizationDefaultModel(organizationId),
+    cloudModel: organizationCloudModel,
+    gatewayCatalog: cloudAgentGatewayCatalog,
+    stepTurns: async () => true,
     sleep: abortableSleep,
     pollIntervalMs: POLL_INTERVAL_MS,
   }
@@ -118,7 +108,6 @@ function usageFromTurn(turn: RunnerTurn | undefined): AutomationUsage {
   return {
     inputTokens: turn?.usage?.inputTokens ?? null,
     outputTokens: turn?.usage?.outputTokens ?? null,
-    // The Gateway meters and bills the tokens; the runner does not price them.
     costMicros: null,
   }
 }
@@ -164,11 +153,6 @@ function failure(input: {
   }
 }
 
-/**
- * Runner failures mapped to the Automation contract. A transient failure is
- * retried: the retry re-sends the same message id, which resumes the turn
- * where it stopped, and the runner never re-runs a tool call it already made.
- */
 function turnFailure(turn: RunnerTurn, messages: RunnerMessage[]): CloudAgentExecution {
   const usage = usageFromTurn(turn)
   const events = [...transcriptEvents(messages, usage), { type: "terminal" as const, payload: { status: "failed", code: turn.error } }]
@@ -186,28 +170,6 @@ function turnFailure(turn: RunnerTurn, messages: RunnerMessage[]): CloudAgentExe
     return failure({ code: "provider_unavailable", message: "The cloud model is not available. An admin needs to check the headless runner's model access.", needsAttention: true, events, usage })
   }
   return failure({ code: "execution_failed", message: `The Automation run failed (${code}).`, events, usage })
-}
-
-/**
- * The member's own selection when the runner can serve it, otherwise the
- * runner's default model. An Automation on the cloud default runs on the
- * organization's default model when admins chose one, else the runner's
- * default. Either way the run records which model it used.
- */
-export async function chooseModel(
-  client: Pick<HeadlessRunnerClient, "listModels">,
-  model: { providerId: string; modelId: string },
-  organizationModel: string | null = null,
-) {
-  if (isAutomationCloudDefaultModel(model)) return { model: organizationModel ?? undefined, warning: null }
-  const modelId = model.modelId
-  const catalog = await client.listModels()
-  if (!catalog) return { model: undefined, warning: null }
-  if (catalog.models.some((model) => model.id === modelId)) return { model: modelId, warning: null }
-  return {
-    model: undefined,
-    warning: { type: "warning" as const, payload: { code: "headless_default_model", requestedModel: modelId, model: catalog.defaultModel } },
-  }
 }
 
 export async function executeHeadlessAgent(
@@ -234,8 +196,6 @@ export async function executeHeadlessAgent(
     const actor = { userId, organizationId: input.organizationId }
 
     if (input.previousReceipt && !previous) {
-      // A receipt from the OpenWork Web computer cannot be continued here, and
-      // starting over could repeat side effects the earlier attempt had.
       return failure({ code: "execution_runtime_unavailable", message: "This run started on another runtime and cannot be resumed safely.", needsAttention: true })
     }
     if (!previous && !await deps.stillHeadless(input.organizationId)) {
@@ -248,28 +208,55 @@ export async function executeHeadlessAgent(
         instructions: HEADLESS_AUTOMATION_INSTRUCTIONS,
         repeats: automationRepeatLimits(input.maximumRuntimeMs),
       })
-      // Nothing has run yet, so a runner outage here is safe to retry.
       if (!created.ok) return failure({ code: "execution_runtime_unavailable", message: "The headless runner is unavailable.", retryable: true })
       sessionId = created.value.id
-      // Saved before any work is sent: recovery observes or resumes this exact turn.
       await input.onAdmitted({ runtime: "headless", sessionId, messageId })
     }
 
-    // Read only for runs on the cloud default; a failed read keeps the runner's default for this run.
-    const organizationModel = isAutomationCloudDefaultModel(input.action.model)
-      ? await deps.defaultModel(input.organizationId).catch(() => null)
-      : null
-    const { model, warning } = await chooseModel(client, input.action.model, organizationModel)
+    let model: string
+    let storedTurn: RunnerTurn | undefined
+    if (previous) {
+      const read = await client.readSession(sessionId, { messageId, limit: 1 })
+      if (!read.ok) return failure({ code: "execution_runtime_unavailable", message: "OpenWork could not read the saved run's model. Try resuming it again.", needsAttention: true })
+      storedTurn = read.value.turns.find((turn) => turn.messageId === messageId)
+    }
+    if (storedTurn?.model) {
+      model = storedTurn.model
+    } else {
+      if (storedTurn) return failure({ code: "provider_unavailable", message: "The saved run has no model and cannot be resumed safely.", needsAttention: true })
+      try {
+        const selected = isAutomationCloudDefaultModel(input.action.model)
+          ? await deps.cloudModel(actor)
+          : input.action.model.modelId
+        const catalog = await deps.gatewayCatalog(actor)
+        if (!selected || !catalog.models.some((entry) => entry.id === selected)) throw new Error("cloud_agent_gateway_model_unavailable")
+        model = selected
+      } catch {
+        return failure({ code: "provider_unavailable", message: "The selected cloud model is not available to the Automation owner. Check their model access and try again.", needsAttention: true })
+      }
+    }
+    let modelAccessRequired = storedTurn?.modelAccessRequired === true
     const ttlMs = Math.min(input.maximumRuntimeMs + TOKEN_GRACE_MS, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS)
     const runSessionId = sessionId
-    const sendTurn = () => client.sendTurn(actor, { sessionId: runSessionId, messageId, prompt: input.action.instructions, model, ttlMs })
+    const execution: "steps" | undefined = (await deps.stepTurns(input.organizationId).catch(() => false)) ? "steps" : undefined
+    const sendTurn = () => client.sendTurn(actor, {
+      sessionId: runSessionId,
+      messageId,
+      prompt: input.action.instructions,
+      model,
+      ttlMs,
+      ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
+      ...(execution ? { execution } : {}),
+    }).catch((error: unknown) => (isModelAccessRefusal(error) ? null : RUNNER_UNREACHABLE))
+    const accessFailure = () => failure({ code: "provider_unavailable", message: "The cloud model is not available to the Automation owner. Check their model access and try again.", needsAttention: true })
 
     const sent = await sendTurn()
+    if (!sent) return accessFailure()
     if (!sent.ok) {
+      if (sent.error === "headless_saved_model_unavailable" || sent.error === "headless_model_access_unavailable") return accessFailure()
       if (sent.status === 404) {
         return failure({ code: "execution_runtime_unavailable", message: "The headless runner lost this run's session.", needsAttention: Boolean(previous) })
       }
-      // A first send that was refused never started; a resumed one may have run, so only the first is retried.
       return failure({ code: "execution_runtime_unavailable", message: "The headless runner is unavailable.", retryable: !previous })
     }
 
@@ -291,9 +278,11 @@ export async function executeHeadlessAgent(
       const turn = read.value.turns.find((entry) => entry.messageId === messageId)
       if (!turn || ACTIVE_TURN_STATUSES.has(turn.status)) continue
       if (turn.status === "interrupted") {
-        // The runner restarted mid-turn. The same message id resumes it; tool
-        // calls whose outcome is unknown are never re-run by the runner.
+        model = turn.model ?? model
+        modelAccessRequired ||= turn.modelAccessRequired === true
         const resumed = await sendTurn()
+        if (!resumed) return accessFailure()
+        if (!resumed.ok && (resumed.error === "headless_saved_model_unavailable" || resumed.error === "headless_model_access_unavailable")) return accessFailure()
         if (!resumed.ok && resumed.status === 404) {
           return failure({ code: "execution_failed", message: "The headless runner lost this run's session before it finished.", needsAttention: true })
         }
@@ -305,10 +294,13 @@ export async function executeHeadlessAgent(
       if (turn.status === "failed") return turnFailure(turn, read.value.messages)
 
       const usage = usageFromTurn(turn)
-      // The answer is the last reply without tool calls; narration between steps is not the result.
       const answer = read.value.messages.filter((message) => message.role === "assistant" && message.toolCalls.length === 0).at(-1)
       const resultSummary = (answer?.role === "assistant" ? answer.text : read.value.finalAssistantText).trim()
         || "The Automation run finished without a written result."
+      const blocker = connectionBlockerFromToolCalls(read.value.messages.flatMap((message) => message.role === "tool" ? [{ name: message.name, output: message.output }] : []))
+      if (blocker) {
+        return connectionBlockedExecution({ blocker, answer: answer?.role === "assistant" ? answer.text : read.value.finalAssistantText, usage, events: transcriptEvents(read.value.messages, usage) })
+      }
       return {
         ok: true,
         threadId: runSessionId,
@@ -316,7 +308,6 @@ export async function executeHeadlessAgent(
         resultSummary: resultSummary.slice(0, RESULT_SUMMARY_LIMIT),
         usage,
         events: [
-          ...(warning ? [warning] : []),
           ...transcriptEvents(read.value.messages, usage),
           { type: "terminal", payload: { status: "succeeded", model: turn.model ?? null } },
         ],
@@ -325,7 +316,6 @@ export async function executeHeadlessAgent(
   } catch (error) {
     const cancelled = input.signal.aborted
     const timedOut = deadline.signal.aborted
-    // Once a turn may have been sent, never end the run while it could still be working.
     if (sessionId && !await stopTurn(client, sessionId, messageId)) {
       return failure({
         code: "execution_failed",
@@ -348,10 +338,6 @@ export async function executeHeadlessAgent(
   }
 }
 
-/**
- * Stops the run's turn and waits until the runner reports it idle. Returns
- * true when nothing can still be running.
- */
 async function stopTurn(client: HeadlessRunnerClient, sessionId: string, messageId: string) {
   const settle = AbortSignal.timeout(ABORT_SETTLE_TIMEOUT_MS)
   await client.abort(sessionId, messageId).catch(() => null)

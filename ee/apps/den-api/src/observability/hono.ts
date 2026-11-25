@@ -54,7 +54,6 @@ export function createRequestAccessLogMiddleware(logger: AppLogger = appLogger.c
     })
 
     try {
-      // Each request, including a nested app.fetch, gets its own shared reads.
       await countDbQueries(queries, () => withRequestReads(next))
     } catch (error) {
       thrownError = error

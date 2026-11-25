@@ -58,6 +58,7 @@ export function OpenWorkWebAccessGateScreen(props: {
 }) {
   const checking = props.state === "checking";
   const denied = props.state === "denied";
+  const notAssigned = props.state === "not_assigned";
   const organizationName = props.organizationName || "this organization";
 
   if (checking) return <WebStartupScreen message="Checking workspace access…" />;
@@ -78,12 +79,16 @@ export function OpenWorkWebAccessGateScreen(props: {
               OpenWork Web
             </p>
             <h1 className="mt-2 text-[26px] font-semibold leading-tight tracking-[-0.03em]">
-              {denied
+              {notAssigned
+                  ? "Ask an admin for OpenWork Web"
+                  : denied
                   ? "OpenWork Web access is required"
                   : "OpenWork Web remains locked"}
             </h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
-              {denied
+              {notAssigned
+                  ? `${organizationName} uses OpenWork Web, but it isn't turned on for you. An admin can turn it on for you from Members in Den.`
+                  : denied
                   ? `${organizationName} does not have an active OpenWork Web subscription or complimentary admin grant.`
                   : `Den could not confirm OpenWork Web access for ${organizationName}. The workspace stays locked until it can.`}
             </p>
@@ -97,11 +102,11 @@ export function OpenWorkWebAccessGateScreen(props: {
                 Manage access in Den
                 <ArrowUpRight className="size-4" aria-hidden="true" />
               </Button>
-            ) : (
+            ) : notAssigned ? null : (
               <Button type="button" onClick={props.onRetry}>Retry</Button>
             )}
-            {denied ? (
-              <Button type="button" variant="outline" onClick={props.onRetry}>Check again</Button>
+            {denied || notAssigned ? (
+              <Button type="button" variant={notAssigned ? "default" : "outline"} onClick={props.onRetry}>Check again</Button>
             ) : null}
             <Button type="button" variant="ghost" onClick={props.onSignOut}>Sign out</Button>
           </div>
@@ -153,7 +158,7 @@ export function OpenWorkWebAccessGate({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setCheck({
           scope: expectedScope,
-          state: access.hasAccess ? "granted" : "denied",
+          state: !access.hasAccess ? "denied" : access.memberHasAccess ? "granted" : "not_assigned",
           accessSource: access.accessSource,
         });
       },

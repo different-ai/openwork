@@ -1,4 +1,3 @@
-// Local observations of member access, not an audit log or a read/unread inbox.
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import { z } from "zod";
@@ -60,7 +59,6 @@ export type ActivityStoreState = {
   contexts: Record<string, ActivityContext>;
   refreshState: "idle" | "refreshing" | "error";
   setScope: (scope: ActivityScope | null) => void;
-  /** Feed only successful, complete inventories; failed syncs must not become empty snapshots. */
   observe: (input: {
     scope: ActivityScope;
     source: ActivitySource;
@@ -68,7 +66,6 @@ export type ActivityStoreState = {
     observedAt?: number;
   }) => void;
   setRefreshState: (scope: ActivityScope, state: ActivityStoreState["refreshState"]) => void;
-  /** Closing the Activity popover marks everything observed so far as seen for the active member. */
   markSeen: (seenAt?: number) => void;
 };
 
@@ -80,7 +77,6 @@ export const EMPTY_ACTIVITY_CONTEXT: ActivityContext = {
   baseline: null,
 };
 
-/** A plugin that carries skills is represented by those skills, not counted twice. */
 function baselineLabels(resources: ActivityResource[]) {
   return resources
     .filter((resource) => resource.kind !== "plugin" || !resource.skillCount)
@@ -121,7 +117,6 @@ function sanitizeContexts(value: unknown): Record<string, ActivityContext> {
     const snapshots: ActivityContext["snapshots"] = {};
     for (const source of SOURCES) {
       const inventory = z.array(resourceSchema).safeParse(context.data.snapshots[source]);
-      // A partly corrupt inventory is not a complete baseline; silently reseed it.
       if (inventory.success) {
         snapshots[source] = [...new Map(inventory.data.map((resource) => [JSON.stringify([resource.kind, resource.id]), resource])).values()];
       }
@@ -145,7 +140,6 @@ function pruneContexts(
   recentKey?: string | null,
 ): Record<string, ActivityContext> {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1_000;
-  // JSON object order preserves recency without persisting active identity or UI status.
   const recent = Object.entries(contexts)
     .sort(([left], [right]) => left === recentKey ? -1 : right === recentKey ? 1 : 0)
     .slice(0, 5);
@@ -158,9 +152,7 @@ function pruneContexts(
   }]));
 }
 
-/** Uses browser localStorage by default; injected storage keeps tests and alternate hosts isolated. */
 export function createActivityStore(storage?: StateStorage) {
-  // Defer observations and writes until their persisted baselines are available.
   let hydrated = false;
   const pending: Parameters<ActivityStoreState["observe"]>[0][] = [];
   const jsonStorage = createJSONStorage<{ contexts: Record<string, ActivityContext> }>(() => {
@@ -174,7 +166,6 @@ export function createActivityStore(storage?: StateStorage) {
           if (result instanceof Promise) return result.catch(() => {});
           return result;
         } catch {
-          // Device storage can be disabled or full; the in-memory feed still works.
         }
       },
       removeItem: (name) => target.removeItem(name),
@@ -185,7 +176,6 @@ export function createActivityStore(storage?: StateStorage) {
     getItem: (name: string) => {
       try {
         const result = jsonStorage.getItem(name);
-        // Do not interpret missing, malformed or future persistence formats.
         if (result instanceof Promise) return result.then((value) => value?.version === 1 ? value : null).catch(() => null);
         return result?.version === 1 ? result : null;
       } catch {
@@ -224,7 +214,6 @@ export function createActivityStore(storage?: StateStorage) {
             changes.push({ id: crypto.randomUUID(), resource, change: "available", observedAt });
           } else if (
             resource.kind !== "provider"
-            // Learning or losing a revision is not evidence that content changed.
             && before.revision !== null
             && resource.revision !== null
             && before.revision !== resource.revision
@@ -238,8 +227,6 @@ export function createActivityStore(storage?: StateStorage) {
           }
         }
       }
-      // The first complete inventory stays silent, but is kept as one summary
-      // ("4 things were already shared with you") instead of disappearing.
       const baseline = previous === undefined
         ? {
           observedAt: context.baseline?.observedAt ?? observedAt,

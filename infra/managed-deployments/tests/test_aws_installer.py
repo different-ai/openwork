@@ -4,6 +4,9 @@ import importlib.util
 import io
 import json
 import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 import tarfile
 import tempfile
@@ -138,6 +141,113 @@ class RunnerTests(unittest.TestCase):
         plan = {"resource_changes": [{"address": "x", "type": "aws_lambda_function", "change": {"actions": ["delete", "create"]}}]}
         self.assertEqual(runner.unsafe_changes(plan), [])
 
+    @staticmethod
+    def tls_upgrade():
+        old = {"DATABASE_URL": "mysql://app:unchanged@db.example.test:3306/openwork?sslaccept=accept",
+               "BETTER_AUTH_SECRET": "auth-unchanged", "DEN_DB_ENCRYPTION_KEY": "encryption-unchanged",
+               "DEN_INITIAL_ADMIN_BOOTSTRAP_CODE": "bootstrap-unchanged", "SMTP_PASS": "smtp-unchanged"}
+        new = {**old, "DATABASE_URL": old["DATABASE_URL"].replace("sslaccept=accept", "sslaccept=strict")}
+        before = {"secret_id": "arn:aws:secretsmanager:us-east-1:123456789012:secret:ow-test-den-app",
+                  "secret_string": json.dumps(old), "version_stages": ["AWSCURRENT"], "secret_binary": "",
+                  "has_secret_string_wo": False}
+        return {"address": "module.platform.aws_secretsmanager_secret_version.app",
+                "type": "aws_secretsmanager_secret_version", "change": {
+                    "actions": ["delete", "create"], "before": before,
+                    "after": {**before, "secret_string": json.dumps(new), "version_stages": None},
+                    "after_unknown": {"version_id": True, "version_stages": True}}}
+
+    def test_tls_upgrade_accepts_provider_empty_binary_absence(self):
+        # AWS 5.100's real retained state uses "" for absent binary, not null.
+        for before in [None, ""]:
+            for after in [None, ""]:
+                resource = self.tls_upgrade()
+                resource["change"]["before"]["secret_binary"] = before
+                resource["change"]["after"]["secret_binary"] = after
+                with self.subTest(before=before, after=after):
+                    self.assertTrue(runner.tls_only_secret_upgrade(resource))
+        for side in ["before", "after"]:
+            resource = self.tls_upgrade()
+            resource["change"][side]["secret_binary"] = "nonempty-binary-payload"
+            with self.subTest(binary_side=side):
+                self.assertFalse(runner.tls_only_secret_upgrade(resource))
+        # Other observed metadata keeps its original constraints: stages is an
+        # AWSCURRENT array and the write-only marker is false, not coerced text.
+        self.assertEqual(self.tls_upgrade()["change"]["before"]["version_stages"], ["AWSCURRENT"])
+        self.assertIs(self.tls_upgrade()["change"]["before"]["has_secret_string_wo"], False)
+
+    def test_only_exact_tls_secret_upgrade_is_allowed(self):
+        resource = self.tls_upgrade()
+        self.assertTrue(runner.tls_only_secret_upgrade(resource))
+        self.assertEqual(runner.unsafe_changes({"resource_changes": [resource]}), [])
+        # An allowed version update never exempts deletion of its parent or DB.
+        protected = {"address": "module.platform.aws_secretsmanager_secret.app", "type": "aws_secretsmanager_secret",
+                     "change": {"actions": ["delete", "create"]}}
+        self.assertEqual(runner.unsafe_changes({"resource_changes": [resource, protected]}), [protected["address"]])
+
+    def test_tls_upgrade_refuses_key_rotation_or_database_identity_changes(self):
+        for key in ["BETTER_AUTH_SECRET", "DEN_DB_ENCRYPTION_KEY", "DEN_INITIAL_ADMIN_BOOTSTRAP_CODE", "SMTP_PASS"]:
+            resource = self.tls_upgrade()
+            values = json.loads(resource["change"]["after"]["secret_string"])
+            values[key] = "rotated"
+            resource["change"]["after"]["secret_string"] = json.dumps(values)
+            with self.subTest(key=key):
+                self.assertFalse(runner.tls_only_secret_upgrade(resource))
+        for old, new in [("app:", "other:"), (":unchanged@", ":new-password@"),
+                         ("db.example.test", "other.example.test"), ("/openwork?", "/other?"),
+                         (":3306/", ":3307/"), ("sslaccept=strict", "sslaccept=accept")]:
+            resource = self.tls_upgrade()
+            resource["change"]["after"]["secret_string"] = resource["change"]["after"]["secret_string"].replace(old, new)
+            with self.subTest(database_change=old):
+                self.assertFalse(runner.tls_only_secret_upgrade(resource))
+
+    def test_tls_upgrade_fails_closed_on_unknown_or_nonstandard_plans(self):
+        candidates = []
+        for field, value in [("secret_string", None), ("secret_string", "not-json"), ("secret_string", "[]"),
+                             ("secret_string", "{}"), ("secret_id", "different"), ("secret_binary", "binary"),
+                             ("version_stages", ["CUSTOM"]), ("has_secret_string_wo", True)]:
+            resource = self.tls_upgrade()
+            resource["change"]["after"][field] = value
+            candidates.append(resource)
+        for field in ["secret_string", "secret_id", "secret_binary"]:
+            resource = self.tls_upgrade()
+            resource["change"]["after_unknown"][field] = True
+            candidates.append(resource)
+        for stages in [None, [], ["AWSPREVIOUS"], ["AWSCURRENT", "CUSTOM"]]:
+            resource = self.tls_upgrade()
+            resource["change"]["before"]["version_stages"] = stages
+            candidates.append(resource)
+        for key, value in [("address", "module.other.aws_secretsmanager_secret_version.app"), ("type", "aws_db_instance")]:
+            resource = self.tls_upgrade()
+            resource[key] = value
+            candidates.append(resource)
+        for actions in [["delete"], ["create", "delete"], ["update"]]:
+            resource = self.tls_upgrade()
+            resource["change"]["actions"] = actions
+            candidates.append(resource)
+        for resource in candidates:
+            with self.subTest(resource=resource["address"], actions=resource["change"]["actions"]):
+                self.assertFalse(runner.tls_only_secret_upgrade(resource))
+
+    def test_real_apply_guard_allows_only_the_saved_tls_upgrade(self):
+        for rotate in [False, True]:
+            resource = self.tls_upgrade()
+            if rotate:
+                resource["change"]["after"]["secret_string"] = resource["change"]["after"]["secret_string"].replace("auth-unchanged", "rotated")
+            with tempfile.TemporaryDirectory() as directory, \
+                    patch.dict(os.environ, {"DEPLOYMENT_ID": "test", "STATE_BUCKET": "state", "AWS_REGION": "us-east-1"}), \
+                    patch.object(runner, "terraform_binary", return_value="terraform"), \
+                    patch.object(runner, "terraform_inputs", return_value={}), \
+                    patch.object(runner, "certificate_states", return_value={}), \
+                    patch.object(runner, "tls_redeploy"), \
+                    patch.object(runner.subprocess, "run") as run, \
+                    patch.object(runner.subprocess, "check_output", side_effect=[json.dumps({"resource_changes": [resource]}), json.dumps({"cluster_name": {"value": "owned"}, "service_names": {"value": {}}, "task_definition_arns": {"value": {}}})]):
+                if rotate:
+                    with self.assertRaisesRegex(ValueError, "manual review"):
+                        runner.apply(Path(directory), Path(directory))
+                else:
+                    self.assertEqual(runner.apply(Path(directory), Path(directory)), {"cluster_name": "owned", "service_names": {}, "task_definition_arns": {}})
+                self.assertEqual(any(call.args[0][1] == "apply" for call in run.call_args_list), not rotate)
+
     def test_health_rejects_unexpected_origins(self):
         with patch.dict(os.environ, {"DOMAIN_NAME": "den.example.test"}):
             with self.assertRaises(ValueError):
@@ -152,6 +262,294 @@ class RunnerTests(unittest.TestCase):
             states = runner.certificate_states("terraform", Path("."))
         self.assertEqual(states, {"module.platform.aws_acm_certificate.this[0]": "FAILED"})
         self.assertIn("FAILED", runner.UNRECOVERABLE_CERTIFICATE_STATES)
+
+
+class TlsLifecycleTests(unittest.TestCase):
+    EXPECTED = {
+        "den-api": "arn:aws:ecs:us-east-1:123456789012:task-definition/openwork-den-api:2",
+        "den-web": "arn:aws:ecs:us-east-1:123456789012:task-definition/openwork-den-web:2",
+    }
+    ENV = {"TLS_CLUSTER": "arn:aws:ecs:us-east-1:123456789012:cluster/openwork-den",
+           "TLS_TASK_DEFINITIONS": json.dumps(EXPECTED)}
+
+    @classmethod
+    def settled(cls):
+        return {"services": [{"serviceName": name, "taskDefinition": arn,
+                "desiredCount": 1, "runningCount": 1, "pendingCount": 0,
+                "deployments": [{"status": "PRIMARY", "rolloutState": "COMPLETED", "taskDefinition": arn}]}
+                for name, arn in cls.EXPECTED.items()]}
+
+    def test_final_tls_deployment_only_uses_existing_ecs_permissions(self):
+        def call(*args):
+            return self.settled() if args[:2] == ("ecs", "describe-services") else {}
+        with patch.dict(os.environ, self.ENV), patch.object(runner, "aws", side_effect=call) as aws:
+            runner.tls_redeploy()
+        operations = [call.args[:2] for call in aws.call_args_list]
+        self.assertEqual(operations, [("ecs", "describe-services"), ("ecs", "update-service"),
+                                     ("ecs", "update-service"), ("ecs", "wait"), ("ecs", "describe-services")])
+        for call in aws.call_args_list:
+            self.assertNotIn("deregister-task-definition", call.args)
+            if call.args[:2] == ("ecs", "update-service"):
+                self.assertIn("--force-new-deployment", call.args)
+        template = json.loads((ROOT / "bootstrap/cloudformation.json").read_text())
+        actions = {action for statement in runner_statements(template, "dedicated")
+                   if statement["Effect"] == "Allow"
+                   for action in (statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]])}
+        self.assertIn("ecs:UpdateService", actions)
+        self.assertIn("ecs:Describe*", actions)
+
+    def test_ca_barrier_only_waits_and_checks_completed_revision(self):
+        def call(*args):
+            return self.settled() if args[:2] == ("ecs", "describe-services") else {}
+        with patch.dict(os.environ, self.ENV), patch.object(runner, "aws", side_effect=call) as aws:
+            runner.tls_redeploy(force=False)
+        self.assertEqual([call.args[:2] for call in aws.call_args_list], [("ecs", "wait"), ("ecs", "describe-services")])
+
+    def test_pre_force_waits_for_in_progress_then_completed(self):
+        pending = self.settled()
+        pending["services"][0]["deployments"][0]["rolloutState"] = "IN_PROGRESS"
+        descriptions = [pending, self.settled(), self.settled()]
+        def call(*args):
+            return descriptions.pop(0) if args[:2] == ("ecs", "describe-services") else {}
+        with patch.dict(os.environ, self.ENV), patch.object(runner, "aws", side_effect=call) as aws, patch.object(runner.time, "sleep") as poll:
+            runner.tls_redeploy()
+        poll.assert_called_once_with(3)
+        self.assertEqual([c.args[:2] for c in aws.call_args_list], [
+            ("ecs", "describe-services"), ("ecs", "describe-services"),
+            ("ecs", "update-service"), ("ecs", "update-service"),
+            ("ecs", "wait"), ("ecs", "describe-services")])
+
+    def test_pre_force_in_progress_then_failed_or_rollback_never_forces(self):
+        for outcome in ("FAILED", "rollback"):
+            pending = self.settled()
+            pending["services"][0]["deployments"][0]["rolloutState"] = "IN_PROGRESS"
+            terminal = self.settled()
+            if outcome == "FAILED":
+                terminal["services"][0]["deployments"][0]["rolloutState"] = "FAILED"
+            else:
+                terminal["services"][0]["taskDefinition"] = self.EXPECTED["den-api"].replace(":2", ":1")
+            descriptions = [pending, terminal]
+            def call(*args):
+                return descriptions.pop(0) if args[:2] == ("ecs", "describe-services") else {}
+            with self.subTest(outcome=outcome), patch.dict(os.environ, self.ENV), patch.object(runner, "aws", side_effect=call) as aws, patch.object(runner.time, "sleep") as poll:
+                with self.assertRaisesRegex(ValueError, "left its expected CA revision"):
+                    runner.tls_redeploy()
+            poll.assert_called_once_with(3)
+            self.assertEqual([c.args[:2] for c in aws.call_args_list], [("ecs", "describe-services"), ("ecs", "describe-services")])
+
+    def test_pre_force_pending_timeout_never_forces(self):
+        pending = self.settled()
+        pending["services"][0]["deployments"][0]["rolloutState"] = "IN_PROGRESS"
+        with patch.dict(os.environ, self.ENV), patch.object(runner, "aws", return_value=pending) as aws, \
+                patch.object(runner.time, "monotonic", side_effect=[0, 121]), patch.object(runner.time, "sleep") as poll:
+            with self.assertRaisesRegex(ValueError, "not complete"):
+                runner.tls_redeploy()
+        poll.assert_not_called()
+        self.assertEqual([c.args[:2] for c in aws.call_args_list], [("ecs", "describe-services")])
+
+    def test_post_force_waits_for_completed_rollout_not_counts_alone(self):
+        pending = self.settled()
+        pending["services"][0]["deployments"][0]["rolloutState"] = "IN_PROGRESS"
+        descriptions = [self.settled(), pending, self.settled()]
+        def call(*args):
+            return descriptions.pop(0) if args[:2] == ("ecs", "describe-services") else {}
+        with patch.dict(os.environ, self.ENV), patch.object(runner, "aws", side_effect=call), patch.object(runner.time, "sleep") as poll:
+            runner.tls_redeploy()
+        poll.assert_called_once_with(3)
+
+    def test_failed_wait_cannot_pass_on_healthy_old_replicas(self):
+        def call(*args):
+            if args[:2] == ("ecs", "wait"):
+                raise subprocess.CalledProcessError(255, ["aws", "ecs", "wait"])
+            return self.settled() if args[:2] == ("ecs", "describe-services") else {}
+        with patch.dict(os.environ, self.ENV), patch.object(runner, "aws", side_effect=call) as aws:
+            with self.assertRaises(subprocess.CalledProcessError):
+                runner.tls_redeploy()
+        self.assertEqual(sum(call.args[:2] == ("ecs", "describe-services") for call in aws.call_args_list), 1)
+
+    def test_pending_rollout_deadline_fails_without_a_success_result(self):
+        pending = self.settled()
+        pending["services"][0]["deployments"][0]["rolloutState"] = "IN_PROGRESS"
+        descriptions = [self.settled(), pending]
+        def call(*args):
+            return descriptions.pop(0) if args[:2] == ("ecs", "describe-services") else {}
+        with patch.dict(os.environ, self.ENV), patch.object(runner, "aws", side_effect=call), \
+                patch.object(runner.time, "monotonic", side_effect=[0, 0, 121]), patch.object(runner.time, "sleep") as poll:
+            with self.assertRaises(ValueError):
+                runner.tls_redeploy()
+        poll.assert_not_called()
+
+    def test_wrong_revision_or_incomplete_deployment_fails_before_force(self):
+        for mutation in ["revision", "pending", "rollback", "overlap"]:
+            state = self.settled()
+            if mutation == "revision":
+                state["services"][0]["taskDefinition"] = self.EXPECTED["den-api"].replace(":2", ":1")
+            elif mutation == "pending":
+                state["services"][0]["pendingCount"] = 1
+            elif mutation == "rollback":
+                state["services"][0]["deployments"][0]["rolloutState"] = "FAILED"
+            else:
+                state["services"][0]["deployments"].append({"status": "ACTIVE"})
+            with self.subTest(mutation=mutation), patch.dict(os.environ, self.ENV), patch.object(runner, "aws", return_value=state) as aws, \
+                    patch.object(runner.time, "monotonic", side_effect=[0, 121]):
+                with self.assertRaises(ValueError):
+                    runner.tls_redeploy()
+                self.assertEqual(aws.call_count, 1)
+
+    def test_failed_post_force_state_fails_the_run(self):
+        descriptions = [self.settled(), self.settled()]
+        descriptions[1]["services"][1]["deployments"][0]["rolloutState"] = "FAILED"
+        def call(*args):
+            return descriptions.pop(0) if args[:2] == ("ecs", "describe-services") else {}
+        with patch.dict(os.environ, self.ENV), patch.object(runner, "aws", side_effect=call):
+            with self.assertRaises(ValueError):
+                runner.tls_redeploy()
+
+    def test_new_strict_version_still_preserves_existing_current_keys(self):
+        transition = RunnerTests.tls_upgrade()["change"]
+        seed = {"address": "module.platform.aws_secretsmanager_secret_version.app", "type": "aws_secretsmanager_secret_version",
+                "change": {"actions": ["no-op"], "before": transition["before"], "after": transition["before"]}}
+        target = {"address": "module.platform.aws_secretsmanager_secret_version.tls", "type": "aws_secretsmanager_secret_version",
+                  "change": {"actions": ["create"], "before": None, "after": transition["after"], "after_unknown": transition["after_unknown"]}}
+        self.assertEqual(runner.unsafe_changes({"resource_changes": [seed, target]}), [])
+        self.assertEqual(runner.unsafe_changes({"resource_changes": [target]}), [target["address"]])
+        rotated = json.loads(json.dumps(target))
+        rotated["change"]["after"]["secret_string"] = rotated["change"]["after"]["secret_string"].replace("auth-unchanged", "rotated")
+        self.assertEqual(runner.unsafe_changes({"resource_changes": [seed, rotated]}), [target["address"]])
+        unknown = json.loads(json.dumps(target))
+        unknown["change"]["after_unknown"]["secret_string"] = True
+        self.assertEqual(runner.unsafe_changes({"resource_changes": [seed, unknown]}), [target["address"]])
+        fresh = {**seed, "change": {"actions": ["create"], "before": None, "after": None, "after_unknown": {"secret_string": True}}}
+        self.assertEqual(runner.unsafe_changes({"resource_changes": [fresh, target]}), [target["address"]])
+        parent = {"address": "module.platform.aws_secretsmanager_secret.app", "type": "aws_secretsmanager_secret",
+                  "change": {"actions": ["create"], "before": None}}
+        self.assertEqual(runner.unsafe_changes({"resource_changes": [parent, fresh, target]}), [])
+
+    def test_forget_plan_is_not_a_protected_deletion(self):
+        changes = [{"address": "module.platform.aws_ecs_task_definition." + name,
+                    "type": "aws_ecs_task_definition", "change": {"actions": ["forget"], "before": {"skip_destroy": False}, "after": None}}
+                   for name in ["api", "web"]]
+        self.assertEqual(runner.unsafe_changes({"resource_changes": changes}), [])
+        changes.append({"address": "module.platform.aws_db_instance.this[0]", "type": "aws_db_instance",
+                        "change": {"actions": ["delete", "create"]}})
+        self.assertEqual(runner.unsafe_changes({"resource_changes": changes}), ["module.platform.aws_db_instance.this[0]"])
+
+    def test_real_terraform_forget_future_update_and_ordering_graph(self):
+        terraform = shutil.which("terraform")
+        if not terraform:
+            self.skipTest("Terraform is installed by the managed-deployments workflow")
+        tf_root = ROOT / "terraform"
+        result = subprocess.run([terraform, "test", "-json", "-verbose", "-filter=tests/lifecycle.tftest.hcl"],
+                                cwd=tf_root, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plans = {row["@testrun"]: row["test_plan"] for row in map(json.loads, result.stdout.splitlines())
+                 if row.get("type") == "test_plan"}
+        upgrade = plans["upgrade_forgets_legacy_and_creates_retained_ca_revisions"]["resource_changes"]
+        changes = {r["address"]: r["change"] for r in upgrade}
+        for resource in upgrade:
+            if resource["type"] in runner.PROTECTED_TYPES or resource["type"] in ("aws_lb", "aws_ecs_cluster"):
+                self.assertNotIn("delete", resource["change"]["actions"], resource["address"])
+                self.assertNotIn("forget", resource["change"]["actions"], resource["address"])
+        for address in ("aws_db_instance.this[0]", "aws_db_subnet_group.this[0]", "aws_secretsmanager_secret.app", "aws_lb.this[0]", "aws_ecs_cluster.this[0]"):
+            self.assertEqual(changes[address]["before"]["id"], changes[address]["after"]["id"], address)
+        for address in ("aws_secretsmanager_secret_version.app", "aws_secretsmanager_secret_version.tls[0]"):
+            self.assertEqual(changes[address]["actions"], ["no-op"], address)
+            self.assertEqual(changes[address]["before"]["secret_string"], changes[address]["after"]["secret_string"], address)
+        for name in ("better_auth", "db_encryption", "bootstrap_code"):
+            resource = next(r for r in upgrade if r["address"] == f"random_password.{name}[0]")
+            self.assertEqual(resource["previous_address"], f"random_password.{name}")
+            self.assertEqual(resource["change"]["before"]["result"], resource["change"]["after"]["result"])
+        self.assertEqual(next(r for r in upgrade if r["address"] == "aws_secretsmanager_secret_version.tls[0]")["previous_address"], "aws_secretsmanager_secret_version.tls")
+        for name in ["api", "web"]:
+            old = changes["aws_ecs_task_definition." + name]
+            self.assertEqual(old["actions"], ["forget"])
+            self.assertIs(old["before"]["skip_destroy"], False)
+            self.assertIsNone(old["after"])
+            retained = next(r for r in upgrade if r["address"] == f"aws_ecs_task_definition.{name}_v1")
+            self.assertEqual(retained["previous_address"], f"aws_ecs_task_definition.{name}_ca")
+            self.assertTrue(retained["change"]["before"]["skip_destroy"])
+            self.assertTrue(retained["change"]["after"]["skip_destroy"])
+        future = {r["address"]: r["change"] for r in plans["future_update_replaces_only_retained_ca_definitions"]["resource_changes"]}
+        for name in ["api_v1", "web_v1"]:
+            change = future["aws_ecs_task_definition." + name]
+            self.assertEqual(set(change["actions"]), {"delete", "create"})
+            self.assertIs(change["before"]["skip_destroy"], True)
+            self.assertIs(change["after"]["skip_destroy"], True)
+        with tempfile.TemporaryDirectory() as directory:
+            wrapper = Path(directory)
+            source = json.dumps(str(ROOT.parents[1] / "terraform/modules/openwork-aws-ecs"))
+            (wrapper / "main.tf").write_text('''terraform {
+  required_providers {
+    aws = { source = "hashicorp/aws", version = "~> 6.69" }
+    random = { source = "hashicorp/random", version = "~> 3.9" }
+    http = { source = "hashicorp/http", version = "= 3.6.2" }
+  }
+}
+module "platform" {
+  source = ''' + source + '''
+  openwork_version = "0.18.58"
+  write_only_secrets = false
+  managed_legacy_secrets = true
+  owner_emails = ["admin@example.com"]
+  domain_name = "openwork.example.com"
+  vpc_id = "vpc-test"
+  alb_subnet_ids = ["subnet-a", "subnet-b"]
+  service_subnet_ids = ["subnet-a", "subnet-b"]
+  certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/test"
+}
+''')
+            init = subprocess.run([terraform, "init", "-backend=false", "-input=false", "-no-color",
+                                   "-plugin-dir=" + str(tf_root / ".terraform/providers")],
+                                  cwd=wrapper, capture_output=True, text=True, timeout=120)
+            self.assertEqual(init.returncode, 0, init.stderr)
+            graph = subprocess.check_output([terraform, "graph", "-type=plan"], cwd=wrapper, text=True, timeout=60)
+        edges = re.findall(r'"([^"]+)" -> "([^"]+)"', graph)
+        nodes = {node for edge in edges for node in edge}
+        def node(name):
+            return next(n for n in nodes if n.endswith("module.platform." + name + " (expand)"))
+        adjacency = {}
+        for start, end in edges:
+            adjacency.setdefault(start, set()).add(end)
+        def reaches(start, end):
+            pending, visited = [node(start)], set()
+            while pending:
+                current = pending.pop()
+                if current == node(end):
+                    return True
+                if current not in visited:
+                    visited.add(current)
+                    pending.extend(adjacency.get(current, set()))
+            return False
+        self.assertTrue(reaches("aws_lambda_invocation.migrate", "aws_secretsmanager_secret_version.tls"))
+        self.assertTrue(reaches("aws_secretsmanager_secret_version.tls", "aws_secretsmanager_secret_version.app"))
+        for name in ["api", "web", "migrate"]:
+            self.assertTrue(reaches("aws_secretsmanager_secret_version.tls", "aws_ecs_task_definition." + name + "_v1"))
+        for name in ["api", "web"]:
+            self.assertTrue(reaches("aws_ecs_service." + name, "terraform_data.migration_complete"))
+            self.assertTrue(reaches("aws_ecs_service." + name, "aws_ecs_task_definition." + name + "_v1"))
+            self.assertFalse(reaches("aws_secretsmanager_secret_version.tls", "aws_ecs_service." + name))
+
+    def test_runtime_markers_validate_actual_uri_and_ca_without_leaking_values(self):
+        source = (ROOT.parents[1] / "terraform/modules/openwork-aws-ecs/security.tf").read_text()
+        script = re.search(r"tls_check = <<-JS\n(.*?)\n  JS", source, re.S).group(1)
+        certificate = subprocess.check_output(["node", "-e", "process.stdout.write(require('node:tls').rootCertificates[0])"], text=True)
+        with tempfile.TemporaryDirectory() as directory:
+            ca = Path(directory) / "public-ca.pem"
+            ca.write_text(certificate)
+            for query, expected in [("sslaccept=accept", None), ("sslaccept=strict", "strict"),
+                                    ("sslmode=verify-full", "strict"), ("sslaccept=strict&sslaccept=accept", None)]:
+                env = {"PATH": os.environ["PATH"], "NODE_EXTRA_CA_CERTS": str(ca),
+                       "DATABASE_URL": "mysql://unit:DO-NOT-PRINT@db.example.test:3306/app?" + query}
+                result = subprocess.run(["node", "-e", script], env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0 if expected else 1)
+                if expected:
+                    self.assertEqual(result.stdout.strip(), "OPENWORK_MANAGED_DB_TLS mode=" + expected + " ca=validated")
+                self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
+                self.assertNotIn("db.example.test", result.stdout + result.stderr)
+            ca.write_text("not a certificate")
+            env["DATABASE_URL"] = "mysql://unit:DO-NOT-PRINT@db.example.test:3306/app?sslaccept=strict"
+            result = subprocess.run(["node", "-e", script], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
 
 
 class NetworkTests(unittest.TestCase):

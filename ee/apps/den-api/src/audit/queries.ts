@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, isNotNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import { AuditEventResourceTable, AuditEventTable, AuditOperationTable, AuditStateTable } from "@openwork-ee/den-db/schema"
 import { parseStoredAuditEnvelope, readAuditPolicy, type AuditDatabase, type AuditTx } from "@openwork-ee/den-db/audit-log"
 import { normalizeDenTypeId, typeId } from "@openwork-ee/utils/typeid"
@@ -32,11 +32,6 @@ type Filters = Omit<z.infer<typeof auditOperationsQuerySchema>, "limit" | "curso
 type Page = z.infer<typeof auditPageQuerySchema>
 type QueryContext = { database: AuditDatabase; organizationId: string; secret: string }
 
-// Reads take no locks. Events are ordered by their time-ordered TypeID. A page
-// set is frozen at `visibleBefore`: later events (including later children of
-// an existing operation) are excluded. Exports also leave out the last few
-// seconds, because IDs are assigned before commit: an append still in flight
-// could otherwise commit behind a page boundary that already moved past it.
 export const AUDIT_EXPORT_SETTLE_MS = 5_000
 type AuditReader = AuditDatabase | AuditTx
 type Snapshot = { visibleBefore: number; issuedAt: number; expiresAt: number }
@@ -102,6 +97,41 @@ function bindingFor(context: QueryContext, mode: AuditCursor["mode"], filters: F
   return { organizationId: normalizeDenTypeId("organization", context.organizationId), mode, filterHash: auditFilterHash(filters), operationId: operationId === null ? null : normalizeDenTypeId("auditOperation", operationId) }
 }
 
+const MAX_REFERENCES_PER_EVENT = 256
+type OperationId = typeof AuditOperationTable.$inferSelect.id
+type EventId = typeof AuditEventTable.$inferSelect.id
+type SummaryReference = { type: string; id: string; relationship: "target" | "parent" | "related"; label: string | null }
+
+async function readFirstEvents(reader: AuditReader, organization: string, visibleBefore: Date, operationIds: OperationId[]) {
+  const organizationId = normalizeDenTypeId("organization", organization)
+  const firstEvents = new Map<string, { id: EventId; action: string }>()
+  const references = new Map<string, SummaryReference[]>()
+  if (!operationIds.length) return { firstEvents, references }
+  const firstIds = reader.select({ operationId: AuditEventTable.operation_id, firstId: sql<string>`min(${AuditEventTable.id})`.as("first_id") }).from(AuditEventTable)
+    .where(and(eventScope(organizationId, visibleBefore), inArray(AuditEventTable.operation_id, operationIds)))
+    .groupBy(AuditEventTable.operation_id).as("first_event")
+  const firstRows = await reader.select({ operationId: AuditEventTable.operation_id, id: AuditEventTable.id, action: AuditEventTable.action }).from(firstIds)
+    .innerJoin(AuditEventTable, and(eq(AuditEventTable.org_id, organizationId), eq(AuditEventTable.id, firstIds.firstId), eq(AuditEventTable.operation_id, firstIds.operationId)))
+  for (const row of firstRows) if (row.operationId) firstEvents.set(row.operationId, { id: row.id, action: row.action })
+  const eventIds = [...firstEvents.values()].map((event) => event.id)
+  if (!eventIds.length) return { firstEvents, references }
+  const refs = await reader.select({
+    operationId: AuditEventResourceTable.operation_id, eventId: AuditEventResourceTable.event_id,
+    type: AuditEventResourceTable.resource_type, id: AuditEventResourceTable.resource_id, relationship: AuditEventResourceTable.relationship, label: AuditEventResourceTable.label,
+  }).from(AuditEventResourceTable).where(and(
+    eq(AuditEventResourceTable.organization_id, organizationId), inArray(AuditEventResourceTable.event_id, eventIds), inArray(AuditEventResourceTable.operation_id, operationIds),
+  )).orderBy(asc(AuditEventResourceTable.event_id), asc(AuditEventResourceTable.id)).limit(eventIds.length * MAX_REFERENCES_PER_EVENT + 1)
+  if (refs.length > eventIds.length * MAX_REFERENCES_PER_EVENT) throw new AuditReadError("audit_storage_inconsistent")
+  for (const { operationId, eventId, ...ref } of refs) {
+    if (firstEvents.get(operationId)?.id !== eventId) continue
+    const list = references.get(eventId) ?? []
+    list.push(ref)
+    if (list.length > MAX_REFERENCES_PER_EVENT) throw new AuditReadError("audit_storage_inconsistent")
+    references.set(eventId, list)
+  }
+  return { firstEvents, references }
+}
+
 export async function listAuditOperations(context: QueryContext, query: z.infer<typeof auditOperationsQuerySchema>) {
   const { cursor: token, limit, ...filters } = query
   const binding = bindingFor(context, "operations", filters)
@@ -119,15 +149,14 @@ export async function listAuditOperations(context: QueryContext, query: z.infer<
     exists(reader.select({ id: AuditEventTable.id }).from(AuditEventTable).where(and(eventJoin(context.organizationId), eventScope(context.organizationId, visibleBefore))).limit(1)),
     position ? or(lt(AuditOperationTable.first_recorded_at, new Date(position.startedAt)), and(eq(AuditOperationTable.first_recorded_at, new Date(position.startedAt)), lt(AuditOperationTable.id, position.operationId))) : undefined,
   )).orderBy(desc(AuditOperationTable.first_recorded_at), desc(AuditOperationTable.id)).limit(limit + 1)
+  const page = rows.slice(0, limit)
+  const { firstEvents, references } = await readFirstEvents(reader, binding.organizationId, visibleBefore, page.map((row) => row.id))
   const operations: AuditOperationSummary[] = []
   let lastPosition: AuditCursor["position"] | undefined
-  for (const row of rows.slice(0, limit)) {
-    const [first] = await reader.select({ id: AuditEventTable.id, action: AuditEventTable.action }).from(AuditEventTable).where(and(eventScope(context.organizationId, visibleBefore), eq(AuditEventTable.operation_id, row.id))).orderBy(asc(AuditEventTable.id)).limit(1)
+  for (const row of page) {
+    const first = firstEvents.get(row.id)
     if (!first) throw new AuditReadError("audit_storage_inconsistent")
-    const refs = await reader.select({ type: AuditEventResourceTable.resource_type, id: AuditEventResourceTable.resource_id, relationship: AuditEventResourceTable.relationship, label: AuditEventResourceTable.label }).from(AuditEventResourceTable).where(and(
-      eq(AuditEventResourceTable.organization_id, binding.organizationId), eq(AuditEventResourceTable.operation_id, row.id), eq(AuditEventResourceTable.event_id, first.id),
-    )).orderBy(asc(AuditEventResourceTable.id)).limit(257)
-    if (refs.length > 256) throw new AuditReadError("audit_storage_inconsistent")
+    const refs = references.get(first.id) ?? []
     operations.push({ ...row, startedAt: row.startedAt.toISOString(), action: first.action, resources: refs.map(({ label, ...ref }) => ({ ...ref, ...(label === null ? {} : { label }) })) })
     lastPosition = { operationId: row.id, eventId: first.id, startedAt: row.startedAt.toISOString() }
   }
@@ -164,17 +193,11 @@ async function eventPage(context: QueryContext, query: Page, binding: AuditCurso
   return auditEventsResponseSchema.parse({ events, nextCursor: rows.length > query.limit && last ? nextCursor(binding, state, { operationId: normalizeDenTypeId("auditOperation", last.operationId), eventId: normalizeDenTypeId("auditEvent", last.id), startedAt: last.operation.startedAt }, context.secret) : null, snapshotAt: visibleBefore.toISOString() })
 }
 
-/**
- * Totals come from audit_state, which the scheduled usage refresh recomputes
- * (POST /internal/audit/usage/refresh); measuredAt says when. The append path
- * never updates them, so they lag live activity until the next refresh.
- */
 export async function readAuditUsage(context: Pick<QueryContext, "database" | "organizationId">, captureEnabled: boolean) {
   const organizationId = normalizeDenTypeId("organization", context.organizationId)
   return context.database.transaction(async (tx) => {
     const { entitlement } = await readAuditAvailability(tx, organizationId)
     const captureAvailable = captureEnabled
-    // GET usage can provision a ready org.
     await initializeAuditPolicyInTx(tx, organizationId, captureAvailable)
     const [state] = await tx.select({ retainedOperations: AuditStateTable.retained_operations, eventCount: AuditStateTable.event_count, logicalBytes: AuditStateTable.logical_bytes, measuredAt: AuditStateTable.updated_at }).from(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId)).limit(1)
     const policy = await readAuditPolicy(tx, organizationId)

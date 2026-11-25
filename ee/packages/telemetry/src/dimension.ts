@@ -4,10 +4,6 @@ const VALUE_MAX_LENGTH = 128
 const HASH_PREFIX_LENGTH = 10
 const FALLBACK_SLUG = "dimension"
 
-/**
- * Reduce a human dimension label to a URL-safe slug: lowercase, ASCII-folded,
- * with every run of non-alphanumeric characters collapsed to a single hyphen.
- */
 function labelSlug(label: string): string {
   const folded = label.trim().toLowerCase().normalize("NFKD")
   let out = ""
@@ -18,7 +14,6 @@ function labelSlug(label: string): string {
       pendingHyphen = false
       out += ch
     } else if (ch >= "\u0300" && ch <= "\u036f") {
-      // combining diacritics from NFKD folding: drop entirely
     } else {
       pendingHyphen = true
     }

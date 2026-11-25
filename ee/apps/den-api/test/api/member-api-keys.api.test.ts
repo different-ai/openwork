@@ -49,8 +49,6 @@ before(async () => {
   orgId = created.orgId
   owner = created.owner
   riley = await den.newMember(owner, orgId, "Riley Member")
-  const enabled = await den.setFeature(orgId, "secureSecretFields", true)
-  assert.equal(enabled.status, 200, summary(enabled))
   ownerToken = await den.mintMcpToken(owner, orgId)
   rileyToken = await den.mintMcpToken(riley, orgId)
 })
@@ -70,7 +68,19 @@ function saveKey(member: Member, connectionId: string, apiKey: string) {
 }
 
 function wireSince(start: number, prefix: string) {
-  return service.wire.slice(start).filter((entry) => entry.path.startsWith(prefix))
+  // The MCP SDK opens its optional SSE GET in the background after initialize.
+  // It can arrive after a later member's call starts. Attribute only that GET
+  // to its earlier session; keep all new handshakes and tool calls observable,
+  // including an unauthorized call that reuses another member's session.
+  const earlierSessions = new Map(service.wire.slice(0, start)
+    .filter((entry) => entry.rpcMethod === "initialize" && entry.status === 200 && entry.sessionId)
+    .map((entry) => [entry.sessionId, entry]))
+  return service.wire.slice(start).filter((entry) => {
+    if (!entry.path.startsWith(prefix)) return false
+    const earlier = entry.sessionId ? earlierSessions.get(entry.sessionId) : undefined
+    return !(entry.rpcMethod === "GET" && entry.status === 405
+      && earlier?.path === entry.path && earlier.authorization === entry.authorization)
+  })
 }
 
 /** Everything den-api prints while `run` runs. */
@@ -108,6 +118,14 @@ test("with individual keys, each call carries only the caller's own key, malform
 
   // Riley may use the connection but has no key yet: the owner's key is not lent to her.
   const noKeyStart = service.wire.length
+  // Reproduce an earlier owner's background SSE request arriving in this window.
+  const ownerSession = ownerCalls[0]?.sessionId
+  assert.ok(ownerSession)
+  const lateStream = await fetch(`${service.url}/personal/mcp`, {
+    headers: { authorization: `Bearer ${STATUS_KEY}`, "mcp-session-id": ownerSession },
+  })
+  assert.equal(lateStream.status, 405)
+  await lateStream.body?.cancel()
   const noKey = await den.callMcpTool(rileyToken, "execute_capability", capability)
   assert.equal(refused(noKey), true)
   assert.deepEqual(wireSince(noKeyStart, "/personal"), [])
@@ -150,6 +168,22 @@ test("a member cannot save a key for a connection they were not given, and nothi
   const call = await den.callMcpTool(rileyToken, "execute_capability", { name: `mcp:${ownerOnly}:team_status`, body: {} })
   assert.equal(refused(call), true)
   assert.deepEqual(wireSince(start, "/owner-only"), [])
+})
+
+test("reading a connection's tools before adding a key reports the connection, so chat can show its card", async () => {
+  const id = await personalKeyConnection("Solo status service", "/solo/mcp", { orgWide: true, memberIds: [], teamIds: [] })
+
+  const direct = await den.as(riley, orgId)("GET", `/v1/mcp-connections/${id}/tools`)
+  assert.equal(direct.status, 409, summary(direct))
+  assert.equal(field(direct.body, "error"), "connection_not_ready")
+  assert.equal(field(direct.body, "connectionStatus", "connectionId"), id)
+
+  const viaAgent = await den.callMcpTool(rileyToken, "execute_capability", { name: "getMcpConnectionsTools", path: { connectionId: id } })
+  assert.equal(viaAgent.isError, true, viaAgent.raw)
+  assert.equal(field(viaAgent.body, "connectionStatus", "state"), "needs_connection")
+  assert.equal(field(viaAgent.structured, "connectionId"), id)
+  assert.equal(field(viaAgent.structured, "connectionName"), "Solo status service")
+  assert.equal(field(viaAgent.structured, "action", "type"), "update_credentials")
 })
 
 test("leaving the team that gives a connection removes the person's key from it", async () => {

@@ -23,14 +23,10 @@ import {
 } from "../surface/composer/composer-pills";
 import { decodeComposerMentionValue } from "../surface/composer/mention-encoding";
 
-/** Pasted text reaches the model as the user's words and stays collapsed in the transcript. */
 function pastedTextPart(text: string): TextPartInput {
   return { type: "text", text, metadata: { openworkPastedText: true } };
 }
 
-// All workspace-scoped server URLs/clients/tokens come from
-// `resolveWorkspaceEndpoint` in apps/app/src/app/lib/workspace-endpoint.ts.
-// Don't compose `<baseUrl>/workspace/<id>` here.
 export async function draftToParts(
   draft: ComposerDraft,
   workspaceRoot: string,
@@ -55,6 +51,25 @@ export async function draftToParts(
     return segments[segments.length - 1] ?? "file";
   };
 
+  const visibleOffset = () => parts.reduce((total, part) => {
+    if (part.type === "text") return part.synthetic ? total : total + part.text.length;
+    if (part.type === "agent") return total + part.name.length + 1;
+    if (part.type === "file" && part.source?.type === "file") return total + part.source.text.value.length;
+    return total;
+  }, 0);
+
+  const fileMentionPart = (absolute: string, mentionPath: string): FilePartInput => {
+    const value = `@${mentionPath}`;
+    const start = visibleOffset();
+    return {
+      type: "file",
+      mime: "text/plain",
+      url: toFileUrl(absolute),
+      filename: filenameFromPath(mentionPath),
+      source: { type: "file", path: absolute, text: { value, start, end: start + value.length } },
+    };
+  };
+
   const attachmentFileById = new Map<string, FilePartInput>();
   if (draft.attachments.length > 0) {
     if (!endpoint) {
@@ -75,8 +90,6 @@ export async function draftToParts(
     }
   }
 
-  // Prefer draft.text token order so attachment chips stay inline with surrounding text
-  // (same positions as the composer), instead of dumping every file part at the end.
   const hasAttachmentTokens = /\[attachment [^\]]+\]/.test(draft.text);
   if (hasAttachmentTokens || attachmentFileById.size > 0) {
     const pasteByLabel = new Map(
@@ -130,12 +143,7 @@ export async function draftToParts(
             parts.push({ type: "text", text: absolute });
             continue;
           }
-          parts.push({
-            type: "file",
-            mime: "text/plain",
-            url: toFileUrl(absolute),
-            filename: filenameFromPath(mentionPart.path),
-          });
+          parts.push(fileMentionPart(absolute, mentionPart.path));
           continue;
         }
       }
@@ -158,7 +166,7 @@ export async function draftToParts(
         parts.push({ type: "agent", name: part.name });
         continue;
       }
-      if (part.type === "skill" || part.type === "connect-skill" || part.type === "connector" || part.type === "computer") {
+      if (part.type === "skill" || part.type === "connect-skill" || part.type === "connector" || part.type === "computer" || part.type === "session") {
         parts.push(...composerPillPromptParts(composerPillFromPart(part)));
         continue;
       }
@@ -169,12 +177,7 @@ export async function draftToParts(
           parts.push({ type: "text", text: absolute });
           continue;
         }
-        parts.push({
-          type: "file",
-          mime: "text/plain",
-          url: toFileUrl(absolute),
-          filename: filenameFromPath(part.path),
-        });
+        parts.push(fileMentionPart(absolute, part.path));
       }
     }
   }

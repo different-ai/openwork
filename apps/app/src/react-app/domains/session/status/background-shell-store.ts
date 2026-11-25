@@ -1,21 +1,17 @@
 import { create } from "zustand";
 
-import { setBackgroundShellTasksFlag, type EngineShell } from "../../../../app/lib/background-shell-tasks";
+import type { EngineShell } from "../../../../app/lib/background-shell-tasks";
 
-/** A command the agent left running in the background for one conversation. */
 export type BackgroundShell = {
   id: string;
   sessionId: string;
   command: string;
   startedAt: number;
-  /** When this app learned of it. A resync whose read started earlier cannot drop it. */
   observedAt: number;
 };
 
-/** Background commands for one workspace. */
 export type BackgroundShellBook = {
   running: Readonly<Record<string, BackgroundShell>>;
-  /** Commands known to have ended. A late or replayed start must not bring one back. */
   settled: readonly string[];
 };
 
@@ -39,8 +35,6 @@ export function settleBackgroundShell(book: BackgroundShellBook, shellId: string
   const known = book.settled.includes(shellId);
   const wasRunning = shellId in book.running;
   if (known && !wasRunning) return book;
-  // Keep the running record's identity when nothing in it changed, so the
-  // chat does not re-render for every foreground command's exit.
   let running = book.running;
   if (wasRunning) {
     const copy = { ...book.running };
@@ -51,26 +45,12 @@ export function settleBackgroundShell(book: BackgroundShellBook, shellId: string
 }
 
 export type BackgroundShellResync = {
-  /** Commands the engine listed as running. */
   listed: readonly EngineShell[];
-  /** When that read started. Commands learned after it are kept. */
   startedAt: number;
-  /** Only these conversations are resynced; the others are left as they are. */
   sessionIds: ReadonlySet<string> | "all";
-  /**
-   * Whether a listed command this app did not know about is a background
-   * one. The listing also includes a foreground command while it runs, so it
-   * only counts when its conversation is idle (a foreground command keeps its
-   * conversation running) or the conversation's tool call says background.
-   */
   admit: (shell: EngineShell & { sessionID: string }) => boolean;
 };
 
-/**
- * Converge on the engine's list of running commands: drop what it no longer
- * runs (an exit the volatile event stream may have lost), keep what it still
- * runs, and add background commands this app missed while disconnected.
- */
 export function resyncBackgroundShells(book: BackgroundShellBook, input: BackgroundShellResync): BackgroundShellBook {
   const inScope = (sessionId: string) => input.sessionIds === "all" || input.sessionIds.has(sessionId);
   const listed = new Map<string, EngineShell & { sessionID: string }>();
@@ -96,7 +76,6 @@ export function resyncBackgroundShells(book: BackgroundShellBook, input: Backgro
   return next;
 }
 
-/** Settle every command of a conversation that no longer exists. */
 export function clearBackgroundShellSession(book: BackgroundShellBook, sessionId: string): BackgroundShellBook {
   let next = book;
   for (const shell of Object.values(book.running)) {
@@ -105,7 +84,6 @@ export function clearBackgroundShellSession(book: BackgroundShellBook, sessionId
   return next;
 }
 
-/** One conversation's running background commands, oldest first. */
 export function sessionBackgroundShells(
   running: Readonly<Record<string, BackgroundShell>> | undefined,
   sessionId: string,
@@ -117,24 +95,13 @@ export function sessionBackgroundShells(
 }
 
 type BackgroundShellStore = {
-  /** Mirrors the `backgroundShellTasks` feature. Off keeps the old chat and records nothing. */
-  enabled: boolean;
   booksByWorkspaceId: Record<string, BackgroundShellBook>;
-  setEnabled: (enabled: boolean) => void;
   update: (workspaceId: string, change: (book: BackgroundShellBook) => BackgroundShellBook) => void;
 };
 
 export const useBackgroundShellStore = create<BackgroundShellStore>((set) => ({
-  enabled: false,
   booksByWorkspaceId: {},
-  setEnabled: (enabled) => {
-    setBackgroundShellTasksFlag(enabled);
-    // Turning the feature off forgets everything, so turning it back on
-    // starts from the engine's own list instead of stale counts.
-    set((state) => state.enabled === enabled ? state : { enabled, booksByWorkspaceId: enabled ? state.booksByWorkspaceId : {} });
-  },
   update: (workspaceId, change) => set((state) => {
-    if (!state.enabled) return state;
     const current = state.booksByWorkspaceId[workspaceId] ?? emptyBackgroundShellBook;
     const next = change(current);
     return next === current ? state : { booksByWorkspaceId: { ...state.booksByWorkspaceId, [workspaceId]: next } };

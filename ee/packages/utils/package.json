@@ -38,29 +38,13 @@
       "development": "./src/den-urls.ts",
       "default": "./dist/den-urls.js"
     },
-    "./inference-egress": {
+    "./client-ip-signature": {
       "types": {
-        "openwork-build": "./dist/types/src/inference-egress.d.ts",
-        "default": "./src/inference-egress.ts"
+        "openwork-build": "./dist/types/src/client-ip-signature.d.ts",
+        "default": "./src/client-ip-signature.ts"
       },
-      "development": "./src/inference-egress.ts",
-      "default": "./dist/inference-egress.js"
-    },
-    "./bedrock-mantle-catalog": {
-      "types": {
-        "openwork-build": "./dist/types/src/bedrock-mantle-catalog.d.ts",
-        "default": "./src/bedrock-mantle-catalog.ts"
-      },
-      "development": "./src/bedrock-mantle-catalog.ts",
-      "default": "./dist/bedrock-mantle-catalog.js"
-    },
-    "./inference-credentials": {
-      "types": {
-        "openwork-build": "./dist/types/src/inference-credentials.d.ts",
-        "default": "./src/inference-credentials.ts"
-      },
-      "development": "./src/inference-credentials.ts",
-      "default": "./dist/inference-credentials.js"
+      "development": "./src/client-ip-signature.ts",
+      "default": "./dist/client-ip-signature.js"
     },
     "./free-inference-digest": {
       "types": {
@@ -86,14 +70,6 @@
       "development": "./src/gateway-env.ts",
       "default": "./dist/gateway-env.js"
     },
-    "./gateway-routing": {
-      "types": {
-        "openwork-build": "./dist/types/src/gateway-routing.d.ts",
-        "default": "./src/gateway-routing.ts"
-      },
-      "development": "./src/gateway-routing.ts",
-      "default": "./dist/gateway-routing.js"
-    },
     "./gateway-rollups": {
       "types": {
         "openwork-build": "./dist/types/src/gateway-rollups.d.ts",
@@ -110,14 +86,6 @@
       "development": "./src/inference-bearer-key.ts",
       "default": "./dist/inference-bearer-key.js"
     },
-    "./litellm-catalog": {
-      "types": {
-        "openwork-build": "./dist/types/src/litellm-catalog.d.ts",
-        "default": "./src/litellm-catalog.ts"
-      },
-      "development": "./src/litellm-catalog.ts",
-      "default": "./dist/litellm-catalog.js"
-    },
     "./ai-sdk-env-settings": {
       "types": {
         "openwork-build": "./dist/types/src/ai-sdk-env-settings.d.ts",
@@ -125,49 +93,16 @@
       },
       "development": "./src/ai-sdk-env-settings.ts",
       "default": "./dist/ai-sdk-env-settings.js"
-    },
-    "./aws-sigv4": {
-      "types": {
-        "openwork-build": "./dist/types/src/aws-sigv4.d.ts",
-        "default": "./src/aws-sigv4.ts"
-      },
-      "development": "./src/aws-sigv4.ts",
-      "default": "./dist/aws-sigv4.js"
-    },
-    "./aws-identity-center": {
-      "types": {
-        "openwork-build": "./dist/types/src/aws-identity-center.d.ts",
-        "default": "./src/aws-identity-center.ts"
-      },
-      "development": "./src/aws-identity-center.ts",
-      "default": "./dist/aws-identity-center.js"
-    },
-    "./microsoft-entra": {
-      "types": {
-        "openwork-build": "./dist/types/src/microsoft-entra.d.ts",
-        "default": "./src/microsoft-entra.ts"
-      },
-      "development": "./src/microsoft-entra.ts",
-      "default": "./dist/microsoft-entra.js"
-    },
-    "./microsoft-foundry-catalog": {
-      "types": {
-        "openwork-build": "./dist/types/src/microsoft-foundry-catalog.d.ts",
-        "default": "./src/microsoft-foundry-catalog.ts"
-      },
-      "development": "./src/microsoft-foundry-catalog.ts",
-      "default": "./dist/microsoft-foundry-catalog.js"
     }
   },
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json",
-    "test": "node --test src/*.test.ts"
+    "build": "tsup && tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "luxon": "^3.6.1",
     "typeid-js": "^1.2.0",
     "uuid": "^11.1.1",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/luxon": "^3.6.2",

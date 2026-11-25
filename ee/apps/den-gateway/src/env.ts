@@ -21,7 +21,6 @@ function optionalString(value: string | undefined) {
   return trimmed ? trimmed : undefined
 }
 
-// GH Actions builds pass DEN_GATEWAY_VERSION; Render repo builds rely on RENDER_GIT_COMMIT.
 export function resolveGatewayBuildVersion(input: { denGatewayVersion?: string; renderGitCommit?: string }): string | undefined {
   return optionalString(input.denGatewayVersion) ?? optionalString(input.renderGitCommit)
 }
@@ -85,8 +84,6 @@ export const env = {
     renderGitCommit: parsed.RENDER_GIT_COMMIT,
   }),
   webRoot: optionalString(parsed.DEN_GATEWAY_WEB_ROOT),
-  // Self-hosted: the Den web origin the served app signs in with. Unset keeps
-  // the app's build-time default (hosted OpenWork Cloud).
   denWebUrl: optionalHttpBaseUrl("DEN_GATEWAY_DEN_WEB_URL", parsed.DEN_GATEWAY_DEN_WEB_URL),
   resolveTtlMs: parsePositiveInteger("DEN_GATEWAY_RESOLVE_TTL_MS", parsed.DEN_GATEWAY_RESOLVE_TTL_MS, 15_000),
   upstreamConnectTimeoutMs: parsePositiveInteger(

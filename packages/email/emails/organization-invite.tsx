@@ -12,5 +12,10 @@ OrganizationInvitePreview.PreviewProps = {
   invitedByName: "Ada Lovelace",
   invitedByEmail: "ada@example.com",
   organizationName: "OpenWork Preview",
-  role: "admin",
+  role: "member",
+  inviteeEmail: "grace@example.com",
+  gettingStartedUrl: "https://openworklabs.com/docs/cloud/team-quickstart",
+  supportEmail: "team@openworklabs.com",
+  reportAbuseUrl: "mailto:team@openworklabs.com?subject=Report%20an%20OpenWork%20invitation",
+  footerLines: ["© 2026 Different AI. All rights reserved.", "openworklabs.com"],
 } satisfies OrganizationInviteEmailProps

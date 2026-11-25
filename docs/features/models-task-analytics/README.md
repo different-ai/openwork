@@ -1,5 +1,16 @@
 # OpenWork Models task analytics
 
+> **Status (October 2026):** the Den web *Models & usage* and *Task analytics*
+> screens were removed together with their `modelsAnalyticsUi` and
+> `taskAnalyticsUi` flags, which had been off for everyone since 2026-10-14.
+> Their read, settings and Langfuse routes (`/v1/inference/analytics/usage`,
+> `settings`, `activity`, `consumption`, `langfuse*`) were removed with them.
+> Stored consent, event history, gateway collection, `POST
+> /v1/inference/analytics/events` and the background export for already
+> connected destinations are unchanged. The desktop collector keeps analytics
+> off because the settings route is unavailable (see Upgrade proof). The rest of
+> this page describes the original design.
+
 The API and migration land first in #4567. This desktop follow-up uses that
 existing API after its deployment is verified. Analytics still requires
 explicit admin consent.

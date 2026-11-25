@@ -20,3 +20,20 @@ export function resolveMcpAuthorizationPollOutcome(input: {
   if (input.elapsedMs >= input.timeoutMs) return "timeout";
   return "pending";
 }
+
+export async function pollMcpAuthorization(input: {
+  authorizationWindow: Pick<Window, "closed">;
+  readConnected: () => Promise<boolean>;
+  startedAt: number;
+  timeoutMs: number;
+  now?: () => number;
+}): Promise<McpAuthorizationPollOutcome> {
+  const authorizationWindowClosed = input.authorizationWindow.closed;
+  const connected = await input.readConnected();
+  return resolveMcpAuthorizationPollOutcome({
+    connected,
+    authorizationWindowClosed,
+    elapsedMs: (input.now ?? Date.now)() - input.startedAt,
+    timeoutMs: input.timeoutMs,
+  });
+}

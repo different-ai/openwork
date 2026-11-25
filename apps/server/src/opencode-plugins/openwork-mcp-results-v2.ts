@@ -1,10 +1,15 @@
+import { mcpToolId } from "../opencode-v2-mcp-readiness.js";
 import { nativeDiscoveryCode } from "./openwork-codemode-discovery-v2.js";
 
 type Registration = { dispose(): Promise<void> };
 type CallEvent = { readonly tool: string; readonly messageID: string; readonly id: string };
 type ToolResult = { output?: unknown; content?: unknown; metadata?: Record<string, unknown> };
 type ToolCall = { readonly messageID: string; readonly id: string; progress(metadata: Record<string, unknown>): Promise<void> };
-type EditableTool = { execute(input: unknown, call: ToolCall): Promise<ToolResult> };
+type EditableTool = { options?: Record<string, unknown>; execute(input: unknown, call: ToolCall): Promise<ToolResult> };
+
+export const PINNED_CONNECT_TOOL_IDS: ReadonlySet<string> = new Set(
+  ["search_capabilities", "execute_capability", "get_skill"].map(name => mcpToolId("openwork-cloud", name)));
+
 type ExecuteAfter = CallEvent & { readonly input: unknown } & (
   | { readonly status: "completed"; result: { output?: unknown; metadata?: Record<string, unknown> } }
   | { readonly status: "error"; readonly error: unknown }
@@ -21,7 +26,6 @@ type Context = {
   };
 };
 
-/** One OpenWork Cloud call made inside a Code Mode `execute`, kept because it reports a connection or an App build. */
 export type PreservedMcpResult =
   | { tool: string; input: unknown; status: "completed"; output: unknown }
   | { tool: string; input: unknown; status: "error"; error: string };
@@ -47,7 +51,6 @@ function parseRecord(text: string): Record<string, unknown> | null {
   }
 }
 
-/** The same shapes the chat's connection card reads (`connectionResultFromChatToolPart`). */
 export function reportsConnection(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if ("connectionStatus" in value || "connectionAction" in value) return true;
@@ -69,7 +72,6 @@ function jsonCopy(value: unknown): unknown {
   }
 }
 
-/** Object keys in a stable order, so a decoded copy of an input compares equal. */
 function stableJson(value: unknown): string | undefined {
   try {
     return JSON.stringify(value, (_key, entry: unknown) => isRecord(entry)
@@ -79,7 +81,6 @@ function stableJson(value: unknown): string | undefined {
   }
 }
 
-/** Code Mode reports inner calls as `openwork-cloud.create_app`; older engines used `_`. */
 function normalizedTool(tool: string): string {
   return tool.replace(/^(openwork(?:-cloud)?)\./, "$1_");
 }
@@ -97,7 +98,6 @@ export function preservedEntry(rawEvent: ExecuteAfter): PreservedMcpResult | nul
   return new TextEncoder().encode(JSON.stringify(entry)).byteLength <= MAX_ENTRY_BYTES ? entry : null;
 }
 
-/** One inner Code Mode call with its own result, kept so a person can inspect it after reload. */
 export type ToolDetail = {
   invocationId: string; ordinal: number; tool: string; input?: unknown;
   status: "running" | "completed" | "error"; startedAt: number; endedAt?: number;
@@ -110,7 +110,6 @@ const TRUNCATED = "[Result truncated by OpenWork]";
 const encoder = new TextEncoder();
 const byteLength = (value: unknown) => encoder.encode(JSON.stringify(value) ?? "").byteLength;
 
-/** A JSON copy that fits the budget, or a marked text preview of it. */
 function bounded(value: unknown, budget: number): { value: unknown; bytes: number; truncated: boolean } {
   if (value === undefined) return { value: undefined, bytes: 0, truncated: false };
   if (budget < 128) return { value: undefined, bytes: 0, truncated: true };
@@ -123,7 +122,6 @@ function bounded(value: unknown, budget: number): { value: unknown; bytes: numbe
   if (serialized === undefined) return { value: undefined, bytes: 0, truncated: true };
   const bytes = encoder.encode(serialized).byteLength;
   if (bytes <= budget) return { value: JSON.parse(serialized) as unknown, bytes, truncated: false };
-  // Six bytes per code unit bounds UTF-8 plus JSON escaping of the preview.
   const preview = `${serialized.slice(0, Math.max(0, Math.floor((budget - 128) / 6)))}\n${TRUNCATED}`;
   return { value: preview, bytes: byteLength(preview), truncated: true };
 }
@@ -140,14 +138,6 @@ type Execution = {
   claimed: Set<string>;
 };
 
-/**
- * The v2 counterpart of the v1 `preserveMcpResult` hook. Code Mode runs MCP
- * calls inside one `execute` and keeps only `{ tool, status, input }` per call.
- * Inner calls fire `execute.before`/`execute.after` with the outer call's
- * `messageID` and `id`; keep each call's own bounded result
- * (`openworkToolDetails`) and the ones that report a connection or an App build
- * (`openworkMcpResults`) on the outer call's metadata, which the engine saves.
- */
 export function createMcpResultsCollector() {
   const open = new Map<string, Execution>();
   const key = (event: Pick<CallEvent, "messageID" | "id">) => `${event.messageID}\u0000${event.id}`;
@@ -173,7 +163,6 @@ export function createMcpResultsCollector() {
           const oldest = open.keys().next().value;
           if (oldest !== undefined) open.delete(oldest);
         }
-        // Reserve room for the surrounding metadata keys and arrays.
         open.set(key(event), { connections: [], calls: [], remaining: MAX_EXECUTION_BYTES - 256, nextOrdinal: 0, truncated: false,
           allowance: new WeakMap(), rawInputs: new WeakMap(), inputKeys: new WeakMap(), claimed: new Set() });
         return;
@@ -183,7 +172,6 @@ export function createMcpResultsCollector() {
       const ordinal = execution.nextOrdinal++;
       if (execution.calls.length >= MAX_DETAIL_CALLS) { execution.truncated = true; return; }
       const detail: ToolDetail = { invocationId: `${event.id}:${ordinal}`, ordinal, tool: normalizedTool(event.tool), status: "running", startedAt: Date.now() };
-      // Count each entry's envelope as well: many small calls must not exceed the cap.
       const envelope = byteLength(detail) + 128;
       if (envelope > execution.remaining) { execution.truncated = true; return; }
       execution.remaining -= envelope;
@@ -210,8 +198,6 @@ export function createMcpResultsCollector() {
         return;
       }
       if (!execution) return;
-      // The hook sees the same input object as `execute.before`. Matching by
-      // tool name alone would cross-wire parallel repeated calls.
       const tool = normalizedTool(event.tool);
       const matching = execution.calls.filter(call => call.status === "running" && call.tool === tool && execution.rawInputs.get(call) === event.input);
       if (matching.length === 1) settle(execution, matching[0]!, event.status === "completed"
@@ -225,11 +211,6 @@ export function createMcpResultsCollector() {
         execution.remaining -= bytes;
       }
     },
-    /**
-     * Identify the call a tool's own `execute` is running. The engine decodes
-     * the input first, so fall back from identity to the only running call of
-     * that tool, then to an equal input; anything ambiguous stays unclaimed.
-     */
     claim(event: CallEvent & { input?: unknown }): string | undefined {
       const execution = open.get(key(event));
       if (!execution) return undefined;
@@ -246,7 +227,6 @@ export function createMcpResultsCollector() {
       execution.claimed.add(claimed.invocationId);
       return claimed.invocationId;
     },
-    /** Settle a claimed call from its tool's own `execute`, before `execute.after`. */
     settle(event: Pick<CallEvent, "messageID" | "id">, invocationId: string, outcome: { status: "completed"; output: unknown } | { status: "error"; error: string }): void {
       const execution = open.get(key(event));
       const detail = execution?.calls.find(call => call.invocationId === invocationId);
@@ -263,13 +243,14 @@ export default {
   async setup(context: Context) {
     const collector = createMcpResultsCollector();
     let rootSearch = false;
+    let toolIds = new Set<string>();
     const catalog = await context.tool.transform(editor => {
       rootSearch = editor.get("search") !== undefined;
-      // Wrap each tool so a Code Mode call publishes its start and its own
-      // result while the script is still running, not only at completion.
+      toolIds = new Set(editor.list().map(info => info.id));
       for (const info of editor.list()) {
         if (info.id === "execute") continue;
         editor.update(info.id, tool => {
+          if (PINNED_CONNECT_TOOL_IDS.has(info.id)) tool.options = { ...tool.options, pinned: true };
           const execute = tool.execute;
           tool.execute = async (input, call) => {
             const event = { tool: info.id, messageID: call.messageID, id: call.id, input };
@@ -295,7 +276,7 @@ export default {
     });
     const before = await context.tool.hook("execute.before", event => {
       if (!rootSearch && event.tool === "execute" && isRecord(event.input) && typeof event.input.code === "string") {
-        event.input = { ...event.input, code: nativeDiscoveryCode(event.input.code) };
+        event.input = { ...event.input, code: nativeDiscoveryCode(event.input.code, server => toolIds.has(mcpToolId(server, "search"))) };
       }
       collector.before(event);
     });

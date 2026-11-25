@@ -33,7 +33,6 @@ export const GatewayUsagePolicyTable = mysqlTable(
     hardLimit: boolean("hard_limit").notNull().default(true),
     allowRequestReset: boolean("allow_request_reset").notNull().default(true),
     revision: int("revision").notNull().default(1),
-    /** Null: a default limit. Otherwise the organization Gateway provider this limit governs. */
     inferenceProviderId: denTypeIdColumn("inferenceProvider", "inference_provider_id"),
     archivedAt: timestamp("archived_at", { fsp: 3 }),
     createdAt: date("created_at"),
@@ -120,7 +119,6 @@ export const GatewayUsageBucketTable = mysqlTable(
     id: id(),
     organizationId: org(),
     memberId: member(),
-    /** '' for the default scope, otherwise the Gateway provider id (see GATEWAY_DEFAULT_USAGE_SCOPE). */
     providerScope: providerScope(),
     timeframe: timeframe(),
     startAt: date("start_at"),

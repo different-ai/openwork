@@ -1,17 +1,3 @@
-/**
- * Generation-aware reconnect lifecycle for the workspace event stream.
- *
- * The stream must never park in a terminal dead state: 401/403/404 from the
- * subscribe call can mean a permanently invalid token, but the same statuses
- * occur transiently while the local server restarts or the runtime generation
- * rotates. Auth-shaped failures therefore keep retrying on a slower bounded
- * exponential schedule, and `notifyGenerationChanged` (a rotated token or a
- * new runtime generation) restarts a parked stream immediately with fresh
- * backoff instead of waiting out stale failure evidence.
- *
- * This module is dependency-free on purpose so specs can drive it directly.
- */
-
 import { connectionDiagnosticHistory, type ConnectionDiagnosticReason } from "../../../../app/lib/connection-diagnostic-history";
 
 export type SyncStreamPhase =
@@ -32,11 +18,6 @@ const phaseDiagnosticReasons: Record<SyncStreamPhase, ConnectionDiagnosticReason
 type SyncStreamLifecycleOptions = {
   subscribe: (signal: AbortSignal) => Promise<AsyncIterable<unknown>>;
   onEvent: (event: unknown) => void;
-  /**
-   * Runs on every successful (re)connect, before events flow. Owners
-   * level-reconcile active run statuses here so a cached idle recorded while
-   * the stream was down cannot mask work that continued on the server.
-   */
   onConnected?: (signal: AbortSignal) => void;
   onPhaseChange?: (phase: SyncStreamPhase) => void;
   isAuthError?: (error: unknown) => boolean;
@@ -49,12 +30,6 @@ type SyncStreamLifecycleOptions = {
 };
 
 export type SyncStreamLifecycle = {
-  /**
-   * The credential or runtime generation behind `subscribe` changed. Resets
-   * both backoff schedules and, when no healthy connection exists, reconnects
-   * immediately. A healthy stream keeps flowing: if the server cuts it over
-   * the rotation, the ordinary retry path reconnects with the new generation.
-   */
   notifyGenerationChanged: () => void;
   getPhase: () => SyncStreamPhase;
   dispose: () => void;
@@ -132,8 +107,6 @@ export function startSyncStreamLifecycle(options: SyncStreamLifecycleOptions): S
       if (connectionController.signal.aborted || !isAuthError(error)) {
         scheduleRetry("reconnecting");
       } else if (generation !== connectGeneration) {
-        // The generation rotated while this attempt was in flight, so its
-        // auth failure is stale evidence about the previous generation.
         scheduleRetry("reconnecting");
       } else {
         scheduleRetry("auth-blocked");
@@ -146,7 +119,6 @@ export function startSyncStreamLifecycle(options: SyncStreamLifecycleOptions): S
   const notifyGenerationChanged = () => {
     if (disposed || controller.signal.aborted) return;
     generation += 1;
-    // New generation: previous failures no longer predict the next attempt.
     retryDelayMs = retryInitialDelayMs;
     authRetryDelayMs = authRetryInitialDelayMs;
     const active = activeConnectionController;

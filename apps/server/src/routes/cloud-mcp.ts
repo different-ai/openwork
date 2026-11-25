@@ -120,9 +120,6 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     assertExactWorkspace(ctx.params.id, workspace);
-    // The refresh needs no payload; an optional body may scope provider/model
-    // and name the trigger for the delivery ledger. An absent/empty body is
-    // fine, but malformed JSON stays a hard 400 — never silently ignored.
     const raw = (await ctx.request.text()).trim();
     let body: Record<string, unknown> = {};
     if (raw) {
@@ -179,9 +176,6 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
         refreshRegistrationFromLiveStatus,
       }));
     }
-    // Reconcile persists the account-global desired config (it reconfigures
-    // Connect for every workspace). Collaborator scope suffices only for
-    // trusted endpoints; anything else needs the owner.
     const configBody = isRecord(body.config) ? body.config : body;
     const endpointUrl = typeof configBody.url === "string" ? configBody.url : "";
     if (!await isTrustedCloudMcpEndpointForGlobalPersist(endpointUrl)) {

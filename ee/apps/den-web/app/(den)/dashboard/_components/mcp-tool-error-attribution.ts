@@ -99,8 +99,6 @@ export function parseExternalMcpDiagnostic(value: unknown): ExternalMcpDiagnosti
   const connectUrl = optionalString(value.connectUrl);
   const diagnostic: ExternalMcpDiagnostic = {
     ...(referenceId ? { referenceId } : {}),
-    // Keep unknown future phases/categories as safe strings so an older
-    // dashboard can still show the reference and fall back to wire evidence.
     ...(phase ? { phase } : {}),
     ...(category ? { category } : {}),
     ...(code ? { code } : {}),

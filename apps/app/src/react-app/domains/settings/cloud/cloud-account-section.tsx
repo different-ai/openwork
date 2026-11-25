@@ -1,5 +1,7 @@
 /** @jsxImportSource react */
+import { useNavigate } from "react-router";
 import { ArrowUpRight, Building2, Check, LogOut, Loader2 } from "lucide-react";
+import { markOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
 
 import {
   formatDenOrgRoleLabel,
@@ -7,10 +9,7 @@ import {
 } from "../../../../app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  SettingsNotice,
-  SettingsSectionHeaderDescription,
-} from "../settings-section";
+import { SettingsNotice } from "../settings-section";
 import { t } from "@/i18n";
 import { useCloudSession } from "./cloud-session-provider";
 import { useOrgListWindow } from "../../cloud/use-org-list-window";
@@ -43,12 +42,18 @@ export function CloudAccountSection({
   onSignOut,
 }: CloudAccountSectionProps) {
   const { user } = useCloudSession();
+  const navigate = useNavigate();
   const activeOrg = orgs.find((org) => org.id === activeOrgId) ?? null;
   const controlsDisabled = authBusy || sessionBusy;
+  const switchOrganization = activeOrg && orgs.length > 1
+    ? () => {
+        markOrgSelectionPending(activeOrg);
+        navigate("/onboarding");
+      }
+    : undefined;
 
   return (
     <section className="flex flex-col gap-y-6">
-      {/* User identity */}
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex items-center gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-dls-hover text-sm font-semibold text-dls-text">
@@ -85,7 +90,6 @@ export function CloudAccountSection({
         </div>
       </div>
 
-      {/* Org picker (stepper-style) or connected org display */}
       {needsOrgSelection ? (
         <OrgPicker
           orgs={orgs}
@@ -95,7 +99,11 @@ export function CloudAccountSection({
           onRefresh={onRefreshOrgs}
         />
       ) : activeOrg ? (
-        <ConnectedOrg org={activeOrg} />
+        <ConnectedOrg
+          org={activeOrg}
+          onSwitchOrganization={switchOrganization}
+          disabled={controlsDisabled || orgsBusy}
+        />
       ) : orgsBusy ? (
         <div className="flex items-center gap-2 text-sm text-dls-secondary">
           <Loader2 size={14} className="animate-spin" />
@@ -108,11 +116,11 @@ export function CloudAccountSection({
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Connected org: read-only display                                   */
-/* ------------------------------------------------------------------ */
-
-function ConnectedOrg({ org }: { org: DenOrgSummary }) {
+function ConnectedOrg({ org, onSwitchOrganization, disabled }: {
+  org: DenOrgSummary;
+  onSwitchOrganization?: () => void;
+  disabled: boolean;
+}) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
       <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-green-3 text-green-11">
@@ -124,14 +132,16 @@ function ConnectedOrg({ org }: { org: DenOrgSummary }) {
           {formatDenOrgRoleLabel(org.role)} &middot; Connected
         </div>
       </div>
-      <Check size={16} className="shrink-0 text-green-11" />
+      {onSwitchOrganization ? (
+        <Button variant="outline" size="sm" onClick={onSwitchOrganization} disabled={disabled}>
+          Switch organization
+        </Button>
+      ) : (
+        <Check size={16} className="shrink-0 text-green-11" />
+      )}
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/*  Org picker: card-per-org selection                                 */
-/* ------------------------------------------------------------------ */
 
 function OrgPicker({
   orgs,
@@ -179,7 +189,7 @@ function OrgPicker({
         Select an organization
       </div>
       <div className="text-xs text-dls-secondary">
-        Choose the organization to use with this workspace. Sign out to switch later.
+        Choose the organization to use with this workspace.
       </div>
       {orgs.length > 10 ? (
         <Input

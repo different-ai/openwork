@@ -12,10 +12,6 @@ export type DenToggleRowProps = {
   onChange: (checked: boolean) => void;
 };
 
-/**
- * A prominent switch row: icon tile, title/description, and a toggle. Used for
- * coarse-grained choices like "Everyone in the organization" access.
- */
 export function DenToggleRow({
   icon: Icon,
   title,

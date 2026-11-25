@@ -1,18 +1,9 @@
-/**
- * Builds the Freestyle snapshot every headless computer boots from, once per install script.
- *
- *   FREESTYLE_API_KEY=... pnpm --filter @openwork-ee/headless-computer snapshot:build
- *
- * Boots Freestyle's Ubuntu base, runs the install script as a detached unit (it outlives the 5-minute command
- * limit), polls its marker files, and snapshots the VM under a slug derived from the script. Re-running with an
- * unchanged script is a no-op. The API key stays on this machine; it never enters the VM.
- */
 import { Freestyle, FreestyleApiError } from "freestyle"
 import { COMPUTER_INSTALL_SCRIPT, computerSnapshotSlug } from "../src/image.js"
 
 const apiKey = process.env.FREESTYLE_API_KEY
 if (!apiKey) {
-  console.error("Set FREESTYLE_API_KEY (see the get-env-var skill: dev, /openwork-ops).")
+  console.error("Set FREESTYLE_API_KEY (Infisical: dev, /openwork-ops).")
   process.exit(1)
 }
 const api = new Freestyle({ apiKey })

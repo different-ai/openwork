@@ -19,7 +19,6 @@ export class HeadlessThreadError extends Error {
   readonly path: string;
   readonly status: number | null;
   readonly body: unknown;
-  /** True when retrying the same call may succeed; null when unclassified. */
   readonly retryable: boolean | null;
 
   constructor(input: {

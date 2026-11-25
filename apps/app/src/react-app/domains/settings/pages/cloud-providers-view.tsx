@@ -7,14 +7,15 @@ import type { DenOrgLlmProvider, DenOrgLlmProviderAccess } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
-import { GatewayConnectRow } from "./ai-view";
+import { GatewayConnectRow, GatewayReadyRow } from "./ai-view";
 import { ProviderIcon } from "../../../design-system/provider-icon";
-import { gatewayConnectProviderKey, type GatewayConnectProvider } from "../../connections/provider-auth/cloud-provider-config";
+import { gatewayConnectProviderKey, resolveLiveGatewayReadyProviders, type GatewayConnectProvider, type LiveGatewayProvider } from "../../connections/provider-auth/cloud-provider-config";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import {
   CloudProvidersSection,
   type CloudProviderRow,
   type CloudProviderRowStatus,
+  type OpenWorkModelsToggle,
 } from "@/react-app/domains/settings/cloud/sections";
 import {
   getCloudProviderEnv,
@@ -27,8 +28,9 @@ import type {
   CloudProviderSyncError,
 } from "@/react-app/domains/connections/provider-auth/store";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
+import { credentialHealthKey, useProviderCredentialHealth, type ProviderCredentialHealth } from "@/react-app/domains/connections/provider-auth/credential-health";
+import type { OrganizationShareEmptyState } from "@/react-app/domains/settings/provider-share/device-provider-share";
 
-/** "Everyone", the team names, or a member count; null when Den did not say. */
 export function providerAccessLabel(access: DenOrgLlmProviderAccess | undefined): string | null {
   if (!access) return null;
   if (access.allMembers) return "Everyone";
@@ -39,22 +41,14 @@ export function providerAccessLabel(access: DenOrgLlmProviderAccess | undefined)
 
 export type CloudProviderRowStateInput = {
   imported: boolean;
+  credentialHealth?: ProviderCredentialHealth;
   outOfSync: boolean;
   allowed: boolean;
   importsUnavailable: boolean;
   needsCredential: boolean;
   needsServer: boolean;
   syncError: CloudProviderSyncError | null;
-  /**
-   * The server-side sync skipped this provider (from
-   * /cloud-provider-sync/status skippedProviders, e.g. missing_credentials) —
-   * an honest attention state instead of a silent, permanent "Syncing".
-   */
   skippedByServer?: boolean;
-  /**
-   * The server still owes the engine a reload: the provider is materialized
-   * on disk but its models are not served yet, so "Connected" would lie.
-   */
   reloadPending?: boolean;
 };
 
@@ -66,9 +60,10 @@ export function resolveCloudProviderRowStatus(
   if (input.syncError) return input.syncError.kind;
   if (input.needsCredential || input.skippedByServer === true) return "needs_credential";
   if (input.needsServer) return "needs_server";
-  return input.imported && !input.outOfSync && input.reloadPending !== true
-    ? "connected"
-    : "syncing";
+  if (!input.imported || input.outOfSync || input.reloadPending === true) return "syncing";
+  if (input.credentialHealth === "rejected") return "credential_rejected";
+  if (input.credentialHealth === "unverified") return "credential_unverified";
+  return "connected";
 }
 
 export function canRetryCloudProviderRow(status: CloudProviderRowStatus) {
@@ -76,6 +71,7 @@ export function canRetryCloudProviderRow(status: CloudProviderRowStatus) {
 }
 
 export type CloudProvidersViewProps = {
+  runtimeWorkspaceId?: string | null;
   checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   cloudOrgProviders: DenOrgLlmProvider[];
   connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
@@ -87,16 +83,19 @@ export type CloudProvidersViewProps = {
   onOpenAccount: () => void;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
   runCloudProviderSync: (reason: "manual") => Promise<unknown>;
-  /** Server-side sync facts (reload pending, skips); null on the legacy renderer-import path. */
   serverSync: CloudProviderServerSyncState | null;
   gatewayConnectProviders?: GatewayConnectProvider[];
+  liveGatewayProviders?: readonly LiveGatewayProvider[] | null;
   connectingGatewayProviderId?: string | null;
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
   onOpenDen?: () => void;
   onOpenModelConnections?: () => void;
+  shareEmptyState?: OrganizationShareEmptyState;
+  openWorkModelsToggle?: OpenWorkModelsToggle;
 };
 
 export function CloudProvidersView({
+  runtimeWorkspaceId,
   checkDesktopAppRestriction,
   cloudOrgProviders,
   connectCloudProvider,
@@ -110,17 +109,23 @@ export function CloudProvidersView({
   runCloudProviderSync,
   serverSync,
   gatewayConnectProviders = [],
+  liveGatewayProviders = null,
   connectingGatewayProviderId,
   onConnectGatewayProvider,
   onOpenDen,
   onOpenModelConnections,
+  shareEmptyState,
+  openWorkModelsToggle,
 }: CloudProvidersViewProps) {
   const { activeOrganization, isSignedIn } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
   const [actionId, setActionId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
 
+  const healthEntries = useProviderCredentialHealth((state) => state.entries);
   const rows = React.useMemo<CloudProviderRow[]>(() => {
+    const providerHealth = (providerId: string): ProviderCredentialHealth =>
+      (runtimeWorkspaceId ? healthEntries[credentialHealthKey(runtimeWorkspaceId, providerId)]?.status : undefined) ?? "unverified";
     const restrictToCloud = checkDesktopAppRestriction({ restriction: "allowCustomProviders" });
     const liveRows = cloudOrgProviders.map((provider) => {
       const imported = importedCloudProviders[provider.id] ?? null;
@@ -130,13 +135,11 @@ export function CloudProvidersView({
         restrictToCloud,
         checkRestriction: checkDesktopAppRestriction,
       });
-      // Modern server sync owns credential resolution, including local
-      // Environment variables. Den's shared-credential summary and errors
-      // from the legacy renderer path are not authoritative in this mode.
       const syncError = serverSync === null ? lastSyncError[provider.id] ?? null : null;
       const env = getCloudProviderEnv(provider.providerConfig);
       const status = resolveCloudProviderRowStatus({
         imported: Boolean(imported),
+        credentialHealth: providerHealth(imported?.providerId ?? getCloudManagedProviderId(provider)),
         outOfSync,
         allowed,
         importsUnavailable,
@@ -174,7 +177,7 @@ export function CloudProvidersView({
     });
     const importedRows: CloudProviderRow[] = Object.values(importedCloudProviders).filter((provider) => !cloudOrgProviders.some((live) => live.id === provider.cloudProviderId)).map((provider) => ({
       key: `imported:${provider.cloudProviderId}`, cloudProviderId: provider.cloudProviderId, provider: null, imported: provider, name: provider.name,
-      status: resolveCloudProviderRowStatus({ imported: true, outOfSync: false, allowed: isProviderAllowedByDesktopPolicy({ providerId: provider.providerId, restrictToCloud, checkRestriction: checkDesktopAppRestriction }), importsUnavailable, needsCredential: false, needsServer: false, syncError: null, reloadPending: serverSync?.reloadPending, skippedByServer: Boolean(serverSync?.skippedProviders[provider.cloudProviderId]) }),
+      status: resolveCloudProviderRowStatus({ imported: true, credentialHealth: providerHealth(provider.providerId), outOfSync: false, allowed: isProviderAllowedByDesktopPolicy({ providerId: provider.providerId, restrictToCloud, checkRestriction: checkDesktopAppRestriction }), importsUnavailable, needsCredential: false, needsServer: false, syncError: null, reloadPending: serverSync?.reloadPending, skippedByServer: Boolean(serverSync?.skippedProviders[provider.cloudProviderId]) }),
       detail: provider.source === "openwork_gateway" ? "OpenWork Gateway · Organization credential" : "Managed in Den",
       metaId: provider.cloudProviderId,
       credentialReady: true,
@@ -182,6 +185,8 @@ export function CloudProvidersView({
     const combined = [...liveRows, ...importedRows];
     return combined.filter((row) => !gatewayConnectProviders.some((provider) => provider.cloudProviderId === row.cloudProviderId)).map<CloudProviderRow>((row) => serverSync?.lastRun?.status === "failed" ? { ...row, status: "unavailable", detail: "Could not verify with Den. Sync again to check access." } : row);
   }, [
+    runtimeWorkspaceId,
+    healthEntries,
     checkDesktopAppRestriction,
     cloudOrgProviders,
     gatewayConnectProviders,
@@ -256,6 +261,8 @@ export function CloudProvidersView({
     );
   }
 
+  const gatewayReadyProviders = resolveLiveGatewayReadyProviders(liveGatewayProviders, cloudOrgProviders.map((provider) => provider.id));
+
   const section = (
     <CloudProvidersSection
       actionError={actionError ?? (serverSync?.lastRun?.status === "failed" ? "Could not verify providers with Den. Sync again to retry." : null)}
@@ -266,9 +273,11 @@ export function CloudProvidersView({
       onRetry={retryProvider}
       onOpenDen={onOpenDen}
       onOpenModelConnections={onOpenModelConnections}
+      shareEmptyState={shareEmptyState}
       lastVerifiedAt={serverSync?.lastVerifiedAt}
-      additionalCount={gatewayConnectProviders.length}
-      additionalRows={gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}
+      openWorkModelsToggle={openWorkModelsToggle}
+      additionalCount={gatewayReadyProviders.length + gatewayConnectProviders.length}
+      additionalRows={<>{gatewayReadyProviders.map((provider) => <GatewayReadyRow key={provider.id} provider={provider} />)}{gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}</>}
     />
   );
 

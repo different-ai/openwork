@@ -49,8 +49,29 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
     permissions: [
       { key: "filesRead", label: "Read OneDrive files", scope: "Files.Read" },
       { key: "filesWrite", label: "Create and update OneDrive files", scope: "Files.ReadWrite" },
-      { key: "filesReadAll", label: "Read all files the member can access", scope: "Files.Read.All" },
-      { key: "filesFull", label: "Full access to files the member can access", scope: "Files.ReadWrite.All" },
+      {
+        key: "filesReadAll",
+        label: "Read all files the member can access",
+        scope: "Files.Read.All",
+        detail: "Includes SharePoint libraries, files shared with the member, and Teams files. Needs admin consent.",
+      },
+      {
+        key: "filesFull",
+        label: "Full access to files the member can access",
+        scope: "Files.ReadWrite.All",
+        detail: "Lets OpenWork save edits to SharePoint and shared files. Needs admin consent.",
+      },
+    ],
+  },
+  {
+    name: "SharePoint",
+    permissions: [
+      {
+        key: "sitesRead",
+        label: "Find SharePoint sites and libraries",
+        scope: "Sites.Read.All",
+        detail: "Reads site and library names; file access still follows the file permissions. Needs admin consent.",
+      },
     ],
   },
   {

@@ -24,7 +24,28 @@ export const DESKTOP_POLICY_ENFORCEMENT_ENABLED: boolean = false;
  * Enforcement never blocks startup, sign-in or chat: callers apply the last
  * known setting and allow when none is known (see #5131).
  */
-export const MODEL_ACCESS_POLICY_KEYS = ["allowCustomProviders"] as const;
+export const MODEL_ACCESS_POLICY_KEYS = ["allowCustomProviders", "allowLocalModels"] as const;
+
+/**
+ * Models that run on the member's own computer (Ollama, LM Studio), by the
+ * provider ids OpenWork's own setup writes. Governed by `allowLocalModels`
+ * independently of `allowCustomProviders`. A local server
+ * someone adds under another id through Connect a provider is a custom
+ * provider and follows "Only models you provide".
+ */
+export const LOCAL_MODEL_PROVIDER_IDS = ["ollama", "lmstudio"] as const;
+
+export function isLocalModelProviderId(providerId: string): boolean {
+  return (LOCAL_MODEL_PROVIDER_IDS as readonly string[]).includes(providerId.trim().toLowerCase());
+}
+
+/**
+ * Whether local models may run. A config without the key (an older Den, or
+ * the feature off) keeps what `allowCustomProviders` always meant for them.
+ */
+export function localModelsAllowed(config: { allowLocalModels?: boolean; allowCustomProviders?: boolean } | null | undefined): boolean {
+  return (config?.allowLocalModels ?? config?.allowCustomProviders) !== false;
+}
 
 export function isModelAccessPolicyKey(key: string): boolean {
   return (MODEL_ACCESS_POLICY_KEYS as readonly string[]).includes(key);
@@ -52,29 +73,10 @@ type DesktopPolicyDefinitionEntry = {
   userNotice: string;
   defaultValue: boolean;
 } & (
-  // Every restricted capability must have a place in the team editor.
-  // Display preferences remain editable in Restricted mode.
   | { restrictedValue: boolean; group: "ai" | "tools" | "app" }
   | { restrictedValue: null; group: "display" }
 );
 
-// Canonical desktop policy catalog.
-//
-// To add a new desktop policy item:
-// 1. Add a matching entry to `desktopPolicyDefinitions` below.
-// 2. Choose a safe `defaultValue` for orgs with missing/older policy data.
-// 3. Choose its `restrictedValue`: the value the Restricted policy mode locks
-//    the key to, or `null` for a display preference Restricted leaves alone.
-// 4. Wire desktop app behavior to read the key through the desktop config hooks.
-// 5. If the key affects Den web editing copy, update the `name`, `description`,
-//    `teamLabel`, `group`, and `userNotice` here rather than duplicating them elsewhere.
-// 6. Do not manually edit `desktopPolicyValueSchema`; it is generated from the
-//    IDs in this definition list.
-//
-// Policy booleans usually use allow-style names. For every policy item,
-// `false` means the feature is restricted/disabled; `true` or an omitted value
-// means the app should not block the feature locally unless a default/effective
-// policy calculation supplies `false`.
 export const desktopPolicyDefinitions = [
   {
     id: "allowCustomProviders",
@@ -89,12 +91,22 @@ export const desktopPolicyDefinitions = [
     restrictedValue: false,
   },
   {
-    id: "allowZenModel",
-    teamLabel: "Use OpenCode models",
+    id: "allowLocalModels",
+    teamLabel: "Use local models",
     group: "ai",
-    name: "Enable OpenCode Zen Models",
-    description: "Allow users to use the built in models provided by OpenCode.",
-    userNotice: "Your administrator has disabled access to OpenCode Models.",
+    name: "Local models (Ollama, LM Studio)",
+    description: "Allow users to run models on their own computer with Ollama or LM Studio.",
+    userNotice: "Your organization administrator has turned off local models.",
+    defaultValue: true,
+    restrictedValue: false,
+  },
+  {
+    id: "allowZenModel",
+    teamLabel: "Use the free starter model",
+    group: "ai",
+    name: "Free starter model (Auto)",
+    description: "Allow users to use OpenWork's free, rate-limited Auto model. OpenCode Zen models are retired and never offered.",
+    userNotice: "Your administrator has turned off the free starter model.",
     defaultValue: true,
     restrictedValue: false,
   },
@@ -202,8 +214,6 @@ export type OnboardingPromptConfig = {
   onboardingPromptDescriptions?: string[];
 };
 
-// Explicit access limits are applied after legacy grants. Omitted access keeps
-// existing policies' grant semantics unchanged.
 export const teamAccessSchema = z.object({
   mode: z.enum(["custom", "locked"]),
   capabilities: desktopPolicyValueSchema,
@@ -216,8 +226,6 @@ function normalizeTeamAccess(value: unknown): TeamAccess | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
-// Execution restrictions intersect across matching policies, independently of
-// the legacy union-of-grants booleans.
 export const desktopExecutionPolicySchema = z.object({
   commands: z.enum(["allow", "deny"]).default("allow"),
   blockedCommands: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
@@ -232,9 +240,6 @@ export const desktopExecutionPolicySchema = z.object({
   blockBrowserUploads: z.boolean().default(false),
 }).strict();
 export type DesktopExecutionPolicy = z.infer<typeof desktopExecutionPolicySchema>;
-// A member can belong to several teams, each contributing up to 100 patterns.
-// The effective union must not fail validation merely because it exceeds one
-// document's editing limit.
 const effectiveDesktopExecutionPolicySchema = desktopExecutionPolicySchema.extend({
   blockedCommands: z.array(z.string().min(1).max(500)).default([]),
 });
@@ -307,15 +312,6 @@ export const desktopPolicyUserNotices = Object.fromEntries(
   ]),
 ) as Record<DesktopPolicyKey, string>;
 
-// ---------------------------------------------------------------------------
-// Restricted policy mode: chat and organization-approved skills only.
-//
-// Restricted is an editor mode, not a stored flag. A policy is Restricted when
-// every key with a `restrictedValue` holds that value; display preferences
-// (`restrictedValue: null`) stay editable in both modes. Because the effective
-// policy is a union of grants, Restricted only locks members down when it is
-// applied to the default policy.
-// ---------------------------------------------------------------------------
 export function applyRestrictedDesktopPolicy(
   value: Required<DesktopPolicyValue>,
 ): Required<DesktopPolicyValue> {
@@ -341,9 +337,6 @@ export const restrictedDesktopPolicyValue = applyRestrictedDesktopPolicy(
   desktopPolicyDefaults,
 );
 
-// ---------------------------------------------------------------------------
-// Radix color families that can be used as a brand accent.
-// ---------------------------------------------------------------------------
 export const brandAccentColorValues = [
   "blue",
   "crimson",
@@ -396,7 +389,7 @@ export type DesktopAgentPermissionRule = z.infer<typeof desktopAgentPermissionsS
 
 /**
  * The model new desktop chats start with on the OpenCode v2 engine, chosen by
- * the organization or one of the member's teams (feature `orgDefaultModel`).
+ * the organization or one of the member's teams.
  * Mirrors `desktopDefaultModelSchema` in ./default-model.ts, which owns the
  * resolution rules; kept inline for the same reason as agent permissions.
  */
@@ -409,6 +402,13 @@ export const desktopConfigDefaultModelSchema = z
   })
   .meta({ ref: "DenDesktopConfigDefaultModel" });
 
+/** Verified account scope for browser upload consent; never inferred from cached tokens. */
+export const desktopBrowserUploadPermissionsSchema = z.object({
+  enabled: z.boolean(),
+  organizationId: z.string().min(1).max(255),
+  memberId: z.string().min(1).max(255),
+}).meta({ ref: "DenDesktopBrowserUploadPermissions" });
+
 export const desktopConfigSchema = desktopPolicyValueSchema
   .extend({
     execution: effectiveDesktopExecutionPolicySchema.optional(),
@@ -420,13 +420,18 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     brandIconUrl: z.string().url().max(2048).optional(),
     brandAccentColor: z.enum(brandAccentColorValues).optional(),
     automationsEnabled: z.boolean().optional(),
+    desktopAutomationsEnabled: z.boolean().optional(),
+    cloudAutomationsEnabled: z.boolean().optional(),
     dashboardEnabled: z.boolean().optional(),
     connectEnabled: z.boolean().optional(),
+    opencodeV2Only: z.boolean().optional(),
+    localProviderMirror: z.boolean().optional(),
+    removeOpencodeZen: z.boolean().optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
-    /** The member's agent permissions, present when the organization has them on. */
     agentPermissions: desktopAgentPermissionsSchema.optional(),
-    /** The member's default model for new chats, present when the organization has one and the feature is on. */
+    browserUploadPermissions: desktopBrowserUploadPermissionsSchema.optional(),
+    fileSendPermissions: desktopBrowserUploadPermissionsSchema.optional(),
     defaultModel: desktopConfigDefaultModelSchema.optional(),
   })
   .meta({ ref: "DenDesktopConfig" });
@@ -464,7 +469,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** JSON columns arrive as strings on engines like MariaDB (JSON = LONGTEXT alias). */
 function coerceJsonRecord(value: unknown): unknown {
   if (typeof value !== "string") return value;
   try {
@@ -519,13 +523,17 @@ export function normalizeDesktopPolicyValue(
 ): DesktopPolicyValue {
   const parsed = desktopPolicyValueSchema.safeParse(coerceJsonRecord(value));
   if (parsed.success) {
-    return Object.fromEntries(
+    const result = Object.fromEntries(
       desktopPolicyKeys.flatMap((key) =>
         typeof parsed.data[key] === "boolean"
           ? [[key, parsed.data[key]] as const]
           : [],
       ),
     ) as DesktopPolicyValue;
+    if (result.allowLocalModels === undefined && typeof result.allowCustomProviders === "boolean") {
+      result.allowLocalModels = result.allowCustomProviders;
+    }
+    return result;
   }
 
   return {};
@@ -821,6 +829,8 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
   const execution = raw?.execution === undefined ? undefined : effectiveDesktopExecutionPolicySchema.parse(raw.execution);
   const agentPermissions = desktopAgentPermissionsSchema.safeParse(raw?.agentPermissions);
+  const browserUploadPermissions = desktopBrowserUploadPermissionsSchema.safeParse(raw?.browserUploadPermissions);
+  const fileSendPermissions = desktopBrowserUploadPermissionsSchema.safeParse(raw?.fileSendPermissions);
   const defaultModel = desktopConfigDefaultModelSchema.safeParse(raw?.defaultModel);
 
   return {
@@ -832,10 +842,17 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(brandIconUrl !== undefined ? { brandIconUrl } : {}),
     ...(brandAccentColor !== undefined ? { brandAccentColor } : {}),
     ...(automationsEnabled !== undefined ? { automationsEnabled } : {}),
+    ...(typeof raw?.desktopAutomationsEnabled === "boolean" ? { desktopAutomationsEnabled: raw.desktopAutomationsEnabled } : {}),
+    ...(typeof raw?.cloudAutomationsEnabled === "boolean" ? { cloudAutomationsEnabled: raw.cloudAutomationsEnabled } : {}),
     ...(dashboardEnabled !== undefined ? { dashboardEnabled } : {}),
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
+    ...(typeof raw?.opencodeV2Only === "boolean" ? { opencodeV2Only: raw.opencodeV2Only } : {}),
+    ...(typeof raw?.localProviderMirror === "boolean" ? { localProviderMirror: raw.localProviderMirror } : {}),
+    ...(typeof raw?.removeOpencodeZen === "boolean" ? { removeOpencodeZen: raw.removeOpencodeZen } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
     ...(agentPermissions.success ? { agentPermissions: agentPermissions.data } : {}),
+    ...(browserUploadPermissions.success ? { browserUploadPermissions: browserUploadPermissions.data } : {}),
+    ...(fileSendPermissions.success ? { fileSendPermissions: fileSendPermissions.data } : {}),
     ...(defaultModel.success ? { defaultModel: defaultModel.data } : {}),
   };
 }
@@ -843,11 +860,11 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
 /**
  * Role assignments a member matches. Assignments include built-in parent
  * roles (an owner also matches `admin`), every member matches `member`, and
- * `admin` matches effective admins: a direct admin role or membership of a
- * team that grants organization admin (`adminViaTeam`).
+ * `admin` matches effective admins: a direct admin or super-admin role or
+ * membership of a team that grants organization admin (`adminViaTeam`).
  */
 export function matchingDesktopPolicyAssignmentRoles(memberRole: string, options: { adminViaTeam?: boolean } = {}) {
-  const levels = new Map<string, number>([["owner", 2], ["admin", 1], ["member", 0]]);
+  const levels = new Map<string, number>([["owner", 2], ["super-admin", 1], ["admin", 1], ["member", 0]]);
   const roles = memberRole.split(",").map((role) => role.trim()).filter(Boolean);
   if (options.adminViaTeam) roles.push("admin");
   return (["owner", "admin", "member"] as const).filter((required) => required === "member" || roles.some((role) =>

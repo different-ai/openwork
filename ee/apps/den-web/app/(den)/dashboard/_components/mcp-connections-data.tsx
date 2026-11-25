@@ -1,8 +1,9 @@
 "use client";
 
+import type { McpRegistrationStatus } from "@openwork/types/den/mcp-registration";
 import { z } from "zod";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { DenRequestCanceledError, DenRequestTimeoutError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
+import { DenRequestCanceledError, DenRequestTimeoutError, getRequestError, isReauthRequiredError, requestJson, requestResponse } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { memberApiKeyFailureMessage } from "./member-api-key";
 import {
@@ -11,6 +12,7 @@ import {
 } from "./mcp-tool-error-attribution";
 import type { McpAuthorizationDebugDetails } from "./mcp-authorization-url";
 import { libraryQueryKeys } from "./library-data";
+import { type DiscoveryCheck, DISCOVERY_STREAM_ERROR, readDiscoveryStream } from "./connector-discovery-stream";
 
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 
@@ -50,12 +52,33 @@ export type ExternalMcpRequiredBy = {
   name: string;
 };
 
+export type ConnectionReadinessFailure = "sign_in_required" | "sign_in_rejected" | "setup_required" | "provider_setup_required" | "unavailable" | "timed_out" | "settings_changed" | "tools_unreadable";
+
 export type ConnectionReadiness = {
   status: "ready" | "could_not_verify";
   checkedAt: string;
   lastSuccessfulAt: string | null;
   reason: string | null;
+  failure?: ConnectionReadinessFailure | null;
 };
+
+const READINESS_CHECKS_BATCH_LIMIT = 50;
+
+export function useRefreshUncheckedConnections() {
+  const { orgId } = useOrgDashboard();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (connectionIds: string[]) => {
+      const { response, payload } = await requestJson("/v1/mcp-connections/readiness-checks", {
+        method: "POST",
+        headers: getOrgScopeHeaders(requireOrgId(orgId)),
+        body: JSON.stringify({ connectionIds: connectionIds.slice(0, READINESS_CHECKS_BATCH_LIMIT) }),
+      }, 60000);
+      if (!response.ok) throw getRequestError(payload, response, "Could not check connections. Try again.");
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+  });
+}
 
 export function useCheckMcpConnection() {
   const { orgId } = useOrgDashboard();
@@ -68,26 +91,27 @@ export function useCheckMcpConnection() {
       if (!response.ok) throw getRequestError(payload, response, "Could not check this connection. Try again.");
       return z.object({ readiness: z.object({ status: z.enum(["ready", "could_not_verify"]), checkedAt: z.string(), reason: z.string().nullable() }) }).parse(payload).readiness;
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
   });
 }
 
 export type ExternalMcpConnection = {
-  /** Absent from older servers; null means no stored check. */
   readiness?: ConnectionReadiness | null;
+  organizationReadiness?: ConnectionReadiness | null;
   id: string;
   name: string;
   url: string;
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
   apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme;
-  /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
+  requestHeaderNames?: string[];
   exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
-  /** Whether the signed-in member added it; they can always edit or remove it. */
   createdByYou?: boolean;
+  createdByOrgMembershipId?: string | null;
+  canRemove?: boolean;
   updatedAt: string | null;
   connectedForMe: boolean;
   needsReconnect?: boolean;
@@ -111,16 +135,20 @@ export type ExternalMcpConnection = {
   setupRequired?: boolean;
   access: ExternalMcpAccessSummary | null;
   oauthClientId?: string | null;
+  oauthClientHasSecret?: boolean;
   oauthCallbackUrl?: string | null;
   oauthSharedCallbackUrl?: string | null;
   oauthClientMetadataUrl?: string | null;
   oauthCallbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1" | null;
   oauthRegistrationSource?: "pre-registered" | "client-metadata" | "dynamic" | null;
+  manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } | null;
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];
+  requestSelectedScopesOnly?: boolean;
 };
 
 export type McpRequirementsDiscovery = {
+  publishedSignInAddresses?: Array<{ authorizationEndpoint: string; tokenEndpoint: string; advertisedIssuer: string; metadataIssuer: string }>;
   status: "ready" | "manual_action_required" | "unsupported" | "unreachable";
   server: {
     url: string;
@@ -143,6 +171,7 @@ export type McpRequirementsDiscovery = {
       tokenEndpointAuthMethodsSupported?: string[];
     }>;
     requiredScopes: string[];
+    resourceScopesSupported?: string[];
     recommendedScopes: string[];
     refreshSupport: "supported" | "not_advertised" | "unknown";
     availableRegistrationMethods: Array<"pre_registered" | "client_metadata" | "dynamic">;
@@ -277,6 +306,10 @@ export type ExternalMcpPreset = {
   requiresOAuthClient?: boolean;
   defaultOAuthClientId?: string;
   supportedAuthTypes?: ExternalMcpAuthType[];
+  defaultOAuthScopes?: string[];
+  optionalOAuthScopes?: string[];
+  oauthCallbackUrl?: string;
+  registrationStatus?: McpRegistrationStatus;
 };
 
 export type CreatedMcpConnection = ExternalMcpConnection & {
@@ -303,6 +336,8 @@ export const mcpConnectionQueryKeys = {
     [...mcpConnectionQueryKeys.all, "tools", orgId ?? "none", connectionId ?? "none"] as const,
   nativeProviderClient: (orgId?: string | null, providerId?: string | null) =>
     [...mcpConnectionQueryKeys.all, "native-provider-client", orgId ?? "none", providerId ?? "none"],
+  googleApiCheck: (orgId?: string | null, providerId?: string | null) =>
+    [...mcpConnectionQueryKeys.all, "google-api-check", orgId ?? "none", providerId ?? "none"],
 };
 
 function isExternalMcpTool(value: unknown): value is ExternalMcpTool {
@@ -387,9 +422,6 @@ export function useUpdateMcpConnectionToolPolicy(connectionId: string) {
   });
 }
 
-// The den-api tool run is bounded by its 150s MCP tool lifecycle deadline;
-// give the request a little headroom so the server's structured failure
-// arrives instead of a client-side timeout.
 const RUN_TOOL_REQUEST_TIMEOUT_MS = 160000;
 
 export function useRunMcpConnectionTool(connectionId: string) {
@@ -433,9 +465,6 @@ export function useRunMcpConnectionTool(connectionId: string) {
         referenceId: payload.referenceId,
         durationMs: payload.durationMs,
         result: payload.result,
-        // A missing or unparseable inspection must not fail a tool run that
-        // succeeded (for example across a den-api/den-web deploy skew); the
-        // runner simply renders without the inspector panel.
         inspection: parseToolCallInspection(payload.inspection),
       };
     },
@@ -470,13 +499,6 @@ export class McpOAuthConfigurationRequiredError extends McpOAuthStartError {
 const MCP_OAUTH_START_UNREADABLE_MESSAGE =
   "OpenWork could not read the answer from its API when starting the sign-in. The browser blocked the response or the request never completed. Try again; if it keeps happening, tell your workspace admin the time of this attempt.";
 
-/**
- * The browser refused to hand the page a response: a network failure, or an
- * error answer (often from a proxy) without CORS headers. Without a readable
- * status the sign-in tab would show only the browser's own text ("Failed to fetch"),
- * so wrap what is known into structured details. Den's own timeout, cancel and
- * re-authentication errors keep their existing meaning.
- */
 function mcpOAuthStartUnreadableError(error: unknown): McpOAuthStartError {
   const browserError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   return new McpOAuthStartError(MCP_OAUTH_START_UNREADABLE_MESSAGE, {
@@ -658,9 +680,9 @@ export function mcpConnectionsQueryOptions(orgId: string | null, scope: External
   });
 }
 
-export function useMcpConnections(scope: ExternalMcpConnectionScope = "manageable") {
+export function useMcpConnections(scope: ExternalMcpConnectionScope = "manageable", options: { refetchOnMount?: "always"; enabled?: boolean } = {}) {
   const { orgId } = useOrgDashboard();
-  return useQuery({ ...mcpConnectionsQueryOptions(orgId, scope), enabled: Boolean(orgId) });
+  return useQuery({ ...mcpConnectionsQueryOptions(orgId, scope), ...options, enabled: Boolean(orgId) && options.enabled !== false });
 }
 
 export function mcpConnectionPresetsQueryOptions() {
@@ -674,7 +696,6 @@ export function mcpConnectionPresetsQueryOptions() {
       const record = payload as { presets?: ExternalMcpPreset[] };
       return record.presets ?? [];
     },
-    // The catalog is fixed for a Den deploy, so one load per session is enough.
     staleTime: Infinity,
     gcTime: Infinity,
   });
@@ -690,6 +711,8 @@ export type McpConnectionAccessInput = {
   teamIds: string[];
 };
 
+export type McpRequestHeaderInput = { name: string; value: string };
+
 export type CreateMcpConnectionInput = {
   name: string;
   url: string;
@@ -698,10 +721,12 @@ export type CreateMcpConnectionInput = {
   exposeDirectly?: boolean;
   apiKey?: string;
   apiKeyAuthScheme?: ExternalMcpApiKeyAuthScheme;
+  requestHeaders?: McpRequestHeaderInput[];
   oauthClient?: {
     clientId: string;
     clientSecret?: string;
   };
+  manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } | null;
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];
   access: McpConnectionAccessInput;
@@ -731,8 +756,10 @@ export type UpdateMcpConnectionInput = {
     clientId: string;
     clientSecret?: string;
   };
+  manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } | null;
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];
+  requestSelectedScopesOnly?: boolean;
   access: McpConnectionAccessInput;
 };
 
@@ -748,11 +775,6 @@ export type McpConnectionResolution = {
   };
 };
 
-/**
- * Smart resolution for the add-connection flow: sends whatever the admin
- * typed (URL, bare host, or product name) and gets back a matched preset or
- * a probed endpoint with its requirements discovery inline.
- */
 export function useResolveMcpConnection() {
   const { orgId } = useOrgDashboard();
   return useMutation({
@@ -777,20 +799,52 @@ export function useResolveMcpConnection() {
 export function useDiscoverMcpConnectionRequirements() {
   const { orgId } = useOrgDashboard();
   return useMutation({
-    mutationFn: async (url: string): Promise<McpRequirementsDiscovery> => {
-      const { response, payload } = await requestJson(
-        "/v1/mcp-connections/discover",
-        {
-          method: "POST",
-          headers: getOrgScopeHeaders(requireOrgId(orgId)),
-          body: JSON.stringify({ url }),
-        },
-        20000,
-      );
-      if (!response.ok) {
-        throw getRequestError(payload, response, `Failed to discover MCP requirements (${response.status}).`);
+    mutationFn: async (input: string | {
+      url: string;
+      requestHeaders?: McpRequestHeaderInput[];
+      signal?: AbortSignal;
+      onCheck?: (check: DiscoveryCheck) => void;
+    }): Promise<McpRequirementsDiscovery> => {
+      const { url, requestHeaders, signal, onCheck } = typeof input === "string"
+        ? { url: input, requestHeaders: undefined, signal: undefined, onCheck: undefined }
+        : input;
+      const controller = new AbortController();
+      const abort = () => controller.abort(signal?.reason);
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
+      const deadline = setTimeout(() => controller.abort(), 20000);
+      try {
+        if (onCheck) {
+          const response = await requestResponse("/v1/mcp-connections/discover/stream", {
+            method: "POST",
+            headers: { ...getOrgScopeHeaders(requireOrgId(orgId)), Accept: "text/event-stream" },
+            body: JSON.stringify(requestHeaders?.length ? { url, requestHeaders } : { url }),
+            signal: controller.signal,
+          });
+          if (response.ok && response.body && response.headers.get("content-type")?.includes("text/event-stream")) {
+            return await readDiscoveryStream(response.body, onCheck, controller.signal);
+          }
+          if (response.status !== 404) throw new Error(DISCOVERY_STREAM_ERROR);
+          await response.body?.cancel();
+        }
+        const { response, payload } = await requestJson(
+          "/v1/mcp-connections/discover",
+          {
+            method: "POST",
+            headers: getOrgScopeHeaders(requireOrgId(orgId)),
+            body: JSON.stringify(requestHeaders?.length ? { url, requestHeaders } : { url }),
+            signal: controller.signal,
+          },
+          20000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to discover MCP requirements (${response.status}).`);
+        }
+        return payload as McpRequirementsDiscovery;
+      } finally {
+        clearTimeout(deadline);
+        signal?.removeEventListener("abort", abort);
       }
-      return payload as McpRequirementsDiscovery;
     },
   });
 }
@@ -992,10 +1046,6 @@ export function useStartMcpConnectionOAuth() {
   });
 }
 
-/**
- * Saves the caller's own key on a per-member API-key connection. gcTime 0 and
- * the dialog's reset() drop the key from mutation state once the form closes.
- */
 export function useSaveMyMcpCredential() {
   const queryClient = useQueryClient();
   const { orgId } = useOrgDashboard();
@@ -1008,7 +1058,6 @@ export function useSaveMyMcpCredential() {
         { method: "PUT", headers: getOrgScopeHeaders(requireOrgId(orgId)), body: JSON.stringify({ apiKey: input.apiKey }) },
         15000,
       ).then(({ response }) => response, () => null);
-      // Never surface server text: a provider or proxy may echo the submitted key.
       if (!response?.ok) throw new Error(memberApiKeyFailureMessage(response?.status));
     },
     onSuccess: () => Promise.all([
@@ -1037,9 +1086,10 @@ export function useDisconnectMyProviderAccount() {
       }
       return connection.id;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all });
-    },
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+      queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
+    ]),
   });
 }
 
@@ -1134,11 +1184,6 @@ function parseNativeProviderClient(payload: unknown): NativeProviderClient {
   return { providerId, configured, clientId, tenantId, features, scopes, redirectUri };
 }
 
-/**
- * Native providers are configured with an org OAuth
- * client instead of a server URL. Saving one makes the provider appear in
- * the usable connections list for every granted member.
- */
 export function useSaveNativeProviderClient() {
   const queryClient = useQueryClient();
   const { orgId, runReauthableAction } = useOrgDashboard();
@@ -1198,6 +1243,65 @@ export function useNativeProviderClient(providerId: string, enabled: boolean) {
         throw new Error("Native provider client response was incomplete.");
       }
       return client;
+    },
+  });
+}
+
+export type GoogleApiCheckItem = {
+  id: string;
+  name: string;
+  features: string[];
+  status: "enabled" | "disabled" | "unknown";
+  enableUrl: string | null;
+  detail: string | null;
+};
+export type GoogleApiCheck = { checked: boolean; apis: GoogleApiCheckItem[] };
+
+function parseGoogleApiCheck(payload: unknown): GoogleApiCheck {
+  if (!isRecord(payload) || typeof payload.checked !== "boolean" || !Array.isArray(payload.apis)) {
+    throw new Error("Google API check response was incomplete.");
+  }
+  const apis = payload.apis.map((api): GoogleApiCheckItem => {
+    if (
+      !isRecord(api)
+      || typeof api.id !== "string"
+      || typeof api.name !== "string"
+      || !isStringArray(api.features)
+      || (api.status !== "enabled" && api.status !== "disabled" && api.status !== "unknown")
+      || (typeof api.enableUrl !== "string" && api.enableUrl !== null)
+      || (typeof api.detail !== "string" && api.detail !== null)
+    ) {
+      throw new Error("Google API check response was incomplete.");
+    }
+    return { id: api.id, name: api.name, features: api.features, status: api.status, enableUrl: api.enableUrl, detail: api.detail };
+  });
+  return { checked: payload.checked, apis };
+}
+
+export function useGoogleApiCheck(providerId: string) {
+  const { orgId, runReauthableAction } = useOrgDashboard();
+
+  return useQuery({
+    enabled: false,
+    queryKey: mcpConnectionQueryKeys.googleApiCheck(orgId, providerId),
+    retry: false,
+    queryFn: async (): Promise<GoogleApiCheck> => {
+      let result: GoogleApiCheck | null = null;
+      await runReauthableAction("check-google-apis", async () => {
+        const { response, payload } = await requestJson(
+          `/v1/oauth-providers/${encodeURIComponent(providerId)}/api-check`,
+          { headers: getOrgScopeHeaders(requireOrgId(orgId)) },
+          30000,
+        );
+        if (!response.ok) {
+          throw getRequestError(payload, response, `Failed to check Google APIs (${response.status}).`);
+        }
+        result = parseGoogleApiCheck(payload);
+      });
+      if (!result) {
+        throw new Error("Google API check response was incomplete.");
+      }
+      return result;
     },
   });
 }

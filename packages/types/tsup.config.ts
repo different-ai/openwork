@@ -1,18 +1,17 @@
+import { readFileSync } from "node:fs"
 import { defineConfig } from "tsup"
 
+const manifest: { exports: Record<string, { development: string }> } = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+)
+const entry: Record<string, string> = {}
+for (const target of Object.values(manifest.exports)) {
+  const source = target.development.replace(/^\.\//, "")
+  entry[source.replace(/^src\//, "").replace(/\.ts$/, "")] = source
+}
+
 export default defineConfig({
-  // Source-only exports get declarations from tsc. Emit JavaScript only for
-  // exports whose production runtime target lives in dist.
-  entry: {
-    "google-drive-upload": "src/google-drive-upload.ts",
-    "cloud-model-fast": "src/cloud-model-fast.ts",
-    "mcp-app-timing": "src/mcp-app-timing.ts",
-    "connection-action-app": "src/connection-action-app.ts",
-    "den/desktop-policies": "src/den/desktop-policies.ts",
-    "den/agent-permissions": "src/den/agent-permissions.ts",
-    "den/gateway": "src/den/gateway.ts",
-    "den/gateway-usage-limits": "src/den/gateway-usage-limits.ts",
-  },
+  entry,
   tsconfig: "./tsconfig.json",
   format: ["esm"],
   dts: false,
@@ -23,4 +22,8 @@ export default defineConfig({
   splitting: false,
   treeshake: true,
   external: ["zod"],
+  noExternal: [/^@openwork\//],
+  esbuildOptions(options) {
+    options.conditions = ["development"]
+  },
 })

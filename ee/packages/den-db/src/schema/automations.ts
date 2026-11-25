@@ -1,14 +1,17 @@
 import { relations, sql } from "drizzle-orm"
-import { bigint, index, int, json, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { bigint, boolean, index, int, json, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import type {
   AutomationAction,
   AutomationDesktopRunnerCapability,
   AutomationError,
   AutomationNeedsAttentionReason,
   AutomationRunEventType,
+  AutomationRunTriggerContext,
   AutomationSchedule,
   AutomationUsage,
   DesktopRunnerInventory,
+  RemoteSessionAccessMode,
+  RunnerReportedSession,
 } from "@openwork/types/automations"
 import { compatJsonColumn, denTypeIdColumn, encryptedColumn, encryptedMediumTextColumn, timestamps } from "../columns"
 
@@ -48,6 +51,27 @@ export const AutomationTable = mysqlTable(
   ],
 )
 
+export const AutomationShareTable = mysqlTable(
+  "automation_share",
+  {
+    id: denTypeIdColumn("automationShare", "id").notNull().primaryKey(),
+    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+    automation_id: denTypeIdColumn("automation", "automation_id").notNull(),
+    org_membership_id: denTypeIdColumn("member", "org_membership_id"),
+    team_id: denTypeIdColumn("team", "team_id"),
+    org_wide: boolean("org_wide").notNull().default(false),
+    created_by_org_membership_id: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("automation_share_automation").on(table.automation_id),
+    index("automation_share_org_member").on(table.organization_id, table.org_membership_id),
+    index("automation_share_org_team").on(table.organization_id, table.team_id),
+    uniqueIndex("automation_share_member").on(table.automation_id, table.org_membership_id),
+    uniqueIndex("automation_share_team").on(table.automation_id, table.team_id),
+  ],
+)
+
 export const AutomationRevisionTable = mysqlTable(
   "automation_revision",
   {
@@ -55,7 +79,7 @@ export const AutomationRevisionTable = mysqlTable(
     automation_id: denTypeIdColumn("automation", "automation_id").notNull(),
     version: int("version").notNull(),
     instructions: encryptedMediumTextColumn("instructions").notNull(),
-    schedule_kind: mysqlEnum("schedule_kind", ["once", "daily", "weekly"]).notNull(),
+    schedule_kind: mysqlEnum("schedule_kind", ["once", "daily", "weekly", "interval", "calendar"]).notNull(),
     schedule_config: compatJsonColumn<AutomationSchedule>("schedule_config").notNull(),
     timezone: varchar("timezone", { length: 120 }).notNull(),
     provider_id: varchar("provider_id", { length: 160 }).notNull(),
@@ -63,7 +87,6 @@ export const AutomationRevisionTable = mysqlTable(
     model_variant: varchar("model_variant", { length: 60 }),
     action: encryptedJsonColumn<AutomationAction>("action"),
     execution_target: mysqlEnum("execution_target", ["desktop", "cloud"]).notNull().default("desktop"),
-    /** Pinned target workspace; null keeps the legacy run-time active-workspace fallback. */
     workspace_id: varchar("workspace_id", { length: 240 }),
     maximum_runtime_ms: int("maximum_runtime_ms").notNull(),
     digest: varchar("digest", { length: 128 }).notNull(),
@@ -87,9 +110,13 @@ export const AutomationRunnerTable = mysqlTable(
     platform: mysqlEnum("platform", ["darwin", "win32", "linux"]).notNull(),
     concurrency: int("concurrency").notNull(),
     last_seen_at: timestamp("last_seen_at", { fsp: 3 }).notNull(),
-    /** Latest computer, workspace and model report; null until the desktop sends one. */
     inventory: compatJsonColumn<DesktopRunnerInventory>("inventory"),
     inventory_updated_at: timestamp("inventory_updated_at", { fsp: 3 }),
+    session_access: varchar("session_access", { length: 16 }).$type<RemoteSessionAccessMode>(),
+    sessions: compatJsonColumn<RunnerReportedSession[]>("sessions"),
+    sessions_updated_at: timestamp("sessions_updated_at", { fsp: 3 }),
+    install_id: varchar("install_id", { length: 160 }),
+    auth_session_id: denTypeIdColumn("session", "auth_session_id"),
     ...timestamps,
   },
   (table) => [
@@ -127,6 +154,7 @@ export const AutomationRunTable = mysqlTable(
     result_summary: text("result_summary"),
     codemode_receipt_id: denTypeIdColumn("workflowRun", "codemode_receipt_id"),
     validated_result: encryptedJsonColumn<unknown>("validated_result"),
+    trigger_context: encryptedJsonColumn<AutomationRunTriggerContext>("trigger_context"),
     usage: compatJsonColumn<AutomationUsage>("usage").notNull(),
     cancel_requested_at: timestamp("cancel_requested_at", { fsp: 3 }),
     mcp_token_hash: varchar("mcp_token_hash", { length: 128 }),

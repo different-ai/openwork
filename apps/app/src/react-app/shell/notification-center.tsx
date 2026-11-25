@@ -17,7 +17,6 @@ import { useControlAction, type OpenworkControlAction } from "./control/control-
 import { openNotificationCenterEvent } from "./notifications";
 import { useShellConfig } from "./shell-config";
 
-/** Shared Activity entry point. Closing it marks entries seen; it never changes the history itself. */
 export function NotificationBell({ align = "end" }: { align?: "start" | "end" }) {
   const { config } = useShellConfig();
   const [open, setOpen] = useState(false);
@@ -60,7 +59,6 @@ export function NotificationBell({ align = "end" }: { align?: "start" | "end" })
 
   const handleOpenChange = useCallback((next: boolean) => {
     setOpen(next);
-    // A1/A5: closing the popover marks what it showed as read on this device.
     if (!next) markSeen();
   }, [markSeen]);
 

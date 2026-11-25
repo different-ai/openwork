@@ -1,30 +1,18 @@
-/**
- * The shell bootstrap every provider runs inside a Cloud sandbox: mount
- * layout, checkpoint hydrate/flush, and the supervised `openwork-server`
- * process. It is provider-neutral; a provider only supplies the paths its
- * mounts land on and the process credentials, then `exec`s the rendered
- * command.
- */
-
 import { shellQuote } from "@openwork/sandbox"
 
 export { shellQuote }
 
 export type OpenWorkCheckpointConfig = {
-  /** Persistent mount that receives `checkpoints/ckpt-*.tar`. */
   dataMountPath: string
-  /** Where the running server keeps its state (checkpointed). */
   runtimeDataPath: string
-  /** The workspace root the server serves (checkpointed). */
   runtimeWorkspacePath: string
-  /** Scratch directory for in-progress checkpoint tars and markers. */
   sidecarDir: string
   intervalSeconds: number
   keep: number
 }
 
 export type OpenWorkBootstrapConfig = OpenWorkCheckpointConfig & {
-  /** Persistent mount exposed to the agent as the workspace volume. */
+  cloudComputerDisplay?: string
   workspaceMountPath: string
   port: number
   workerId: string
@@ -34,11 +22,8 @@ export type OpenWorkBootstrapConfig = OpenWorkCheckpointConfig & {
     url: string
     token: string
   }
-  /** Value of `DEN_RUNTIME_PROVIDER` inside the sandbox. */
   runtimeProvider: string
-  /** Wording for the runtime-image verification failure, e.g. "Daytona runtime image". */
   imageDescription: string
-  /** Operator hint appended to start failures, e.g. "rebuild and republish the Daytona snapshot". */
   rebuildHint: string
 }
 
@@ -59,11 +44,6 @@ function checkpointLastFlushMarkerPath(config: OpenWorkCheckpointConfig) {
 }
 
 function checkpointEnvironmentScript(config: OpenWorkCheckpointConfig) {
-  // The engine keeps its sessions in a SQLite database under its own data dir
-  // (opencode.db), which lives on the container overlay rather than a volume.
-  // It was missing from the checkpoint, so every recycle onto a new snapshot
-  // started the user from scratch. Resolved from $HOME in-shell so it tracks
-  // the image instead of a hardcoded /root.
   return `ENGINE_STATE_PATH=\${OPENWORK_ENGINE_STATE_PATH:-\$HOME/.local/share/opencode}
 OPENWORK_STATE_MANIFEST="${checkpointStateManifest(config)} \$ENGINE_STATE_PATH"
 CHECKPOINT_DIR=${shellQuote(checkpointDirectory(config))}
@@ -160,7 +140,15 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     `if ! command -v openwork-server >/dev/null 2>&1; then echo 'openwork-server binary missing from ${config.imageDescription}; ${config.rebuildHint}' >&2; exit 1; fi`,
     `if ! command -v opencode >/dev/null 2>&1; then echo 'opencode binary missing from ${config.imageDescription}; ${config.rebuildHint}' >&2; exit 1; fi`,
   ].join("; ")
+  const desktopEnvironment = config.cloudComputerDisplay ? [
+    `DISPLAY=${shellQuote(config.cloudComputerDisplay)} `,
+    `XAUTHORITY=${shellQuote(`/run/openwork-desktop/${config.cloudComputerDisplay.slice(1)}/.Xauthority`)} `,
+    `OPENWORK_CLOUD_COMPUTER_DISPLAY=${shellQuote(config.cloudComputerDisplay)} `,
+    "OPENWORK_BROWSER_PROVIDER=sandbox-interactive ",
+    `OPENWORK_UI_CONTROL_DISCOVERY=${shellQuote(`${config.sidecarDir}/cloud-ui-control.json`)} `,
+  ].join("") : ""
   const openworkServe = [
+    desktopEnvironment,
     "OPENWORK_DATA_DIR=",
     shellQuote(config.runtimeDataPath),
     " OPENWORK_SERVER_CONFIG=",
@@ -173,18 +161,24 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     shellQuote("1"),
     " OPENWORK_OPENCODE_BIN=",
     shellQuote("/usr/local/bin/opencode"),
+    " OPENWORK_OPENCODE2_BIN=",
+    shellQuote("/usr/local/bin/opencode2"),
+    " OPENWORK_ENGINE_FORCE_POLICY=",
+    shellQuote("1"),
+    " OPENWORK_ENGINE_AUTO_UPGRADE=",
+    shellQuote("1"),
+    " OPENWORK_RUNTIME_SURFACE=",
+    shellQuote("web"),
+    " OPENWORK_FRESH_INSTALL_ENGINE=",
+    shellQuote("v2"),
     " OPENWORK_WEB_ROOT=",
     shellQuote("/opt/openwork/web"),
-    // The instance still serves its own SPA copy for direct/debug access, but
-    // without a bootstrap token that path is intentionally inert; the gateway
-    // is the supported entry.
     " OPENWORK_WEB_BOOTSTRAP_TOKEN=",
     shellQuote("0"),
     " OPENWORK_EXTENSIONS_PLUGIN_DIR=",
     shellQuote("/opt/openwork/opencode-plugins"),
     " DEN_RUNTIME_PROVIDER=",
     shellQuote(config.runtimeProvider),
-    // Den owns this instance's idle lifecycle regardless of which host runs it.
     " DEN_RUNTIME_MANAGED=",
     shellQuote("1"),
     " DEN_WORKER_ID=",
@@ -195,13 +189,12 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     shellQuote(config.activityHeartbeat.url),
     " DEN_ACTIVITY_HEARTBEAT_TOKEN=",
     shellQuote(config.activityHeartbeat.token),
-    " openwork-server",
+    ...(config.cloudComputerDisplay ? [" DEN_ACTIVITY_HEARTBEAT_INTERVAL_SECONDS=30 DEN_ACTIVITY_WINDOW_SECONDS=120"] : []),
+    ...(config.cloudComputerDisplay ? [` sh -c ${shellQuote(`openwork-cloud-desktop ${shellQuote(config.runtimeDataPath)} ${shellQuote(config.cloudComputerDisplay)} && exec openwork-server "$@"`)} --`] : [" openwork-server"]),
     ` --workspace ${shellQuote(config.runtimeWorkspacePath)}`,
     ` --host 0.0.0.0`,
     ` --port ${shellQuote(String(config.port))}`,
     ` --cors '*'`,
-    // This single-user worker's SPA has no approvals responder, so manual mode makes gated writes such as chat-attachment uploads time out to 403.
-    // Auto matches the desktop sidecar's approvalMode; viewer tokens remain blocked by scope checks.
     ` --approval auto`,
     ` --verbose`,
   ].join("")

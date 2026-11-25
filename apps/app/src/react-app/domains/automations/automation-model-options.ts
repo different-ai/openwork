@@ -2,15 +2,17 @@ import type { DenOrgLlmProvider } from "@/app/lib/den"
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior"
 import type { ModelOption, ProviderListItem } from "@/app/types"
 import type { AutomationModel } from "@openwork/types/automations"
-import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
+import { AUTOMATION_FREE_MODEL, isDenAuthorizedAutomationProvider } from "@openwork/types/automations"
 import {
   automationModelOptions as sharedAutomationModelOptions,
+  compareAutomationModelOptions,
   findAutomationModelOption,
   type AutomationModelOption,
 } from "@openwork/types/automation-models"
 
-/** providerId → modelId → the local runtime's model record. */
-export type AutomationProviderCatalog = Record<string, Record<string, ProviderListItem["models"][string]>>
+export type AutomationCatalogModel = ProviderListItem["models"][string] & { providerName?: string }
+
+export type AutomationProviderCatalog = Record<string, Record<string, AutomationCatalogModel>>
 
 export type { AutomationModelOption }
 
@@ -22,31 +24,57 @@ export type ResolvedProposalModel = {
 export type AutomationModelAvailability = {
   includeFreeStarter?: boolean
   includeCloudDefault?: boolean
-  /** The executing desktop workspace's runtime catalog; when given, only models it can run are offered. */
   catalog?: AutomationProviderCatalog
+  desktopWideCatalog?: AutomationProviderCatalog
 }
 
-/**
- * Den's usable-provider response is already scoped to the active member; the shared helper keeps the submitted
- * value normalized to the IDs the server revalidates.
- */
+const isGatewaySyncedToEveryWorkspace = (providerId: string) => providerId.startsWith("ipr_")
+
 export function automationModelOptions(
   providers: readonly DenOrgLlmProvider[],
   options: AutomationModelAvailability = {},
 ): AutomationModelOption[] {
-  const { catalog, ...shared } = options
-  return sharedAutomationModelOptions(providers, shared)
-    .filter((model) => catalog === undefined || Boolean(catalog[model.providerId]?.[model.modelId]))
+  const { catalog, desktopWideCatalog, ...shared } = options
+  const fromDen = sharedAutomationModelOptions(providers, shared)
+  if (catalog !== undefined) {
+    return [
+      ...fromDen.filter((model) => Boolean(catalog[model.providerId]?.[model.modelId])),
+      ...desktopRuntimeModelOptions(catalog),
+    ].sort(compareAutomationModelOptions)
+  }
+  if (desktopWideCatalog === undefined) return fromDen
+  return [
+    ...fromDen,
+    ...desktopRuntimeModelOptions(desktopWideCatalog, isGatewaySyncedToEveryWorkspace),
+  ].sort(compareAutomationModelOptions)
+}
+
+function desktopRuntimeModelOptions(
+  catalog: AutomationProviderCatalog,
+  include: (providerId: string) => boolean = () => true,
+): AutomationModelOption[] {
+  return Object.entries(catalog)
+    .filter(([providerId]) => !isDenAuthorizedAutomationProvider(providerId) && include(providerId))
+    .flatMap(([providerId, models]) => Object.entries(models).map(([modelId, model]): AutomationModelOption => ({
+      providerId,
+      modelId,
+      providerName: model.providerName?.trim() || providerId,
+      modelName: model.name?.trim() || modelId,
+      logoProviderId: providerId,
+      accessKind: "desktop_runtime",
+    })))
 }
 
 export { findAutomationModelOption }
 
-/** A runtime's connected providers as an Automation catalog: providerId → modelId → model record. */
 export function automationProviderCatalog(
   providers: readonly ProviderListItem[] | undefined,
 ): AutomationProviderCatalog {
   const catalog: AutomationProviderCatalog = {}
-  for (const provider of providers ?? []) catalog[provider.id] = { ...(provider.models ?? {}) }
+  for (const provider of providers ?? []) {
+    catalog[provider.id] = Object.fromEntries(Object.entries(provider.models ?? {})
+      .map(([modelId, model]) => [modelId, { ...model, providerName: provider.name }]))
+  }
   return catalog
 }
 
@@ -61,9 +89,12 @@ export function resolveProposalModel(
     variant: null,
   }
   const options = automationModelOptions(providers, availability)
-  if (!proposed) return {
-    model: freeModel,
-    resolution: findAutomationModelOption(options, freeModel) ? "default" : "unavailable",
+  if (!proposed) {
+    if (findAutomationModelOption(options, freeModel)) return { model: freeModel, resolution: "default" }
+    const first = options[0]
+    return first
+      ? { model: { providerId: first.providerId, modelId: first.modelId, variant: null }, resolution: "default" }
+      : { model: freeModel, resolution: "unavailable" }
   }
 
   if (findAutomationModelOption(options, proposed)) {
@@ -89,11 +120,6 @@ export function resolveProposalModel(
   return { model: proposed, resolution: "unavailable" }
 }
 
-/**
- * Human label for a stored Automation model. Falls back to the raw identity
- * only when the model is no longer among the ones this member can use, so a
- * revoked model stays inspectable instead of rendering as a blank.
- */
 export function describeAutomationModel(
   model: AutomationModel,
   options: readonly AutomationModelOption[],
@@ -103,14 +129,6 @@ export function describeAutomationModel(
   return model.variant ? `${name} · ${model.variant}` : name
 }
 
-/**
- * Presents the member's authorized Automation models in the shape the shared
- * model picker renders, so an Automation is configured with the same control
- * and the same reasoning levels as a chat.
- *
- * Reasoning variants are a property of the desktop runtime that will execute
- * the run, so they come from the local provider catalog.
- */
 export function automationPickerOptions(input: {
   options: readonly AutomationModelOption[]
   catalog: AutomationProviderCatalog

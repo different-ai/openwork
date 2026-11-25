@@ -26,16 +26,9 @@ export type CalendarTransport = {
   microsoft(query: DenCalendarRangeQuery, signal?: AbortSignal): Promise<DenMicrosoftCalendarEvent[]>
 }
 
-/** Smallest window the reader will split to before calling a range incomplete. */
 const MIN_WINDOW_MS = HOUR_MS
 const MAX_REQUESTS_PER_RANGE = 32
 
-/**
- * Den's calendar routes return at most 100 events and no page token, so a
- * full page may hide more. Split the window in half until every page is
- * partial (both providers return events *overlapping* the window, so events
- * crossing a split appear twice and are de-duplicated by key).
- */
 async function readWindowed<T>(input: {
   request: CalendarRangeRequest
   fetchPage: (query: DenCalendarRangeQuery) => Promise<T[]>
@@ -67,7 +60,6 @@ async function readWindowed<T>(input: {
 
 function overlaps(event: CalendarEvent, request: CalendarRangeRequest): boolean {
   if (event.timing.kind === "timed") return event.timing.end > request.start && event.timing.start < request.end
-  // All-day events are kept; the grid places them by date.
   return true
 }
 
@@ -85,7 +77,6 @@ export function normalizeGoogleEvent(raw: DenGoogleCalendarEvent): CalendarEvent
   let timing: CalendarEvent["timing"]
   if (startDate) {
     const endDate = parseDateKey(raw.end)
-    // The end date is exclusive; a missing or non-advancing end means one day.
     timing = { kind: "all_day", startDate, endDate: endDate && compareKey(endDate) > compareKey(startDate) ? endDate : addDays(startDate, 1) }
   } else {
     const start = Date.parse(raw.start)
@@ -97,7 +88,6 @@ export function normalizeGoogleEvent(raw: DenGoogleCalendarEvent): CalendarEvent
     key: `google:${raw.id}`,
     provider: "google",
     providerEventId: raw.id,
-    // Google omits the summary of events the member can only see as busy.
     title: raw.summary.trim() || "Busy",
     sourceUrl: blankToNull(raw.htmlLink),
     location: blankToNull(raw.location),
@@ -153,7 +143,6 @@ const THROTTLE_REASONS = /rateLimitExceeded|userRateLimitExceeded|quotaExceeded|
 
 type DenErrorLike = Error & { status: number; code: string }
 
-/** DenApiError (app/lib/den.ts) by shape, so this module stays free of the Den client. */
 function isDenErrorLike(error: unknown): error is DenErrorLike {
   return error instanceof Error
     && "status" in error && typeof error.status === "number"

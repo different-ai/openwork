@@ -4,6 +4,7 @@ import { ContentBlockSchema, type ContentBlock } from "@modelcontextprotocol/sdk
 export type AgentToolContentPart =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string }
+  | { type: "resource_link"; uri: string; name: string; mimeType?: string; size?: number }
 
 const MAX_INLINE_IMAGE_BYTES = 1024 * 1024
 const MAX_IMAGE_DIMENSION = 1568
@@ -35,11 +36,6 @@ function truncationMarker(shownCharacters: number, totalCharacters: number): str
     + "Call this capability from execute_capability_script to read the full value and return the part you need.]"
 }
 
-/**
- * Keeps one model-visible string within budget. The cut is always announced
- * with the real size, because Code Mode scripts receive the untruncated
- * payload (see invoke.ts `includePayload`) and can read the rest.
- */
 function truncateModelString(value: string): string {
   if (value.length <= MAX_MODEL_VISIBLE_TEXT_CHARACTERS) return value
   const markerLength = truncationMarker(MAX_MODEL_VISIBLE_TEXT_CHARACTERS, value.length).length
@@ -92,6 +88,17 @@ function stringifyModelPayload(value: unknown): string {
   return JSON.stringify(value, null, 2)!
 }
 
+function findResourceLink(payload: unknown): AgentToolContentPart | undefined {
+  if (!isRecord(payload) || !isRecord(payload.resourceLink)) return undefined
+  const link = payload.resourceLink
+  if (link.type !== "resource_link" || typeof link.uri !== "string" || typeof link.name !== "string") return undefined
+  return {
+    type: "resource_link", uri: link.uri, name: link.name,
+    ...(typeof link.mimeType === "string" ? { mimeType: link.mimeType } : {}),
+    ...(typeof link.size === "number" ? { size: link.size } : {}),
+  }
+}
+
 function findImagePayload(value: unknown, seen = new WeakSet<object>()): (Record<string, unknown> & {
   contentBase64: string
   mimeType: string
@@ -127,7 +134,8 @@ export async function buildRestToolContent(payload: unknown): Promise<AgentToolC
     type: "text",
     text: stringifyModelPayload(sanitizeModelPayload(payload)),
   }
-  if (!imagePayload) return [textPart]
+  const resourceLink = findResourceLink(payload)
+  if (!imagePayload) return resourceLink ? [textPart, resourceLink] : [textPart]
 
   const byteSize = Buffer.byteLength(imagePayload.contentBase64, "base64")
 

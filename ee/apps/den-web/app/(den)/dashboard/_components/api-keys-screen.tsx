@@ -1,12 +1,14 @@
 "use client";
 
 import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Copy, KeyRound, Trash2 } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
+import { DenBadge } from "../../_components/ui/badge";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import {
     getOrgAccessFlags,
@@ -15,6 +17,15 @@ import {
     permissionLockReason,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { useFeatureIntro } from "../_features/feature-intros";
+import { useConfigAreas } from "./config-blobs/config-blobs-data";
+import {
+    ConfigTokenFields,
+    configTokenRequestFields,
+    describeConfigToken,
+    EMPTY_CONFIG_TOKEN_DRAFT,
+    type ConfigTokenDraft,
+} from "./api-keys-config-token-fields";
 
 function formatDateTime(value: string | null) {
     if (!value) {
@@ -59,12 +70,17 @@ export function ApiKeysScreen() {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [name, setName] = useState("");
+    const [configDraft, setConfigDraft] = useState<ConfigTokenDraft>(EMPTY_CONFIG_TOKEN_DRAFT);
     const [creating, setCreating] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [showCreateForm, setShowCreateForm] = useState(false);
     const [createdKey, setCreatedKey] = useState<string | null>(null);
     const [createdKeyName, setCreatedKeyName] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
+    const [loadedOrgId, setLoadedOrgId] = useState<string | null>(null);
+    const searchParams = useSearchParams();
+    const configAreasQuery = useConfigAreas(orgId, Boolean(orgContext));
+    const configAreas = configAreasQuery.data ? configAreasQuery.data.areas : null;
 
     const access = useMemo(
         () =>
@@ -100,6 +116,7 @@ export function ApiKeysScreen() {
 
             if (isCurrent()) {
                 setApiKeys(parseOrgApiKeysPayload(payload));
+                setLoadedOrgId(orgId);
             }
         } catch (nextError) {
             if (isReauthRequiredError(nextError)) {
@@ -156,6 +173,12 @@ export function ApiKeysScreen() {
             return;
         }
 
+        const typeFields = configTokenRequestFields(configDraft);
+        if (!typeFields.ok) {
+            setError(typeFields.reason);
+            return;
+        }
+
         setError(null);
         setCreatedKey(null);
         setCreatedKeyName(null);
@@ -168,7 +191,7 @@ export function ApiKeysScreen() {
                         `/v1/api-keys`,
                         {
                             method: "POST",
-                            body: JSON.stringify({ name }),
+                            body: JSON.stringify({ name, ...typeFields.fields }),
                         },
                         12000,
                     );
@@ -191,6 +214,7 @@ export function ApiKeysScreen() {
                     setCreatedKey(nextKey);
                     setCreatedKeyName(name);
                     setName("");
+                    setConfigDraft(EMPTY_CONFIG_TOKEN_DRAFT);
                     setShowCreateForm(false);
                     await loadApiKeys();
                 } finally {
@@ -217,11 +241,13 @@ export function ApiKeysScreen() {
         setCreatedKey(null);
         setCreatedKeyName(null);
         setName("");
+        setConfigDraft(EMPTY_CONFIG_TOKEN_DRAFT);
         setShowCreateForm(true);
     }
 
     function closeCreateForm() {
         setName("");
+        setConfigDraft(EMPTY_CONFIG_TOKEN_DRAFT);
         setShowCreateForm(false);
     }
 
@@ -288,6 +314,27 @@ export function ApiKeysScreen() {
         }
     }
 
+    const intro = useFeatureIntro(
+        "api-keys",
+        access.canViewApiKeys && loadedOrgId === orgId && orgId && !error ? { apiKeys: apiKeys.length } : null,
+    );
+
+    const newRequested = searchParams.get("new") === "1";
+    useEffect(() => {
+        if (!orgContext || !newRequested) return;
+        if (access.canManageApiKeys) {
+            setError(null);
+            setCreatedKey(null);
+            setCreatedKeyName(null);
+            setName("");
+            setConfigDraft(EMPTY_CONFIG_TOKEN_DRAFT);
+            setShowCreateForm(true);
+        }
+        const url = new URL(window.location.href);
+        url.searchParams.delete("new");
+        window.history.replaceState(null, "", url);
+    }, [orgContext, newRequested, access.canManageApiKeys]);
+
     if (!orgContext) {
         return (
             <DashboardPageTemplate
@@ -301,6 +348,8 @@ export function ApiKeysScreen() {
             </DashboardPageTemplate>
         );
     }
+
+    if (intro.size === "fullscreen" && !showCreateForm && !createdKey) return intro.element;
 
     return (
         <DashboardPageTemplate
@@ -388,6 +437,13 @@ export function ApiKeysScreen() {
                                     />
                                 </label>
 
+                                <ConfigTokenFields
+                                    draft={configDraft}
+                                    onChange={setConfigDraft}
+                                    areas={configAreas}
+                                    disabled={creating}
+                                />
+
                                 <div className="mt-5 flex flex-wrap justify-end gap-3">
                                     <DenButton
                                         type="button"
@@ -397,7 +453,9 @@ export function ApiKeysScreen() {
                                         Cancel
                                     </DenButton>
                                     <DenButton type="submit" loading={creating}>
-                                        Create API key
+                                        {configDraft.type === "config"
+                                            ? "Create config token"
+                                            : "Create API key"}
                                     </DenButton>
                                 </div>
                             </form>
@@ -438,15 +496,25 @@ export function ApiKeysScreen() {
                                     className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_180px_120px] items-center gap-4 border-b border-gray-100 px-6 py-4 transition hover:bg-gray-50/70 last:border-b-0"
                                 >
                                     <div className="min-w-0">
-                                        <p className="truncate text-[14px] font-medium text-gray-900">
-                                            {apiKey.name ??
-                                                apiKey.start ??
-                                                "Untitled key"}
-                                        </p>
+                                        <div className="flex min-w-0 items-center gap-2">
+                                            <p className="truncate text-[14px] font-medium text-gray-900">
+                                                {apiKey.name ??
+                                                    apiKey.start ??
+                                                    "Untitled key"}
+                                            </p>
+                                            {apiKey.type === "config" ? (
+                                                <DenBadge size="sm">Config token</DenBadge>
+                                            ) : null}
+                                        </div>
                                         <p className="mt-1 truncate text-[12px] text-gray-400">
                                             {formatKeyPreview(apiKey)}{" "}
                                             {formatDateTime(apiKey.createdAt)}
                                         </p>
+                                        {apiKey.type === "config" ? (
+                                            <p className="mt-1 truncate text-[12px] text-gray-500" data-testid="config-token-scopes-summary">
+                                                {describeConfigToken(apiKey, configAreas)}
+                                            </p>
+                                        ) : null}
                                     </div>
 
                                     <div className="min-w-0">

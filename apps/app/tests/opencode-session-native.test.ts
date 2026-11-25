@@ -200,6 +200,28 @@ describe("native OpenCode session operations", () => {
     });
   });
 
+  test("v2 fork sends the native `before` boundary, or no boundary to copy the whole session", async () => {
+    const baseUrl = endpoint.opencodeBaseUrl.replace("opencode", "opencode2");
+    const bodies: unknown[] = [];
+    await withSessionFetch(async (request) => {
+      const path = new URL(request.url).pathname;
+      expect(request.method).toBe("POST");
+      expect(path.endsWith(`/api/session/${session.id}/fork`)).toBe(true);
+      bodies.push(await request.json());
+      return Response.json({ data: {
+        id: `ses_fork_${bodies.length}`, parentID: session.id, title: "Forked",
+        location: { directory: session.directory }, time: { created: 3, updated: 3 },
+      } });
+    }, async () => {
+      const client = createClientV2(baseUrl, session.directory, { token: endpoint.token, mode: "openwork" });
+      const atMessage = unwrap(await client.session.fork({ sessionID: session.id, messageID: "msg_next" }));
+      const whole = unwrap(await client.session.fork({ sessionID: session.id }));
+      expect(bodies).toEqual([{ before: "msg_next" }, {}]);
+      expect([atMessage.id, whole.id]).toEqual(["ses_fork_1", "ses_fork_2"]);
+      expect(atMessage.parentID).toBe(session.id);
+    });
+  });
+
   test("native repeated cursors fail instead of advertising an endless older page", async () => {
     await withSessionFetch((request) => Response.json(new URL(request.url).pathname.endsWith("/message") ? messages : session,
       { headers: { "X-Next-Cursor": "same" } }), async () => {

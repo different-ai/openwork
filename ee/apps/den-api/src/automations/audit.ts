@@ -9,19 +9,12 @@ import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
 
-// One job operation per Automation run (jobRunId = run id): the scheduler's
-// start (scheduled occurrences only) and exactly one terminal outcome, whoever
-// performed the transition (cloud executor, desktop runner callback, scheduler
-// recovery, a skip or an immediate cancel). Never instructions, prompts,
-// results, summaries or usage.
-
 const PRINCIPAL_KEY = "system:den-api.automations"
 const EXECUTOR_ACTOR: AuditActor = { type: "system", id: "den-api.automation-executor" }
 const SCHEDULER_ACTOR: AuditActor = { type: "system", id: "den-api.automation-scheduler" }
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "skipped"])
 const logger = appLogger.child({ component: "automation_audit" })
 
-/** Who reported the terminal state; defaults to the den-api executor. */
 export type AutomationRunOutcomeActor =
   | Readonly<{ kind: "executor" }>
   | Readonly<{ kind: "runner"; runnerId: string; ownerMemberId: string }>
@@ -66,7 +59,6 @@ function jobContext(run: RunRow) {
   }
 }
 
-/** succeeded → succeeded; failed/cancelled/skipped → failed. reasonCode never carries a message. */
 export function automationRunAuditOutcome(status: string, errorCode: string | null | undefined): { outcome: AuditEventInput["outcome"]; reasonCode: string } {
   const outcome = status === "succeeded" ? "succeeded" : TERMINAL.has(status) ? "failed" : "unknown"
   const code = auditJobReasonCode(errorCode, "")
@@ -74,11 +66,6 @@ export function automationRunAuditOutcome(status: string, errorCode: string | nu
   return { outcome, reasonCode: auditJobReasonCode(reasonCode, "run_terminal") }
 }
 
-/**
- * Appends `automation_run.completed` when the run is terminal AND this caller
- * performed the transition at `terminalAt` (finished_at matches): a retried
- * completion or a no-op skip finds an older finished_at and appends nothing.
- */
 export async function recordAutomationRunCompleted(input: { runId: string; terminalAt: number; actor?: AutomationRunOutcomeActor }): Promise<void> {
   if (!env.auditCaptureEnabled) return
   try {
@@ -98,7 +85,6 @@ export async function recordAutomationRunCompleted(input: { runId: string; termi
   }
 }
 
-/** Scheduler-created occurrence (no HTTP request): `automation_run.started`, origin scheduler. */
 export async function recordAutomationRunStarted(runId: string): Promise<void> {
   if (!env.auditCaptureEnabled) return
   try {

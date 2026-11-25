@@ -3,7 +3,7 @@ export function isFork(pr) {
   return !pr?.head?.repo || pr.head.repo.full_name !== pr.base?.repo?.full_name || pr.head.repo.fork === true;
 }
 
-const REVIEW_MACHINERY = /^(\.github\/|\.opencode\/|opencode\.jsonc?$|warden\.toml$|\.warden\/|\.agents\/skills\/|\.claude\/skills\/)/;
+const REVIEW_MACHINERY = /^(\.github\/|\.opencode\/|opencode\.jsonc?$|\.agents\/skills\/|\.claude\/skills\/)/;
 
 export function machineryFiles(files) {
   return files

@@ -35,8 +35,7 @@ import { ensureFreshPrivilegedSession } from "../privileged-session.js"
 import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { listHeadlessModels, slackRunnerAvailable } from "./headless.js"
-import { getOrganizationFeatures } from "../features.js"
-import { defaultModelFeatureOn, organizationDefaultModel } from "../workbot/model.js"
+import { organizationDefaultModel } from "../workbot/model.js"
 import { publicRequestUrl } from "../request-url.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
@@ -54,7 +53,6 @@ import {
   enqueueSlackEvent,
   getInstallation,
   isSlackConnection,
-  slackAssistantEnabledForInstallation,
 } from "./repository.js"
 
 const connectionParams = idParamSchema("connectionId", "externalMcpConnection")
@@ -87,7 +85,6 @@ const setupResponseSchema = z.object({
   enabled: z.boolean(),
   installed: z.boolean(),
   teamId: z.string().nullable(),
-  rolloutEnabled: z.boolean().describe("Whether the platform admin enabled Slack Assistant for this organization."),
   hasSigningSecret: z.boolean(),
   eligible: z.boolean(),
   runnerAvailable: z
@@ -125,7 +122,6 @@ const setupErrorSchema = z.object({
     "signing_secret_required",
     "setup_required",
     "browser_session_required",
-    "slack_assistant_not_enabled",
     "slack_runner_unavailable",
   ]),
   message: z.string().optional(),
@@ -147,10 +143,6 @@ const webhookResponses = {
   413: textResponse("Slack payload exceeds the request size limit."),
 }
 
-/**
- * A request signed with this installation's Slack signing secret proves the
- * installation, whose organization is the audit tenant (origin webhook).
- */
 async function attributeSlackInstallation(c: Context, installation: { organizationId: string; connectionId: string }) {
   const audited = await attributeAuditRequest(c, {
     organizationId: installation.organizationId, origin: "webhook",
@@ -178,23 +170,20 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       const connection = await getExternalMcpConnection({ organizationId: org.organization.id, connectionId })
       if (!connection) return c.json({ error: "not_found" }, 404)
       const installation = await getInstallation(connectionId)
-      const features = await getOrganizationFeatures(org.organization.id)
       const runnerAvailable = slackRunnerAvailable()
       const catalog = runnerAvailable ? await listHeadlessModels() : null
       return c.json({
         enabled: installation?.enabled ?? false,
         installed: Boolean(installation?.botToken),
         teamId: installation?.teamId ?? null,
-        rolloutEnabled: features.slackAssistant,
         hasSigningSecret: Boolean(installation?.signingSecret),
         eligible: isSlackConnection(connection),
         runnerAvailable,
         channelIds: installation?.channelIds ?? [],
         shadowMode: installation?.shadowMode ?? false,
         dailyLimit: installation?.dailyLimit ?? 100,
-        ...(defaultModelFeatureOn(features)
-          ? { model: await organizationDefaultModel(org.organization.id, { features: async () => features }), modelManagedByOrganization: true }
-          : { model: installation?.model ?? null, modelManagedByOrganization: false }),
+        model: await organizationDefaultModel(org.organization.id),
+        modelManagedByOrganization: true,
         defaultModel: catalog?.defaultModel ?? null,
         progressUpdates: installation?.progressUpdates ?? false,
         models: catalog?.models ?? [],
@@ -209,7 +198,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       tags: ["Authentication"],
       summary: "Configure Slack assistant installation",
       description:
-        "Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and the deployment's headless runner. Requires the Manage connections permission, a browser session and recent verification.",
+        "Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the deployment's headless runner. Requires the Manage connections permission, a browser session and recent verification.",
       responses: {
         ...adminResponses,
         200: jsonResponse("Slack assistant settings saved.", okSchema),
@@ -220,7 +209,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
     paramValidator(connectionParams),
     jsonValidator(configSchema),
     async (c) => {
-      // connections.manage is not sensitive; Slack assistant setup keeps its recent sign-in check.
       const fresh = ensureFreshPrivilegedSession(c)
       if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
       const org = c.get("organizationContext")
@@ -232,19 +220,8 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           { error: "individual_accounts_required", message: "Choose a Slack connection in Individual accounts mode." },
           400,
         )
-      const features = await getOrganizationFeatures(org.organization.id)
-      // While the organization's default model applies, the installation's own model is kept as it was.
       const { model: _keptModel, ...settings } = c.req.valid("json")
-      const body = defaultModelFeatureOn(features) ? settings : c.req.valid("json")
-      if (body.enabled && !features.slackAssistant) {
-        return c.json(
-          {
-            error: "slack_assistant_not_enabled",
-            message: "A platform admin must enable Slack Assistant for this workspace in /admin.",
-          },
-          403,
-        )
-      }
+      const body = settings
       if (body.enabled && !slackRunnerAvailable())
         return c.json(
           {
@@ -253,7 +230,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           },
           403,
         )
-      const previous = await getInstallation(connectionId)
+      const previous = await getInstallation(connectionId, db.$primary)
       const signingSecret = body.signingSecret ?? previous?.signingSecret
       if (!signingSecret) return c.json({ error: "signing_secret_required" }, 400)
       const saved = await db.transaction(async (tx) => {
@@ -293,7 +270,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
     orgPermissionRoute("connections.manage"),
     paramValidator(connectionParams),
     async (c) => {
-      // connections.manage is not sensitive; Slack assistant installation keeps its recent sign-in check.
       const fresh = ensureFreshPrivilegedSession(c)
       if (!fresh.ok) return c.json(fresh.response, orgAccessFailureStatus(fresh.response))
       const org = c.get("organizationContext")
@@ -302,7 +278,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       const connection = await getExternalMcpConnection({ organizationId: org.organization.id, connectionId })
       if (!connection || !isSlackConnection(connection)) return c.json({ error: "individual_accounts_required" }, 400)
       const client = await getOrgOAuthClient(org.organization.id, connectionId)
-      if (!client?.clientSecret || !(await getInstallation(connectionId)))
+      if (!client?.clientSecret || !(await getInstallation(connectionId, db.$primary)))
         return c.json(
           {
             error: "setup_required",
@@ -366,9 +342,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       if (!installation || !member?.userId || member.removedAt) return c.text("Access denied.", 403)
       const permissions = await resolvePermissionsForMember({ organizationId: installation.organizationId, memberId: member.id })
       if (!permissions.has("connections.manage")) return c.text("Access denied.", 403)
-      // Single-use state consumed and the installing admin re-verified: the
-      // installation's organization is the tenant (state consumption precedes
-      // attribution; nothing else has happened yet).
       const installer = auditSessionUserAttribution(member.userId, member.id)
       if (installer) {
         const audited = await attributeAuditRequest(c, { organizationId: installation.organizationId, ...installer })
@@ -409,7 +382,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       if (installation.teamId && installation.teamId !== token.team.id)
         return c.text("This connector is already linked to another Slack workspace.", 409)
       const collision = (
-        await db
+        await db.$primary
           .select({ id: Installation.connectionId })
           .from(Installation)
           .where(eq(Installation.teamId, token.team.id))
@@ -482,8 +455,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       )
         return c.json({ ok: true })
       const event = value.event
-      if (isInvocation(event) && !(await slackAssistantEnabledForInstallation(installation)))
-        return c.json({ ok: true })
       if (event.bot_id || event.app_id || event.user === installation.botUserId) return c.json({ ok: true })
       if (
         isInvocation(event) ||
@@ -506,7 +477,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         const id = await enqueueSlackEvent(installation, value.event_id, event)
         appLogger.info("slack_assistant_event_accepted", { event_id: id, ack_ms: Date.now() - startedAt })
       }
-      // Acknowledge only after durable insertion. No provider/runtime calls on ingress.
       return c.json({ ok: true })
     },
   )

@@ -174,8 +174,6 @@ async function ensureInferenceOrgLimitAmountNullable(executor: Executor) {
     return
   }
 
-  // 0015 briefly created a stale NOT NULL column that the current schema omits.
-  // Existing DBs need it nullable so inserts can omit it without losing data.
   const rows = await executor.query(
     `SELECT 1 AS present FROM information_schema.COLUMNS
      WHERE table_schema = DATABASE()
@@ -200,8 +198,6 @@ async function ensureOrgDefaultModelTeamIndex(executor: Executor) {
   if (!(await tableExists(executor, tableName))) {
     return
   }
-  // 0145 once created the table and index in separate statements; a database
-  // that kept the table after the index failed is missing this index.
   const rows = await executor.query(
     `SELECT 1 AS present FROM information_schema.STATISTICS
      WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? LIMIT 1`,
@@ -212,6 +208,39 @@ async function ensureOrgDefaultModelTeamIndex(executor: Executor) {
   }
   await runDdl(executor, `CREATE INDEX \`${indexName}\` ON \`${tableName}\` (\`team_id\`)`)
   console.log(`[den-db] ${tableName}.team_id index created`)
+}
+
+async function indexExists(executor: Executor, table: string, indexName: string) {
+  const rows = await executor.query(
+    `SELECT 1 AS present FROM information_schema.STATISTICS
+     WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? LIMIT 1`,
+    [table, indexName],
+  )
+  return rows.length > 0
+}
+
+async function columnExists(executor: Executor, table: string, column: string) {
+  const rows = await executor.query(
+    `SELECT 1 AS present FROM information_schema.COLUMNS
+     WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+    [table, column],
+  )
+  return rows.length > 0
+}
+
+async function ensureSessionSsoProofSchema(executor: Executor) {
+  if (await tableExists(executor, "deviceCode") && !(await columnExists(executor, "deviceCode", "sso_authenticated_at"))) {
+    await runDdl(executor, "ALTER TABLE `deviceCode` ADD `sso_authenticated_at` timestamp(3)")
+    console.log("[den-db] deviceCode.sso_authenticated_at column added")
+  }
+  if (!(await tableExists(executor, "session_sso_proof"))) {
+    return
+  }
+  for (const [indexName, column] of [["session_sso_proof_org", "organization_id"], ["session_sso_proof_user", "user_id"]] as const) {
+    if (await indexExists(executor, "session_sso_proof", indexName)) continue
+    await runDdl(executor, `CREATE INDEX \`${indexName}\` ON \`session_sso_proof\` (\`${column}\`)`)
+    console.log(`[den-db] session_sso_proof.${column} index created`)
+  }
 }
 
 export async function ensureSchemaRepairs(executor: Executor): Promise<void> {
@@ -232,4 +261,5 @@ export async function ensureSchemaRepairs(executor: Executor): Promise<void> {
 
   await ensureInferenceOrgLimitAmountNullable(executor)
   await ensureOrgDefaultModelTeamIndex(executor)
+  await ensureSessionSsoProofSchema(executor)
 }
