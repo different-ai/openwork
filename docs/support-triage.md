@@ -14,11 +14,11 @@ Platform admins can turn on support triage in **Admin → Support triage**. Tria
 
 | Result | Action |
 | --- | --- |
-| Product bug | Label Product bug and set priority to High. |
+| Product bug | Label Product bug, set priority to High, and notify Slack if configured. |
 | Enterprise lead | Label Enterprise lead, set priority to Urgent, and notify Slack if configured. |
 | Job ask or pitch | Apply the matching label and mark the thread Done. |
 | Needs review or Other | Leave the thread unchanged. Filter the list to Needs review to find unclear threads. |
 
 Only threads created since the latest enable time are considered. Turning triage off doesn't undo changes already made in Plain. Clearing the Plain key also turns triage off. The worker doesn't send replies or mark customers as spam.
 
-Jev receives the title, up to 4,000 characters from the first inbound message, and the sender's domain (not the email address). Den keeps the thread title, short preview, and model probabilities encrypted; it doesn't store the full message body. Enterprise Slack alerts include the title, domain, and links, not the message body. A failed row stays visible in Den for manual review; if Slack delivery is uncertain, check the destination before posting manually.
+Jev receives the title, up to 4,000 characters from the first inbound message, and the sender's domain (not the email address). Den keeps the thread title, short preview, and model probabilities encrypted; it doesn't store the full message body. Slack alerts for bugs and enterprise leads include the title, domain, and links, not the message body. A failed row stays visible in Den for manual review; if Slack delivery is uncertain, check the destination before posting manually.
