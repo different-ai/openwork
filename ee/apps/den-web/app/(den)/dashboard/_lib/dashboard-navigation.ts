@@ -28,6 +28,7 @@ import {
   getAuthSecurityRoute,
   getAutomationsRoute,
   getBillingRoute,
+  getCapabilitiesRoute,
   getConfigRoute,
   getComputersRoute,
   getDesktopPoliciesRoute,
@@ -91,6 +92,7 @@ export type BuildDashboardNavSectionsInput = {
   runtimeConfigLoaded: boolean;
   libraryNeedsSignIn?: number;
   managedDeployments?: boolean;
+  capabilitiesView?: boolean;
   desktopPolicyScreenRemoved?: boolean;
   workbotSettingsInTeams?: boolean;
   canManageDeploymentServices?: boolean;
@@ -106,6 +108,7 @@ export function buildDashboardNavSections({
   runtimeConfigLoaded,
   libraryNeedsSignIn = 0,
   managedDeployments = false,
+  capabilitiesView = false,
   desktopPolicyScreenRemoved = false,
   workbotSettingsInTeams = false,
   canManageDeploymentServices = false,
@@ -183,6 +186,9 @@ export function buildDashboardNavSections({
         ...(canOpen(getMarketplacesRoute(orgSlug))
           ? [{ href: getMarketplacesRoute(orgSlug), label: "Advanced" }]
           : []),
+        ...(capabilitiesView && canOpen(getCapabilitiesRoute(orgSlug))
+          ? [{ href: getCapabilitiesRoute(orgSlug), label: "Capabilities" }]
+          : []),
         ...(canOpen(getConfigRoute(orgSlug))
           ? [{ href: getConfigRoute(orgSlug), label: "Config" }]
           : []),
@@ -230,6 +236,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   "API Keys": ["token", "secret"],
   "Auth & Security": ["sso", "single sign on", "saml", "oidc", "scim", "provisioning", "directory", "okta", "entra", "identity provider"],
   Billing: ["plan", "invoice", "payment"],
+  Capabilities: ["installed", "infrastructure", "member access", "workbot", "slack assistant", "automations", "ai gateway", "cloud computers"],
   Config: ["export", "import", "backup", "json", "copy settings", "change requests", "revert"],
   "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],
   Computers: ["devices", "team computers", "desktop", "virtual computers", "inventory", "owners", "remote access", "other devices"],

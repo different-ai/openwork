@@ -1,7 +1,8 @@
-import { CreditCard, Laptop, Receipt, SlidersHorizontal, Stethoscope } from "lucide-react";
+import { Blocks, CreditCard, Laptop, Receipt, SlidersHorizontal, Stethoscope } from "lucide-react";
 import {
   getBillingInvoicesRoute,
   getBillingRoute,
+  getCapabilitiesRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getNewDesktopPolicyRoute,
@@ -41,6 +42,24 @@ export const settingsIntros = [
       { when: (ctx) => ctx.can("canManageSettings"), label: "Restrict who can join", href: ORG_SETTINGS_EMAIL_DOMAINS_ANCHOR },
       { when: () => true, label: "Restrict who can join", href: ORG_SETTINGS_EMAIL_DOMAINS_ANCHOR, locked: { reason: permissionLockReason("organization.update") } },
     ],
+    setupState: () => "done",
+  }),
+
+  defineFeatureIntro({
+    key: "capabilities",
+    version: 1,
+    helpOnly: true,
+    match: { path: getCapabilitiesRoute() },
+    icon: Blocks,
+    title: "Capabilities",
+    summary: "See what this deployment has installed, and which of your members can use it.",
+    highlights: [
+      { title: "Installed is not the same as on.", text: "A capability can be installed on the deployment while no member of your organization may use it." },
+      { title: "Infrastructure.", text: "Whether Workbot, the Slack assistant, Automations, the AI Gateway and cloud computers are installed here." },
+      { title: "Member access.", text: "Everyone, selected teams or nobody, read from the setting that decides it." },
+    ],
+    docsUrl: docsPage("workbot/overview"),
+    ctas: [],
     setupState: () => "done",
   }),
 

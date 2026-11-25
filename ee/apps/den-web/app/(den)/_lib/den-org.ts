@@ -932,6 +932,10 @@ export function getConfigRoute(orgSlug?: string | null, tab?: ConfigTab): string
   return tab && tab !== "overview" ? `${base}?tab=${tab}` : base;
 }
 
+export function getCapabilitiesRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/capabilities`;
+}
+
 export function getConfigChangeRequestRoute(orgSlug: string | null | undefined, changeRequestId: string): string {
   return `${getConfigRoute(orgSlug)}/changes/${encodeURIComponent(changeRequestId)}`;
 }
