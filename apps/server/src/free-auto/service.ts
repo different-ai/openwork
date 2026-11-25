@@ -1,7 +1,7 @@
 import { DesktopFreeSession } from "./desktop-session.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  DESKTOP_FREE_REQUIRED_CODE, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_OPEN_API_KEY, DESKTOP_FREE_PROVIDER_ID,
+  desktopFreeProofRequested, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_OPEN_API_KEY, DESKTOP_FREE_PROVIDER_ID,
   DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_RESPONSES_PATH, MEMBER_FREE_CREDENTIAL_PATH, MEMBER_FREE_MODELS_PATH,
   MEMBER_FREE_STATUS_PATH, type DesktopFreeAccessStatus,
 } from "@openwork/free-auto";
@@ -19,7 +19,7 @@ import { TaskActivation, taskRoute } from "./activation.js";
 import { readFreeAutoAnalyticsEnabled, readFreeAutoJourney, writeFreeAutoAnalyticsEnabled } from "./journey.js";
 import { RemoteFailure, isRecord, jsonError, readBoundedBody, readJson, responseHeaders } from "./http.js";
 import { isOwnedProvider, ownedProvider } from "./provider-config.js";
-import { memberCredentialFailure, parseMemberCredential, parseStatus, statusFromRejection } from "./responses.js";
+import { desktopAppRequiredFailure, memberCredentialFailure, parseMemberCredential, parseStatus, statusFromRejection } from "./responses.js";
 import {
   ANONYMOUS_INFERENCE_PROVIDER_ID, ERROR_BODY_LIMIT, FAILURE_CACHE_LIMIT, FAILURE_CACHE_MS, HEADER_TIMEOUT_MS, MEMBER_CREDENTIAL_CACHE_MS,
   REQUEST_BODY_LIMIT, REQUEST_BODY_TIMEOUT_MS, REQUEST_LIFETIME_MS, SESSION_TIMEOUT_MS, STATUS_CACHE_MS, readRelaySettings, type RelaySettings,
@@ -336,7 +336,11 @@ export class AnonymousInferenceService {
     const authorization = member ?? `Bearer ${DESKTOP_FREE_OPEN_API_KEY}`;
     const actualPath = member ? memberPath(path) : path;
     const journey = await this.journeyHeaders();
-    const authHeaders = await this.desktopSession?.headers(member, actualPath, method, body, signal) ?? { authorization };
+    const host = this.host;
+    if (!member && !this.desktopSession && host?.eligible() && host.sign && host.identity) {
+      this.desktopSession = new DesktopFreeSession({ sign: host.sign, identity: host.identity }, this.settings.origin);
+    }
+    const authHeaders = await this.desktopSession?.headers(member, actualPath, method, body, signal, !member && retryProof) ?? { authorization };
     signal.throwIfAborted();
     if (relayToken) this.assertRelayIdentity(relayToken);
     const response = await externalFetch(`${this.settings.origin}${actualPath}`, {
@@ -347,14 +351,15 @@ export class AnonymousInferenceService {
     signal.throwIfAborted();
     if (response.ok) return response;
     const failure = new RemoteFailure(response.status, await readBoundedBody(response.body, ERROR_BODY_LIMIT, signal), responseHeaders(response.headers));
-    const code = failure.payload().code;
-    if (retryProof && ((failure.status === 403 && code === DESKTOP_FREE_REQUIRED_CODE)
-      || (this.desktopSession && failure.status === 401 && code === "invalid_anonymous_token"))) {
-      const host = this.host;
-      if (host?.eligible() && host.sign && host.identity) {
-        this.desktopSession = new DesktopFreeSession({ sign: host.sign, identity: host.identity }, this.settings.origin);
+    const payload = failure.payload();
+    const proofRequested = desktopFreeProofRequested(failure.status, payload);
+    if (proofRequested || (this.desktopSession && failure.status === 401 && payload.code === "invalid_anonymous_token")) {
+      const signer = host?.eligible() && host.sign && host.identity ? { sign: host.sign, identity: host.identity } : null;
+      if (retryProof && signer) {
+        this.desktopSession = new DesktopFreeSession(signer, this.settings.origin);
         return this.remote(path, method, body, requestSignal, relayToken, false);
       }
+      if (proofRequested && !signer) throw desktopAppRequiredFailure();
     }
     if (member && [401, 403].includes(failure.status) && this.memberCredential?.authorization === member) {
       this.memberCredential = null;
@@ -434,7 +439,7 @@ export class AnonymousInferenceService {
     } catch (error) {
       if (request.signal.aborted) throw error;
       if (error instanceof RemoteFailure) {
-        if ([401, 403, 429, 503].includes(error.status)) {
+        if ([401, 403, 426, 429, 503].includes(error.status)) {
           error.headers.set("x-openwork-anonymous-no-upstream-retry", "1");
           if (this.failures.size >= FAILURE_CACHE_LIMIT) this.failures.clear();
           this.failures.set(requestKey, { expiresAt: Date.now() + FAILURE_CACHE_MS, failure: error });

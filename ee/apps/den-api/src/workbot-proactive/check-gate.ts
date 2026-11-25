@@ -10,7 +10,7 @@ import {
   type AgentPeek,
 } from "@openwork/automations/proactive-brief"
 import type { MemberCalendarRead, MemberMailArrivals } from "../routes/org/google-workspace.js"
-import type { EvaluationModel } from "./evaluation-model.js"
+import type { EvaluationModel } from "../llm/evaluation-model.js"
 import { readableConnections, type ResolvedSource } from "./sources.js"
 
 const HOUR_MS = 3_600_000

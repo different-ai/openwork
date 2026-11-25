@@ -149,7 +149,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       guidedNavigation: async () => member.den.guidedNavigation && member.den.documents === true,
       teachingNavigation: async () => member.den.browser === true && member.den.browserDemonstrations === true,
       connectors: () => connectors(`${member.den.organization.id}:${member.den.memberId}`, member.accessToken),
-      sandboxGateway: member.den.sandboxGateway,
       browserRecovery: member.den.browserRecovery,
       stepTurns: member.den.stepTurns,
       sessionCells: member.den.sessionCells,
@@ -246,7 +245,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       browser: who.enabled && who.browser,
       browserDemonstrations: who.enabled && who.browser && who.browserDemonstrations,
       browserLiveView: who.enabled && who.browser,
-      documentEditing: who.enabled && who.documents === true && who.documentEditing,
       nativeDictation: who.enabled,
       workspaceAssistant: who.enabled && who.workspaceAssistant,
       guidedNavigation: who.enabled && who.workspaceAssistant && who.guidedNavigation,
@@ -266,8 +264,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       profileNav: who.enabled,
       quietCalendar: who.enabled && who.calendar === true,
       scrollToBottom: who.enabled,
-      profileComputers: who.enabled && who.profileComputers,
-      deviceActivity: who.enabled && who.deviceActivity,
+      profileComputers: who.enabled,
+      deviceActivity: who.enabled,
       calmChat: who.enabled && who.calmChat,
       devices: who.enabled,
       commandPalette: true,
@@ -431,24 +429,20 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const { status, payload } = await den.calendar(member.accessToken, { method, path: `${path}${url.search}`, body })
     return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } })
   }
-  app.on(["GET", "POST"], "/v1/workbot/documents/*", bodyLimit({ maxSize: 2 * 1024 * 1024 }), async (c) => {
+  app.get("/v1/workbot/documents/*", async (c) => {
     const member = c.get("member")
     if (!member.den.enabled || member.den.documents !== true) return c.json({ error: "workbot_documents_not_enabled" }, 403)
     const url = new URL(c.req.url)
     const path = url.pathname.slice("/v1/workbot/documents".length)
     const editor = /^\/v1\/documents\/(?:google-drive|microsoft-365)\/files\/[A-Za-z0-9_-]{1,512}\/(editor|content|metadata)$/.exec(path)
     if (editor?.[1] === "metadata" && !member.den.workspaceAssistant) return c.json({ error: "feature_disabled" }, 403)
-    const office = /^\/v1\/documents\/google-drive\/files\/[A-Za-z0-9_-]{1,512}\/office(?:\/[0-9a-f-]{36}(?:\/(save|close))?)?$/.exec(path)
-    const method = c.req.method === "POST" ? "POST" : "GET"
-    if (!(method === "GET" && (path === "/v1/capabilities/google-workspace/drive-files" || path === "/v1/documents/microsoft-365/files")) && !(editor && (method === "GET" || editor[1] === "editor")) && !(office && (method === "GET" ? !office[1] && /\/[0-9a-f-]{36}$/.test(path) : path.endsWith("/office") || !!office[1]))) return c.json({ error: "not_found" }, 404)
-    if (method === "POST" && !path.endsWith("/close") && !member.den.documentEditing) return c.json({ error: "feature_disabled", message: "Document editing is off for this workspace." }, 403)
+    if (path !== "/v1/capabilities/google-workspace/drive-files" && path !== "/v1/documents/microsoft-365/files" && !editor) return c.json({ error: "not_found" }, 404)
     if (editor?.[1] === "content") {
       const response = await den.documentContent(member.accessToken, `${path}${url.search}`, c.req.header("range"))
       const ranged = Object.fromEntries(["content-length", "content-range", "accept-ranges"].flatMap(name => { const value = response.headers.get(name); return value ? [[name, value]] : [] }))
       return new Response(response.body, { status: response.status, headers: { "content-type": response.headers.get("content-type") ?? "application/octet-stream", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox", ...ranged } })
     }
-    const body: unknown = method === "POST" ? await c.req.json().catch(() => null) : undefined
-    const { status, payload } = await den.documents(member.accessToken, `${path}${url.search}`, method, body)
+    const { status, payload } = await den.documents(member.accessToken, `${path}${url.search}`)
     return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } })
   })
 

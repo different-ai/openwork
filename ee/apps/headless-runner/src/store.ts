@@ -57,7 +57,6 @@ const sessionOptions = z.object({
   tasks: z.boolean().optional(),
   documentNavigation: z.boolean().optional(),
   teachingNavigation: z.boolean().optional(),
-  sandboxGateway: z.boolean().optional(),
   browserRecovery: z.boolean().optional(),
   timeZone: z.string().optional(),
   autoTitle: z.boolean().optional(),
@@ -101,7 +100,6 @@ export type Session = {
   tasks: boolean
   documentNavigation: boolean
   teachingNavigation: boolean
-  sandboxGateway: boolean
   browserRecovery: boolean
   owner: string | null
   ref: string | null
@@ -124,7 +122,6 @@ export type SessionInput = {
   tasks?: boolean
   documentNavigation?: boolean
   teachingNavigation?: boolean
-  sandboxGateway?: boolean
   browserRecovery?: boolean
   owner?: string
   ref?: string
@@ -144,7 +141,6 @@ function optionsOf(input: {
   tasks?: boolean
   documentNavigation?: boolean
   teachingNavigation?: boolean
-  sandboxGateway?: boolean
   browserRecovery?: boolean
   timeZone?: string | null
   autoTitle?: boolean
@@ -161,7 +157,6 @@ function optionsOf(input: {
     ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
     ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
     ...(input.teachingNavigation !== undefined ? { teachingNavigation: input.teachingNavigation } : {}),
-    ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
     ...(input.browserRecovery !== undefined ? { browserRecovery: input.browserRecovery } : {}),
     ...(input.timeZone ? { timeZone: input.timeZone } : {}),
     ...(input.autoTitle !== undefined ? { autoTitle: input.autoTitle } : {}),
@@ -183,7 +178,6 @@ function serializeOptions(options: SessionOptions) {
     ...(options.tasks ? { tasks: true } : {}),
     ...(options.documentNavigation ? { documentNavigation: true } : {}),
     ...(options.teachingNavigation ? { teachingNavigation: true } : {}),
-    ...(options.sandboxGateway ? { sandboxGateway: true } : {}),
     ...(options.browserRecovery ? { browserRecovery: true } : {}),
     ...(options.timeZone ? { timeZone: options.timeZone } : {}),
     ...(options.autoTitle ? { autoTitle: true } : {}),
@@ -192,8 +186,6 @@ function serializeOptions(options: SessionOptions) {
   }
   return Object.keys(ordered).length ? JSON.stringify(ordered) : null
 }
-
-export type ComputerSide = "gateway" | "direct"
 
 export type Turn = {
   sessionId: string
@@ -509,7 +501,6 @@ export class Store {
       tasks: options.tasks ?? false,
       documentNavigation: options.documentNavigation ?? false,
       teachingNavigation: options.teachingNavigation ?? false,
-      sandboxGateway: options.sandboxGateway ?? false,
       browserRecovery: options.browserRecovery ?? false,
       owner: value.owner ?? null,
       ref: value.ref ?? null,
@@ -932,22 +923,6 @@ export class Store {
     this.db
       .prepare("INSERT INTO computer_pauses (session_id, due_at) SELECT id, ? FROM sessions WHERE id = ? ON CONFLICT (session_id) DO UPDATE SET due_at = excluded.due_at")
       .run(dueAt, sessionId)
-  }
-
-  computerSide(sessionId: string): ComputerSide | null {
-    const row = this.db.prepare("SELECT side FROM computer_sides WHERE session_id = ?").get(sessionId)
-    const parsed = z.object({ side: z.enum(["gateway", "direct"]) }).safeParse(row)
-    return parsed.success ? parsed.data.side : null
-  }
-
-  setComputerSide(sessionId: string, side: ComputerSide) {
-    this.db
-      .prepare("INSERT INTO computer_sides (session_id, side, placed_at) SELECT id, ?, ? FROM sessions WHERE id = ? ON CONFLICT (session_id) DO UPDATE SET side = excluded.side, placed_at = excluded.placed_at")
-      .run(side, this.now(), sessionId)
-  }
-
-  clearComputerSide(sessionId: string) {
-    this.db.prepare("DELETE FROM computer_sides WHERE session_id = ?").run(sessionId)
   }
 
   clearComputerPause(sessionId: string) {

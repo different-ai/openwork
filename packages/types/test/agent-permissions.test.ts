@@ -18,6 +18,7 @@ import {
   resolveSandboxRequirement,
   withoutAgentHarnessPermissions,
   withoutAgentHarnessRules,
+  withoutPrivateValuePermissions,
   withoutHostExecutionPermissions,
   withoutSandboxOptOutPermissions,
   type AgentPermissionRule,
@@ -159,4 +160,74 @@ test("sandbox rules are delivered according to each desktop generation's headers
   assert.deepEqual(agentPermissionRulesForClient(both, intermediate), force)
   assert.deepEqual(agentPermissionRulesForClient(use, intermediate), [])
   for (const rules of [force, use, both]) assert.deepEqual(agentPermissionRulesForClient(rules, current), rules)
+})
+
+test("private-value fills are the member's to approve: no Allow, Ask first for every fill, and a list of websites left to them", () => {
+  const fills = agentPermissionDefinition("privateValueFills")
+  assert.deepEqual(agentPermissionDecisionsFor(fills), ["ask", "deny"])
+  assert.equal(agentPermissionDefaultDecision("privateValueFills"), "ask")
+  assert.equal(agentPermissionSettingsSchema.safeParse({ privateValueFills: { decision: "allow" } }).success, false)
+  assert.deepEqual(normalizeAgentPermissionSettings({ privateValueFills: { decision: "allow" } }), {})
+  assert.deepEqual(rulesFor({}), [])
+  assert.deepEqual(decideAgentPermission([], "private_value_fill", ["https://bank.example"]), { effect: "ask", rule: null, resource: "https://bank.example" })
+
+  const everyTime = rulesFor({ privateValueFills: { decision: "ask" } })
+  assert.equal(decideAgentPermission(everyTime, "private_value_fill", ["https://bank.example"]).rule?.source, AGENT_PERMISSION_EVERYONE)
+
+  const onlyThese = rulesFor({ privateValueFills: { decision: "deny", allow: ["*.example.com"], block: ["admin.example.com"] } })
+  assert.equal(decideAgentPermission(onlyThese, "private_value_fill", ["https://app.example.com"]).effect, "allow")
+  assert.equal(decideAgentPermission(onlyThese, "private_value_fill", ["https://admin.example.com"]).effect, "deny")
+  assert.equal(decideAgentPermission(onlyThese, "private_value_fill", ["https://other.test"]).effect, "deny")
+})
+
+test("private-value commands are allowed or blocked by command, and a blocked command wins", () => {
+  const commands = agentPermissionDefinition("privateValueCommands")
+  assert.deepEqual(agentPermissionDecisionsFor(commands), ["allow", "deny"])
+  assert.equal(agentPermissionSettingsSchema.safeParse({ privateValueCommands: { decision: "ask" } }).success, false)
+  assert.deepEqual(rulesFor({ privateValueCommands: { allow: ["bw *"] } }), [])
+
+  const onlyVault = rulesFor({ privateValueCommands: { decision: "deny", allow: ["bw get *"], block: ["bw get notes *"] } })
+  assert.equal(decideAgentPermission(onlyVault, "private_value_command", ["bw get password example.com"]).effect, "allow")
+  assert.equal(decideAgentPermission(onlyVault, "private_value_command", ["bw get notes example.com"]).effect, "deny")
+  assert.equal(decideAgentPermission(onlyVault, "private_value_command", ["cat /etc/passwd"]).effect, "deny")
+
+  const blocked = rulesFor({ privateValueCommands: { block: ["security *"] } })
+  assert.equal(decideAgentPermission(blocked, "private_value_command", ["security find-generic-password -w"]).effect, "deny")
+  assert.equal(decideAgentPermission(blocked, "private_value_command", ["op read op://vault/item/password"]).effect, "allow")
+})
+
+const terminalBlock = { action: "private_value_terminal", resource: "*", effect: "deny", source: AGENT_PERMISSION_EVERYONE } as const
+
+test("private-value programs stay out of the agent's own terminal until an administrator lets them in", () => {
+  const terminal = agentPermissionDefinition("privateValueTerminal")
+  assert.equal(terminal.control, "toggle")
+  assert.equal(agentPermissionDefaultDecision("privateValueTerminal"), "deny")
+  assert.deepEqual(rulesFor({}), [])
+  assert.deepEqual(agentPermissionRulesForClient([], { ...everything, privateValues: true }), [terminalBlock])
+  assert.deepEqual(agentPermissionRulesForClient([], everything), [])
+
+  const allowed = rulesFor({ privateValueTerminal: { decision: "allow" } })
+  assert.deepEqual(allowed, [{ action: "private_value_terminal", resource: "*", effect: "allow", source: AGENT_PERMISSION_EVERYONE }])
+  const delivered = agentPermissionRulesForClient(allowed, { ...everything, privateValues: true })
+  assert.deepEqual(delivered, allowed)
+  assert.deepEqual(agentPermissionRulesForClient(allowed, everything), [])
+})
+
+test("a team that lets private-value programs into the terminal does not undo another team's default", () => {
+  const letsIn = { source: "Platform", settings: { privateValueTerminal: { decision: "allow" as const } } }
+  const silent = { source: "Support", settings: {} }
+  assert.deepEqual(resolveAgentPermissionRules({ everyone: null, teams: [letsIn] }), [{ action: "private_value_terminal", resource: "*", effect: "allow", source: "Platform" }])
+  assert.deepEqual(resolveAgentPermissionRules({ everyone: null, teams: [letsIn, silent] }), [])
+  const refuses = { source: "Finance", settings: { privateValueTerminal: { decision: "deny" as const } } }
+  assert.deepEqual(resolveAgentPermissionRules({ everyone: { source: AGENT_PERMISSION_EVERYONE, settings: { privateValueTerminal: { decision: "allow" } } }, teams: [refuses] }),
+    [{ action: "private_value_terminal", resource: "*", effect: "deny", source: "Finance" }])
+})
+
+test("pasting a private value is a switch, and a desktop that cannot read these rules gets none of them", () => {
+  assert.deepEqual(agentPermissionDecisionsFor(agentPermissionDefinition("privateValuePaste")), ["allow", "deny"])
+  const rules = rulesFor({ privateValuePaste: { decision: "deny" }, privateValueFills: { decision: "ask" }, privateValueCommands: { block: ["op *"] }, commands: { block: ["rm *"] } })
+  assert.equal(decideAgentPermission(rules, "private_value_paste", ["*"]).effect, "deny")
+  assert.deepEqual(agentPermissionRulesForClient(rules, { ...everything, privateValues: true }), [...rules, terminalBlock])
+  assert.deepEqual(agentPermissionRulesForClient(rules, everything).map((rule) => rule.action), ["shell"])
+  assert.deepEqual(withoutPrivateValuePermissions({ privateValuePaste: { decision: "deny" }, privateValueFills: { decision: "ask" }, privateValueCommands: { block: ["op *"] }, commands: { block: ["rm *"] } }), { commands: { block: ["rm *"] } })
 })

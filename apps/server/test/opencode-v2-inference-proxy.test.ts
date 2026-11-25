@@ -29,6 +29,9 @@ test("HTTP inference resolves raw Gateway auth server-side, translating native p
     for (const name of ["host", "cookie", "x-api-key", "api-key", "x-goog-api-key", "x-openwork-org-id", "x-openwork-legacy-org-id"]) assert.equal(headers.get(name), null, name);
     assert.equal(headers.get("anthropic-version"), "2023-06-01");
     assert.equal(headers.get("x-openwork-gateway-request-model"), "gwm_fixture");
+    assert.equal(headers.get("x-opencode-session"), "ses_fixture");
+    assert.equal(headers.get("x-opencode-session-id"), "ses_fixture");
+    assert.equal(headers.get("x-session-affinity"), null);
     assert.equal(Buffer.from(init?.body instanceof Uint8Array ? init.body : []).toString(), '{"model":"gwm_fixture","stream":true}');
     return new Response(new ReadableStream({ start(output) {
       const text = JSON.stringify({ error: { source: "openwork_gateway", code: "openwork_gateway_usage_limit_exceeded", type: "usage_limit_error", message: "You have reached your AI Gateway usage limit." }, denEcho: den.token, gatewayEcho: gatewayKey });
@@ -45,7 +48,7 @@ test("HTTP inference resolves raw Gateway auth server-side, translating native p
       ["v1beta/models/gemini-fixture:streamGenerateContent", "query"], ["v1/models/gemini-fixture:generateContent", "query"],
     ];
     for (const [path, auth] of protocols) {
-      const headers: Record<string, string> = { "content-type": "application/json", "anthropic-version": "2023-06-01", "x-openwork-gateway-request-model": "gwm_fixture", cookie: "untrusted-client-cookie", "x-openwork-org-id": "org_evil" };
+      const headers: Record<string, string> = { "content-type": "application/json", "anthropic-version": "2023-06-01", "x-openwork-gateway-request-model": "gwm_fixture", "x-opencode-session": "ses_fixture", "x-opencode-session-id": "ses_fixture", "x-session-affinity": "ses_fixture", cookie: "untrusted-client-cookie", "x-openwork-org-id": "org_evil" };
       if (auth !== "query") headers[auth] = auth === "authorization" ? `Bearer ${metadata.inferenceKey}` : metadata.inferenceKey;
       const query = auth === "query" ? `?key=${metadata.inferenceKey}&alt=sse` : "";
       const response = await fetch(`${metadata.inferenceOrigin}/api/v1/providers/${providerId}/${path}${query}`, { method: "POST", headers, body: '{"model":"gwm_fixture","stream":true}' });

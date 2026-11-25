@@ -40,6 +40,16 @@ test("Den's own providers stay Den's, and retired Zen is never offered from the 
   expect(options[0]?.accessKind).toBe("authorized_custom");
 });
 
+test("an Automation pinned to another workspace keeps this desktop's AI Gateway models, but not workspace-local ones", () => {
+  const desktopWideCatalog = automationProviderCatalog([
+    runtimeProvider("ipr_fireworks", "Fireworks AI", ["glm"]),
+    runtimeProvider("nvidia", "NVIDIA", ["llama"]),
+  ]);
+  const options = automationModelOptions([team], { includeFreeStarter: false, desktopWideCatalog });
+  expect(options.map((option) => `${option.providerId}/${option.modelId}`)).toEqual(["lpr_team/team-model", "ipr_fireworks/glm"]);
+  expect(options.find((option) => option.providerId === "ipr_fireworks")?.accessKind).toBe("desktop_runtime");
+});
+
 test("Cloud placement, which has no desktop catalog, never offers desktop-only models", () => {
   expect(automationModelOptions([team], { includeFreeStarter: false })).toHaveLength(1);
 });

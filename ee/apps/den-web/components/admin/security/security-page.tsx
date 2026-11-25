@@ -46,6 +46,7 @@ function SeverityBadge({ severity }: { severity: SecuritySeverity }) {
 }
 
 function entityColumns(finding: SecurityFinding): DenTableColumn<SecurityEntity>[] {
+  const showSpend = finding.unit === "micro_usd" || MONEY_FINDINGS.has(finding.id);
   return [
     {
       key: "entity", header: "Review", render: (entity) => {
@@ -59,7 +60,7 @@ function entityColumns(finding: SecurityFinding): DenTableColumn<SecurityEntity>
         );
       },
     },
-    { key: "value", header: MONEY_FINDINGS.has(finding.id) ? "Spend" : "Count", align: "right", render: (entity) => <span className="tabular-nums">{MONEY_FINDINGS.has(finding.id) ? formatUsd(entity.value) : formatCount(entity.value)}</span> },
+    { key: "value", header: showSpend ? "Spend" : "Count", align: "right", render: (entity) => <span className="tabular-nums">{showSpend ? formatUsd(entity.value) : formatCount(entity.value)}</span> },
     { key: "severity", header: "Severity", align: "right", width: "96px", render: (entity) => <SeverityBadge severity={entity.severity} /> },
   ];
 }

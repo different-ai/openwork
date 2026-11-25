@@ -1,4 +1,5 @@
 import { recordFreeAutoFounder } from "@openwork-ee/den-db"
+import { assertWorkspaceCreateAllowed } from "./workspace-create-limit.js"
 import { peopleMemberCondition } from "./setup-agent-members.js"
 import { and, asc, count, eq, gt, inArray, isNotNull, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
 import { listAuthoritativeTeamMemberships } from "@openwork-ee/den-db/permissions"
@@ -1030,6 +1031,7 @@ async function createOrganizationRecord(input: {
   slug?: string
   logo?: string | null
   metadata?: Record<string, unknown> | null
+  enforceCreateLimit?: boolean
 }) {
   const organizationId = createDenTypeId("organization")
   const metadata =
@@ -1042,6 +1044,7 @@ async function createOrganizationRecord(input: {
 
   const ownerMemberId = createDenTypeId("member")
   await db.transaction(async (tx) => {
+    if (input.enforceCreateLimit) await assertWorkspaceCreateAllowed(tx, input.userId)
     await tx.insert(OrganizationTable).values({
       id: organizationId,
       name: input.name,
@@ -1243,10 +1246,12 @@ export async function ensurePersonalOrganizationForUser(userId: UserId) {
 export async function createOrganizationForUser(input: {
   userId: UserId
   name: string
+  enforceCreateLimit?: boolean
 }) {
   return createOrganizationRecord({
     userId: input.userId,
     name: input.name.trim(),
+    enforceCreateLimit: input.enforceCreateLimit,
   })
 }
 

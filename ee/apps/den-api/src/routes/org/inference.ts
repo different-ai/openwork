@@ -118,7 +118,10 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
     try {
       const result = await issueMemberFreeInferenceCredential({ organizationId: context.organization.id, memberId: context.currentMember.id,
         userId: normalizeDenTypeId("user", user.id) })
-      if ("credential" in result) return c.json({ credential: result.credential })
+      if ("credential" in result) {
+        const { keyId: _keyId, ...credential } = result.credential
+        return c.json({ credential })
+      }
       if (result.refusal === "free_disabled") return c.json({ error: "free_disabled" }, 503)
       return c.json({ error: result.refusal, message: FREE_REFUSAL_MESSAGES[result.refusal] }, 403)
     } catch (error) {

@@ -161,3 +161,255 @@ test("a typed credential keeps its own card and its always choice", async () => 
   expect(container.querySelector('[data-testid="session-computer-credential-always"]')?.textContent).toBe("Always for this site in this chat")
   expect(container.querySelector('[data-testid="session-computer-credential-secret-label"]')).toBeNull()
 })
+
+const READ_PASSWORD = { field: "password", command: ["op", "read", "op://Private/Example/password"] }
+const READ_CODE = { field: "number", command: ["/opt/homebrew/bin/bw", "get", "totp", "example site"] }
+const ASKED = { field: "password", ask: "Example password" }
+const values = (fills: NonNullable<NonNullable<ComputerRequest["credential"]>["fills"]>, extra: Partial<ComputerRequest> = {}): ComputerRequest => ({
+  id: "req_7", reason: "credential", computer: "This Mac", placement: "local", ...extra, credential: { site: "https://app.example", fills },
+})
+const rows = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-testid="session-computer-credential-fill"]')]
+const pasteFields = (container: HTMLElement) => [...container.querySelectorAll<HTMLInputElement>('[data-testid="session-computer-credential-paste"]')]
+const button = (container: HTMLElement, id: string) => container.querySelector<HTMLButtonElement>(`[data-testid="session-computer-credential-${id}"]`)
+async function paste(element: HTMLInputElement | undefined, value: string) {
+  if (!element) throw new Error("No paste field")
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value")?.set?.call(element, value)
+    element.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+}
+
+test("commands are listed whole with their fields, and can be run once or always", async () => {
+  const container = await render(values([READ_PASSWORD, READ_CODE]))
+  expect(container.querySelector('[data-testid="session-computer-request"]')?.getAttribute("data-credential")).toBe("values")
+  expect(button(container, "title")?.textContent ?? container.querySelector('[data-testid="session-computer-credential-title"]')?.textContent)
+    .toBe("Run these 2 commands and fill what they print on app.example?")
+  expect(rows(container).map((row) => [row.dataset.source, row.querySelector('[data-testid="session-computer-credential-command"]')?.textContent, row.querySelector('[data-testid="session-computer-credential-field"]')?.textContent]))
+    .toEqual([["command", "op read op://Private/Example/password", "Into a password field"], ["command", "/opt/homebrew/bin/bw get totp 'example site'", "Into a number field"]])
+  expect(pasteFields(container)).toEqual([])
+  expect([button(container, "dismiss")?.textContent, button(container, "always")?.textContent, button(container, "allow")?.textContent])
+    .toEqual(["Don't run", "Always for this site in this chat", "Run and fill"])
+  const { answers, press } = answersFrom(container)
+  try {
+    await press("allow")
+    await press("always")
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__")
+  }
+  expect(answers).toEqual([{ sessionId: "chat_1", answer: "allow", id: "req_7" }, { sessionId: "chat_1", answer: "always", id: "req_7" }])
+})
+
+test("a value the agent asks for is pasted into a private field, and Fill waits for it", async () => {
+  const container = await render(values([ASKED], { standing: false }))
+  expect(container.querySelector('[data-testid="session-computer-credential-title"]')?.textContent).toBe("Fill this field on app.example?")
+  expect(container.textContent).toContain("the agent never sees it")
+  expect(rows(container).map((row) => row.dataset.source)).toEqual(["paste"])
+  expect(container.querySelector('[data-testid="session-computer-credential-ask"]')?.textContent).toBe("Example password")
+  const [field] = pasteFields(container)
+  expect([field?.type, field?.getAttribute("autocomplete")]).toEqual(["password", "off"])
+  expect(button(container, "always")).toBeNull()
+  expect(button(container, "switch")).toBeNull()
+  expect([button(container, "dismiss")?.textContent, button(container, "allow")?.textContent, button(container, "allow")?.disabled]).toEqual(["Don't fill", "Fill", true])
+  const { answers, press } = answersFrom(container)
+  try {
+    await press("allow")
+    expect(answers).toEqual([])
+    await paste(field, "hunter2-pasted")
+    expect(button(container, "allow")?.disabled).toBe(false)
+    await press("allow")
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__")
+  }
+  expect(answers).toEqual([{ sessionId: "chat_1", answer: "allow", id: "req_7", values: ["hunter2-pasted"], keep: [false] }])
+  // The field gives its value up once: nothing of it is left in the page.
+  expect(field?.value).toBe("")
+  expect(container.innerHTML).not.toContain("hunter2-pasted")
+})
+
+test("keeping a pasted value for the chat is the person's choice, per value", async () => {
+  const container = await render(values([READ_CODE, ASKED, { field: "text", ask: "Account number" }], { standing: false }))
+  expect(container.querySelector('[data-testid="session-computer-credential-title"]')?.textContent).toBe("Fill these 3 fields on app.example?")
+  expect(rows(container).map((row) => row.dataset.source)).toEqual(["command", "paste", "paste"])
+  expect(button(container, "allow")?.textContent).toBe("Run and fill")
+  const [password, account] = pasteFields(container)
+  const keeps = [...container.querySelectorAll<HTMLButtonElement>('[data-testid="session-computer-credential-keep"]')]
+  expect(keeps.length).toBe(2)
+  const { answers, press } = answersFrom(container)
+  try {
+    await paste(password, "hunter2-pasted")
+    expect(button(container, "allow")?.disabled).toBe(true)
+    await paste(account, "0042-7781")
+    await act(async () => keeps[1]?.closest("label")?.click())
+    expect(keeps.map((keep) => keep.getAttribute("aria-checked"))).toEqual(["false", "true"])
+    await press("allow")
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__")
+  }
+  expect(answers).toEqual([{ sessionId: "chat_1", answer: "allow", id: "req_7", values: [null, "hunter2-pasted", "0042-7781"], keep: [false, false, true] }])
+})
+
+test("a command can be swapped for a pasted value, which is used once and never kept or made standing", async () => {
+  const container = await render(values([READ_PASSWORD]))
+  expect(button(container, "switch")?.textContent).toBe("Paste it instead")
+  await act(async () => button(container, "switch")?.click())
+  expect(rows(container).map((row) => row.dataset.source)).toEqual(["paste"])
+  expect(container.querySelector('[data-testid="session-computer-credential-title"]')?.textContent).toBe("Fill this field on app.example?")
+  expect([button(container, "always"), container.querySelector('[data-testid="session-computer-credential-keep"]')]).toEqual([null, null])
+  expect([button(container, "switch")?.textContent, button(container, "allow")?.textContent, button(container, "allow")?.disabled]).toEqual(["Run the command instead", "Fill", true])
+  const { answers, press } = answersFrom(container)
+  try {
+    await paste(pasteFields(container)[0], "hunter2-pasted")
+    await press("allow")
+    // Back to the command: nothing pasted is sent, and always is offered again.
+    await act(async () => button(container, "switch")?.click())
+    expect(button(container, "always")?.textContent).toBe("Always for this site in this chat")
+    await press("allow")
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__")
+  }
+  expect(answers).toEqual([{ sessionId: "chat_1", answer: "allow", id: "req_7", values: ["hunter2-pasted"], keep: [false] }, { sessionId: "chat_1", answer: "allow", id: "req_7" }])
+})
+
+test("a value kept for the chat fills with one click, or a different one can be pasted", async () => {
+  const container = await render(values([{ ...ASKED, kept: true }], { standing: false }))
+  expect(rows(container).map((row) => row.dataset.source)).toEqual(["kept"])
+  expect(container.querySelector('[data-testid="session-computer-credential-field"]')?.textContent).toBe("Into a password field, from what you kept for this chat")
+  expect(container.textContent).toContain("what you kept for this chat")
+  expect(pasteFields(container)).toEqual([])
+  expect([button(container, "always"), button(container, "switch")?.textContent, button(container, "allow")?.textContent, button(container, "allow")?.disabled])
+    .toEqual([null, "Paste a different one", "Fill", false])
+  const { answers, press } = answersFrom(container)
+  try {
+    await press("allow")
+    await act(async () => button(container, "switch")?.click())
+    expect([rows(container)[0]?.dataset.source, button(container, "switch")?.textContent, button(container, "allow")?.disabled]).toEqual(["paste", "Use the one you kept", true])
+    await paste(pasteFields(container)[0], "another-pasted")
+    await press("allow")
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__")
+  }
+  expect(answers).toEqual([{ sessionId: "chat_1", answer: "allow", id: "req_7" }, { sessionId: "chat_1", answer: "allow", id: "req_7", values: ["another-pasted"], keep: [false] }])
+})
+
+test("hidden characters in a command or a name are shown and warned about, and a card with no site fills nothing", async () => {
+  const container = await render(values([{ field: "password", ask: "Example‮password" }, { field: "text", command: ["op", "read​"] }], { standing: false }))
+  expect(container.querySelector('[data-testid="session-computer-credential-ask"]')?.textContent).toBe("Example<U+202E>password")
+  expect(container.querySelector('[data-testid="session-computer-credential-command"]')?.textContent).toBe("op 'read<U+200B>'")
+  expect(container.querySelector('[data-testid="session-computer-credential-hidden"]')?.textContent).toContain("2 hidden characters")
+  if (root) await act(async () => root?.unmount())
+  root = null
+  document.body.innerHTML = ""
+  const nowhere = await render({ id: "req_8", reason: "credential", computer: "This Mac", placement: "local", standing: false, credential: { fills: [ASKED] } })
+  expect(nowhere.textContent).toContain("can't tell which site")
+  expect([button(nowhere, "allow"), pasteFields(nowhere).length, button(nowhere, "dismiss")?.textContent]).toEqual([null, 0, "Don't fill"])
+})
+
+test("a refused answer is said on the card, and the card stays", async () => {
+  const container = await render(values([ASKED], { standing: false }))
+  Reflect.set(window, "__OPENWORK_ELECTRON__", { invokeDesktop: async () => { throw new Error("A pasted value must be 4 to 4096 characters long.") } })
+  try {
+    await paste(pasteFields(container)[0], "abc")
+    await act(async () => button(container, "allow")?.click())
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__")
+  }
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("4 to 4096 characters")
+  expect(container.innerHTML).not.toContain(">abc<")
+  expect(button(container, "allow")?.disabled).toBe(true)
+})
+
+const LOCKED = { field: "password", command: ["/opt/homebrew/bin/bw", "get", "password", "example.com"], needs: "BW_SESSION" }
+const KEY = { unlock: "BW_SESSION", program: "/opt/homebrew/bin/bw", ask: "Bitwarden session key" }
+const text = (row: HTMLElement | undefined, id: string) => row?.querySelector(`[data-testid="session-computer-credential-${id}"]`)?.textContent
+
+test("a command that needs a key shows the key as its own row, pasted once and kept only when chosen", async () => {
+  const container = await render(values([LOCKED, READ_CODE, KEY], { standing: false }))
+  expect(container.querySelector('[data-testid="session-computer-credential-title"]')?.textContent).toBe("Run these 2 commands and fill what they print on app.example?")
+  expect(rows(container).map((row) => [row.dataset.row, row.dataset.source])).toEqual([["field", "command"], ["field", "command"], ["key", "paste"]])
+  expect(text(rows(container)[0], "field")).toBe("Into a password field, with BW_SESSION set")
+  expect(text(rows(container)[1], "field")).toBe("Into a number field")
+  expect([text(rows(container)[2], "ask"), text(rows(container)[2], "field")]).toEqual(["Bitwarden session key", "Given to /opt/homebrew/bin/bw as BW_SESSION, for this run only"])
+  expect(container.textContent).toContain("with the key you paste here")
+  expect(container.textContent).toContain("never sees the key or the result")
+  expect(pasteFields(container).map((field) => field.getAttribute("placeholder"))).toEqual(["Paste the key here"])
+  expect([button(container, "always"), button(container, "dismiss")?.textContent, button(container, "allow")?.textContent, button(container, "allow")?.disabled]).toEqual([null, "Don't run", "Run and fill", true])
+  const keep = container.querySelector<HTMLButtonElement>('[data-testid="session-computer-credential-keep"]')
+  const { answers, press } = answersFrom(container)
+  try {
+    await press("allow")
+    expect(answers).toEqual([])
+    await paste(pasteFields(container)[0], "made-up-session-key")
+    await act(async () => keep?.closest("label")?.click())
+    expect(keep?.getAttribute("aria-checked")).toBe("true")
+    await press("allow")
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__")
+  }
+  expect(answers).toEqual([{ sessionId: "chat_1", answer: "allow", id: "req_7", values: [null, null, "made-up-session-key"], keep: [false, false, true] }])
+  expect(container.innerHTML).not.toContain("made-up-session-key")
+})
+
+test("a key kept for the chat runs with one click, or a different one can be pasted", async () => {
+  const container = await render(values([LOCKED, { ...KEY, kept: true }], { standing: false }))
+  expect(rows(container).map((row) => [row.dataset.row, row.dataset.source])).toEqual([["field", "command"], ["key", "kept"]])
+  expect(text(rows(container)[1], "field")).toBe("Given to /opt/homebrew/bin/bw as BW_SESSION, for this run only, from what you kept for this chat")
+  expect(container.textContent).toContain("with the key you kept for this chat")
+  expect(container.querySelector('[data-testid="session-computer-credential-title"]')?.textContent).toBe("Run this command and fill what it prints on app.example?")
+  expect([pasteFields(container).length, button(container, "always"), button(container, "allow")?.textContent, button(container, "allow")?.disabled]).toEqual([0, null, "Run and fill", false])
+  const change = rows(container)[1]?.querySelector<HTMLButtonElement>('[data-testid="session-computer-credential-switch"]')
+  expect(change?.textContent).toBe("Paste a different one")
+  const { answers, press } = answersFrom(container)
+  try {
+    await press("allow")
+    await act(async () => change?.click())
+    expect([rows(container)[1]?.dataset.source, button(container, "allow")?.disabled]).toEqual(["paste", true])
+    await paste(pasteFields(container)[0], "another-session-key")
+    await press("allow")
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__")
+  }
+  expect(answers).toEqual([{ sessionId: "chat_1", answer: "allow", id: "req_7" }, { sessionId: "chat_1", answer: "allow", id: "req_7", values: [null, "another-session-key"], keep: [false, false] }])
+})
+
+test("pasting the value in place of the command leaves no key to give", async () => {
+  const container = await render(values([LOCKED, KEY], { standing: false }))
+  await act(async () => rows(container)[0]?.querySelector<HTMLButtonElement>('[data-testid="session-computer-credential-switch"]')?.click())
+  expect(rows(container).map((row) => [row.dataset.row, row.dataset.source])).toEqual([["field", "paste"]])
+  expect(text(rows(container)[0], "field")).toBe("Into a password field")
+  expect(container.querySelector('[data-testid="session-computer-credential-title"]')?.textContent).toBe("Fill this field on app.example?")
+  expect([button(container, "dismiss")?.textContent, button(container, "allow")?.textContent]).toEqual(["Don't fill", "Fill"])
+  const { answers, press } = answersFrom(container)
+  try {
+    await paste(pasteFields(container)[0], "hunter2-pasted")
+    await press("allow")
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__")
+  }
+  expect(answers).toEqual([{ sessionId: "chat_1", answer: "allow", id: "req_7", values: ["hunter2-pasted", null], keep: [false, false] }])
+  // Back to the command, and the key is asked for again.
+  await act(async () => rows(container)[0]?.querySelector<HTMLButtonElement>('[data-testid="session-computer-credential-switch"]')?.click())
+  expect(rows(container).map((row) => [row.dataset.row, row.dataset.source])).toEqual([["field", "command"], ["key", "paste"]])
+  expect(button(container, "allow")?.disabled).toBe(true)
+})
+
+test("with pasting turned off, a command cannot be swapped for a pasted value", async () => {
+  const container = await render({ ...values([READ_PASSWORD, READ_CODE]), credential: { site: "https://app.example", fills: [READ_PASSWORD, READ_CODE], paste: false } })
+  expect(rows(container).length).toBe(2)
+  expect(container.querySelector('[data-testid="session-computer-credential-switch"]')).toBeNull()
+  expect(pasteFields(container)).toEqual([])
+  expect(button(container, "always")).not.toBeNull()
+  // The same card with nothing turned off offers the swap on every command.
+  await act(async () => root?.unmount())
+  const open = await render(values([READ_PASSWORD, READ_CODE]))
+  expect(open.querySelectorAll('[data-testid="session-computer-credential-switch"]').length).toBe(2)
+})
+
+test("with keeping turned off, a pasted value is never offered to be kept for the chat", async () => {
+  const container = await render({ ...values([ASKED]), credential: { site: "https://app.example", fills: [ASKED], keep: false } })
+  await paste(pasteFields(container)[0], "hunter2-pasted")
+  expect(container.querySelector('[data-testid="session-computer-credential-keep"]')).toBeNull()
+  await act(async () => root?.unmount())
+  const open = await render(values([ASKED]))
+  await paste(pasteFields(open)[0], "hunter2-pasted")
+  expect(open.querySelector('[data-testid="session-computer-credential-keep"]')).not.toBeNull()
+})

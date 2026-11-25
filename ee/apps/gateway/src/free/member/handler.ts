@@ -1,6 +1,6 @@
 import { desktopChallenge, desktopProofRequired } from "../desktop-access.js"
-import { DESKTOP_FREE_SESSION_HEADER } from "@openwork/free-auto"
-import { sha256Hex } from "@openwork/free-auto/node"
+import { DESKTOP_FREE_SESSION_HEADER, WORKBOT_FREE_GRANT_HEADER } from "@openwork/free-auto"
+import { sha256Hex, verifyWorkbotFreeGrant } from "@openwork/free-auto/node"
 import { checkDesktopFreeRequest } from "../guest/gate.js"
 import { resolveAnonymousClientAddress, verifyAnonymousToken } from "../guest/identity.js"
 import type { Context } from "hono"
@@ -30,7 +30,7 @@ export type FreeMemberDependencies = {
   fetch: typeof fetch;
   findMember: typeof findMemberFreePrincipal;
   defaultPinned: typeof readFreePrincipalDefaultPinned;
-  requireDesktop?: typeof desktopProofRequired;
+  requireDesktop?: (config: AutoConfig) => boolean;
   clientAddress?: (c: Context) => string | null;
   linkGuest?: (input: Parameters<typeof linkFreeAutoGuest>[1]) => Promise<void>;
   usageLog?: { insert: InsertRequestLog; update?: UpdateRequestLog; reporter?: InferenceReporter };
@@ -55,19 +55,21 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       if (!principal) return disabled()
       const path = c.req.path, method = c.req.method
       if (new URL(c.req.url).search) return freeError(400, "invalid_request")
-      const strict = await dependencies.requireDesktop?.(principal.organizationId)
+      const strict = (dependencies.requireDesktop ?? desktopProofRequired)(config)
       let desktopHash: string | undefined
+      const workbot = Boolean(config.workbotGrantSecret && verifyWorkbotFreeGrant(config.workbotGrantSecret, c.req.header(WORKBOT_FREE_GRANT_HEADER),
+        { keyId: key.id, organizationId: key.organization_id, memberId: key.org_membership_id }))
       const verifyDesktop = async (bodyHash: string) => {
-        if (!strict) return null
+        if (!strict || workbot) return null
         const address = dependencies.clientAddress?.(c)
         const token = c.req.header(DESKTOP_FREE_SESSION_HEADER)
         const auth = c.req.header("authorization")
-        if (!address || !token || !auth?.startsWith("Bearer ")) return desktopChallenge()
+        if (!address || !token || !auth?.startsWith("Bearer ")) return desktopChallenge(config.minimumVersion)
         const session = verifyAnonymousToken(token, address, config)
-        if (!session || session.credentialHash !== sha256Hex(auth)) return desktopChallenge()
+        if (!session || session.credentialHash !== sha256Hex(auth)) return desktopChallenge(config.minimumVersion)
         const gate = await checkDesktopFreeRequest(c.req.raw, bodyHash, { config, consumeNonce: store.consumeNonce }, session)
         if (gate.error) return gate.error
-        if (gate.proof.version !== 3 || gate.versionError) return desktopChallenge()
+        if (gate.proof.version !== 3 || gate.versionError) return desktopChallenge(config.minimumVersion)
         desktopHash = session.installationHash
         return null
       }

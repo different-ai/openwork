@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm"
+import { relations, sql } from "drizzle-orm"
 import {
   bigint,
   boolean,
@@ -7,6 +7,7 @@ import {
   json,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   smallint,
   timestamp,
   uniqueIndex,
@@ -514,6 +515,17 @@ export const DesktopFreeProofNonceTable = mysqlTable("desktop_free_proof_nonces"
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
 }, (table) => [index("desktop_free_proof_nonce_expiry").on(table.expires_at)])
 
+export const FundedModelSuspensionTable = mysqlTable("funded_model_suspension", {
+  reference_hash: varchar("reference_hash", { length: 64 }).notNull().primaryKey(),
+  provider_reference: varchar("provider_reference", { length: 128 }).notNull(),
+  user_id: denTypeIdColumn("user", "user_id").notNull(),
+  suspended_by: denTypeIdColumn("user", "suspended_by").notNull(),
+  suspended_at: timestamp("suspended_at", { fsp: 3 }).notNull().defaultNow(),
+  released_at: timestamp("released_at", { fsp: 3 }),
+  released_by: denTypeIdColumn("user", "released_by"),
+  release_reference: varchar("release_reference", { length: 128 }),
+}, t => [index("funded_model_suspension_user").on(t.user_id, t.released_at)])
+
 export const FreeAutoSafetyCaseTable = mysqlTable("free_auto_safety_case", {
   case_key: varchar("case_key", { length: 64 }).notNull().primaryKey(),
   case_id: varchar("case_id", { length: 128 }).notNull(),
@@ -554,6 +566,18 @@ export const FreeAutoOrgFounderTable = mysqlTable("free_auto_org_founder", {
   organization_id: denTypeIdColumn("organization", "organization_id").notNull().primaryKey(),
   founder_user_id: denTypeIdColumn("user", "founder_user_id").notNull(),
 }, (table) => [index("free_auto_org_founder_user").on(table.founder_user_id)])
+
+export const WorkspaceCreateLimitRuleTable = mysqlTable("workspace_create_limit_rule", {
+  scope: mysqlEnum("scope", ["email", "domain"]).notNull(),
+  value: varchar("value", { length: 320 }).notNull(),
+  workspace_limit: int("workspace_limit"),
+  set_by_user_id: denTypeIdColumn("user", "set_by_user_id").notNull(),
+  updated_at: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+}, (table) => [primaryKey({ columns: [table.scope, table.value] })])
+
+export const WorkspaceCreateIdentityTable = mysqlTable("workspace_create_identity", {
+  identity: varchar("identity", { length: 320 }).notNull().primaryKey(),
+})
 
 export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
   desktop_hash: varchar("desktop_hash", { length: 64 }),

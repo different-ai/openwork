@@ -338,7 +338,42 @@ export type ComputerRequest = {
   standing?: boolean;
   script?: { app: "applescript" | "jxa" | "blender"; code: string };
   files?: { app: string; names: string[]; site?: string; canRemember?: boolean; save?: boolean };
-  credential?: { site?: string; app?: string; appId?: string; secret?: { label: string; kind: BrowserSecretKind; field: string } };
+  credential?: { site?: string; use?: PrivateValueUse; app?: string; appId?: string; secret?: { label: string; kind: BrowserSecretKind; field: string }; fills?: PrivateValueFill[]; paste?: false; keep?: false };
+};
+
+/**
+ * One field the built-in browser fills with a value the agent never sees: the field's input type, and where the
+ * value comes from. `command` is the program and arguments that print it. `ask` is the name under which the person
+ * pastes it into the card; `kept` says one pasted earlier is kept for this chat. A command that reads a key from
+ * its environment names the variable in `needs`; that key is its own row after the fields, with the variable in
+ * `unlock`, the command it is for in `program`, and the name under which the person pastes it in `ask`.
+ */
+export type PrivateValueUse =
+  | { kind: "run"; command: string[] }
+  | { kind: "request"; method: string; url: string; origin: string; seal?: PrivateValueSeal[] };
+
+/** A value a request's JSON answer keeps for the chat instead of showing: its name, the path it is taken from, and the one https origin it may later be sent to. */
+export type PrivateValueSeal = { name: string; from: string; for: string };
+
+export type PrivateValueFill =
+  | { field: string; command: string[]; needs?: string; ask?: undefined; kept?: undefined; unlock?: undefined; program?: undefined }
+  | { field: string; ask: string; kept?: true; command?: undefined; needs?: undefined; unlock?: undefined; program?: undefined }
+  | { unlock: string; program: string; ask: string; kept?: true; field?: undefined; command?: undefined; needs?: undefined };
+
+/** One of the person's own switches for private values, in Settings under Computer use. */
+export type PrivateValueSwitch = "commands" | "paste" | "keep";
+
+/**
+ * What Settings shows about private values. No value is in it. `organization` says what the person's
+ * organization set and they cannot change: `blocked`, `limited` to some websites or commands, or `ask` every time.
+ */
+export type PrivateValueSettings = {
+  enabled: boolean;
+  switches: Record<PrivateValueSwitch, boolean>;
+  organization: { fills: "blocked" | "limited" | "ask" | null; commands: "blocked" | "limited" | null; paste: "blocked" | null };
+  always: Array<{ id: string; sessionId: string; site: string; field: string; command: string; blocked: boolean }>;
+  kept: Array<{ id: string; sessionId: string; site?: string; program?: string; label: string }>;
+  recent: Array<{ at: number; sessionId: string; site: string; field: string; source: "command" | "paste" | "kept"; program?: string; result: string }>;
 };
 
 /** What a saved browser secret is: a password, a one-time code, or an API key or token. */
@@ -496,12 +531,15 @@ export type DesktopCommandMap = {
   computerDismissSetup: { args: [setupId?: string]; result: void };
   computerChoose: { args: [targetId: string]; result: ComputerStatus };
   computerHalt: { args: [sessionId: string]; result: ComputerSnapshot };
-  computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always" | "remember"; id?: string }]; result: ComputerSnapshot };
+  computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always" | "remember"; id?: string; values?: Array<string | null>; keep?: boolean[] }]; result: ComputerSnapshot };
   computerOpenSavedFile: { args: [input: { sessionId: string; path: string; reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
   computerChatFiles: { args: [input: { sessionId: string }]; result: { files: Array<{ path: string; bytes: number; modifiedAt: number }> } };
   computerChatImage: { args: [input: { sessionId: string; path: string }]; result: { data: Uint8Array<ArrayBuffer>; contentType: string } | null };
   computerListFileGrants: { args: []; result: { enabled: boolean; grants: Array<{ id: string; origin: string; folder: string; blocked?: boolean }> } };
   computerRemoveFileGrant: { args: [id: string]; result: { ok: boolean } };
+  computerListPrivateValues: { args: []; result: PrivateValueSettings };
+  computerSetPrivateValueSwitch: { args: [name: PrivateValueSwitch, enabled: boolean]; result: { ok: boolean } };
+  computerRemovePrivateValue: { args: [kind: "always" | "kept", id: string]; result: { ok: boolean } };
   computerSetRemoteEnabled: { args: [enabled: boolean]; result: boolean };
   computerRecordableOverlay: { args: []; result: boolean };
   computerSetRecordableOverlay: { args: [enabled: boolean]; result: boolean };

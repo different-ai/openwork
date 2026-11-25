@@ -13,6 +13,8 @@ export const domainChangeEmitters: Readonly<Record<string, string>> = {
   "organization.complimentary_access.granted": "audit/domain/organization-settings.ts", "organization.complimentary_access.revoked": "audit/domain/organization-settings.ts",
   "organization.dpa_signed.updated": "audit/domain/organization-settings.ts",
   "web_origin.approved": "audit/domain/web-origins.ts", "web_origin.removed": "audit/domain/web-origins.ts",
+  "private_value.filled": "audit/domain/private-values.ts", "private_value.fill_declined": "audit/domain/private-values.ts",
+  "private_value.fill_refused": "audit/domain/private-values.ts",
   "permission_set.created": "audit/domain/permissions.ts", "permission_set.permissions_changed": "audit/domain/permissions.ts", "permission_set.archived": "audit/domain/permissions.ts",
   "permission_set.renamed": "audit/domain/permissions.ts", "permission_set.teams_changed": "audit/domain/permissions.ts",
   "permission_set.members_changed": "audit/domain/permissions.ts",
@@ -30,6 +32,7 @@ export const domainChangeEmitters: Readonly<Record<string, string>> = {
 
 export const domainEventCategories: Readonly<Record<string, "security" | "access">> = {
   "session.sign_in_failed": "security", "account.provider_token.accessed": "access",
+  "private_value.filled": "access", "private_value.fill_declined": "access", "private_value.fill_refused": "security",
 }
 
 export const domainChangeEventTypes: readonly string[] = Object.keys(domainChangeEmitters).sort()

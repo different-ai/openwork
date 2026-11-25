@@ -32,6 +32,7 @@ ENV = {
     "CONTROL_PLANE_ORIGIN": "https://control.example.com", "VERSION": "0.18.0",
     "STATE_BUCKET": "ow-123456781234-123456789012-state",
     "RUNNER_SERVICE_ACCOUNT": "ow-123456781234-runner@test-project.iam.gserviceaccount.com",
+    "BUILD_ID": "0f0e0d0c-1111-4222-8333-444455556666",
 }
 
 
@@ -76,7 +77,9 @@ class RuntimeIsolationTests(unittest.TestCase):
             self.assertFalse(any(key.startswith("GOOGLE_BACKEND_") for key in result))
             for key in ("GOOGLE_CREDENTIALS", "GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_OAUTH_ACCESS_TOKEN"):
                 self.assertNotIn(key, result)
-            self.assertEqual(result["GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"], ENV["RUNNER_SERVICE_ACCOUNT"])
+            # Terraform and its backend run as the build's own identity: nothing
+            # inherited may select or impersonate another one.
+            self.assertFalse(any("IMPERSONATE" in key for key in result))
             config = Path(result["TF_CLI_CONFIG_FILE"])
             self.assertEqual(config.parent, root)
             self.assertEqual(config.stat().st_mode & 0o777, 0o600)
@@ -127,6 +130,7 @@ class ImagePinTests(unittest.TestCase):
                          "DOCKER_HOST": "tcp://evil.test:2375"}
             with patch.dict(os.environ, inherited, clear=True), patch.object(runner, "__file__", str(root / "infra/managed-deployments/gcp/runner/runner.py")), \
                     patch.object(Path, "cwd", return_value=root), patch.object(runner, "gcloud", side_effect=cloud) as remote, \
+                    patch.object(runner, "access_token", return_value="private-token"), patch.object(runner, "docker_binary", return_value="docker"), \
                     patch.object(subprocess, "run", side_effect=execute):
                 if manifest is None or manifest.get("images") is None:
                     with self.assertRaises((ValueError, FileNotFoundError)):
@@ -214,7 +218,7 @@ class OrchestrationMutexTests(unittest.TestCase):
                 live = None
                 return b""
             self.assertEqual(query["ifGenerationMatch"], ["0"])
-            self.assertEqual(json.loads(data), {"runId": ENV["RUN_ID"]})
+            self.assertEqual(json.loads(data), {"runId": ENV["RUN_ID"], "buildId": ENV["BUILD_ID"]})
             if live is not None:
                 raise urllib.error.HTTPError(url, 412, "Precondition Failed", {}, None)
             live = "17"
@@ -271,6 +275,9 @@ class OrchestrationMutexTests(unittest.TestCase):
                 order.append("release")
 
         with patch.dict(os.environ, ENV, clear=True), patch.object(runner, "enroll", return_value="run-token"), \
+                patch.object(runner, "refuse_ejected_run", side_effect=lambda: order.append("ejected-check")), \
+                patch.object(runner, "customer_overrides", side_effect=lambda: order.append("overrides")), \
+                patch.object(runner, "write_applied", side_effect=lambda *args: order.append("applied-kit")), \
                 patch.object(runner, "report", side_effect=lambda token, seq, *args: order.append("report-" + str(seq))), \
                 patch.object(runner, "verify_target"), patch.object(runner, "orchestration_mutex", side_effect=mutex), \
                 patch.object(runner, "mirror_images", side_effect=lambda: order.append("mirror") or {}), \
@@ -279,7 +286,10 @@ class OrchestrationMutexTests(unittest.TestCase):
                 patch.object(runner, "verify_health", side_effect=lambda *args: order.append("https")), \
                 patch.object(runner, "verify_health_job", side_effect=lambda *args: order.append("signed-health-receipt")), patch("builtins.print"):
             runner.main()
-        self.assertEqual(order, ["report-1", "report-2", "report-3", "acquire", "mirror", "migration-and-rollout", "report-4", "services", "report-5", "https", "signed-health-receipt", "release", "report-6"])
+        # The marker and the tuning file are checked before "project verified" and
+        # before the lock; the applied record is stored before "infrastructure installed".
+        self.assertEqual(order, ["report-1", "report-2", "ejected-check", "overrides", "report-3", "acquire", "mirror", "migration-and-rollout",
+                                 "applied-kit", "report-4", "services", "report-5", "https", "signed-health-receipt", "release", "report-6"])
 
 
 class TrafficAttributionTests(unittest.TestCase):

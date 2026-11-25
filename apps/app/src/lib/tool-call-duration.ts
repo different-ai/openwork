@@ -50,8 +50,5 @@ export function formatElapsedSeconds(seconds: number): string {
 export function formatToolCallDuration(ms: number): string {
   const seconds = ms / 1000
   if (seconds < 10) return `${Math.max(0.1, Number(seconds.toFixed(1)))}s`
-  if (seconds < 60) return `${Math.round(seconds)}s`
-  const minutes = Math.floor(seconds / 60)
-  const rest = Math.round(seconds % 60)
-  return `${minutes}m ${rest}s`
+  return formatElapsedSeconds(Math.round(seconds))
 }

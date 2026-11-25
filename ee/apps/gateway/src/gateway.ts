@@ -3,7 +3,7 @@ import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { validateInferenceUrl, createGcpServiceAccountTokenMinter, createAwsSsoRoleCredentialMinter, isAllowedRequestHeader, parseBedrockModelPath, parseGoogleModelPath, stripApiVersionPrefix, isAwsFamily, materializeAuth, resolveUpstream, type ResolvedUpstream } from "@openwork-ee/gateway-upstreams"
-import { BEDROCK_MANTLE_DEFAULT_API_PATH, parseGatewayModelAlias, isLiteLlmProviderId, liteLlmEntraScope, liteLlmSpendTrackingEnabled, isTrueFoundryProviderId, trueFoundryTracksUsageCosts } from "@openwork-ee/gateway-catalog"
+import { BEDROCK_MANTLE_DEFAULT_API_PATH, classifyLiteLlmAuthError, parseGatewayModelAlias, isLiteLlmProviderId, liteLlmEntraScope, liteLlmKeySource, liteLlmSpendTrackingEnabled, isTrueFoundryProviderId, trueFoundryTracksUsageCosts, type LiteLlmAuthErrorReason, type LiteLlmKeySource } from "@openwork-ee/gateway-catalog"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
@@ -27,7 +27,6 @@ import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provi
 import type { GatewayCredential, GatewayProvider, LoadProviderCredential } from "./provider-credentials.js"
 import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime, describeUpstreamFetchFailure } from "./relay.js"
 import { env } from "./env.js"
-import { checkLiteLlmEntraFeature, type CheckLiteLlmEntraFeature } from "./litellm-entra-feature.js"
 import { gatewayLog } from "./log.js"
 import { respondBeforeUpstream } from "./early-response.js"
 import type { EarlyStreamProtocol } from "./early-response.js"
@@ -36,6 +35,7 @@ import { checkGatewayUsage, type CheckGatewayUsage } from "./usage-limits.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import type { ParsedUsage, UsageParser, ReasoningStore } from "@openwork-ee/gateway-protocols"
 import { autoRouterIdFromModel } from "@openwork/types/den/auto-router"
+import type { FundedModelGuard } from "./funded-model-access.js"
 import { loadAutoRouterConfigFromDb, loadMemberAutoRoutersFromDb, type LoadAutoRouterConfig, type LoadMemberAutoRouters } from "./auto-router/config.js"
 import { handleAutoRequest, type AutoRouterDependencies } from "./auto-router/handler.js"
 import { smartToolRouters, type SmartToolDependencies } from "./smart-tools.js"
@@ -63,7 +63,6 @@ export type GatewayDependencies = {
   updateRequestLog?: RequestLogRecorderDependencies["updateRequestLog"]
   reporter: InferenceReporter
   loadGatewayProvider: LoadGatewayProvider
-  checkLiteLlmEntraFeature: CheckLiteLlmEntraFeature
   loadGatewayAccess: LoadGatewayAccess
   loadMemberGatewayAccess: LoadMemberGatewayAccess
   resolveGatewayModelProvider: ResolveGatewayModelProvider
@@ -78,6 +77,7 @@ export type GatewayDependencies = {
   askJev: AskJev
   autoRouterReasoning: ReasoningStore
   autoRouterRoutingConfigured: boolean
+  fundedModelGuard?: FundedModelGuard
 }
 
 export type GatewayRouteDependencies =
@@ -165,6 +165,83 @@ export function genericProviderAuthError(input: {
   return { response, errorCode }
 }
 
+export function liteLlmProviderAuthError(input: {
+  status: 401 | 403
+  providerId: string
+  credentialMode: "org" | "member"
+  keySource: LiteLlmKeySource | null
+  modelId: string
+  reason: LiteLlmAuthErrorReason
+  requestId: string
+}) {
+  const denied = input.status === 403
+  const model = input.modelId.trim() || "this model"
+  let message: string
+  if (input.credentialMode === "member" && input.keySource === "entra") {
+    if (denied) {
+      if (input.reason === "model_denied") {
+        message = `LiteLLM denied access to ${model} for your Microsoft account. Ask your LiteLLM administrator to grant your user or team access to ${model}.`
+      } else if (input.reason === "user_not_found") {
+        message = "LiteLLM did not recognize your Microsoft account. Ask your LiteLLM administrator to add your user or enable user_id_upsert in LiteLLM."
+      } else if (input.reason === "budget_exceeded") {
+        message = "LiteLLM blocked this request because your LiteLLM budget limit was reached. Ask your LiteLLM administrator to check your user or team budget."
+      } else {
+        message = `LiteLLM denied access to ${model} for your Microsoft sign-in. Ask your LiteLLM administrator to check your user or team permissions and budget in LiteLLM.`
+      }
+    } else if (input.reason === "jwt_mismatch") {
+      message = "LiteLLM rejected your Microsoft sign-in token. Ask your administrator to check the LiteLLM JWT issuer, audience, and v2 access token settings, then sign in again."
+    } else if (input.reason === "user_not_found") {
+      message = "LiteLLM did not recognize your Microsoft account. Ask your LiteLLM administrator to add your user or enable user_id_upsert in LiteLLM."
+    } else {
+      message = "LiteLLM rejected your Microsoft sign-in. Sign in with Microsoft again in OpenWork; if the problem persists, ask your administrator to check LiteLLM JWT settings."
+    }
+  } else if (input.credentialMode === "org") {
+    if (denied) {
+      if (input.reason === "model_denied") {
+        message = `LiteLLM denied access to ${model} for your organization's key. Ask your administrator to check the key's allowed models in LiteLLM and sync LiteLLM in AI Gateway.`
+      } else if (input.reason === "budget_exceeded") {
+        message = "LiteLLM blocked this request because your organization's LiteLLM budget limit was reached. Ask your administrator to check the key budget in LiteLLM."
+      } else {
+        message = `LiteLLM denied access to ${model} for your organization's key. Ask your administrator to check the key's permissions and budget in LiteLLM.`
+      }
+    } else {
+      message = "LiteLLM rejected your organization's API key. Ask your administrator to check or replace the LiteLLM key in AI Gateway."
+    }
+  } else if (input.keySource === "issued") {
+    if (denied) {
+      if (input.reason === "model_denied") {
+        message = `LiteLLM denied access to ${model} for your LiteLLM user or team. Ask your LiteLLM administrator to check your model access and sync LiteLLM in AI Gateway.`
+      } else if (input.reason === "budget_exceeded") {
+        message = "LiteLLM blocked this request because your LiteLLM budget limit was reached. Ask your LiteLLM administrator to check your user or team budget."
+      } else {
+        message = `LiteLLM denied access to ${model} for your LiteLLM account. Ask your LiteLLM administrator to check your user or team permissions and budget in LiteLLM.`
+      }
+    } else {
+      message = "LiteLLM rejected your OpenWork-managed LiteLLM key. Ask your administrator to sync LiteLLM in AI Gateway."
+    }
+  } else if (denied) {
+    if (input.reason === "model_denied") {
+      message = `LiteLLM denied access to ${model} for your LiteLLM key. Ask your LiteLLM administrator to grant your key access to ${model}, or reconnect a key with access.`
+    } else if (input.reason === "budget_exceeded") {
+      message = "LiteLLM blocked this request because your LiteLLM key's budget limit was reached. Ask your LiteLLM administrator to check your budget."
+    } else {
+      message = `LiteLLM denied access to ${model} for your LiteLLM key. Ask your LiteLLM administrator to check your key's permissions and budget, or reconnect your key.`
+    }
+  } else {
+    message = "LiteLLM rejected your LiteLLM key. Reconnect your LiteLLM key in OpenWork, or ask your LiteLLM administrator if it was revoked."
+  }
+  const errorCode = denied ? "provider_permission_denied" : "provider_authentication_failed"
+  const response = Response.json({ error: {
+    source: "openwork_gateway",
+    message,
+    type: "invalid_request_error",
+    code: errorCode,
+    provider_id: input.providerId,
+  } }, { status: input.status })
+  response.headers.set("x-openwork-request-id", input.requestId)
+  return { response, errorCode }
+}
+
 function displayProviderName(providerId: string) {
   const knownNames: Record<string, string> = {
     openrouter: "OpenRouter",
@@ -173,6 +250,8 @@ function displayProviderName(providerId: string) {
     deepseek: "DeepSeek",
     google: "Google",
     mistral: "Mistral",
+    litellm: "LiteLLM",
+    truefoundry: "TrueFoundry",
   }
   return knownNames[providerId.toLowerCase()] ?? providerId.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
@@ -376,10 +455,10 @@ function rewriteSelectedModel(prepared: PreparedRequest, upstream: ResolvedUpstr
   if (modified) prepared.body = JSON.stringify(json)
 }
 
-function buildUpstreamHeaders(request: Request, family: ProtocolFamily, openworkRequestId: string) {
+function buildUpstreamHeaders(request: Request, family: ProtocolFamily, providerHeaders: readonly string[], openworkRequestId: string) {
   const headers = new Headers()
   request.headers.forEach((value, name) => {
-    if (name.toLowerCase() !== GATEWAY_GRANT_HEADER && name.toLowerCase() !== GATEWAY_REQUEST_MODEL_HEADER && isAllowedRequestHeader(family, name)) headers.set(name, value)
+    if (name.toLowerCase() !== GATEWAY_GRANT_HEADER && name.toLowerCase() !== GATEWAY_REQUEST_MODEL_HEADER && isAllowedRequestHeader(family, name, providerHeaders)) headers.set(name, value)
   })
   headers.set("x-openwork-request-id", openworkRequestId)
   return headers
@@ -642,7 +721,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     updateRequestLog: input.updateRequestLog,
     reporter: input.reporter,
     loadGatewayProvider: input.loadGatewayProvider ?? loadGatewayProviderFromDb,
-    checkLiteLlmEntraFeature: input.checkLiteLlmEntraFeature ?? checkLiteLlmEntraFeature,
     loadGatewayAccess: input.loadGatewayAccess ?? loadGatewayAccessFromDb,
     loadMemberGatewayAccess: input.loadMemberGatewayAccess ?? loadMemberGatewayAccessFromDb,
     resolveGatewayModelProvider: input.resolveGatewayModelProvider ?? resolveGatewayModelProviderFromDb,
@@ -684,16 +762,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return gatewayError(404, "provider_not_found", `Unknown inference provider: ${inferenceProviderId}.`)
     }
     const entraMode = usesLiteLlmEntra(provider)
-    const featureDisabled = () => gatewayError(403, "feature_disabled", "Microsoft sign-in for this provider is turned off.")
-    const entraEnabled = async () => {
-      try {
-        return await dependencies.checkLiteLlmEntraFeature(identity)
-      } catch {
-        return false
-      }
-    }
     if (entraMode) {
-      if (!await entraEnabled()) return featureDisabled()
       const current = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId, consistency: "primary" })
       if (!current || !usesLiteLlmEntra(current) || liteLlmEntraScope(current) === null) {
         return gatewayError(503, "provider_configuration_changed", "The inference provider changed. Retry the same selection.")
@@ -821,6 +890,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return reject(gatewayError(403, selected.code, "No current grant authorizes this model and selection."), selected.code, "Gateway model access denied")
     }
     selection = selected.selection
+    if (selection.row.credentialSet.credential_mode === "org") {
+      const denied = await input.fundedModelGuard?.(identity, { kind: "sandbox", credentialSetId: selection.row.credentialSet.id })
+      if (denied) return denied
+    }
     if (isLiteLlmProviderId(provider.provider_id)) {
       spendTracking = liteLlmSpendTrackingEnabled(selection.row.credentialSet.credential_mode)
       const price = spendTracking && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
@@ -848,7 +921,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       selection,
       envNames: catalog?.env ?? [],
       loadProviderCredential: dependencies.loadProviderCredential,
-      checkLiteLlmEntraFeature: entraMode ? entraEnabled : undefined,
       refreshMemberToken: dependencies.refreshMemberToken,
       mintGcpAccessToken: dependencies.mintGcpAccessToken,
       mintAwsRoleCredentials: dependencies.mintAwsRoleCredentials,
@@ -863,8 +935,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         credentialId: "credentialId" in credential ? credential.credentialId : null,
       })
       switch (credential.kind) {
-        case "feature_disabled":
-          return reject(featureDisabled(), "feature_disabled", "Microsoft sign-in feature disabled")
         case "retry": {
           const response = gatewayError(503, "provider_credential_retry", "The provider credential is temporarily unavailable. Retry shortly.", { provider_id: provider.id })
           response.headers.set("retry-after", "5")
@@ -954,7 +1024,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       requestBytes: prepared.body === null ? null : Buffer.byteLength(prepared.body),
     })
 
-    const headers = buildUpstreamHeaders(request, resolved.family, openworkRequestId)
+    const headers = buildUpstreamHeaders(request, resolved.family, catalog?.requestHeaders ?? [], openworkRequestId)
     if (auth.kind === "header") headers.set(auth.header.name, auth.header.value)
     else auth.sign({ method, url: prepared.url, headers, body: prepared.body })
 
@@ -980,10 +1050,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
 
     const lifetime = upstreamLifetime(request.signal, env.upstreamTimeoutMs)
     const dispatch = async (): Promise<Response> => {
-      if (entraMode && !await entraEnabled()) {
-        lifetime.dispose()
-        return reject(featureDisabled(), "feature_disabled", "Microsoft sign-in feature disabled")
-      }
       let upstream: Response
       try {
         validateInferenceUrl(prepared.url)
@@ -1003,7 +1069,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
               provider_output_limit: rejection.limit,
             })
             prepared.body = JSON.stringify(prepared.json)
-            const retryHeaders = buildUpstreamHeaders(request, resolved.family, openworkRequestId)
+            const retryHeaders = buildUpstreamHeaders(request, resolved.family, catalog?.requestHeaders ?? [], openworkRequestId)
             if (auth.kind === "header") retryHeaders.set(auth.header.name, auth.header.value)
             else auth.sign({ method, url: prepared.url, headers: retryHeaders, body: prepared.body })
             lifetime.signal.throwIfAborted()
@@ -1097,6 +1163,33 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         return response
       }
 
+      if (isLiteLlmProviderId(provider.provider_id) && (upstream.status === 401 || upstream.status === 403)) {
+        const snippet = new TextDecoder().decode(await readBoundedBody({ body: upstream.body, signal: lifetime.signal }, 4096).catch(() => new Uint8Array()))
+        const reason = classifyLiteLlmAuthError(snippet)
+        const keySource = liteLlmKeySource(provider)
+        gatewayLog.warn("litellm upstream auth or permission failure", {
+          request_id: openworkRequestId,
+          organization_id: identity.organizationId,
+          inference_provider_id: provider.id,
+          status: upstream.status,
+          credential_mode: selection.row.credentialSet.credential_mode,
+          litellm_key_source: keySource,
+          litellm_auth_reason: reason,
+        })
+        const result = liteLlmProviderAuthError({
+          status: upstream.status,
+          providerId: provider.id,
+          credentialMode: selection.row.credentialSet.credential_mode,
+          keySource,
+          modelId: selection.row.model?.model_id ?? selection.upstreamModel ?? "",
+          reason,
+          requestId: openworkRequestId,
+        })
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode: result.errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
+        lifetime.dispose()
+        return result.response
+      }
+
       if (upstream.status === 401 || upstream.status === 403) {
         const result = genericProviderAuthError({
           status: upstream.status,
@@ -1136,22 +1229,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     })
   }
 
-  const loadEnabledMemberGatewayAccess: LoadMemberGatewayAccess = async (identity) => {
-    const rows = await dependencies.loadMemberGatewayAccess(identity)
-    const isEntraRow = (row: typeof rows[number]) => isLiteLlmProviderId(row.provider.provider_id) && row.provider.litellmKeySource === "entra"
-    if (!rows.some(isEntraRow)) return rows
-    let enabled = false
-    try {
-      enabled = await dependencies.checkLiteLlmEntraFeature(identity)
-    } catch {
-    }
-    return enabled ? rows : rows.filter((row) => !isEntraRow(row))
-  }
-
   function autoDependencies(c: Context<GatewayEnv>, identity: GatewayContext): AutoRouterDependencies {
     return {
+      fundedAccess: () => input.fundedModelGuard?.(identity, { kind: "managed" }),
       loadConfig: dependencies.loadAutoRouterConfig,
-      loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+      loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
       catalog: dependencies.catalog,
       askJev: dependencies.askJev,
       reasoningStore: dependencies.autoRouterReasoning,
@@ -1177,7 +1259,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return next()
     c.header("cache-control", "no-store")
-    const rows = await loadEnabledMemberGatewayAccess(identity)
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
     const routers = identity.keySource === "api_key" ? await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity)) : []
     return c.json(listGatewayModels(rows, routers))
   })
@@ -1185,7 +1267,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     c.header("cache-control", "no-store")
-    const rows = await loadEnabledMemberGatewayAccess(identity)
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
     return c.json(listCursorModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   const cursorChat = async (c: Context<GatewayEnv>, api: CursorApi) => {
@@ -1207,7 +1289,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       api,
       identity,
       dependencies: {
-        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),
@@ -1221,7 +1303,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
     c.header("cache-control", "no-store")
-    const rows = await loadEnabledMemberGatewayAccess(identity)
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
     return c.json(listClaudeCodeModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   const claudeCodeBody = async (c: Context<GatewayEnv>): Promise<JsonObject | Response> => {
@@ -1251,7 +1333,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       body,
       identity,
       dependencies: {
-        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),
@@ -1264,7 +1346,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     c.header("cache-control", "no-store")
-    const rows = await loadEnabledMemberGatewayAccess(identity)
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
     return c.json(listCodexModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   api.post(codexResponsesPath, async (c) => {
@@ -1285,7 +1367,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       body,
       identity,
       dependencies: {
-        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),

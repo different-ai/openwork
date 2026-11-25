@@ -2,6 +2,7 @@ const MODEL_ACCESS_REFUSALS = new Set([
   "cloud_agent_model_unavailable",
   "cloud_model_unavailable",
   "model_access_unavailable",
+  "funded_model_account_suspended",
   "cloud_agent_gateway_model_unavailable",
   "cloud_agent_gateway_member_not_found",
 ])

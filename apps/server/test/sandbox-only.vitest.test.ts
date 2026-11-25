@@ -41,7 +41,7 @@ test("mode truth table: a required sandbox never becomes off or additive when di
         const required = local === "force" || org === "force" || org === "unverified";
         expect(await runtime.status(f.workspace)).toEqual({ mode: required ? "only" : enabled && (local === "use" || org === "use") ? "tools" : "off" });
         await expect(runtime.execute(f.workspace, "shell", { command: "true" })).rejects.toThrow(/Nothing ran/);
-        // Even a previously offered call cannot acquire a provider when the rollout is off.
+        // Even a previously offered call cannot acquire a provider when access is refused.
         expect(factories).toBe(enabled ? 1 : 0);
         expect(await runtime.status(f.workspace)).toEqual({ mode: required ? "only" : enabled && (local === "use" || org === "use") ? "tools" : "off" });
       } finally { await runtime.close(); }
@@ -125,21 +125,18 @@ test("a concurrent Use-only save cannot undo a Force save", async () => {
   } finally { await f.cleanup(); }
 });
 
-test("Den verification runs both reads in parallel, shares them, and expires without losing a restriction on failure", async () => {
+test("Den verification shares one read and expires without losing a restriction on failure", async () => {
   const f = await fixture();
   let desktopReads = 0;
-  let orgReads = 0;
   let mode: "use" | "force" | "offline" = "use";
-  const orgStarted = Promise.withResolvers<void>();
   const desktopStarted = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
   const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
-    const isOrg = new URL(request.url).pathname === "/v1/org";
-    if (isOrg) { orgReads++; orgStarted.resolve(); }
-    else { desktopReads++; desktopStarted.resolve(); }
+    expect(new URL(request.url).pathname).toBe("/v1/me/desktop-config");
+    desktopReads++;
+    desktopStarted.resolve();
     await release.promise;
     if (mode === "offline") return new Response(null, { status: 403 });
-    if (isOrg) return Response.json({ features: { sandboxTools: true } });
     expect(request.headers.get("x-openwork-sandbox-only")).toBe("1");
     expect(request.headers.get("x-openwork-sandbox-modes")).toBe("1");
     return Response.json({ agentPermissions: { rules: [{ action: mode === "force" ? "host_execution" : "sandbox_opt_out", resource: "*", effect: "deny", source: "Everyone" }] } });
@@ -148,7 +145,7 @@ test("Den verification runs both reads in parallel, shares them, and expires wit
   try {
     await policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_concurrent", token: "member" });
     const parallel = Promise.all(Array.from({ length: 20 }, () => policy.localSandboxAccess()));
-    const firstRound = await Promise.race([Promise.all([orgStarted.promise, desktopStarted.promise]).then(() => true), delay(400, false)]);
+    const firstRound = await Promise.race([desktopStarted.promise.then(() => true), delay(400, false)]);
     expect(firstRound).toBe(true);
     release.resolve();
     for (const access of await parallel) expect(access).toMatchObject({ enabled: true, useRequired: true, hostDenied: false, hostPolicyVerified: true });
@@ -156,15 +153,15 @@ test("Den verification runs both reads in parallel, shares them, and expires wit
       await expect(policy.assertHostExecution()).resolves.toBeUndefined();
       expect(await policy.sandboxSettings()).toMatchObject({ managedUse: true, managedForce: false, effectiveUseSandbox: true });
     }
-    expect([desktopReads, orgReads]).toEqual([1, 1]);
+    expect(desktopReads).toBe(1);
     mode = "force";
     await delay(2_010);
     await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
-    expect([desktopReads, orgReads]).toEqual([2, 1]);
+    expect(desktopReads).toBe(2);
     mode = "offline";
     await writeSandboxSettings(f.config, { useSandbox: true, forceSandbox: false });
     expect(await policy.localSandboxAccess()).toMatchObject({ enabled: false, hostDenied: true, hostPolicyVerified: true });
-    expect([desktopReads, orgReads]).toEqual([3, 2]);
+    expect(desktopReads).toBe(3);
     await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
   } finally { release.resolve(); await den.stop(); await f.cleanup(); }
 });
@@ -196,15 +193,13 @@ test("desired intent is durable without changing the applied local policy of act
   } finally { await runtime.close(); await f.cleanup(); }
 });
 
-test("verified org deny beats local allow, survives flag off/outage and scoped cold restart", async () => {
+test("verified org deny beats local allow, survives an outage and scoped cold restart", async () => {
   const f = await fixture();
-  let enabled = true;
   let deny = true;
   let unavailable = false;
   const headers: (string | null)[] = [];
   const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: request => {
     if (unavailable) return new Response(null, { status: 503 });
-    if (new URL(request.url).pathname === "/v1/org") return Response.json({ features: { sandboxTools: enabled } });
     headers.push(request.headers.get("x-openwork-sandbox-only"));
     return Response.json({ agentPermissions: { rules: [{ action: "host_execution", resource: "*", effect: deny ? "deny" : "allow", source: "Everyone" }] } });
   } });
@@ -213,19 +208,17 @@ test("verified org deny beats local allow, survives flag off/outage and scoped c
     const policy = managedDesktopPolicy(f.config, { sandboxFreshnessMs: 0 });
     await policy.setSession(session);
     await policy.current();
-    expect(await policy.sandboxSettings()).toEqual({ useSandbox: false, forceSandbox: false, effectiveUseSandbox: true, effectiveForceSandbox: true, allowHostExecution: true, effectiveAllowHostExecution: false, managedUse: true, managedForce: true, managed: true, featureEnabled: true, verification: "verified" });
+    expect(await policy.sandboxSettings()).toEqual({ useSandbox: false, forceSandbox: false, effectiveUseSandbox: true, effectiveForceSandbox: true, allowHostExecution: true, effectiveAllowHostExecution: false, managedUse: true, managedForce: true, managed: true, verification: "verified" });
     expect(headers.every(header => header === "1")).toBe(true);
     await expect(policy.assertHostExecution()).rejects.toThrow("requires the sandbox");
     expect((await policy.computerRules()).map(rule => rule.effect)).toEqual(["deny", "deny", "deny", "deny"]);
-    enabled = false;
-    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: false, managed: true, featureEnabled: false });
     unavailable = true;
     const restarted = managedDesktopPolicy({ ...f.config });
     await restarted.setSession({ ...session, token: "rotated-fixture-token" });
-    expect(await restarted.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: false, managed: true, featureEnabled: false });
+    expect(await restarted.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: false, managed: true });
     unavailable = false;
     deny = false;
-    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: true, managed: false, featureEnabled: false });
+    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: true, managed: false });
     await writeSandboxSettings(f.config, { useSandbox: true, forceSandbox: true });
     expect(await policy.sandboxSettings()).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: false });
   } finally { await den.stop(); await f.cleanup(); }
@@ -235,8 +228,7 @@ test("a slow organization answer still verifies host authority instead of leavin
   const f = await fixture();
   let required = false;
   let reads = 0;
-  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
-    if (new URL(request.url).pathname === "/v1/org") return Response.json({ features: { sandboxTools: false } });
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async () => {
     reads++;
     // Every answer takes longer than the freshness window allows an answer to stay current.
     await delay(120);
@@ -262,27 +254,26 @@ test("a first unverified sign-in never grants host execution, even with local al
   const f = await fixture();
   let unavailable = true;
   let required = true;
-  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: request => {
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: () => {
     if (unavailable) return new Response(null, { status: 503 });
-    if (new URL(request.url).pathname === "/v1/org") return Response.json({ features: { sandboxTools: false } });
     return Response.json({ agentPermissions: { rules: [{ action: "host_execution", resource: "*", effect: required ? "deny" : "allow", source: "Everyone" }] } });
   } });
   const session = { baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_first_read", token: "first-fixture-token" };
   const policy = managedDesktopPolicy(f.config, { sandboxFreshnessMs: 0 });
   const runtime = createLocalSandboxRuntime(f.config);
   try {
-    // Signed-out ordinary mode is unchanged, including when rollout cannot be read.
+    // Signed-out ordinary mode is unchanged.
     await expect(policy.assertHostExecution()).resolves.toBeUndefined();
     await policy.setSession(session);
     await policy.current();
-    expect(await policy.sandboxSettings()).toEqual({ useSandbox: false, forceSandbox: false, effectiveUseSandbox: true, effectiveForceSandbox: true, allowHostExecution: true, effectiveAllowHostExecution: false, managedUse: false, managedForce: false, managed: false, featureEnabled: false, verification: "unavailable" });
+    expect(await policy.sandboxSettings()).toEqual({ useSandbox: false, forceSandbox: false, effectiveUseSandbox: true, effectiveForceSandbox: true, allowHostExecution: true, effectiveAllowHostExecution: false, managedUse: false, managedForce: false, managed: false, verification: "unavailable" });
     await expect(policy.assertHostExecution()).rejects.toThrow("couldn't check your permissions");
     expect(await runtime.status(f.workspace)).toEqual({ mode: "only" });
     unavailable = false;
-    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: false, managed: true, featureEnabled: false });
+    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: false, managed: true });
     await expect(policy.assertHostExecution()).rejects.toThrow("requires the sandbox");
     required = false;
-    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: true, managed: false, featureEnabled: false });
+    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: true, managed: false });
     // Previously verified Allow can keep its ordinary offline behaviour for
     // this identity; a changed identity must verify again, never inherit it.
     unavailable = true;
@@ -293,37 +284,25 @@ test("a first unverified sign-in never grants host execution, even with local al
   } finally { await runtime.close(); await policy.clearSession(); await den.stop(); await f.cleanup(); }
 });
 
-test("signed-out rollout reads only the trusted configured Den /v1/features without credentials", async () => {
+test("signed-out sandbox settings need no Den read and refuse an untrusted configured origin", async () => {
   const f = await fixture();
-  let enabled = true;
-  const calls: { path: string; authorization: string | null }[] = [];
-  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: request => {
-    calls.push({ path: new URL(request.url).pathname, authorization: request.headers.get("authorization") });
-    return Response.json({ version: 1, features: { sandboxTools: enabled } });
-  } });
+  let calls = 0;
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: () => { calls++; return new Response(null, { status: 404 }); } });
   f.config.trustedDenOrigin = `http://127.0.0.1:${den.port}`;
   try {
     const policy = managedDesktopPolicy(f.config, { sandboxFreshnessMs: 0 });
-    expect(await policy.sandboxSettings()).toEqual({ useSandbox: false, forceSandbox: false, effectiveUseSandbox: false, effectiveForceSandbox: false, allowHostExecution: true, effectiveAllowHostExecution: true, managedUse: false, managedForce: false, managed: false, featureEnabled: true, verification: "verified" });
-    enabled = false;
+    expect(await policy.sandboxSettings()).toEqual({ useSandbox: false, forceSandbox: false, effectiveUseSandbox: false, effectiveForceSandbox: false, allowHostExecution: true, effectiveAllowHostExecution: true, managedUse: false, managedForce: false, managed: false, verification: "verified" });
     await writeSandboxSettings(f.config, { useSandbox: true, forceSandbox: true });
-    expect(await policy.sandboxSettings()).toEqual({ useSandbox: true, forceSandbox: true, effectiveUseSandbox: true, effectiveForceSandbox: true, allowHostExecution: false, effectiveAllowHostExecution: false, managedUse: false, managedForce: false, managed: false, featureEnabled: false, verification: "verified" });
-    expect(calls).toEqual([{ path: "/v1/features", authorization: null }, { path: "/v1/features", authorization: null }]);
+    expect(await policy.sandboxSettings()).toEqual({ useSandbox: true, forceSandbox: true, effectiveUseSandbox: true, effectiveForceSandbox: true, allowHostExecution: false, effectiveAllowHostExecution: false, managedUse: false, managedForce: false, managed: false, verification: "verified" });
+    expect((await policy.localSandboxAccess()).enabled).toBe(true);
     f.config.trustedDenOrigin = `${f.config.trustedDenOrigin}/untrusted-path`;
     expect((await policy.localSandboxAccess()).enabled).toBe(false);
-    expect(calls).toHaveLength(2);
+    expect(calls).toBe(0);
   } finally { await den.stop(); await f.cleanup(); }
 });
 
-test("one short signed-out tool turn uses one feature read and a captured tool survives Use switching off", async () => {
+test("a captured tool in a short signed-out turn survives Use switching off", async () => {
   const f = await fixture();
-  let featureReads = 0;
-  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: request => {
-    expect(new URL(request.url).pathname).toBe("/v1/features");
-    featureReads++;
-    return Response.json({ features: { sandboxTools: true } });
-  } });
-  f.config.trustedDenOrigin = `http://127.0.0.1:${den.port}`;
   const provider = createFakeProvider({ id: "microsandbox" });
   const runtime = createLocalSandboxRuntime(f.config, { externalDirectories: async () => ({}), provider: async () => provider });
   const policy = managedDesktopPolicy(f.config);
@@ -357,7 +336,6 @@ test("one short signed-out tool turn uses one feature read and a captured tool s
     try {
       expect(tools.size).toBe(0);
       await writeSandboxSettings(f.config, { useSandbox: true, forceSandbox: false });
-      featureReads = 0;
       await prompt?.();
       await hooks.get("context")?.(state());
       await hooks.get("generate")?.(state());
@@ -366,13 +344,12 @@ test("one short signed-out tool turn uses one feature read and a captured tool s
       const call = { sessionID: "one-tool-turn", signal: AbortSignal.timeout(2_000) };
       expect(await shell?.execute({ command: "true" }, call)).toMatchObject({ metadata: { sandbox: true } });
       await hooks.get("generate")?.(state());
-      expect(featureReads).toBe(1);
       await writeSandboxSettings(f.config, { useSandbox: false, forceSandbox: false });
       expect(await shell?.execute({ command: "true" }, call)).toMatchObject({ metadata: { sandbox: true } });
       await prompt?.();
       expect(tools.size).toBe(0);
     } finally { await dispose(); }
-  } finally { await runtime.close(); await den.stop(); await f.cleanup(); }
+  } finally { await runtime.close(); await f.cleanup(); }
 });
 
 test("required catalog is bounded, before-call guards reject stale custom tools, and MCP is disabled before spawn", async () => {
@@ -480,7 +457,7 @@ test("host API guard covers files, alternate execution, MCP transports, but not 
   const f = await fixture();
   try {
     const policy = managedDesktopPolicy(f.config);
-    // Flag off/default preference: ordinary host surfaces retain their behaviour.
+    // Default preference: ordinary host surfaces retain their behaviour.
     await expect(policy.assertRequest(new Request("http://localhost/workspace/ws/files/raw"), "/workspace/ws/files/raw")).resolves.toBeUndefined();
     await writeSandboxSettings(f.config, { useSandbox: true, forceSandbox: true });
     await expect(policy.assertRequest(new Request("http://localhost/workspace/ws/files/raw"), "/workspace/ws/files/raw")).rejects.toThrow("This action can only run in the sandbox");
@@ -530,7 +507,7 @@ test("required runtime preserves absolute native mounts and read-only grants", a
   } finally { await runtime.close(); await f.cleanup(); }
 });
 
-test("server admission refuses a missing sandbox runtime while ordinary flag-off requests stay unchanged", async () => {
+test("server admission refuses a missing sandbox runtime while ordinary requests stay unchanged", async () => {
   const f = await fixture();
   const { createEngineV2Preview } = await import("../src/engine-v2-preview.js");
   const { EnvService } = await import("../src/env-file.js");
@@ -586,9 +563,10 @@ test("settings and folder GETs stay local while Den hangs, then report verified 
   let offline = false;
   const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async () => {
     await release.promise;
-    return offline ? new Response(null, { status: 403 }) : Response.json({ features: { sandboxTools: true } });
+    return offline ? new Response(null, { status: 403 }) : Response.json({ agentPermissions: { rules: [] } });
   } });
-  f.config.trustedDenOrigin = `http://127.0.0.1:${den.port}`;
+  const policy = managedDesktopPolicy(f.config);
+  const signedIn = policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_hanging", token: "fixture" });
   const { startServer } = await import("../src/server.js");
   const app = await startServer(f.config, { deferManagedEngineStartup: true });
   const headers = { authorization: `Bearer ${f.config.token}`, "content-type": "application/json" };
@@ -602,12 +580,12 @@ test("settings and folder GETs stay local while Den hangs, then report verified 
     const response = await fetch(url("sandbox-settings"), { headers, signal: AbortSignal.timeout(500) });
     expect(performance.now() - before).toBeLessThan(50);
     expect(response.headers.get("server-timing")).toMatch(/workspace;dur=.*db;dur=.*policy;dur=.*process;dur=/);
-    expect(await response.json()).toMatchObject({ verification: "checking", featureEnabled: false, effectiveUseSandbox: false });
+    expect(await response.json()).toMatchObject({ verification: "checking", effectiveForceSandbox: true });
     expect(await readdir(f.workspace)).toEqual(files);
-    const policy = managedDesktopPolicy(f.config);
     release.resolve();
+    await signedIn;
     await policy.localSandboxAccess();
-    expect(await (await fetch(url("sandbox-settings"), { headers })).json()).toMatchObject({ verification: "verified", featureEnabled: true });
+    expect(await (await fetch(url("sandbox-settings"), { headers })).json()).toMatchObject({ verification: "verified", effectiveForceSandbox: false });
     const put = async (body: unknown) => fetch(url("sandbox-settings"), { method: "PUT", headers, body: JSON.stringify(body) });
     for (const body of [{}, { useSandbox: 1 }, { useSandbox: false, allowHostExecution: false }]) {
       expect((await put(body)).status).toBe(400);
@@ -629,25 +607,25 @@ test("settings and folder GETs stay local while Den hangs, then report verified 
     await writeSandboxSettings(f.config, { useSandbox: false, forceSandbox: false });
     await policy.localSandboxAccess();
     const unavailable = await fetch(url("sandbox-settings"), { headers });
-    expect(await unavailable.json()).toMatchObject({ verification: "unavailable", featureEnabled: true, useSandbox: false });
-  } finally { release.resolve(); await app.stop(); await den.stop(); await f.cleanup(); }
+    expect(await unavailable.json()).toMatchObject({ verification: "unavailable", useSandbox: false });
+  } finally { release.resolve(); await app.stop(); await policy.clearSession(); await den.stop(); await f.cleanup(); }
 });
 
-test("sandbox settings GET backs off failed rollout verification and recovers without losing Force authority", async () => {
+test("sandbox settings GET backs off failed verification and recovers without losing Force authority", async () => {
   const f = await fixture();
   f.config.engineAutoUpgrade = false;
   const now = performance.now.bind(performance);
   let offset = 0;
   const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + offset);
   let reads = 0;
+  let signedIn = false;
   let release = Promise.withResolvers<void>();
-  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
-    if (new URL(request.url).pathname === "/v1/me/desktop-config") {
-      return Response.json({ agentPermissions: { rules: [{ action: "host_execution", resource: "*", effect: "deny", source: "Everyone" }] } });
-    }
+  const required = () => Response.json({ agentPermissions: { rules: [{ action: "host_execution", resource: "*", effect: "deny", source: "Everyone" }] } });
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async () => {
+    if (!signedIn) return required();
     const round = ++reads;
     await release.promise;
-    return round <= 2 ? new Response(null, { status: 403 }) : Response.json({ features: { sandboxTools: true } });
+    return round <= 2 ? new Response(null, { status: 403 }) : required();
   } });
   const policy = managedDesktopPolicy(f.config);
   const { startServer } = await import("../src/server.js");
@@ -666,9 +644,12 @@ test("sandbox settings GET backs off failed rollout verification and recovers wi
       expect(result).toMatchObject({ hostDenied: true, hostPolicyVerified: true });
       release = Promise.withResolvers<void>();
     };
-    expect(await read()).toMatchObject({ verification: "checking", ...restrictive });
+    await policy.localSandboxAccess();
+    signedIn = true;
+    offset += 2_000;
+    expect(await read()).toMatchObject({ verification: "refreshing", ...restrictive });
     await finish();
-    expect(await read()).toMatchObject({ verification: "unavailable", featureEnabled: false, ...restrictive });
+    expect(await read()).toMatchObject({ verification: "unavailable", ...restrictive });
     expect(reads).toBe(1);
     offset += 2_000;
     expect(await read()).toMatchObject({ verification: "checking", ...restrictive });
@@ -679,10 +660,10 @@ test("sandbox settings GET backs off failed rollout verification and recovers wi
     offset += 2_000;
     expect(await read()).toMatchObject({ verification: "checking", ...restrictive });
     await finish();
-    expect(await read()).toMatchObject({ verification: "verified", featureEnabled: true, ...restrictive });
+    expect(await read()).toMatchObject({ verification: "verified", ...restrictive });
     expect(reads).toBe(3);
     offset += 2_000;
-    expect(await read()).toMatchObject({ verification: "refreshing", featureEnabled: true, ...restrictive });
+    expect(await read()).toMatchObject({ verification: "refreshing", ...restrictive });
     // The answer took longer than the freshness window to arrive. The next read still
     // reports it as settled instead of starting another round.
     const slow = policy.localSandboxAccess();
@@ -690,7 +671,7 @@ test("sandbox settings GET backs off failed rollout verification and recovers wi
     release.resolve();
     await slow;
     release = Promise.withResolvers<void>();
-    expect(await read()).toMatchObject({ verification: "verified", featureEnabled: true, ...restrictive });
+    expect(await read()).toMatchObject({ verification: "verified", ...restrictive });
     expect(reads).toBe(4);
   } finally { release.resolve(); clock.mockRestore(); await app.stop(); await den.stop(); await f.cleanup(); }
 });
@@ -709,7 +690,7 @@ test("settings route requires approval before engine-global writes and leaves wo
   try {
     const route = `${root}/workspace/ws_sandbox/sandbox-settings`;
     await managedDesktopPolicy(f.config).localSandboxAccess();
-    expect(await (await fetch(route, { headers })).json()).toEqual({ useSandbox: false, forceSandbox: false, effectiveUseSandbox: false, effectiveForceSandbox: false, allowHostExecution: true, effectiveAllowHostExecution: true, pending: false, managedUse: false, managedForce: false, managed: false, featureEnabled: false, verification: "unavailable" });
+    expect(await (await fetch(route, { headers })).json()).toEqual({ useSandbox: false, forceSandbox: false, effectiveUseSandbox: false, effectiveForceSandbox: false, allowHostExecution: true, effectiveAllowHostExecution: true, pending: false, managedUse: false, managedForce: false, managed: false, verification: "verified" });
     const pending = fetch(route, { method: "PUT", headers, body: JSON.stringify({ allowHostExecution: false }) });
     let approvalId: string | undefined;
     for (let attempt = 0; attempt < 50 && !approvalId; attempt++) {
@@ -722,7 +703,7 @@ test("settings route requires approval before engine-global writes and leaves wo
     await fetch(`${root}/approvals/${approvalId}`, { method: "POST", headers: hostHeaders, body: JSON.stringify({ reply: "allow" }) });
     const updated = await pending;
     expect(updated.status).toBe(200);
-    expect(await updated.json()).toEqual({ useSandbox: true, forceSandbox: true, effectiveUseSandbox: true, effectiveForceSandbox: true, allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managedUse: false, managedForce: false, managed: false, featureEnabled: false, verification: "unavailable" });
+    expect(await updated.json()).toEqual({ useSandbox: true, forceSandbox: true, effectiveUseSandbox: true, effectiveForceSandbox: true, allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managedUse: false, managedForce: false, managed: false, verification: "refreshing" });
     expect(await readSandboxSettings(f.config)).toEqual({ useSandbox: true, forceSandbox: true });
     expect((await fetch(`${root}/workspace/ws_sandbox/files/raw?path=missing.txt`, { headers })).status).toBe(403);
     expect((await fetch(route, { method: "PUT", headers, body: JSON.stringify({ allowHostExecution: "yes" }) })).status).toBe(400);
@@ -733,35 +714,6 @@ test("settings route requires approval before engine-global writes and leaves wo
   }
 });
 
-test("host checks observe a new deny while an older rollout read is still held", async () => {
-  const f = await fixture();
-  const orgStarted = Promise.withResolvers<void>();
-  const releaseOrg = Promise.withResolvers<void>();
-  let deny = false, orgFinished = false;
-  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
-    if (new URL(request.url).pathname === "/v1/org") {
-      orgStarted.resolve();
-      await releaseOrg.promise;
-      orgFinished = true;
-      return Response.json({ features: { sandboxTools: true } });
-    }
-    return Response.json({ agentPermissions: { rules: deny ? [{ action: "host_execution", resource: "*", effect: "deny", source: "Everyone" }] : [] } });
-  } });
-  const policy = managedDesktopPolicy(f.config, { sandboxFreshnessMs: 100 });
-  try {
-    await policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_fixture", token: "fixture" });
-    const rollout = policy.localSandboxAccess();
-    await orgStarted.promise;
-    expect(await Promise.race([policy.assertHostExecution().then(() => "allowed"), delay(300, "blocked on rollout")])).toBe("allowed");
-    deny = true;
-    await delay(110);
-    await expect(Promise.race([policy.assertHostExecution(), delay(300, "blocked on rollout")])).rejects.toMatchObject({ code: "sandbox_only" });
-    expect(orgFinished).toBe(false);
-    releaseOrg.resolve();
-    expect(await rollout).toMatchObject({ hostDenied: true });
-  } finally { releaseOrg.resolve(); await den.stop(); await f.cleanup(); }
-});
-
 test("Force-off stays restrictive during a held and failed replacement; settings PUT never waits", async () => {
   const f = await fixture();
   f.config.engineAutoUpgrade = false;
@@ -769,7 +721,7 @@ test("Force-off stays restrictive during a held and failed replacement; settings
   const releaseDen = Promise.withResolvers<void>();
   const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async () => {
     await releaseDen.promise;
-    return Response.json({ features: { sandboxTools: false } });
+    return Response.json({ features: {} });
   } });
   f.config.trustedDenOrigin = `http://127.0.0.1:${den.port}`;
   const env = { OPENWORK_ENGINE_V2_PREVIEW: "1", OPENWORK_ENGINE_V2_CHAT: "1", OPENWORK_OPENCODE2_BIN: "fixture" };

@@ -211,6 +211,14 @@ export async function exchangeHeadlessResumeGrant(
     now.getTime(),
   )
   if (retryAfterSeconds !== null) return { ok: false, status: 429, error: "rate_limited", retryAfterMs: retryAfterSeconds * 1000 }
+  if (!input.modelAccessRequired) {
+    const { assertFundedUserAllowed } = await import("../openai-safety/account-suspensions.js")
+    try { await assertFundedUserAllowed(row.userId) }
+    catch (error) {
+      if (error instanceof Error && error.message === "funded_model_account_suspended") return { ok: false, status: 403, error: "model_unavailable" }
+      throw error
+    }
+  }
   let modelAccess: HeadlessModelAccess | undefined
   if (input.modelAccessRequired) {
     if (!input.model) return { ok: false, status: 403, error: "model_unavailable" }

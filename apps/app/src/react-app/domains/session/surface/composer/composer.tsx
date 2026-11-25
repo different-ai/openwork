@@ -62,7 +62,7 @@ import { markFeatureUsed } from "@/app/lib/den";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import { NativeDictationControl } from "./native-dictation-control";
 import { useSessionReferencesMaybe, type SessionReferenceCandidate } from "@/components/chat/session-reference-context";
-import { formatRelativeTime } from "@/app/utils";
+import { formatRelativeTime, isMacPlatform } from "@/app/utils";
 import { filterSessionReferenceCandidates } from "./session-reference-search";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
@@ -82,6 +82,7 @@ type ComposerProps = {
   stopping?: boolean;
   steering: boolean;
   followUpDefault?: "queue" | "steer";
+  followUpChords?: boolean;
   submissionPreparing: boolean;
   submissionPreparingLabel?: string;
   queuedCount: number;
@@ -373,6 +374,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   }, [dictation, props.childConversation, props.busy, props.disabled, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
 
   const showStop = props.busy && !props.editing;
+  const enterSteers = props.followUpDefault === "steer";
+  const followUpChords = [
+    { keys: "↵", label: enterSteers ? "settings.follow_up.steer" : "settings.follow_up.queue" },
+    { keys: isMacPlatform() ? "⌘↵" : "Ctrl+↵", label: enterSteers ? "settings.follow_up.queue" : "settings.follow_up.steer" },
+  ];
 
   const slashCommandQuery = inlineSuggestions ? null : getSlashCommandQuery(props.draft);
   const slashOpenNext = slashCommandQuery !== null;
@@ -1167,7 +1173,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       && event.target instanceof HTMLElement && event.target.closest("[data-composer-editor]")
     ) {
       event.preventDefault();
-      markFeatureUsed("followUpSuggestions");
       props.onDraftChange(followUpSuggestion);
       return;
     }
@@ -1550,6 +1555,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
             {props.busy && !props.stopping && escapeArmed ? (
               <div data-composer-stop-confirmation role="status" className="mt-2 text-[12px] font-medium text-gray-10">
                 {t("composer.escape_to_stop")}
+              </div>
+            ) : props.followUpChords && showStop && !props.stopping && !props.childConversation && canSend ? (
+              <div data-composer-follow-up-chords className="mt-2 flex items-center gap-3 text-xs text-gray-10 pointer-coarse:hidden">
+                {followUpChords.map((chord) => (
+                  <span key={chord.keys} className="flex items-center gap-1.5">
+                    <kbd className="rounded border border-dls-border px-1 py-0.5 font-sans text-[11px] leading-none">{chord.keys}</kbd>
+                    {t(chord.label)}
+                  </span>
+                ))}
               </div>
             ) : null}
             <div data-composer-toolbar className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1.5 gap-y-2 max-lg:flex @min-[560px]/composer:flex">

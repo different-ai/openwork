@@ -98,6 +98,7 @@ export async function proxyV2ProviderInference(input: {
       const value = request.headers.get(name);
       if (value !== null) headers.set(name, value);
     }
+    request.headers.forEach((value, name) => { if (name.startsWith("x-opencode-")) headers.set(name, value); });
     headers.set("authorization", `Bearer ${key}`);
     const response = await fetcher(`${base.href.replace(/\/+$/, "")}/${suffix}${query.size ? `?${query}` : ""}`, {
       method: "POST", headers, body: Buffer.concat(chunks, size), redirect: "error", signal,

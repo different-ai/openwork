@@ -150,6 +150,8 @@ export const idTypesMapNameToPrefix = {
   denInstance: "dni",
   workbotTeamSetting: "wts",
   workbotUsageDay: "wud",
+  harnessFeedbackGroup: "hfg",
+  harnessFeedbackReport: "hfr",
   remoteDevice: "rdv",
   remoteDeviceEvent: "rde",
   automationShare: "ats",

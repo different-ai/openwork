@@ -3,7 +3,7 @@ import { z } from "zod"
 import type { DesktopView, HeadlessModelAccess, Message, ToolCall, ToolSpec } from "./types.js"
 
 export function createModelAdapter(access: HeadlessModelAccess, options: { maxOutputTokens: number; fetch?: typeof fetch }): ModelClient {
-  const config = { ...options, baseUrl: access.baseUrl }
+  const config = { ...options, baseUrl: access.baseUrl, headers: access.headers }
   const client = access.protocol === "anthropic" ? anthropicModel(config)
     : access.protocol === "openai-responses" ? openAIResponsesModel(config)
     : openAIModel(config)
@@ -541,6 +541,7 @@ export function anthropicModel(options: {
   maxOutputTokens: number
   fetch?: Fetch
   sleep?: Sleep
+  headers?: Record<string, string>
 }): ModelClient {
   const sleep = options.sleep ?? defaultSleep
   const call = (request: ModelRequest, stream: boolean, continued: string) => {
@@ -549,7 +550,7 @@ export function anthropicModel(options: {
       fetch: options.fetch ?? fetch,
       sleep,
       url: `${options.baseUrl}/messages`,
-      headers: { "x-api-key": request.apiKey, "anthropic-version": "2023-06-01", ...sessionHeader(request) },
+      headers: { ...options.headers, "x-api-key": request.apiKey, "anthropic-version": "2023-06-01", ...sessionHeader(request) },
       signal: request.signal,
       body: {
         model: request.model,
@@ -797,7 +798,7 @@ async function readOpenAIStream(
   }, cutOff)
 }
 
-export function openAIModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep }): ModelClient {
+export function openAIModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep; headers?: Record<string, string> }): ModelClient {
   return {
     async complete(request) {
       const sleep = options.sleep ?? defaultSleep
@@ -805,7 +806,7 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
         fetch: options.fetch ?? fetch,
         sleep,
         url: `${options.baseUrl}/chat/completions`,
-        headers: { authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
+        headers: { ...options.headers, authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
         signal: request.signal,
         body: {
           model: request.model,
@@ -995,7 +996,7 @@ async function readResponsesStream(
   return responsesStep(final)
 }
 
-export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep }): ModelClient {
+export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep; headers?: Record<string, string> }): ModelClient {
   return {
     async complete(request) {
       const sleep = options.sleep ?? defaultSleep
@@ -1003,7 +1004,7 @@ export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens
         fetch: options.fetch ?? fetch,
         sleep,
         url: `${options.baseUrl}/responses`,
-        headers: { authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
+        headers: { ...options.headers, authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
         signal: request.signal,
         body: {
           model: request.model,

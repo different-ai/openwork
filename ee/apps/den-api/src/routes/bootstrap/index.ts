@@ -1,4 +1,5 @@
 import { recordFreeAutoFounder } from "@openwork-ee/den-db"
+import { WorkspaceLimitReachedError, assertWorkspaceCreateAllowed, recordWorkspaceLimitReached, workspaceLimitReachedSchema, type WorkspaceLimitReached } from "../../workspace-create-limit.js"
 import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
@@ -266,9 +267,17 @@ async function transferProvisionalWorkspace(tx: BootstrapTransaction, claim: {
   role: string
   userId: ReturnType<typeof normalizeDenTypeId<"user">>
   now: Date
-}): Promise<{ status: "membership_removed" } | { status: "ok"; memberId: ReturnType<typeof createDenTypeId<"member">> }> {
+}): Promise<{ status: "membership_removed" } | { status: "workspace_limit_reached"; body: WorkspaceLimitReached } | { status: "ok"; memberId: ReturnType<typeof createDenTypeId<"member">> }> {
   const { now } = claim
   const normalizedUserId = claim.userId
+  if (claim.role === "owner") {
+    try {
+      await assertWorkspaceCreateAllowed(tx, normalizedUserId)
+    } catch (error) {
+      if (error instanceof WorkspaceLimitReachedError) return { status: "workspace_limit_reached", body: error.body }
+      throw error
+    }
+  }
   const [existingMember] = await tx
     .select({ id: MemberTable.id })
     .from(MemberTable)
@@ -589,7 +598,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         200: jsonResponse("Workspace claim accepted.", acceptClaimResponseSchema),
         400: jsonResponse("The claim request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to claim a workspace.", unauthorizedSchema),
-        403: jsonResponse("The caller cannot accept this claim.", forbiddenSchema),
+        403: jsonResponse("The caller cannot accept this claim, or they reached their workspace limit.", forbiddenSchema.or(workspaceLimitReachedSchema)),
         404: jsonResponse("The claim token was missing, expired, or already used.", notFoundSchema),
       },
     }),
@@ -653,7 +662,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           userId: normalizedUserId,
           now,
         })
-        if (transferred.status === "membership_removed") {
+        if (transferred.status !== "ok") {
           return transferred
         }
         const memberId = transferred.memberId
@@ -680,6 +689,10 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           error: "membership_removed",
           message: "Your access to this workspace was removed. Ask a workspace admin for a new invite.",
         }, 403)
+      }
+      if (result.status === "workspace_limit_reached") {
+        await recordWorkspaceLimitReached({ requestId: c.get("requestId"), method: "POST", route: "/v1/bootstrap/claims/accept", userId: normalizedUserId })
+        return c.json(result.body, 403)
       }
 
       if (session?.id) {
@@ -783,7 +796,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         200: jsonResponse("The workspace was claimed.", acceptClaimResponseSchema),
         400: jsonResponse("The request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("The caller's access to this workspace was removed.", forbiddenSchema),
+        403: jsonResponse("The caller's access to this workspace was removed, or they reached their workspace limit.", forbiddenSchema.or(workspaceLimitReachedSchema)),
         404: jsonResponse("The code is unknown, used, or expired.", notFoundSchema),
       },
     }),
@@ -827,7 +840,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           userId: normalizedUserId,
           now,
         })
-        if (transferred.status === "membership_removed") return transferred
+        if (transferred.status !== "ok") return transferred
         await tx.update(WorkspaceClaimCodeTable)
           .set({ state: "accepted", claimedByUserId: normalizedUserId, acceptedAt: now })
           .where(eq(WorkspaceClaimCodeTable.id, code.id))
@@ -847,6 +860,10 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       }
       if (result.status === "membership_removed") {
         return c.json({ error: "membership_removed", message: "Your access to this workspace was removed. Ask a workspace admin for a new invite." }, 403)
+      }
+      if (result.status === "workspace_limit_reached") {
+        await recordWorkspaceLimitReached({ requestId: c.get("requestId"), method: "POST", route: "/v1/bootstrap/claim-codes/accept", userId: normalizedUserId })
+        return c.json(result.body, 403)
       }
 
       await revokePreclaimCredentials(lookup.bootstrapId, now)

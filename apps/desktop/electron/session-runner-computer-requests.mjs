@@ -5,9 +5,12 @@
  * The chat's own card on this computer keeps working; whichever answers first
  * wins. A remote answer is "once" or "reject": it never becomes a standing
  * approval ("always", a remembered folder). What the person approves is shown
- * whole (the script, the file names, the site, a saved secret's name and field):
- * a request too long to show is reported, but can only be approved on this computer.
+ * whole (the script, the file names, the site, a saved secret's name and field, each command and its field):
+ * a request too long to show is reported, but can only be approved on this computer. So can one that needs a
+ * value pasted: it is typed into this computer's own card and never travels through a remote surface.
  */
+
+import { showValueCommand, validValueAsk, validValueCommand, validValueUnlock } from "@openwork/computer-use/value-command"
 
 const TITLE_MAX = 240
 const DETAIL_MAX = 2000
@@ -17,6 +20,8 @@ const SECRET_KINDS = new Map([["password", "password"], ["code", "one-time code"
 /** The input types a saved secret is filled into, in the card's words. */
 const SECRET_FIELDS = new Map([["password", "a password field"], ["text", "a text field"], ["email", "an email field"], ["tel", "a phone number field"],
   ["url", "a web address field"], ["search", "a search field"], ["textarea", "a multi-line text field"]])
+/** The input types a command's answer is typed into: a saved secret's, and a number field for a code. */
+const VALUE_FIELDS = new Map([...SECRET_FIELDS, ["number", "a number field"]])
 /** The same characters the chat's card reveals: they change how text reads without changing what runs. */
 const HIDDEN_CHARACTERS = /[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F-\u009F\u00AD\u061C\u115F-\u1160\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB\u{E0000}-\u{E007F}]/gu
 
@@ -72,9 +77,43 @@ export function computerRequestPending(request) {
       detail = `${app} opened a file panel on that computer. The agent sees the file names it shows, and asks again before handing any file over.`
     }
   } else if (request.reason === "credential" && request.credential) {
-    const { site, app, appId, secret } = request.credential
+    const { site, app, appId, secret, fills } = request.credential
     allow = true
-    if (secret) {
+    if (fills) {
+      // Each command runs on that computer as the person: it is approved by its exact words, its field and the site.
+      const where = shown(site ?? "")
+      const listed = Array.isArray(fills) ? fills : []
+      const into = (fill) => `\n  into ${VALUE_FIELDS.get(fill.field) ?? `a field of type ${shown(fill.field)}`}${typeof fill.needs === "string" ? `, with ${shown(fill.needs)} set` : ""}`
+      // A key a command reads from its environment is its own line: the variable, and the program it is for.
+      const key = (fill) => typeof fill.program === "string" && validValueUnlock({ env: fill.unlock, ask: fill.ask })
+        ? `${fill.kept === true ? "Kept for this chat" : "Pasted on that computer"}: ${shown(fill.ask)}\n  as ${fill.unlock} for ${shown(fill.program)}` : null
+      const lines = listed.map((fill) => !fill ? null : fill.unlock !== undefined ? key(fill)
+        : typeof fill.field !== "string" || !fill.field.trim() ? null
+        : fill.ask === undefined ? validValueCommand(fill.command) ? `${shown(showValueCommand(fill.command))}${into(fill)}` : null
+        : fill.command === undefined && validValueAsk(fill.ask) ? `${fill.kept === true ? "Kept for this chat" : "Pasted on that computer"}: ${shown(fill.ask)}${into(fill)}` : null)
+      const keys = listed.filter((fill) => fill?.unlock !== undefined)
+      const fields = listed.length - keys.length
+      const asked = listed.filter((fill) => fill?.ask !== undefined && fill.unlock === undefined)
+      if (!asked.length) {
+        title = fields === 1 ? "Run a command and fill what it prints on a website" : `Run ${fields} commands and fill what they print on a website`
+        detail = "OpenWork runs each command on that computer as you and types what it prints into the field, without showing it to the agent. Approve only commands you recognize, for the site you meant."
+        if (keys.length) {
+          detail += keys.every((fill) => fill.kept === true)
+            ? " A command is given the key you kept for this chat."
+            : " A command needs a key that you paste into OpenWork on that computer; it cannot be given from here."
+        }
+      } else {
+        title = fields === 1 ? "Fill a private value on a website" : `Fill ${fields} private values on a website`
+        detail = [...asked, ...keys].every((fill) => fill.kept === true)
+          ? "OpenWork types what you kept for this chat into the field, and what each command prints, without showing it to the agent. Approve only for the site you meant."
+          : "The agent asked for a value that you paste into OpenWork on that computer. It is typed into the field without being shown to the agent, and it cannot be given from here."
+      }
+      exact = `Site: ${where}\n${lines.join("\n")}`
+      // A line break in the site or a field would read as another line of what is approved.
+      if (secret || !where || /[\r\n]/.test(where) || !lines.length || lines.some((line) => line === null || line.split("\n").length !== 2)) allow = false
+      // A value is pasted into this computer's own card, never sent from a remote surface.
+      if ([...asked, ...keys].some((fill) => fill.kept !== true)) allow = false
+    } else if (secret) {
       // A saved secret is approved by its name, its exact site and the field it goes into: all three, or not here.
       const kind = SECRET_KINDS.get(secret.kind)
       const label = shown(secret.label)

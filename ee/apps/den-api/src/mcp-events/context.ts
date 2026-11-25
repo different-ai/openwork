@@ -3,7 +3,6 @@ import { McpEventTurnTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { workbotOwner } from "@openwork-ee/headless-protocol/workbot-routing"
 import { db } from "../db.js"
-import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
 import { createHeadlessRunnerClient, defaultHeadlessRunnerDeps } from "../headless-runner/client.js"
 import { headlessRunTokenId } from "../mcp/headless-run-token.js"
 import { resolveMcpMemberIdentity } from "../mcp/external-capabilities.js"
@@ -16,7 +15,7 @@ export type EventThread = typeof McpEventTurnTable.$inferSelect
 export class EventAccessError extends Error {}
 
 export async function bindEventTurn(input: { tokenId: string; resumeGrantId?: string | null; organizationId: string; userId: string; memberId?: string; sessionId?: string; model?: string; readOnly?: boolean; expiresAt: Date }) {
-  if (input.readOnly || !input.memberId || !input.sessionId || !input.model || !await organizationFeatureEnabled(input.organizationId, "mcpThreadEvents", { userId: input.userId })) return
+  if (input.readOnly || !input.memberId || !input.sessionId || !input.model) return
   await db.insert(McpEventTurnTable).values({
     tokenId: normalizeDenTypeId("oauthAccessToken", input.tokenId),
     resumeGrantId: input.resumeGrantId ? normalizeDenTypeId("headlessResumeGrant", input.resumeGrantId) : null,
@@ -51,8 +50,6 @@ export async function eventAccess(actor: Actor, originalScopes: readonly string[
     eq(MemberTable.id, actor.memberId), eq(MemberTable.organizationId, actor.organizationId), eq(MemberTable.userId, actor.userId), isNull(MemberTable.removedAt),
   )).limit(1)
   if (!member) throw new EventAccessError("Your membership is no longer active.")
-  const features = await getOrganizationFeatures(actor.organizationId, { userId: actor.userId })
-  if (!features.mcpThreadEvents) throw new EventAccessError("MCP thread events are turned off.")
   const settings = await resolveMemberWorkbotSettings({ ...actor })
   if (!settings.enabled) throw new EventAccessError("Workbot is turned off for this member.")
   const policy = await resolveMemberAgentPolicy({ ...actor, workbot: settings })
@@ -61,7 +58,7 @@ export async function eventAccess(actor: Actor, originalScopes: readonly string[
   if (!identity) throw new EventAccessError("Your membership is no longer active.")
   const usable = await listUsableExternalMcpConnections({ organizationId: actor.organizationId, ...identity, withheldConnectionIds: connectionsWithheld(new Set(scopes)) })
   const connections = await readyExternalMcpConnectionsForMember(usable.filter((connection) => connection.kind === "external_mcp"), actor.memberId)
-  return { connections, scopes, features }
+  return { connections, scopes }
 }
 
 export function eventRunner(actor: Actor, scopes: readonly string[]) {

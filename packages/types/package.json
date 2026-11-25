@@ -204,6 +204,14 @@
       "development": "./src/den/agent-permissions.ts",
       "default": "./src/den/agent-permissions.ts"
     },
+    "./den/private-value-fills": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/private-value-fills.d.ts",
+        "default": "./src/den/private-value-fills.ts"
+      },
+      "development": "./src/den/private-value-fills.ts",
+      "default": "./src/den/private-value-fills.ts"
+    },
     "./den/desktop-policies": {
       "types": {
         "openwork-build": "./dist/types/src/den/desktop-policies.d.ts",
@@ -572,6 +580,14 @@
       },
       "development": "./src/den/organization-grants.ts",
       "default": "./src/den/organization-grants.ts"
+    },
+    "./den/admin-limits": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-limits.d.ts",
+        "default": "./src/den/admin-limits.ts"
+      },
+      "development": "./src/den/admin-limits.ts",
+      "default": "./src/den/admin-limits.ts"
     },
     "./den/sandbox-organizations": {
       "types": {

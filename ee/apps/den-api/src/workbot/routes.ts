@@ -59,10 +59,8 @@ const sessionSchema = z.object({
   browserDemonstrations: z.boolean().optional(),
   browserRecovery: z.boolean().optional(),
   browserLiveView: z.boolean().optional(),
-  sandboxGateway: z.boolean().optional(),
   calendar: z.boolean().optional(),
   documents: z.boolean().optional(),
-  documentEditing: z.boolean().optional(),
   nativeDictation: z.boolean().optional(),
   workspaceAssistant: z.boolean().optional(),
   guidedNavigation: z.boolean().optional(),
@@ -382,11 +380,9 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         browserRecovery: env.features.deployment === "cloud",
         browserDemonstrations: features.browserDemonstrations && features.remoteComputers,
         browserLiveView: features.remoteComputers,
-        sandboxGateway: features.sandboxGateway,
         canSchedule,
         calendar: on,
         documents: on && features.workbotDocuments,
-        documentEditing: on && features.workbotDocuments && features.workbotDocumentEditing,
         nativeDictation: true,
         workspaceAssistant: on && features.workbotWorkspaceAssistant,
         guidedNavigation: on && features.workbotWorkspaceAssistant,
@@ -406,8 +402,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         activationChecklist: true,
         sideChats: on,
         scrollToBottom: true,
-        profileComputers: features.workbotProfileComputers,
-        deviceActivity: features.workbotDeviceActivity,
+        profileComputers: true,
+        deviceActivity: true,
         openworkApps: true,
         calmChat: features.workbotCalmChat,
         devices: on,
@@ -663,14 +659,12 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     },
   )
 
-  app.on(
-    ["GET", "POST"],
+  app.get(
     "/v1/workbot/documents/*",
-    bodyLimit({ maxSize: 2 * 1024 * 1024 }),
     describeWorkbotRoute({
       tags: ["Workbot"], operationId: "workbotDocumentsProxy", "x-mcp": false,
-      summary: "Browse, open and explicitly save connected documents",
-      description: "Allowlisted Drive metadata and inline-editor routes only. Rechecks membership, scopes and both feature flags; signed internal re-entry retains connector authorization. File bytes and document contents never enter chat.",
+      summary: "Browse and open connected documents",
+      description: "Allowlisted read-only Drive and OneDrive listing, metadata, editor-view and content routes only. Rechecks membership, scopes and both feature flags; signed internal re-entry retains connector authorization. File bytes and document contents never enter chat.",
       responses: { 200: jsonResponse("The document route's response.", z.unknown()), 403: jsonResponse("Documents is disabled, Workbot is off for the member, or this scope is missing.", signedOutSchema) },
     }),
     tokenRoute,
@@ -681,26 +675,16 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (auditBlocked) return auditBlocked
       const inner = c.req.path.slice("/v1/workbot/documents".length)
       const editor = /^\/v1\/documents\/(?:google-drive|microsoft-365)\/files\/[A-Za-z0-9_-]{1,512}\/(editor|content|metadata)$/.exec(inner)
-      const office = /^\/v1\/documents\/google-drive\/files\/[A-Za-z0-9_-]{1,512}\/office(?:\/[0-9a-f-]{36}(?:\/(save|close))?)?$/.exec(inner)
-      const read = c.req.method === "GET"
-      if (!(read && (inner === "/v1/capabilities/google-workspace/drive-files" || inner === "/v1/documents/microsoft-365/files")) && !(editor && (read || editor[1] === "editor")) && !(office && (read ? !office[1] && /\/[0-9a-f-]{36}$/.test(inner) : inner.endsWith("/office") || !!office[1]))) return c.json({ error: "not_found" }, 404)
+      if (inner !== "/v1/capabilities/google-workspace/drive-files" && inner !== "/v1/documents/microsoft-365/files" && !editor) return c.json({ error: "not_found" }, 404)
       const features = resolved.features
       if (editor?.[1] === "metadata" && !features.workbotWorkspaceAssistant) return c.json({ error: "feature_disabled", message: "Opening document links is off for this workspace." }, 403)
       if (!features.workbotDocuments) return c.json({ error: "workbot_documents_not_enabled", message: "Documents is off for this workspace." }, 403)
-      if (!read && !inner.endsWith("/close") && !features.workbotDocumentEditing) return c.json({ error: "feature_disabled", message: "Document editing is off for this workspace." }, 403)
-      if (!resolved.scopes.has(read ? DEN_MCP_READ_SCOPE : DEN_MCP_WRITE_SCOPE)) return c.json({ error: "insufficient_scope" }, 403)
+      if (!resolved.scopes.has(DEN_MCP_READ_SCOPE)) return c.json({ error: "insufficient_scope" }, 403)
       const url = new URL(c.req.url)
       const headers = new Headers({ accept: "application/json", "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({ userId: resolved.principal.userId, organizationId: resolved.principal.organizationId, credentialId: resolved.credentialId }) })
-      let body: string | undefined
-      if (!read) {
-        if (Number(c.req.header("content-length")) > 2 * 1024 * 1024) return c.json({ error: "file_too_large" }, 413)
-        body = await c.req.text()
-        if (Buffer.byteLength(body) > 2 * 1024 * 1024) return c.json({ error: "file_too_large" }, 413)
-        headers.set("content-type", "application/json")
-      }
       const range = editor?.[1] === "content" ? c.req.header("range") : undefined
       if (range) headers.set("range", range)
-      const response = await app.fetch(new Request(new URL(`${inner}${url.search}`, "http://den-api.local"), { method: c.req.method, headers, body }))
+      const response = await app.fetch(new Request(new URL(`${inner}${url.search}`, "http://den-api.local"), { method: "GET", headers }))
       const status = response.status === 502 ? 424 : response.status
       return new Response(response.body, { status, headers: { "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff", ...(editor?.[1] === "content" ? { "content-security-policy": "default-src 'none'; sandbox", ...rangeHeaders(response.headers) } : {}) } })
     },

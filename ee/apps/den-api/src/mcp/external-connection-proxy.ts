@@ -24,7 +24,6 @@ import { externalMcpDiagnosticForResponse } from "../capability-sources/external
 import { evaluateToolPolicy } from "../capability-sources/external-mcp-tool-policy.js"
 import { cache } from "../cache.js"
 import { env } from "../env.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { tokenRoute } from "../middleware/index.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { handleMcpAppServerRequest, isMcpAppServerId } from "./app-server.js"
@@ -99,13 +98,12 @@ const boundedGatewayTools: ExternalMcpProxyTool[] = [
   {
     name: EXECUTE_CAPABILITY_TOOL_NAME,
     title: "Execute capability",
-    description: "Execute an exact tool returned by search_capabilities on this connected MCP server, with arguments matching its inputSchema.",
+    description: "Execute an exact tool returned by search_capabilities on this connected MCP server.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", minLength: 1 },
-        arguments: { type: "object" },
-        body: { type: "object", description: "Older form of arguments." },
+        body: { type: "object" },
       },
       required: ["name"],
       additionalProperties: false,
@@ -113,24 +111,6 @@ const boundedGatewayTools: ExternalMcpProxyTool[] = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
 ]
-
-const legacyBoundedGatewayTools: ExternalMcpProxyTool[] = boundedGatewayTools.map((tool) => (
-  tool.name === EXECUTE_CAPABILITY_TOOL_NAME
-    ? {
-      ...tool,
-      description: "Execute an exact tool returned by search_capabilities on this connected MCP server.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: { type: "string", minLength: 1 },
-          body: { type: "object" },
-        },
-        required: ["name"],
-        additionalProperties: false,
-      },
-    }
-    : tool
-))
 
 function objectSchema(value: unknown): Record<string, unknown> | undefined {
   if (!isRecord(value) || (value.type !== undefined && value.type !== "object")) return undefined
@@ -192,13 +172,11 @@ export function createExternalConnectionProxyServer(input: {
   scopes: ReadonlySet<string>
   runtime?: ExternalMcpProxyRuntime
   appHostClient?: boolean
-  toolShapes?: boolean
   directExposureEnabled?: boolean
 }) {
   const { connection } = input.operation
   const runtime = input.runtime ?? externalMcpProxyRuntime
-  const gatewayTools = input.toolShapes === true ? boundedGatewayTools : legacyBoundedGatewayTools
-  const appGatewayTools = gatewayTools.map((tool) => ({
+  const appGatewayTools = boundedGatewayTools.map((tool) => ({
     ...tool,
     _meta: { ui: { visibility: ["app"] } },
   }))
@@ -276,7 +254,7 @@ export function createExternalConnectionProxyServer(input: {
         ? [...appGatewayTools, ...await listAppTools()]
         : directClient
           ? await listDirectTools()
-          : gatewayTools),
+          : boundedGatewayTools),
     }))
     server.setRequestHandler("tools/call", async (request) => {
       const args = toolArguments(request.params.arguments)
@@ -300,29 +278,20 @@ export function createExternalConnectionProxyServer(input: {
           const resourceUri = input.appHostClient ? externalMcpAppResourceUri(tool) : null
           return [{
             score,
-            match: input.toolShapes === true
-              ? {
-                name: tool.name,
-                description: summary,
-                inputSchema: tool.inputSchema,
-                schemaDigest: externalMcpToolSchemaDigest(tool.inputSchema),
-                ...(tool.annotations ? { annotations: tool.annotations } : {}),
-                ...(resourceUri ? { kind: "mcp_app", mcpApp: { resourceUri } } : {}),
-              }
-              : {
-                name: tool.name,
-                method: "MCP",
-                path: connection.name,
-                score,
-                summary,
-                pathParams: [],
-                queryParams: [],
-                hasBody: true,
-                argumentsSchema: tool.inputSchema,
-                schemaDigest: externalMcpToolSchemaDigest(tool.inputSchema),
-                invocation: { argumentsField: "body" },
-                ...(resourceUri ? { kind: "mcp_app", mcpApp: { resourceUri } } : {}),
-              },
+            match: {
+              name: tool.name,
+              method: "MCP",
+              path: connection.name,
+              score,
+              summary,
+              pathParams: [],
+              queryParams: [],
+              hasBody: true,
+              argumentsSchema: tool.inputSchema,
+              schemaDigest: externalMcpToolSchemaDigest(tool.inputSchema),
+              invocation: { argumentsField: "body" },
+              ...(resourceUri ? { kind: "mcp_app", mcpApp: { resourceUri } } : {}),
+            },
           }]
         }).sort((left, right) => (right.score - left.score) || left.match.name.localeCompare(right.match.name)).slice(0, limit)
           .map(({ match }) => match)
@@ -472,7 +441,6 @@ export async function handleExternalConnectionProxyRequest(input: {
   operation: ExternalMcpProxyOperation
   scopes: ReadonlySet<string>
   appHostClient?: boolean
-  toolShapes?: boolean
   directExposureEnabled?: boolean
   runtime?: ExternalMcpProxyRuntime
   dependencies?: Partial<ExternalMcpProxyRequestDependencies>
@@ -490,7 +458,6 @@ export async function handleExternalConnectionProxyRequest(input: {
       runtime: input.runtime,
       appHostClient: input.appHostClient === true,
       directExposureEnabled: input.directExposureEnabled === true,
-      toolShapes: input.toolShapes === true,
     })
     const response = await dependencies.serve(server, input.context, input.operation.connection.organizationId)
     return response ?? new Response(null, { status: 204 })
@@ -509,7 +476,6 @@ export type ExternalConnectionProxyRouteDeps = {
   connection: typeof getExternalMcpConnection
   granted: typeof memberCanUseExternalMcpConnection
   memberKeyReady: typeof externalMcpConnectionReadyForMember
-  toolShapes: (organizationId: Parameters<typeof organizationFeatureEnabled>[0], userId: string) => Promise<boolean>
   proxy: typeof handleExternalConnectionProxyRequest
 }
 
@@ -519,7 +485,6 @@ export const EXTERNAL_CONNECTION_PROXY_ROUTE_DEPS: ExternalConnectionProxyRouteD
   connection: getExternalMcpConnection,
   granted: memberCanUseExternalMcpConnection,
   memberKeyReady: externalMcpConnectionReadyForMember,
-  toolShapes: (organizationId, userId) => organizationFeatureEnabled(organizationId, "connectStandardTools", { userId }),
   proxy: handleExternalConnectionProxyRequest,
 }
 
@@ -582,7 +547,6 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     }
 
     const directExposureEnabled = connection.exposeDirectly
-    const toolShapes = await deps.toolShapes(organizationId, principal.userId)
 
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
     const redirectUri = `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connection.id)}/connect/callback`
@@ -599,7 +563,6 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       scopes: principal.scopes,
       appHostClient: principal.scopes.has(DEN_MCP_APP_HOST_SCOPE),
       directExposureEnabled,
-      toolShapes,
     })
   })
 }

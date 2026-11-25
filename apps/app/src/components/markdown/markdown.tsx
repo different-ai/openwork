@@ -7,7 +7,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { markFeatureUsed } from "@/app/lib/den";
 import { desktopBridge } from "@/app/lib/desktop";
 import { isElectronRuntime } from "@/app/lib/runtime-env";
 import { useOpenTargets } from "@/lib/target-provider";
@@ -51,8 +50,8 @@ function syncCodeRunButtons(root: HTMLElement, runnable: boolean) {
 
 const MarkdownTableExpandContext = createContext(false);
 
-export function MarkdownTableExpand({ enabled, children }: { enabled: boolean; children: ReactNode }) {
-  return <MarkdownTableExpandContext.Provider value={enabled}>{children}</MarkdownTableExpandContext.Provider>;
+export function MarkdownTableExpand({ children }: { children: ReactNode }) {
+  return <MarkdownTableExpandContext.Provider value={true}>{children}</MarkdownTableExpandContext.Provider>;
 }
 
 type MarkdownBlockInnerProps = {
@@ -379,7 +378,6 @@ function MarkdownBlockInner({
         event.stopPropagation();
         if (!tableExpand) return;
         setExpandedTableMarkdown(tableExpandButton.dataset.openworkTableExpand || null);
-        try { markFeatureUsed("chatTableExpand"); } catch {}
         return;
       }
 

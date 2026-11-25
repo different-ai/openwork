@@ -7,6 +7,7 @@ import { withEngineSwitchFence } from "./engine-switch-fence.js";
 import { createEngineSystemProxy } from "./engine-system-proxy.js";
 import { engineAutoUpgradeRetry, waitForEngineIdle, type EngineAutoUpgradeRetry } from "./engine-auto-upgrade.js";
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
+import { createV2PrivateValuesBridge } from "./opencode-v2-private-values-bridge.js";
 import type { PrepareDriveUpload } from "./extensions/approved-drive-upload.js";
 import { createV2ProviderSessionBridge } from "./opencode-v2-provider-session.js";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
@@ -700,6 +701,7 @@ export function createEngineV2Preview(options: {
   let sidecar: ManagedOpencodeV2Server | undefined;
   let contextBridge: Awaited<ReturnType<typeof createV2ContextBridge>> | undefined;
   let providerSessionBridge: Awaited<ReturnType<typeof createV2ProviderSessionBridge>> | undefined;
+  let privateValuesBridge: Awaited<ReturnType<typeof createV2PrivateValuesBridge>> | undefined;
   let unsubscribe: (() => void) | undefined;
   let startPromise: Promise<void> | undefined;
   let restartAttempts = 0;
@@ -1114,8 +1116,10 @@ export function createEngineV2Preview(options: {
     contextBridge = undefined;
     const sessionBridge = providerSessionBridge;
     providerSessionBridge = undefined;
+    const valuesBridge = privateValuesBridge;
+    privateValuesBridge = undefined;
     try {
-      await Promise.all([bridge?.close(), sessionBridge?.close(), active?.close()]);
+      await Promise.all([bridge?.close(), sessionBridge?.close(), valuesBridge?.close(), active?.close()]);
     } catch (error) {
       lastError = errorMessage(error);
     }
@@ -1132,6 +1136,8 @@ export function createEngineV2Preview(options: {
     contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, options.prepareDriveUpload, options.fileSends, config) : undefined;
     providerSessionBridge = options.providerSession ? await createV2ProviderSessionBridge(() =>
       options.providerSession?.() ?? null) : undefined;
+    await privateValuesBridge?.close();
+    privateValuesBridge = await createV2PrivateValuesBridge();
     const globalSkills = globalSkillDirectories();
     const historyDatabase = await selectHistoryDatabase();
     const policy = managedDesktopPolicy(config);
@@ -1148,6 +1154,7 @@ export function createEngineV2Preview(options: {
       contextTools: contextBridge,
       cloudSkillFoldersDirectory: cloudSkillFoldersRoot(config),
       ...(providerSessionBridge ? { providerSession: providerSessionBridge } : {}),
+      privateValues: { url: privateValuesBridge.url, token: privateValuesBridge.token },
       bin: resolved.bin,
       rootDir,
       instanceId: engineInstanceId(),
@@ -1401,6 +1408,10 @@ export function createEngineV2Preview(options: {
       if (!stopping) await start();
       return true;
     } catch (error) {
+      if (stopping && error === autoUpgradeAbort.signal.reason) {
+        warn(`Automatic upgrade paused: ${errorMessage(error)}`);
+        return false;
+      }
       lastError = errorMessage(error);
       autoUpgradeRetry = engineAutoUpgradeRetry(autoUpgradeRetry?.attempts ?? 0);
       reportEngineFailure("upgrade", error);

@@ -5,7 +5,7 @@ import { agentPermissionEngineV2Rules, type AgentPermissionRule, type EngineV2Pe
 import type { OrganizationMcpServers } from "./organization-mcp-names.js";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { gatewayBase } from "./gateway-quota.js";
-import { openworkAgentPermissionsV2PluginPath, openworkAutoRouteV2PluginPath, openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkMcpReadinessV2PluginPath, openworkProviderFiltersV2PluginPath, openworkProviderSyncV2PluginPath, openworkVisibleReasoningV2PluginPath } from "./openwork-extensions-plugin-path.js";
+import { openworkAgentPermissionsV2PluginPath, openworkAutoRouteV2PluginPath, openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkPrivateValuesV2PluginPath, openworkMcpReadinessV2PluginPath, openworkProviderFiltersV2PluginPath, openworkProviderSyncV2PluginPath, openworkVisibleReasoningV2PluginPath } from "./openwork-extensions-plugin-path.js";
 import { DRIVE_UPLOAD_PERMISSION, GMAIL_DRAFT_PERMISSION, OUTLOOK_DRAFT_PERMISSION } from "./extensions/cloud-upload-constants.js";
 import { pathToFileURL } from "node:url";
 import { openworkSandboxV2PluginPath } from "./openwork-extensions-plugin-path.js";
@@ -56,6 +56,7 @@ export interface ManagedOpencodeV2ServerOptions {
   bootTimeoutMs?: number;
   contextTools?: { url: string; token: string; browser?: { url: string; token: string }; sandbox?: { url: string; token: string } };
   providerSession?: { url: string; token: string };
+  privateValues?: { url: string; token: string };
   permissions?: () => Promise<EnginePermissionRule[]>;
   skills?: string[];
   agentPermissions?: () => Promise<{ rules: AgentPermissionRule[]; organizationMcp: OrganizationMcpServers }>;
@@ -213,6 +214,8 @@ export function renderOpencodeV2Config(input: {
   organizationMcp?: OrganizationMcpServers;
   agentPermissionsPluginDirectory?: string;
   sandboxPluginDirectory?: string;
+  privateValuesPluginDirectory?: string;
+  privateValues?: { url: string; token: string };
   cloudSkillFoldersDirectory?: string;
 }): Record<string, unknown> {
   const disabled = new Set(input.disabledProviderIds ?? []);
@@ -300,6 +303,10 @@ export function renderOpencodeV2Config(input: {
     ...(input.contextTools?.sandbox && input.sandboxPluginDirectory ? [{
       package: pathToFileURL(input.sandboxPluginDirectory).href,
       options: input.contextTools.sandbox,
+    }] : []),
+    ...(input.privateValuesPluginDirectory ? [{
+      package: pathToFileURL(input.privateValuesPluginDirectory).href,
+      ...(input.privateValues ? { options: input.privateValues } : {}),
     }] : []),
   ];
   const contextWrites = [DRIVE_UPLOAD_PERMISSION, "drive_pull_file", "drive_push_file", GMAIL_DRAFT_PERMISSION, OUTLOOK_DRAFT_PERMISSION];
@@ -398,6 +405,7 @@ async function createManagedOpencodeV2ServerInner(
   const contextPluginDirectory = join(instanceRoot, "context-plugin");
   const sandboxPluginDirectory = join(instanceRoot, "sandbox-plugin");
   const agentPermissionsPluginDirectory = join(instanceRoot, "agent-permissions-plugin");
+  const privateValuesPluginDirectory = join(instanceRoot, "private-values-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
   const sandboxBridge = options.contextTools?.sandbox;
@@ -458,6 +466,10 @@ async function createManagedOpencodeV2ServerInner(
   await writeFile(join(autoRoutePluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
   await writeFile(join(autoRoutePluginDirectory, "server.js"),
     `export { default } from ${JSON.stringify(pathToFileURL(openworkAutoRouteV2PluginPath()).href)};\n`, { mode: 0o600 });
+  await mkdir(privateValuesPluginDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(join(privateValuesPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+  await writeFile(join(privateValuesPluginDirectory, "server.js"),
+    `export { default } from ${JSON.stringify(pathToFileURL(openworkPrivateValuesV2PluginPath()).href)};\n`, { mode: 0o600 });
   if (options.contextTools) {
     await mkdir(contextPluginDirectory, { recursive: true, mode: 0o700 });
     await writeFile(join(contextPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
@@ -575,6 +587,8 @@ async function createManagedOpencodeV2ServerInner(
       autoRoutePluginDirectory,
       contextPluginDirectory,
       sandboxPluginDirectory,
+      privateValuesPluginDirectory,
+      ...(options.privateValues ? { privateValues: options.privateValues } : {}),
       contextTools: options.contextTools,
       ...(options.cloudSkillFoldersDirectory ? { cloudSkillFoldersDirectory: options.cloudSkillFoldersDirectory } : {}),
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
