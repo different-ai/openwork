@@ -15,6 +15,8 @@ export { default as browserSecretHandles } from "@openwork/features/flags/browse
 export { default as chatSkillCardShare } from "@openwork/features/flags/chat-skill-card-share"
 export { default as composerInlineSuggestions } from "@openwork/features/flags/composer-inline-suggestions"
 export { default as connectionSelectedScopesOnly } from "@openwork/features/flags/connection-selected-scopes-only"
+export { default as denGreySidebar } from "@openwork/features/flags/den-grey-sidebar"
+export { default as deploymentCapabilitiesView } from "@openwork/features/flags/deployment-capabilities-view"
 export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-system-proxy"
 export { default as endedSandboxNotice } from "@openwork/features/flags/ended-sandbox-notice"
 export { default as flatSessionPanes } from "@openwork/features/flags/flat-session-panes"

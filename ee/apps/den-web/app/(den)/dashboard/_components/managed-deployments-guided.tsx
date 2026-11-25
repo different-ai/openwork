@@ -16,6 +16,7 @@ import { BackLink, ItemHeader, ItemPage, SectionTitle } from "./item-header";
 import { DetailRows, DisclosureGroup, DisclosureSection, ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, type ItemMenuEntry } from "./item-list";
 import { ConnectorLogo } from "./item-logo";
 import { ManagedDeploymentAssistants } from "./managed-deployment-assistants";
+import { ManagedDeploymentCapabilities } from "../_features/capabilities/managed-deployment-capabilities";
 import {
   CHECK_LABELS, CreateDeploymentDialog, FAILURE_LABELS, ProviderLock, STEP_LABELS, StatusIcon, checkDetail, gcpFailureMessage, networkLabel, relativeTime,
 } from "./managed-deployments-screen";
@@ -412,6 +413,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
       {configurationControls ? <ManagedDeploymentConfigurationSummary deployment={deployment} canManage={canManage} commandShown={Boolean(launch?.command)} controls={configurationControls} /> : null}
       {approve}
       {steps}
+      <ManagedDeploymentCapabilities deploymentId={deployment.id} />
 
       {installed ? (
         <section className="flex flex-col gap-2.5">

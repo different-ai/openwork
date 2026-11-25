@@ -940,6 +940,9 @@ importers:
       '@openwork/features':
         specifier: workspace:*
         version: link:../../../packages/features
+      '@openwork/managed-deployments':
+        specifier: workspace:*
+        version: link:../../../packages/managed-deployments
       '@openwork/mcp-enterprise-client':
         specifier: workspace:*
         version: link:../../../packages/mcp-enterprise-client
