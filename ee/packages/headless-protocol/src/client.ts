@@ -318,7 +318,6 @@ export type RunnerCapabilities = {
   tasks?: boolean
   documentNavigation?: boolean
   teachingNavigation?: boolean
-  sandboxGateway?: boolean
   browserRecovery?: boolean
 }
 export const RUNNER_DESKTOP_VIEWS = ["browser", "computer"] as const
@@ -341,7 +340,6 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
   ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
   ...(input.teachingNavigation !== undefined ? { teachingNavigation: input.teachingNavigation } : {}),
-  ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
   ...(input.browserRecovery !== undefined ? { browserRecovery: input.browserRecovery } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
   ...(input.ref ? { ref: input.ref } : {}),
@@ -422,11 +420,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       }
       if (unknownSetting(status, payload) && input.browserRecovery !== undefined) {
         const { browserRecovery: _recovery, ...rest } = compatible
-        compatible = rest
-        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
-      }
-      if (unknownSetting(status, payload) && input.sandboxGateway !== undefined) {
-        const { sandboxGateway: _gateway, ...rest } = compatible
         compatible = rest
         ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
       }

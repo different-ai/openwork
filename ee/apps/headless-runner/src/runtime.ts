@@ -23,8 +23,6 @@ import { SelfResume } from "./self-resume.js"
 import { SessionStorage } from "./storage/index.js"
 import { readToolFile } from "./tool-files.js"
 import type { SessionComputer } from "./types.js"
-import type { ComputerOptions } from "@openwork-ee/headless-computer"
-import { GatewayHealth, routeComputers } from "./computer-route.js"
 import type { CellsStore } from "./cells-store.js"
 import type { MemoryResolver } from "./memory.js"
 
@@ -71,36 +69,23 @@ export async function createRuntime(config: Config, store: Store, stepHost?: Ste
   const storage = new SessionStorage(store, blobs, { ...config.storage, contextCharBudget: config.limits.contextCharBudget }, errors)
   for (const job of storage.jobs()) background.register(job)
   let computer: SessionComputer | undefined
-  if (config.computer || config.computerGateway) {
-    const { Computers, createComputerProvider, createGatewayHealth, createGatewayProvider, isInfrastructureError } = await import("@openwork-ee/headless-computer")
-    const computers = (settings: NonNullable<Config["computer"] | Config["computerGateway"]>, provider: ComputerOptions["provider"]) => new Computers({
-      ...settings, provider,
+  if (config.computer) {
+    const { Computers, createComputerProvider } = await import("@openwork-ee/headless-computer")
+    const computers = new Computers({
+      ...config.computer, provider: await createComputerProvider(config.computer),
       pauses: { set: (sessionId, dueAt) => store.setComputerPause(sessionId, dueAt), clear: (sessionId) => store.clearComputerPause(sessionId) },
     }, {
       files,
       readFile: (file, counts) => readToolFile({ name: file.name, mimeType: mediaTypeFor(file.name), data: Buffer.from(file.bytes).toString("base64") }, counts),
     })
-    const direct = config.computer && computers(config.computer, await createComputerProvider(config.computer))
-    const gateway = config.computerGateway && computers(config.computerGateway, await createGatewayProvider(config.computerGateway))
-    const routed = routeComputers({
-      direct,
-      gateway,
-      health: config.computerGateway ? new GatewayHealth(await createGatewayHealth(config.computerGateway)) : undefined,
-      viaGateway: (sessionId) => store.getSession(sessionId)?.sandboxGateway === true,
-      sides: { get: (sessionId) => store.computerSide(sessionId), set: (sessionId, side) => store.setComputerSide(sessionId, side), clear: (sessionId) => store.clearComputerSide(sessionId) },
-      infrastructure: isInfrastructureError,
-    })
     background.register({
       name: "computer-pause",
       nextAt: () => store.nextComputerPauseAt(),
       run: async () => {
-        for (const sessionId of store.dueComputerPauses(Date.now())) {
-          if (routed?.available?.(sessionId)) await routed.pauseIdle(sessionId)
-          else store.clearComputerPause(sessionId)
-        }
+        for (const sessionId of store.dueComputerPauses(Date.now())) await computers.pauseIdle(sessionId)
       },
     })
-    computer = routed
+    computer = computers
   }
   store.onChange = (sessionId, messageId, status) => events.emit(sessionId, { type: "changed", messageId, ...(status ? { status } : {}) })
   const modelFetch: typeof fetch = (input, init) => fetch(input, init)

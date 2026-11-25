@@ -1,5 +1,7 @@
 # Sandbox-only: real-model engine check, Claude Fable 5.2
 
+> Historical record from before the sandbox rollout switch was retired. See [modes.md](modes.md) for current behavior.
+
 Run 2026-11-18 01:24 PST (09:24:36–09:25:36 UTC) on Apple Silicon macOS, Node 24.22.2, with
 `evals/scripts/sandbox-model-check.ts --model fable`. One run, no retry, no plugin override.
 

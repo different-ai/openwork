@@ -274,7 +274,7 @@ export function ComputerFleetPage() {
           <section aria-labelledby="computer-fleet-sources" className="flex flex-col gap-3">
             <div>
               <h2 id="computer-fleet-sources" className="text-[16px] font-medium text-gray-950">Where computers come from</h2>
-              <p className="mt-1 max-w-3xl text-[13px] leading-5 text-gray-600">A conversation&apos;s computer is placed by the sandbox gateway when its organization uses the gateway, and created at the runner&apos;s own provider otherwise. The runner asks each one what it holds.</p>
+              <p className="mt-1 max-w-3xl text-[13px] leading-5 text-gray-600">The headless runner lists computers from its provider. Older runners may also report computers from a sandbox gateway.</p>
             </div>
             <div className="grid gap-4 lg:grid-cols-2">
               {fleet.sources.map((source) => <SourceCard key={source.source} source={source} />)}

@@ -1,7 +1,7 @@
 import { isBuiltInOpenWorkExtension, type McpDirectoryInfo } from "../../../app/constants";
 import { t } from "../../../i18n";
 
-export type ExtensionTaxonomy = "app" | "connection" | "mcp" | "skill" | "command" | "agent" | "plugin";
+export type ExtensionTaxonomy = "app" | "connection" | "mcp" | "skill" | "command" | "agent" | "plugin" | "model";
 
 export type ExtensionInventoryFilter = "all" | ExtensionTaxonomy;
 
@@ -16,9 +16,14 @@ export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
   "plugin",
 ];
 
+export function libraryInventoryFilters(options: { models: boolean }): ExtensionInventoryFilter[] {
+  return options.models ? [...extensionInventoryFilters, "model"] : extensionInventoryFilters;
+}
+
 export function primaryLibraryFilter(filter?: ExtensionInventoryFilter): ExtensionInventoryFilter {
   if (filter === "skill" || filter === "command" || filter === "agent") return "skill";
   if (filter === "connection" || filter === "mcp") return "connection";
+  if (filter === "model") return "model";
   return filter === "plugin" ? "plugin" : "all";
 }
 
@@ -59,6 +64,8 @@ export function extensionFilterLabel(filter: ExtensionInventoryFilter) {
       return t("extensions.filter_agents");
     case "plugin":
       return t("extensions.filter_plugins");
+    case "model":
+      return t("extensions.filter_models");
   }
 }
 
@@ -78,5 +85,7 @@ export function extensionTaxonomyLabel(taxonomy: ExtensionTaxonomy) {
       return t("extensions.badge_agent");
     case "plugin":
       return t("extensions.badge_plugin");
+    case "model":
+      return t("extensions.badge_model");
   }
 }

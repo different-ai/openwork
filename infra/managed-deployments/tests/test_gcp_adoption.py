@@ -10,7 +10,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from test_gcp_installer import GCP, ROOT, ENV, runner, install
+from test_gcp_installer import GCP, ROOT, ENV, runner, install, quiet_run_boundaries
 
 
 def observations(revision="owned-revision", count="0", stamp=None):
@@ -52,6 +52,9 @@ class AdoptionTests(unittest.TestCase):
                 if resource["type"] == "google_sql_database_instance":
                     self.assertEqual(change["after"]["database_version"], "MYSQL_8_0")
                     self.assertEqual(change["after"]["name"], change["before"]["name"])
+                    self.assertFalse(change.get("replace_paths"))
+                    self.assertEqual(change["after"]["settings"][0]["backup_configuration"], change["before"]["settings"][0]["backup_configuration"])
+                    self.assertIsNone(change["after"]["settings"][0]["backup_configuration"][0]["location"])
 
     def test_secret_updates_unknown_passwords_major_upgrades_and_service_replacement_are_blocked(self):
         for kind, change in [
@@ -64,6 +67,15 @@ class AdoptionTests(unittest.TestCase):
         ]:
             with self.subTest(kind=kind):
                 self.assertEqual(runner.unsafe_changes({"resource_changes": [{"address": "owned", "type": kind, "change": change}]}), ["owned"])
+
+    def test_backup_location_moves_in_place_and_is_refused_as_a_replacement(self):
+        def instance(actions):
+            settings = lambda location: [{"backup_configuration": [{"enabled": True, "location": location}]}]
+            return {"resource_changes": [{"address": "owned", "type": "google_sql_database_instance", "change": {
+                "actions": actions, "before": {"database_version": "MYSQL_8_0", "settings": settings(None)},
+                "after": {"database_version": "MYSQL_8_0", "settings": settings("asia-east2")}}}]}
+        self.assertEqual(runner.unsafe_changes(instance(["update"])), [])
+        self.assertEqual(runner.unsafe_changes(instance(["delete", "create"])), ["owned"])
 
     def test_apply_keeps_maintenance_through_migration_and_revision_validation(self):
         order = []
@@ -288,7 +300,7 @@ class CommandTimeoutTests(unittest.TestCase):
                     "maintenanceCommand": {"errorCode": "command_deadline"}})
 
     def test_timeout_records_infrastructure_failure_without_reporting_success(self):
-        with patch.dict(os.environ, ENV), patch.object(runner, "enroll", return_value="test-token"), \
+        with patch.dict(os.environ, ENV), quiet_run_boundaries(), patch.object(runner, "enroll", return_value="test-token"), \
                 patch.object(runner, "verify_target"), patch.object(runner, "orchestration_mutex"), \
                 patch.object(runner, "mirror_images", return_value={}), \
                 patch.object(runner, "apply", side_effect=lambda *args: runner.service_status("owned-api")), \

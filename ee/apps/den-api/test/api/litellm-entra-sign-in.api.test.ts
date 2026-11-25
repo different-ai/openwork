@@ -1,20 +1,18 @@
 /**
- * LiteLLM with member Microsoft Entra sign-in (feature litellmEntraMemberSignIn): a proxy that accepts sign-in
+ * LiteLLM with member Microsoft Entra sign-in: a proxy that accepts sign-in
  * tokens instead of LiteLLM keys. An admin stores an Entra app registration, one API scope and a model list; each
  * person signs in with Microsoft through the member sign-in flow Microsoft Foundry uses.
  *
  * Entra ID is a stand-in here: the token endpoint and the tenant's signing keys are answered by this file, so
  * these tests prove what OpenWork requests, stores and returns, not that a real tenant or a real LiteLLM proxy
- * accepts it. With the feature off, Microsoft Foundry sign-in and the key-based LiteLLM modes behave as before.
+ * accepts it. Microsoft Foundry sign-in and the key-based LiteLLM modes behave as before.
  */
 import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 import { after, test } from "node:test"
-import { setTimeout } from "node:timers/promises"
 import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { bootDen, field, isRecord, list, startFakeHttpServer, strings, summary, text, type Call, type Member } from "./harness.js"
 
-const FEATURE = "litellmEntraMemberSignIn"
 const TENANT = "11111111-2222-4333-8444-555555555555"
 const CLIENT = "66666666-7777-4888-8999-aaaaaaaaaaaa"
 const CLIENT_SECRET = "entra-client-secret-fixture"
@@ -31,9 +29,17 @@ const LITELLM_ADMIN_KEY = "sk-litellm-admin-fixture"
 const TOKEN_URL = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`
 const JWKS_URL = `https://login.microsoftonline.com/${TENANT}/discovery/v2.0/keys`
 
-// A key-based LiteLLM proxy, for the modes that existed before.
+// A key-based LiteLLM proxy, for the modes that existed before, plus optional override for Entra connect-check tests.
+let liteLlmModelsHandler: ((authHeader: string) => { status: number; body: unknown }) | null = null
 const liteLlm = await startFakeHttpServer((request, _body, response) => {
   const path = (request.url ?? "/").split("?")[0]
+  if (path === "/v1/models" && liteLlmModelsHandler) {
+    const result = liteLlmModelsHandler(String(request.headers.authorization ?? ""))
+    response.statusCode = result.status
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify(result.body))
+    return
+  }
   const body = path === "/v1/models" ? { data: [{ id: "gpt-fixture" }, { id: "claude-fixture" }] }
     : path === "/model_group/info" ? { data: [] }
       : path === "/team/list" ? []
@@ -128,39 +134,7 @@ async function usable(member: Member, providerId: string) {
 
 let entraProviderId = ""
 
-async function testPool() {
-  const { client } = await import("../../src/db.js")
-  if (!("getConnection" in client)) throw new Error("API locking test requires isolated MySQL")
-  return client
-}
-
-/** Wait for an actual database lock wait, not a guessed request delay. */
-async function waitForLock(table: string) {
-  const pool = await testPool()
-  for (let attempt = 0; attempt < 500; attempt++) {
-    const [rows] = await pool.execute("SELECT 1 FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID = w.BLOCKING_ENGINE_LOCK_ID WHERE l.OBJECT_SCHEMA = DATABASE() AND l.OBJECT_NAME = ? LIMIT 1", [table])
-    if (Array.isArray(rows) && rows.length) return
-    await setTimeout(10)
-  }
-  throw new Error(`No blocked ${table} mutation observed`)
-}
-
-async function killFeature(killed: boolean) {
-  const changed = await den.asPlatformAdmin("PUT", `/v1/admin/features/${FEATURE}`, { killed })
-  assert.equal(changed.status, 200, summary(changed))
-}
-
-test("with the feature off, a LiteLLM provider cannot be added with Microsoft sign-in", async () => {
-  const refused = await owner("POST", "/v1/inference-providers/litellm", entraProvider())
-  assert.equal(refused.status, 403, summary(refused))
-  assert.equal(field(refused.body, "error"), "feature_disabled")
-  const providers = await owner("GET", "/v1/inference-providers?scope=manageable")
-  assert.deepEqual(field(providers.body, "inferenceProviders"), [])
-})
-
 test("an admin adds the provider with an app registration, one API scope and a model list, and nothing is read from the proxy", async () => {
-  assert.equal((await den.setFeature(workspace.orgId, FEATURE, true)).status, 200)
-
   // Scopes LiteLLM could never validate, and incomplete settings, are refused with what to enter instead.
   const invalid: Array<[Record<string, unknown>, string]> = [
     [{ oauthScope: "https://graph.microsoft.com/User.Read" }, "invalid_scope"],
@@ -396,182 +370,7 @@ test("changing each app registration setting revokes tokens and cancels an in-fl
   }
 })
 
-test("member overrides gate the caller's models, sign-in and transaction-local authorization without affecting other members", async () => {
-  const path = `/v1/admin/organizations/${workspace.orgId}/members/${person.memberId}/capabilities`
-  const changed = await den.asPlatformAdmin("PUT", path, { capabilities: { [FEATURE]: false } })
-  assert.equal(changed.status, 200, summary(changed))
-  try {
-    const unavailable = await usable(person, entraProviderId)
-    assert.deepEqual(unavailable?.models, [])
-    assert.deepEqual(unavailable?.authorizationRequests, [])
-    const refused = await asPerson("GET", `/v1/inference-providers/${entraProviderId}/oauth/start`, undefined, { accept: "application/json" })
-    assert.equal(refused.status, 403, summary(refused))
-    const { db } = await import("../../src/db.js")
-    const { lockOrganizationFeatureForMutation } = await import("../../src/features.js")
-    assert.equal(await db.transaction((tx) => lockOrganizationFeatureForMutation(tx, workspace.orgId, person.userId, FEATURE)), false)
-    assert.equal(await db.transaction((tx) => lockOrganizationFeatureForMutation(tx, workspace.orgId, workspace.owner.userId, FEATURE)), true)
-  } finally {
-    const restored = await den.asPlatformAdmin("PUT", path, { capabilities: { [FEATURE]: null } })
-    assert.equal(restored.status, 200, summary(restored))
-  }
-  assert.equal((await usable(person, entraProviderId))?.credentialStatus, "ready")
-})
-
-for (const operation of ["create", "edit"]) {
-  test(`global disable during ${operation} is rechecked inside the mutation transaction`, async () => {
-    const pool = await testPool()
-    const blocker = await pool.getConnection()
-    await blocker.beginTransaction()
-    await blocker.execute("SELECT id FROM member WHERE id = ? FOR UPDATE", [workspace.owner.memberId])
-    const before = await owner("GET", "/v1/inference-providers?scope=manageable")
-    const pending = operation === "create"
-      ? owner("POST", "/v1/inference-providers/litellm", entraProvider())
-      : owner("PATCH", `/v1/inference-providers/${entraProviderId}/litellm`, { modelIds: ["blocked-model-fixture"] })
-    try {
-      await waitForLock("member")
-      await killFeature(true)
-    } finally {
-      await blocker.rollback()
-      blocker.release()
-    }
-    try {
-      const refused = await pending
-      assert.equal(refused.status, 403, summary(refused))
-      assert.equal(field(refused.body, "error"), "feature_disabled")
-      const after = await owner("GET", "/v1/inference-providers?scope=manageable")
-      assert.deepEqual(list(field(after.body, "inferenceProviders")).map((provider) => provider.id).sort(), list(field(before.body, "inferenceProviders")).map((provider) => provider.id).sort())
-      const provider = list(field(after.body, "inferenceProviders")).find((provider) => provider.id === entraProviderId)
-      assert.equal(list(provider?.modelGroups).some((group) => strings(group.modelIds).includes("blocked-model-fixture")), false)
-    } finally {
-      await killFeature(false)
-    }
-  })
-}
-
-for (const stored of [false, true]) {
-  test(`global kill serializes with a mutation when the rollout row ${stored ? "exists" : "does not exist"}`, async () => {
-    const pool = await testPool()
-    if (!stored) await pool.execute("DELETE FROM feature_rollout WHERE feature_key = ?", [FEATURE])
-    const { db } = await import("../../src/db.js")
-    const { lockOrganizationFeatureForMutation } = await import("../../src/features.js")
-    const entered = Promise.withResolvers<void>()
-    const release = Promise.withResolvers<void>()
-    const mutation = db.transaction(async (tx) => {
-      assert.equal(await lockOrganizationFeatureForMutation(tx, workspace.orgId, workspace.owner.userId, FEATURE), true)
-      entered.resolve()
-      await release.promise
-    })
-    await entered.promise
-    let completed = false
-    const kill = killFeature(true).then(() => { completed = true })
-    try {
-      await waitForLock("feature_rollout")
-      assert.equal(completed, false)
-    } finally {
-      release.resolve()
-      await mutation
-      await kill
-    }
-    try {
-      const refused = await owner("POST", "/v1/inference-providers/litellm", entraProvider())
-      assert.equal(refused.status, 403, summary(refused))
-    } finally { await killFeature(false) }
-  })
-}
-
-test("a mutation sees a committed global kill even after establishing an older repeatable-read snapshot", async () => {
-  const { db } = await import("../../src/db.js")
-  const { FeatureRolloutTable } = await import("@openwork-ee/den-db/schema")
-  const { lockOrganizationFeatureForMutation } = await import("../../src/features.js")
-  try {
-    await db.transaction(async (tx) => {
-      await tx.select().from(FeatureRolloutTable)
-      await killFeature(true)
-      assert.equal(await lockOrganizationFeatureForMutation(tx, workspace.orgId, workspace.owner.userId, FEATURE), false)
-    })
-  } finally { await killFeature(false) }
-})
-
-test("turning the feature off stops new sign-ins and edits, retains tokens but makes models unusable", async () => {
-  const attempt = await startConnect(person, entraProviderId)
-  assert.equal((await den.setFeature(workspace.orgId, FEATURE, false)).status, 200)
-
-  const status = await browser(person, `/v1/inference-providers/oauth/browser-status?attempt=${encodeURIComponent(attempt)}`)
-  assert.equal(status.status, 403, summary(status))
-  assert.equal(field(status.body, "error"), "feature_disabled")
-  assert.match(text(field(status.body, "message"), "message"), /turned off/)
-  const start = await browser(person, `/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`)
-  assert.equal(start.status, 403, summary(start))
-  assert.equal(field(start.body, "error"), "feature_disabled")
-  assert.equal(field(start.body, "authUrl"), undefined)
-
-  const edit = await owner("PATCH", `/v1/inference-providers/${entraProviderId}/litellm`, { modelIds: ["gpt-fixture"] })
-  assert.equal(edit.status, 403, summary(edit))
-  assert.equal(field(edit.body, "error"), "feature_disabled")
-
-  const pool = await testPool()
-  const [entriesBefore] = await pool.execute("SELECT id FROM gateway_provider_oauth_states WHERE gateway_provider_id = ?", [entraProviderId])
-  const started = await asPerson("GET", `/v1/inference-providers/${entraProviderId}/oauth/start`, undefined, { accept: "application/json" })
-  assert.equal(started.status, 403, summary(started))
-  assert.equal(field(started.body, "error"), "feature_disabled")
-  const [entriesAfter] = await pool.execute("SELECT id FROM gateway_provider_oauth_states WHERE gateway_provider_id = ?", [entraProviderId])
-  assert.deepEqual(entriesAfter, entriesBefore)
-
-  // Retain the connection for disconnection/restoration, but advertise no usable models or sign-in requests.
-  const unavailable = await usable(person, entraProviderId)
-  assert.notEqual(unavailable?.credentialStatus, "ready")
-  assert.deepEqual(unavailable?.models, [])
-  assert.deepEqual(unavailable?.authorizationRequests, [])
-  const connections = await asPerson("GET", "/v1/inference-providers/member-connections")
-  const connection = list(field(connections.body, "connections")).find((entry) => entry.providerId === entraProviderId)
-  assert.equal(connection?.hasCredential, true)
-  assert.equal(connection?.ready, false)
-  const details = await owner("GET", `/v1/inference-providers/${entraProviderId}`)
-  assert.equal(details.status, 200, summary(details))
-  assert.equal(field(details.body, "inferenceProvider", "litellm", "keySource"), "entra")
-  assert.ok(list(field(details.body, "inferenceProvider", "credentials")).some((credential) => credential.orgMembershipId === person.memberId && credential.status === "active"))
-
-  // Back on: the attempt that was refused continues to Microsoft.
-  assert.equal((await den.setFeature(workspace.orgId, FEATURE, true)).status, 200)
-  assert.equal((await usable(person, entraProviderId))?.credentialStatus, "ready")
-  const again = await browser(person, `/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`)
-  assert.equal(again.status, 200, summary(again))
-  assert.equal(new URL(text(field(again.body, "authUrl"), "authorize URL")).searchParams.get("scope"), `api://${CLIENT}/models offline_access openid profile`)
-})
-
-for (const change of ["organization", "global"]) {
-  test(`${change} disable during the token exchange prevents storing the sign-in`, async () => {
-    const connecting = await den.newMember(workspace.owner, workspace.orgId, `Connecting member ${change}`)
-    const entered = Promise.withResolvers<void>()
-    const released = Promise.withResolvers<void>()
-    beforeTokenResponse = async () => { entered.resolve(); await released.promise }
-    grantedScope = `api://${CLIENT}/models`
-    const pending = signIn(connecting, entraProviderId)
-    try {
-      await entered.promise
-      if (change === "global") await killFeature(true)
-      else assert.equal((await den.setFeature(workspace.orgId, FEATURE, false)).status, 200)
-    } finally {
-      released.resolve()
-    }
-    try {
-      const { callback } = await pending
-      assert.equal(callback.status, 400, summary(callback))
-      assert.match(callback.text, /Provider access changed/)
-      assert.notEqual((await usable(connecting, entraProviderId))?.credentialStatus, "ready")
-      const details = await owner("GET", `/v1/inference-providers/${entraProviderId}`)
-      assert.equal(list(field(details.body, "inferenceProvider", "credentials")).some((credential) => credential.orgMembershipId === connecting.memberId), false)
-    } finally {
-      beforeTokenResponse = undefined
-      grantedScope = API_SCOPE
-      if (change === "global") await killFeature(false)
-      else assert.equal((await den.setFeature(workspace.orgId, FEATURE, true)).status, 200)
-    }
-  })
-}
-
-test("with the feature off, a person can still disconnect and an admin can still disable and remove the provider", async () => {
-  assert.equal((await den.setFeature(workspace.orgId, FEATURE, false)).status, 200)
+test("a person can disconnect and an admin can disable and remove the provider", async () => {
   const disconnected = await asPerson("DELETE", `/v1/inference-providers/${entraProviderId}/oauth`)
   assert.equal(disconnected.status, 204, summary(disconnected))
   assert.notEqual((await usable(person, entraProviderId))?.credentialStatus, "ready")
@@ -584,65 +383,113 @@ test("with the feature off, a person can still disconnect and an admin can still
   assert.equal((await owner("GET", `/v1/inference-providers/${entraProviderId}`)).status, 404)
 })
 
-for (const enabled of [false, true]) {
-  test(`with the feature ${enabled ? "on" : "off"}, a key-based LiteLLM provider and Microsoft Foundry sign-in work as before`, async () => {
-    const org = await den.createOrg(await den.signUp(`Existing Owner ${enabled ? "On" : "Off"}`), `Existing ${enabled ? "on" : "off"}`)
-    assert.equal((await den.setFeature(org.orgId, FEATURE, enabled)).status, 200)
-    const admin = (...args: Parameters<ReturnType<typeof den.as>>) => den.as(org.owner, org.orgId)(...args).then(keep)
-    const connect = async (providerId: string) => {
-      const started = await admin("GET", `/v1/inference-providers/${providerId}/oauth/start`, undefined, { accept: "application/json" })
-      assert.equal(started.status, 200, summary(started))
-      return text(new URL(text(field(started.body, "authUrl"), "connect page URL")).searchParams.get("attempt"), "attempt")
-    }
+test("a key-based LiteLLM provider and Microsoft Foundry sign-in work as before", async () => {
+  const org = await den.createOrg(await den.signUp("Existing Owner"), "Existing")
+  const admin = (...args: Parameters<ReturnType<typeof den.as>>) => den.as(org.owner, org.orgId)(...args).then(keep)
+  const connect = async (providerId: string) => {
+    const started = await admin("GET", `/v1/inference-providers/${providerId}/oauth/start`, undefined, { accept: "application/json" })
+    assert.equal(started.status, 200, summary(started))
+    return text(new URL(text(field(started.body, "authUrl"), "connect page URL")).searchParams.get("attempt"), "attempt")
+  }
 
-    // LiteLLM, each person's own key: synced from the proxy with the admin key, connected by pasting a key.
-    const personal = await admin("POST", "/v1/inference-providers/litellm", { baseUrl: liteLlm.url, mode: "member", apiKey: LITELLM_ADMIN_KEY, allMembers: true })
-    assert.equal(personal.status, 201, summary(personal))
-    const personalId = text(field(personal.body, "inferenceProvider", "id"), "provider id")
-    const status = field(personal.body, "inferenceProvider", "litellm")
-    assert.equal(field(status, "keySource"), "personal")
-    assert.equal(field(status, "hasSyncKey"), true)
-    assert.ok(isRecord(status))
-    assert.deepEqual(Object.keys(status).sort(), ["attention", "attentionCount", "baseUrl", "connectedMemberCount", "hasSyncKey", "issueStrategy", "issuedMemberCount", "keySource", "lastSyncError", "lastSyncedAt", "mirrorFallback", "mode", "modelCount", "spendTracking", "teamCount"])
-    const personalAttempt = await connect(personalId)
-    const personalStatus = await browser(org.owner, `/v1/inference-providers/oauth/browser-status?attempt=${encodeURIComponent(personalAttempt)}`)
-    assert.equal(field(personalStatus.body, "method"), "litellm_key", summary(personalStatus))
-    const personalStart = await browser(org.owner, `/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(personalAttempt)}`)
-    assert.equal(personalStart.status, 400, summary(personalStart))
-    assert.equal(field(personalStart.body, "error"), "litellm_key_required")
-    // Its sets take no Microsoft sign-in settings, and it has none of that mode's settings to change.
-    const personalSetId = text(list(field(personal.body, "inferenceProvider", "credentialSets"))[0]?.id, "set id")
-    const oauthOnKeySet = await admin("PATCH", `/v1/inference-providers/${personalId}/credential-sets/${personalSetId}`, { oauthClientId: CLIENT, oauthClientSecret: CLIENT_SECRET })
-    assert.equal(field(oauthOnKeySet.body, "error"), "unsupported_oauth_client", summary(oauthOnKeySet))
-    const entraOnKeyProvider = await admin("PATCH", `/v1/inference-providers/${personalId}/litellm`, { oauthScope: API_SCOPE })
-    assert.equal(entraOnKeyProvider.status, 409, summary(entraOnKeyProvider))
-    assert.equal(field(entraOnKeyProvider.body, "error"), "litellm_not_entra")
-    assert.equal((await admin("POST", `/v1/inference-providers/${personalId}/litellm/sync`)).status, 200)
+  // LiteLLM, each person's own key: synced from the proxy with the admin key, connected by pasting a key.
+  const personal = await admin("POST", "/v1/inference-providers/litellm", { baseUrl: liteLlm.url, mode: "member", apiKey: LITELLM_ADMIN_KEY, allMembers: true })
+  assert.equal(personal.status, 201, summary(personal))
+  const personalId = text(field(personal.body, "inferenceProvider", "id"), "provider id")
+  const status = field(personal.body, "inferenceProvider", "litellm")
+  assert.equal(field(status, "keySource"), "personal")
+  assert.equal(field(status, "hasSyncKey"), true)
+  assert.ok(isRecord(status))
+  assert.deepEqual(Object.keys(status).sort(), ["attention", "attentionCount", "baseUrl", "connectedMemberCount", "hasSyncKey", "issueStrategy", "issuedMemberCount", "keySource", "lastSyncError", "lastSyncedAt", "mirrorFallback", "mode", "modelCount", "spendTracking", "teamCount"])
+  const personalAttempt = await connect(personalId)
+  const personalStatus = await browser(org.owner, `/v1/inference-providers/oauth/browser-status?attempt=${encodeURIComponent(personalAttempt)}`)
+  assert.equal(field(personalStatus.body, "method"), "litellm_key", summary(personalStatus))
+  const personalStart = await browser(org.owner, `/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(personalAttempt)}`)
+  assert.equal(personalStart.status, 400, summary(personalStart))
+  assert.equal(field(personalStart.body, "error"), "litellm_key_required")
+  // Its sets take no Microsoft sign-in settings, and it has none of that mode's settings to change.
+  const personalSetId = text(list(field(personal.body, "inferenceProvider", "credentialSets"))[0]?.id, "set id")
+  const oauthOnKeySet = await admin("PATCH", `/v1/inference-providers/${personalId}/credential-sets/${personalSetId}`, { oauthClientId: CLIENT, oauthClientSecret: CLIENT_SECRET })
+  assert.equal(field(oauthOnKeySet.body, "error"), "unsupported_oauth_client", summary(oauthOnKeySet))
+  const entraOnKeyProvider = await admin("PATCH", `/v1/inference-providers/${personalId}/litellm`, { oauthScope: API_SCOPE })
+  assert.equal(entraOnKeyProvider.status, 409, summary(entraOnKeyProvider))
+  assert.equal(field(entraOnKeyProvider.body, "error"), "litellm_not_entra")
+  assert.equal((await admin("POST", `/v1/inference-providers/${personalId}/litellm/sync`)).status, 200)
 
-    // Microsoft Foundry: the same sign-in flow, for Azure Cognitive Services.
-    const foundry = await admin("POST", "/v1/inference-providers", { name: "Foundry", providerId: "microsoft-foundry", modelIds: ["claude-fixture"], settings: { resourceName: "acme-foundry" },
-      credentialMode: "member", oauthTenantId: TENANT, oauthClientId: CLIENT, oauthClientSecret: CLIENT_SECRET, allMembers: true })
-    assert.equal(foundry.status, 201, summary(foundry))
-    const foundryId = text(field(foundry.body, "inferenceProvider", "id"), "provider id")
-    const foundryAttempt = await connect(foundryId)
-    const foundryStatus = await browser(org.owner, `/v1/inference-providers/oauth/browser-status?attempt=${encodeURIComponent(foundryAttempt)}`)
-    assert.equal(field(foundryStatus.body, "method"), "microsoft", summary(foundryStatus))
-    const foundryStart = await browser(org.owner, `/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(foundryAttempt)}`)
-    assert.equal(foundryStart.status, 200, summary(foundryStart))
-    const authorize = new URL(text(field(foundryStart.body, "authUrl"), "authorize URL"))
-    assert.equal(authorize.searchParams.get("scope"), COGNITIVE_SIGN_IN)
+  // Microsoft Foundry: the same sign-in flow, for Azure Cognitive Services.
+  const foundry = await admin("POST", "/v1/inference-providers", { name: "Foundry", providerId: "microsoft-foundry", modelIds: ["claude-fixture"], settings: { resourceName: "acme-foundry" },
+    credentialMode: "member", oauthTenantId: TENANT, oauthClientId: CLIENT, oauthClientSecret: CLIENT_SECRET, allMembers: true })
+  assert.equal(foundry.status, 201, summary(foundry))
+  const foundryId = text(field(foundry.body, "inferenceProvider", "id"), "provider id")
+  const foundryAttempt = await connect(foundryId)
+  const foundryStatus = await browser(org.owner, `/v1/inference-providers/oauth/browser-status?attempt=${encodeURIComponent(foundryAttempt)}`)
+  assert.equal(field(foundryStatus.body, "method"), "microsoft", summary(foundryStatus))
+  const foundryStart = await browser(org.owner, `/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(foundryAttempt)}`)
+  assert.equal(foundryStart.status, 200, summary(foundryStart))
+  const authorize = new URL(text(field(foundryStart.body, "authUrl"), "authorize URL"))
+  assert.equal(authorize.searchParams.get("scope"), COGNITIVE_SIGN_IN)
 
-    signInState = text(authorize.searchParams.get("state"), "state")
-    grantedScope = "https://cognitiveservices.azure.com/user_impersonation https://cognitiveservices.azure.com/.default"
-    tokenRequests.length = 0
-    const callback = await browser(org.owner, `/v1/inference-providers/oauth/callback?code=fixture-code&state=${encodeURIComponent(signInState)}`)
-    grantedScope = API_SCOPE
-    assert.equal(callback.status, 200, summary(callback))
-    assert.equal(tokenRequests[0]?.get("scope"), COGNITIVE_SIGN_IN)
-    const listed = await admin("GET", "/v1/inference-providers")
-    assert.equal(list(field(listed.body, "inferenceProviders")).find((provider) => provider.id === foundryId)?.credentialStatus, "ready")
-  })
-}
+  signInState = text(authorize.searchParams.get("state"), "state")
+  grantedScope = "https://cognitiveservices.azure.com/user_impersonation https://cognitiveservices.azure.com/.default"
+  tokenRequests.length = 0
+  const callback = await browser(org.owner, `/v1/inference-providers/oauth/callback?code=fixture-code&state=${encodeURIComponent(signInState)}`)
+  grantedScope = API_SCOPE
+  assert.equal(callback.status, 200, summary(callback))
+  assert.equal(tokenRequests[0]?.get("scope"), COGNITIVE_SIGN_IN)
+  const listed = await admin("GET", "/v1/inference-providers")
+  assert.equal(list(field(listed.body, "inferenceProviders")).find((provider) => provider.id === foundryId)?.credentialStatus, "ready")
+})
+
+test("Entra callback probes LiteLLM /v1/models and warns on mismatch without blocking sign-in", async () => {
+  const created = await owner("POST", "/v1/inference-providers/litellm", entraProvider({ name: "LiteLLM (Connect Check)", baseUrl: liteLlm.url }))
+  assert.equal(created.status, 201, summary(created))
+  const checkProviderId = text(field(created.body, "inferenceProvider", "id"), "provider id")
+
+  let probeCount = 0
+  const seenBearers: string[] = []
+  let nextResponse: { status: number; body: unknown } = { status: 200, body: { data: [{ id: "gpt-fixture" }, { id: "claude-fixture" }] } }
+  liteLlmModelsHandler = (authHeader) => {
+    probeCount += 1
+    seenBearers.push(authHeader)
+    return nextResponse
+  }
+
+  try {
+    // Verified when all configured models are listed.
+    const verifiedSignIn = await signIn(person, checkProviderId)
+    assert.equal(verifiedSignIn.callback.status, 200, summary(verifiedSignIn.callback))
+    assert.equal(probeCount, 1)
+    assert.equal(seenBearers[0], `Bearer ${ACCESS_TOKEN}`)
+    assert.match(verifiedSignIn.callback.text, /Connection verified with LiteLLM\./)
+    assert.doesNotMatch(verifiedSignIn.callback.text, /LiteLLM needs attention/)
+
+    // Missing configured model renders an amber warning while keeping sign-in stored.
+    nextResponse = { status: 200, body: { data: [{ id: "gpt-fixture" }] } }
+    const missingSignIn = await signIn(person, checkProviderId)
+    assert.equal(missingSignIn.callback.status, 200, summary(missingSignIn.callback))
+    assert.match(missingSignIn.callback.text, /LiteLLM needs attention/)
+    assert.match(missingSignIn.callback.text, /claude-fixture/)
+    assert.equal((await usable(person, checkProviderId))?.credentialStatus, "ready")
+
+    // 401 JWT issuer mismatch renders actionable JWT guidance without echoing the token.
+    nextResponse = { status: 401, body: { error: { message: `Invalid issuer for ${ACCESS_TOKEN}` } } }
+    const rejectedSignIn = await signIn(person, checkProviderId)
+    assert.equal(rejectedSignIn.callback.status, 200, summary(rejectedSignIn.callback))
+    assert.match(rejectedSignIn.callback.text, /LiteLLM needs attention/)
+    assert.match(rejectedSignIn.callback.text, /issuer, audience, and v2 access token settings/)
+    assert.equal(rejectedSignIn.callback.text.includes(ACCESS_TOKEN), false)
+
+    // Non-auth proxy error fails open silently with the standard completion page.
+    nextResponse = { status: 502, body: { error: "bad_gateway" } }
+    const skippedSignIn = await signIn(person, checkProviderId)
+    assert.equal(skippedSignIn.callback.status, 200, summary(skippedSignIn.callback))
+    assert.match(skippedSignIn.callback.text, /Connection complete/)
+    assert.doesNotMatch(skippedSignIn.callback.text, /LiteLLM needs attention/)
+  } finally {
+    liteLlmModelsHandler = null
+    await owner("DELETE", `/v1/inference-providers/${checkProviderId}`)
+  }
+})
 
 test("no API response carries a token or the client secret", () => {
   const everything = answered.join("\n")

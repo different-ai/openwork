@@ -9,7 +9,6 @@ import { db } from "../../db.js"
 import { jsonValidator, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { cloudRuntimeAvailable, getCloudRuntime } from "../../workers/cloud-runtime.js"
 import { appLogger } from "../../observability/logger.js"
-import { workerHasOpenOfficeSession } from "../../documents-office-store.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
   activityHeartbeatSchema,
@@ -120,7 +119,7 @@ export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteV
 
     const now = Date.now()
     const recentWork = Boolean(body.isActiveRecently && activityAt && now - activityAt.getTime() <= 120_000 && activityAt.getTime() <= now + 30_000)
-    if (cloudRuntimeAvailable() && (recentWork || await workerHasOpenOfficeSession(workerId).catch(() => false))) {
+    if (cloudRuntimeAvailable() && recentWork) {
       await getCloudRuntime().recordActivity(workerId).catch(() => {
         appLogger.warn("Could not refresh active computer idle timer", { worker_id: workerId })
       })

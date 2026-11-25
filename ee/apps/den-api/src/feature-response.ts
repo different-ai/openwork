@@ -2,7 +2,7 @@ import { z } from "zod"
 
 const retired = z.literal(true).default(true).meta({
   deprecated: true,
-  description: "Fixed compatibility value for supported published desktop clients; not a configurable feature.",
+  description: "Fixed compatibility value for published clients; not a configurable feature.",
 })
 const retiredClientFeaturesSchema = z.object({
   claudeAgentProvider: retired,
@@ -93,6 +93,16 @@ const retiredClientFeaturesSchema = z.object({
   lastUsedSignIn: retired,
   remoteSessionHelperView: retired,
   settingsFind: retired,
+  chatRunCommands: retired,
+  chatTableExpand: retired,
+  sessionMultiSelect: retired,
+  followUpSuggestions: retired,
+  sideChatPanel: retired,
+  personalSkillPortability: retired,
+  denGreySidebar: retired,
+  sandboxTools: retired,
+  litellmEntraMemberSignIn: retired,
+  workbotEnableAllConnectors: retired,
   teamSettingsSidebar: z.literal(false).default(false).meta({
     deprecated: true,
     description: "Fixed false compatibility value for the removed team sidebar; not configurable.",

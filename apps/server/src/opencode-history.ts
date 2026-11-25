@@ -6,9 +6,9 @@ import { importNodeSqlite } from "./runtime-db.js";
 
 export function opencodeV1DatabasePath(env: NodeJS.ProcessEnv = process.env): string {
   if (env.OPENCODE_DB === ":memory:") throw new Error("In-memory OpenCode history cannot be migrated.");
-  if (env.OPENCODE_DB?.trim()) return resolve(env.OPENCODE_DB);
   const isolated = env === process.env ? isolatedOpencodeV1Database() : undefined;
   if (isolated) return isolated;
+  if (env.OPENCODE_DB?.trim()) return resolve(env.OPENCODE_DB);
   return join(env.XDG_DATA_HOME || join(env.HOME || homedir(), ".local", "share"), "opencode", "opencode.db");
 }
 

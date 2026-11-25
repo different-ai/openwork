@@ -2733,7 +2733,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
-  async function runCloudProviderSync(reason: CloudProviderSyncReason, syncOptions?: { fresh?: boolean; throwOnError?: boolean }): Promise<void | { outcome: "handled_server_side" | "handled_live" }> {
+  async function runCloudProviderSync(
+    reason: CloudProviderSyncReason,
+    syncOptions?: {
+      fresh?: boolean;
+      throwOnError?: boolean;
+      refreshGatewayCatalog?: boolean;
+    },
+  ): Promise<void | { outcome: "handled_server_side" | "handled_live" }> {
     if (disposed) return;
     const delivery = syncDenSessionDelivery();
     const contextKey = getCloudProviderSyncContextKey();
@@ -2783,7 +2790,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         && contextKey === getCloudProviderSyncContextKey();
       try {
         const result = await enqueueGlobalCloudProviderSync(
-          `server:${contextKey}${syncOptions?.fresh ? `:fresh:${++freshCloudProviderSyncGeneration}` : ""}`,
+          `server:${contextKey}${syncOptions?.fresh || syncOptions?.refreshGatewayCatalog ? `:fresh:${++freshCloudProviderSyncGeneration}` : ""}`,
           async () => {
             if (!isCurrent()) return;
             const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
@@ -2798,7 +2805,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
               const previouslyLive = usesLiveProviderSync({ baseUrl, status: queryClient.getQueryData<LiveProviderSyncStatus>(key) });
               if (status) queryClient.setQueryData(key, status);
               if (usesLiveProviderSync({ baseUrl, status })) {
-                if (syncOptions?.fresh && options.providerFilterSyncFixEnabled?.()) {
+                if ((syncOptions?.fresh && options.providerFilterSyncFixEnabled?.()) || syncOptions?.refreshGatewayCatalog) {
                   await openworkClient.refreshGatewayProviderCatalog(delivery?.controller.signal);
                   if (!isCurrent()) return;
                 }

@@ -1,29 +1,16 @@
 import { expect, test } from "bun:test";
 import type { OpenworkSandboxSettingsResponse, OpenworkSandboxStatusResponse } from "@/app/lib/openwork-server";
-import { sandboxEditableToggleUpdate, sandboxEstimateText, sandboxImageSize, sandboxPanelState, sandboxPanelVisibility, sandboxRetryStarted, sandboxSavedChoiceMatches, sandboxStatusView, sandboxToggleUpdate } from "@/react-app/domains/settings/panels/sandbox-panel-state";
+import { sandboxEditableToggleUpdate, sandboxEstimateText, sandboxImageSize, sandboxPanelState, sandboxRetryStarted, sandboxSavedChoiceMatches, sandboxStatusView, sandboxToggleUpdate } from "@/react-app/domains/settings/panels/sandbox-panel-state";
 
 const off: OpenworkSandboxSettingsResponse = {
-  featureEnabled: false, useSandbox: false, forceSandbox: false,
+  useSandbox: false, forceSandbox: false,
   effectiveUseSandbox: false, effectiveForceSandbox: false, managedUse: false, managedForce: false,
   pending: false, verification: "verified", allowHostExecution: true, effectiveAllowHostExecution: true, managed: false,
 };
-test("visibility and readiness for unknown, off and on rollouts", () => {
-  const render = (visible: boolean, ready: boolean) => ({ visible, ready });
-  for (const rollout of [undefined, false, true]) {
-    expect(sandboxPanelVisibility(rollout, "loading")).toEqual(render(rollout === true, false));
-    expect(sandboxPanelVisibility(rollout, "error")).toEqual(render(rollout === true, rollout !== undefined));
-    expect(sandboxPanelVisibility(rollout, "settled", null)).toEqual(render(rollout === true, rollout !== undefined));
-    expect(sandboxPanelVisibility(rollout, "settled", { ...off, featureEnabled: true, verification: "checking" })).toEqual(render(rollout === true, rollout !== undefined));
-    for (const reason of [{ managedUse: true }, { managedForce: true }, { useSandbox: true }, { forceSandbox: true }, { pending: true }]) {
-      expect(sandboxPanelVisibility(rollout, "settled", { ...off, ...reason })).toEqual(render(true, true));
-    }
-  }
-});
-
 test("Force includes Use; organization locks leave stricter choices editable", () => {
   expect(sandboxPanelState(off, sandboxToggleUpdate("force", true))).toMatchObject({ use: true, force: true, useNote: "included", forceNote: null });
   expect(sandboxPanelState({ ...off, managedUse: true })).toMatchObject({ use: true, force: false, useNote: "managed", forceNote: null });
-  expect(sandboxPanelState({ ...off, managedForce: true })).toMatchObject({ use: true, force: true, useNote: "managed", forceNote: "managed", unavailable: true });
+  expect(sandboxPanelState({ ...off, managedForce: true })).toMatchObject({ use: true, force: true, useNote: "managed", forceNote: "managed" });
   expect(sandboxToggleUpdate("use", false)).toEqual({ useSandbox: false, forceSandbox: false });
   expect(sandboxPanelState({ ...off, pending: true, effectiveForceSandbox: true })).toMatchObject({ use: false, force: false, pending: "sandbox" });
   expect(sandboxPanelState({ ...off, pending: true, forceSandbox: true })).toMatchObject({ use: true, force: true, pending: "computer" });

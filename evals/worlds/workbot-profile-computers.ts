@@ -7,7 +7,7 @@ import { chrome } from "@openwork/hosts";
  * this is UI regression evidence, not a live Den/runner or remote-computer integration test. */
 export async function workbotProfileComputers(_seed: Seed, { place }: { place: Place }) {
   const resources = new AsyncDisposableStack();
-  let access = { profileComputers: false, profileSheet: true, devices: true };
+  let access = { profileSheet: true, devices: true };
   let inventory: "populated" | "empty" | "error" = "populated";
   const reads: string[] = [];
   const now = Date.now();

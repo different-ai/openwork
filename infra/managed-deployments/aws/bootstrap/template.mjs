@@ -54,8 +54,9 @@ const serviceGlob = { "Fn::If": ["IsExisting", join([tfName, "-*"]), "*"] };
 const securityGroupRules = ["ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress", "ec2:RevokeSecurityGroupEgress",
   "ec2:ModifySecurityGroupRules", "ec2:UpdateSecurityGroupRuleDescriptionsIngress", "ec2:UpdateSecurityGroupRuleDescriptionsEgress"];
 const statements = [
-  // Reads, and creates that have no resource-level permissions.
-  allow("Read", ["ec2:Describe*", "ecs:Describe*", "ecs:List*", "ecs:RegisterTaskDefinition", "elasticloadbalancing:Describe*", "rds:Describe*",
+  // Reads, and creates that have no resource-level permissions. Creating a
+  // load balancer also checks ec2:GetSecurityGroupsForVpc, which Describe* omits.
+  allow("Read", ["ec2:Describe*", "ec2:GetSecurityGroupsForVpc", "ecs:Describe*", "ecs:List*", "ecs:RegisterTaskDefinition", "elasticloadbalancing:Describe*", "rds:Describe*",
     "rds:ListTagsForResource", "acm:DescribeCertificate", "acm:ListTagsForCertificate", "acm:RequestCertificate", "acm:AddTagsToCertificate",
     "servicediscovery:Get*", "servicediscovery:List*", "events:DescribeRule", "events:ListTargetsByRule", "events:ListTagsForResource"], "*", inRegion),
   // A dedicated account gets its own VPC; its network actions cannot be scoped before the VPC exists.

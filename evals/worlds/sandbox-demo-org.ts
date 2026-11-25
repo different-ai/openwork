@@ -30,11 +30,6 @@ export async function orgDemo(cleanup: AsyncDisposableStack, root: string, signa
   const member = den.members.member;
   requireDemo(member, "No seeded Den member");
   const adminAuth = { authorization: `Bearer ${admin.token}` };
-  const context = await denFetch(admin, "/v1/org", { headers: adminAuth });
-  const org = isRecord(context.body) ? context.body.organization : null;
-  requireDemo(isRecord(org) && typeof org.id === "string", "No seeded organization ID");
-  const enabled = await denFetch(admin, `/v1/admin/organizations/${org.id}/capabilities`, { method: "PUT", headers: adminAuth, body: JSON.stringify({ capabilities: { sandboxTools: true } }) });
-  requireDemo(enabled.response.ok, "Local Den rollout flag could not be enabled");
   const shots: string[] = [];
   const directories: string[] = [];
   const assertPolicy = () => poll("actual member received host_execution deny", () => denFetch(member, "/v1/me/desktop-config", { headers: { authorization: `Bearer ${member.token}`, "X-OpenWork-Sandbox-Only": "1", "X-OpenWork-Sandbox-Modes": "1" } }), row => row.response.ok && isRecord(row.body) && isRecord(row.body.agentPermissions) && Array.isArray(row.body.agentPermissions.rules) && row.body.agentPermissions.rules.some(rule => isRecord(rule) && rule.action === "host_execution" && rule.effect === "deny"));

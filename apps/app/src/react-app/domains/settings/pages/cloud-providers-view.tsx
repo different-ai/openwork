@@ -7,9 +7,9 @@ import type { DenOrgLlmProvider, DenOrgLlmProviderAccess } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
-import { GatewayConnectRow } from "./ai-view";
+import { GatewayConnectRow, GatewayReadyRow } from "./ai-view";
 import { ProviderIcon } from "../../../design-system/provider-icon";
-import { gatewayConnectProviderKey, type GatewayConnectProvider } from "../../connections/provider-auth/cloud-provider-config";
+import { gatewayConnectProviderKey, resolveLiveGatewayReadyProviders, type GatewayConnectProvider, type LiveGatewayProvider } from "../../connections/provider-auth/cloud-provider-config";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import {
   CloudProvidersSection,
@@ -85,6 +85,7 @@ export type CloudProvidersViewProps = {
   runCloudProviderSync: (reason: "manual") => Promise<unknown>;
   serverSync: CloudProviderServerSyncState | null;
   gatewayConnectProviders?: GatewayConnectProvider[];
+  liveGatewayProviders?: readonly LiveGatewayProvider[] | null;
   connectingGatewayProviderId?: string | null;
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
   onOpenDen?: () => void;
@@ -108,6 +109,7 @@ export function CloudProvidersView({
   runCloudProviderSync,
   serverSync,
   gatewayConnectProviders = [],
+  liveGatewayProviders = null,
   connectingGatewayProviderId,
   onConnectGatewayProvider,
   onOpenDen,
@@ -259,6 +261,8 @@ export function CloudProvidersView({
     );
   }
 
+  const gatewayReadyProviders = resolveLiveGatewayReadyProviders(liveGatewayProviders, cloudOrgProviders.map((provider) => provider.id));
+
   const section = (
     <CloudProvidersSection
       actionError={actionError ?? (serverSync?.lastRun?.status === "failed" ? "Could not verify providers with Den. Sync again to retry." : null)}
@@ -272,8 +276,8 @@ export function CloudProvidersView({
       shareEmptyState={shareEmptyState}
       lastVerifiedAt={serverSync?.lastVerifiedAt}
       openWorkModelsToggle={openWorkModelsToggle}
-      additionalCount={gatewayConnectProviders.length}
-      additionalRows={gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}
+      additionalCount={gatewayReadyProviders.length + gatewayConnectProviders.length}
+      additionalRows={<>{gatewayReadyProviders.map((provider) => <GatewayReadyRow key={provider.id} provider={provider} />)}{gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}</>}
     />
   );
 

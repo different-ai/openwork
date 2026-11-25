@@ -51,7 +51,7 @@ const COPIED_LINE = "copied"
 function computerBlocks(provider: SandboxProvider) { return withBlocks(provider, ["run", "files"], "Workbot computer") }
 const GUEST_PATH = "/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 const MAX_COMMAND_SECONDS = 300
-/** A microVM pause writes a full checkpoint of disk and memory: about three minutes for a desktop on Fast Sandbox. */
+/** A microVM pause writes a full checkpoint of disk and memory, which can take minutes for a desktop. */
 export const PAUSE_TIMEOUT_MS = 5 * 60_000
 const START_TIMEOUT_MS = 170_000
 const DEFAULT_COMMAND_SECONDS = 120

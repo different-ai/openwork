@@ -6,11 +6,10 @@
  * replacement, the server's context/sandbox bridges, the local sandbox
  * runtime, a local microVM, and inference from the chosen model.
  *
- * What is a fixture: a loopback Den that answers `/v1/features` (the
- * signed-out rollout read), and a loopback inference proxy that holds the
- * provider key in memory. The engine config only ever contains a random
- * scoped token and the proxy's loopback URL. No UI, no organization, no
- * production flag is touched: this is not a product or UI proof.
+ * What is a fixture: a loopback inference proxy that holds the provider key
+ * in memory. The engine config only ever contains a random
+ * scoped token and the proxy's loopback URL. No UI and no organization
+ * is touched: this is not a product or UI proof.
  *
  * Run from apps/server so `tsx` and the server's dependencies resolve:
  *
@@ -440,22 +439,13 @@ async function main() {
   const files = {
     reference: join(paths.authorized, "reference.txt"), fromGuest: join(paths.authorized, "from-guest.txt"),
     notes: join(paths.workspace, "notes.txt"), copy: join(paths.workspace, "copy.txt"),
-    hostSecret: join(paths.hostOnly, "secret.txt"), sentinel: join(paths.workspace, "sentinel.txt"),
-    sentinelShell: join(paths.workspace, "sentinel-shell.txt"),
+    hostSecret: join(paths.hostOnly, "secret.txt"),
   };
   await writeFile(files.reference, `${authorizedNonce}\n`);
   await writeFile(files.notes, "title: sandbox check\nstatus: draft\n");
   await writeFile(files.hostSecret, `${hostSecret}\n`);
 
   const state = { phase: "setup", hostSecret };
-  const rollout = { sandboxTools: true, reads: 0 };
-  const den = createServer((request, response) => {
-    if (request.method === "GET" && new URL(request.url ?? "/", "http://127.0.0.1").pathname === "/v1/features") {
-      rollout.reads++;
-      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ sandboxTools: rollout.sandboxTools }));
-    } else response.writeHead(404).end();
-  });
-  await new Promise<void>(resolve => den.listen(0, "127.0.0.1", resolve));
   const witnessHits: string[] = [];
   const witnessServer = createServer((request, response) => {
     witnessHits.push(`${request.method} ${request.url}`);
@@ -465,15 +455,13 @@ async function main() {
   const witnessAddress = witnessServer.address();
   if (!witnessAddress || typeof witnessAddress === "string") throw new Error("Witness has no port");
   const witness = { url: `http://127.0.0.1:${witnessAddress.port}`, hits: witnessHits };
-  const denAddress = den.address();
-  if (!denAddress || typeof denAddress === "string") throw new Error("Den fixture has no port");
 
   const config: ServerConfig = {
     host: "127.0.0.1", port: 0, token: randomBytes(16).toString("hex"), hostToken: randomBytes(16).toString("hex"),
     configPath: join(paths.runtime, "server.json"), approval: { mode: "auto", timeoutMs: 1_000 }, corsOrigins: [],
     workspaces: [{ id: `modelcheck-${profile.key}`, path: paths.workspace, name: "Sandbox model check", preset: "starter", workspaceType: "local" }],
     authorizedRoots: [], readOnly: false, startedAt: Date.now(), tokenSource: "generated", hostTokenSource: "generated",
-    logFormat: "json", logRequests: false, trustedDenOrigin: `http://127.0.0.1:${denAddress.port}`,
+    logFormat: "json", logRequests: false, trustedDenOrigin: "http://127.0.0.1",
   };
 
   const startedAt = new Date().toISOString();
@@ -660,35 +648,6 @@ async function main() {
     const killedCalls = killedTurn.tools.filter(trace => uses(trace, "shell") || uses(trace, "write"));
     observations.push(`VM killed: ${vmProcesses.length} process(es) killed; then ${killedCalls.map(trace => `${trace.tool}=${trace.status}${trace.error ? ` (${trace.error.slice(0, 200)})` : ""}`).join("; ") || "no calls"}; workspace file from the shell: ${afterKillUname === null ? "absent" : JSON.stringify(afterKillUname.trim())}; write file: ${(await exists(killedFiles.write)) ? "present" : "absent"}.`);
 
-    // ----- Phase 5: the rollout is revoked; sandbox-only must not hand tools back to the host -----
-    rollout.sandboxTools = false;
-    state.phase = "sandbox-unavailable";
-    const downTurn = await runTurn(engine, { directory: paths.workspace, title: "Sandbox model check: sandbox unavailable", model, timeoutMs: turnTimeoutMs, text: [
-      "Do both steps below in order, each exactly once with the named tool, even if the first fails. Do not try any other approach and do not ask questions.",
-      `1. Use the write tool to create ${files.sentinel} with the content ${sentinelNonce}`,
-      `2. Use the shell tool to run exactly: echo ${sentinelNonce} > ${files.sentinelShell}`,
-      "Then reply with one short line per step, quoting any error text exactly.",
-    ].join("\n") });
-    turnMessages["sandbox-unavailable"] = downTurn.messages;
-    turns.push({ phase: state.phase, sessionId: downTurn.sessionId, timedOut: downTurn.timedOut, tools: downTurn.tools, assistantText: "" });
-    const downInference = proxy.records.filter(entry => entry.phase === "sandbox-unavailable");
-    check("unavailable turn: the turn finished", !downTurn.timedOut, `timed out after ${turnTimeoutMs} ms`);
-    const downForm = catalogForm(downInference);
-    catalogForms.sandboxUnavailable = downForm;
-    check("unavailable turn: the model was still offered only the six guest tools, no host builtins", downForm === "native" || downForm === "codemode", describeCatalog(downInference));
-    const attempted = downTurn.tools.filter(trace => uses(trace, "write") || uses(trace, "shell"));
-    check("unavailable turn: the model called write and shell", attempted.some(trace => uses(trace, "write")) && attempted.some(trace => uses(trace, "shell")), describe(downTurn.tools));
-    check("unavailable turn: no tool outside the six guest tools was called", downTurn.tools.every(onlyGuestTools), describe(downTurn.tools));
-    // Code Mode lets the model catch a child tool's error and return it, so the refusal may arrive as output.
-    const refusal = /nothing ran on the host/i;
-    const refused = (trace: ToolTrace) => trace.children.length
-      ? trace.children.every(child => child.status === "error" && refusal.test(child.error))
-      : refusal.test(trace.error) || refusal.test(trace.output);
-    check("unavailable turn: every attempted call was refused, saying nothing ran on the host", attempted.length > 0 && attempted.every(refused),
-      attempted.map(trace => `${trace.tool}:${trace.status}:${(trace.error || trace.children.map(child => `${child.tool}=${child.status}:${child.error}`).join(";") || trace.output).slice(0, 300)}`).join(" | "));
-    check("unavailable turn: no sentinel file exists on the host", !(await exists(files.sentinel)) && !(await exists(files.sentinelShell)));
-    check("the rollout was read from the Den fixture, not assumed", rollout.reads > 0, `reads: ${rollout.reads}`);
-
     for (const turn of turns) turn.assistantText = collectAssistantText(turnMessages[turn.phase]).slice(-2_000);
     const everything = JSON.stringify({ turns: turnMessages, records: proxy.records, firstRequest: proxy.firstToolDefinitions.value });
     if (values["dump-messages"]) {
@@ -706,8 +665,6 @@ async function main() {
     await proxy?.close().catch(() => undefined);
     witnessServer.closeAllConnections();
     await new Promise<void>(resolve => witnessServer.close(() => resolve()));
-    den.closeAllConnections();
-    await new Promise<void>(resolve => den.close(() => resolve()));
     let remaining = await ownVmProcesses();
     for (const { pid } of remaining) { try { process.kill(pid, "SIGTERM"); } catch { /* Already gone. */ } }
     if (remaining.length) { await delay(2_000); remaining = await ownVmProcesses(); }
@@ -721,7 +678,7 @@ async function main() {
     for (const entry of records) for (const [key, value] of Object.entries(entry.usage ?? {})) if (typeof value === "number") usageTotals[key] = (usageTotals[key] ?? 0) + value;
     const evidence = {
       script: "evals/scripts/sandbox-model-check.ts",
-      scope: "engine/plugin/bridge/microVM with real inference; rollout read from a loopback Den fixture; not a UI or product-flag proof",
+      scope: "engine/plugin/bridge/microVM with real inference; signed out, no Den read; not a UI proof",
       pluginOverride: pluginOverride ? "DIAGNOSTIC: engine plugins loaded from an override directory, not the product source" : null,
       catalogForms, observations,
       model: { key: profile.key, requested: profile.modelId, package: profile.package,

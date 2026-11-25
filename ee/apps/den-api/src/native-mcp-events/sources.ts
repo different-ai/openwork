@@ -3,7 +3,6 @@ import { MemberTable, RemoteDeviceEventTable, RemoteDeviceTable } from "@openwor
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { db } from "../db.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { readRemoteSessionEventStatus } from "../mcp/remote-session-capabilities.js"
 import { SESSION_EVENT, computerArguments, denied, NativeEventError, nativeNameSchema, sessionArguments } from "./protocol.js"
 
@@ -13,7 +12,7 @@ export async function nativeAccess(actor: NativeActor) {
     eq(MemberTable.id, normalizeDenTypeId("member", actor.memberId)), eq(MemberTable.organizationId, normalizeDenTypeId("organization", actor.organizationId)),
     eq(MemberTable.userId, normalizeDenTypeId("user", actor.userId)), isNull(MemberTable.removedAt),
   )).limit(1)
-  if (!member || !await organizationFeatureEnabled(actor.organizationId, "nativeMcpEvents", { userId: actor.userId })) throw denied()
+  if (!member) throw denied()
 }
 const statusSchema = z.object({ threads: z.array(z.object({ state: z.enum(["starting", "running", "waiting", "idle", "error"]).optional(), stale: z.boolean().optional(), sessionId: z.string().nullable().optional(), waitingFor: z.string().nullable().optional(), pending: z.object({ requestId: z.string() }).nullable().optional(), error: z.object({ code: z.string() }).nullable().optional() })) })
 

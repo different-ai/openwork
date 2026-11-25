@@ -97,9 +97,8 @@ function Group({ title, children }: { title?: string; children: ReactNode }) {
   );
 }
 
-export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onChange, connectorsHref, scope = { kind: "everyone" } }: {
+export function WorkbotAgentSettingsGroups({ view, canManage, saving, onChange, connectorsHref, scope = { kind: "everyone" } }: {
   view: WorkbotProactiveView;
-  brief: AgentBriefView;
   canManage: boolean;
   saving: boolean;
   onChange: (change: WorkbotProactiveSettingsInput) => void;
@@ -108,7 +107,7 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
 }) {
   const ids = { every: useId(), hours: useId(), days: useId(), cap: useId(), extra: useId(), holdAt: useId(), skipAt: useId() };
   const switchLabel = AGENTS_SWITCH_LABEL;
-  const { settings, slackReady, runnerReady } = view;
+  const { settings, brief, slackReady, runnerReady } = view;
   const locked = !canManage || saving;
   const switchNote = !runnerReady
     ? "Needs the headless runner. Ask your deployment administrator."
