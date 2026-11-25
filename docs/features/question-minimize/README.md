@@ -1,5 +1,7 @@
 # Minimize a pending question (`questionMinimize`)
 
+> **Generally available:** `questionMinimize` is retired; the enabled behavior is now standard. Rollout, off-state and kill-switch notes below describe the historical rollout.
+
 - **Feature key:** `questionMinimize`
 - **Deployments:** cloud and self-hosted (`everywhere`), off by default
 - **Author:** @benjaminshafii

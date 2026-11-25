@@ -20,7 +20,6 @@ afterEach(async () => {
 
 for (const mode of ["ready", "inventory_unavailable", "stale_sync", "refresh_failed"]) test(`Share joins the actual Gateway and engine catalog (${mode})`, async () => {
   const requests: string[] = [];
-  let featureEnabled = true;
   let refreshed = false;
   let statusReads = 0;
   let release = () => {};
@@ -53,7 +52,6 @@ for (const mode of ["ready", "inventory_unavailable", "stale_sync", "refresh_fai
   const server = createOpenworkServerClient({ baseUrl: "http://localhost:8787", hostToken: "fixture-host" });
   const client = createClientV2("http://localhost:8787/opencode2", "/workspace", {});
   const store = createProviderAuthStore({
-    providerFilterSyncFixEnabled: () => featureEnabled,
     client: () => client, providers: () => [], providerDefaults: () => ({}), providerConnectedIds: () => [], disabledProviders: () => [],
     checkDesktopAppRestriction: () => false,
     selectedWorkspaceDisplay: () => ({ id: "workspace", name: "Workspace", path: "/workspace", preset: "default", workspaceType: "local" }),
@@ -81,10 +79,6 @@ for (const mode of ["ready", "inventory_unavailable", "stale_sync", "refresh_fai
     if (mode === "ready") await expect(store.syncSharedDeviceProvider("openai", shared)).resolves.toMatchObject({ status: "arrived" });
     expect(requests.filter((request) => request.endsWith("/share"))).toHaveLength(1);
     expect(requests.some((request) => request.startsWith("DELETE"))).toBe(false);
-    featureEnabled = false;
-    const beforeDisabledCheck = requests.length;
-    await expect(store.syncSharedDeviceProvider("openai", shared)).resolves.toEqual({ status: "pending" });
-    expect(requests).toHaveLength(beforeDisabledCheck);
   } finally {
     store.dispose();
     fetch.mockRestore();

@@ -3,7 +3,6 @@ import { useEffect, useEffectEvent, useReducer, useRef, useState } from "react";
 import type { QuestionInfo } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, HelpCircle, X } from "lucide-react";
 
-import { markFeatureUsed } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { t } from "@/i18n";
@@ -18,7 +17,6 @@ export type QuestionPanelProps = {
   busy: boolean;
   onReply: (answers: string[][]) => unknown;
   onDismiss?: () => void;
-  collapsible?: boolean;
   requestId?: string;
   shortcutActive?: boolean;
   variant?: "composer" | "thread";
@@ -147,7 +145,7 @@ const QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE =
 const QUESTION_OPTIONS_SCROLL_IN_WINDOW_SHARE = "max-h-[min(18rem,40vh)] space-y-3 overflow-auto px-4 py-3";
 
 export function QuestionPanel(props: QuestionPanelProps) {
-  const draftKey = props.collapsible ? props.requestId : undefined;
+  const draftKey = props.variant === "thread" ? undefined : props.requestId;
   const [state, dispatch] = useReducer(
     questionReducer,
     draftKey,
@@ -189,16 +187,12 @@ export function QuestionPanel(props: QuestionPanelProps) {
     saveQuestionDraft(draftKey, { state, collapsed });
   }, [draftKey, state, collapsed]);
 
-  const changeCollapsed = (next: boolean) => {
-    if (next) markFeatureUsed("questionMinimize");
-    setCollapsed(next);
-  };
   const handleCollapseChord = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.repeat || !isQuestionCollapseChord(event)) return;
     event.preventDefault();
-    changeCollapsed(!collapsed);
+    setCollapsed(!collapsed);
   });
-  const chordListening = Boolean(props.collapsible && props.shortcutActive);
+  const chordListening = Boolean(props.variant !== "thread" && props.shortcutActive);
   useEffect(() => {
     if (!chordListening) return;
     const handler = (event: KeyboardEvent) => handleCollapseChord(event);
@@ -553,115 +547,72 @@ export function QuestionPanel(props: QuestionPanelProps) {
       </div>
   );
 
-  if (props.collapsible) {
-    const heading = currentQuestion.header || t("common.question");
-    return (
-      <Collapsible
-        open={!collapsed}
-        onOpenChange={(open) => changeCollapsed(!open)}
-        className="overflow-hidden border-b border-dls-border bg-transparent"
-        data-question-collapsed={collapsed ? "true" : "false"}
-      >
-        <div className={`px-4 ${collapsed ? "py-2" : "border-b border-dls-border py-3"}`}>
-          <div className={`flex gap-2.5 ${collapsed ? "items-center" : "items-start"}`}>
-            <div className={`flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-3 text-blue-11 ${collapsed ? "" : "mt-0.5"}`}>
-              <HelpCircle size={12} />
+  const heading = currentQuestion.header || t("common.question");
+  return (
+    <Collapsible
+      open={!collapsed}
+      onOpenChange={(open) => setCollapsed(!open)}
+      className="overflow-hidden border-b border-dls-border bg-transparent"
+      data-question-collapsed={collapsed ? "true" : "false"}
+    >
+      <div className={`px-4 ${collapsed ? "py-2" : "border-b border-dls-border py-3"}`}>
+        <div className={`flex gap-2.5 ${collapsed ? "items-center" : "items-start"}`}>
+          <div className={`flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-3 text-blue-11 ${collapsed ? "" : "mt-0.5"}`}>
+            <HelpCircle size={12} />
+          </div>
+          {collapsed ? (
+            <div className="flex min-w-0 flex-1 items-baseline gap-2">
+              <div className="min-w-0 truncate text-sm font-medium leading-5 text-gray-12">{heading}</div>
+              <div className="shrink-0 text-xs leading-4 text-gray-10" role="status">
+                {t("question_modal.collapsed_status")}
+              </div>
             </div>
-            {collapsed ? (
-              <div className="flex min-w-0 flex-1 items-baseline gap-2">
-                <div className="min-w-0 truncate text-sm font-medium leading-5 text-gray-12">{heading}</div>
-                <div className="shrink-0 text-xs leading-4 text-gray-10" role="status">
-                  {t("question_modal.collapsed_status")}
+          ) : (
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <div className="text-sm font-medium leading-5 text-gray-12">{heading}</div>
+                <div className="text-[11px] font-medium leading-4 text-gray-9">
+                  {t("question_modal.question_counter", undefined, {
+                    current: state.currentIndex + 1,
+                    total: props.questions.length,
+                  })}
                 </div>
               </div>
-            ) : (
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <div className="text-sm font-medium leading-5 text-gray-12">{heading}</div>
-                  <div className="text-[11px] font-medium leading-4 text-gray-9">
-                    {t("question_modal.question_counter", undefined, {
-                      current: state.currentIndex + 1,
-                      total: props.questions.length,
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-            <CollapsibleTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={`shrink-0 text-gray-10 aria-expanded:text-gray-10 aria-expanded:hover:text-foreground ${collapsed ? "-mr-2" : "-mt-1"}`}
-                />
-              }
-              data-question-collapse-toggle=""
-            >
-              {collapsed ? <ChevronUp data-icon="inline-start" /> : <ChevronDown data-icon="inline-start" />}
-              {collapsed ? t("question_modal.expand") : t("question_modal.collapse")}
-              <span className="text-[11px] font-normal text-gray-9" aria-hidden="true">{questionCollapseChordLabel()}</span>
-            </CollapsibleTrigger>
-            {props.onDismiss && !collapsed ? (
+            </div>
+          )}
+          <CollapsibleTrigger
+            render={
               <Button
                 variant="ghost"
                 size="sm"
-                className="-mr-2 -mt-1 shrink-0 text-gray-10"
-                disabled={props.busy}
-                title={t("question_modal.dismiss_hint")}
-                onClick={dismiss}
-              >
-                <X data-icon="inline-start" />
-                {t("question_modal.dismiss")}
-              </Button>
-            ) : null}
-          </div>
-          {collapsed ? null : (
-            <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
-          )}
-        </div>
-        <CollapsibleContent className={QUESTION_COLLAPSE_PANEL_CLASS}>{body}</CollapsibleContent>
-      </Collapsible>
-    );
-  }
-
-  return (
-    <div className="overflow-hidden border-b border-dls-border bg-transparent">
-      <div className="border-b border-dls-border px-4 py-3">
-        <div className="flex items-start gap-2.5">
-          <div className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border border-blue-7/30 bg-blue-3/20 text-blue-11">
-            <HelpCircle size={12} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <div className="text-sm font-medium leading-5 text-gray-12">
-                {currentQuestion.header || t("common.question")}
-              </div>
-              <div className="text-[11px] font-medium leading-4 text-gray-9">
-                {t("question_modal.question_counter", undefined, {
-                  current: state.currentIndex + 1,
-                  total: props.questions.length,
-                })}
-              </div>
-            </div>
-          </div>
-          {props.onDismiss ? (
+                className={`shrink-0 text-gray-10 aria-expanded:text-gray-10 aria-expanded:hover:text-foreground ${collapsed ? "-mr-2" : "-mt-1"}`}
+              />
+            }
+            data-question-collapse-toggle=""
+          >
+            {collapsed ? <ChevronUp data-icon="inline-start" /> : <ChevronDown data-icon="inline-start" />}
+            {collapsed ? t("question_modal.expand") : t("question_modal.collapse")}
+            <span className="text-[11px] font-normal text-gray-9" aria-hidden="true">{questionCollapseChordLabel()}</span>
+          </CollapsibleTrigger>
+          {props.onDismiss && !collapsed ? (
             <Button
               variant="ghost"
               size="sm"
               className="-mr-2 -mt-1 shrink-0 text-gray-10"
               disabled={props.busy}
               title={t("question_modal.dismiss_hint")}
-              onClick={props.onDismiss}
+              onClick={dismiss}
             >
               <X data-icon="inline-start" />
               {t("question_modal.dismiss")}
             </Button>
           ) : null}
         </div>
-        <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
+        {collapsed ? null : (
+          <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
+        )}
       </div>
-
-      {body}
-    </div>
+      <CollapsibleContent className={QUESTION_COLLAPSE_PANEL_CLASS}>{body}</CollapsibleContent>
+    </Collapsible>
   );
 }

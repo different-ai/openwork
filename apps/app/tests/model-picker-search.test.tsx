@@ -7,7 +7,6 @@ const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const features = await import("../src/react-app/domains/session/status/use-desktop-feature");
 const { ModelPickerList } = await import("../src/react-app/domains/models/model-picker-list");
 const { createDefaultPlatform, PlatformProvider } = await import("../src/react-app/kernel/platform");
 const { CommandPalette } = await import("../src/react-app/shell/command-palette");
@@ -31,8 +30,7 @@ const claude = model("ipr_a", "gwm_a", "Claude Opus 5.5", "OpenWork Anthropic");
 const sol = model("ipr_b", "gwm_b", "Sol 6.1", "OpenWork Models");
 const unrelated = model("302ai", "claude-opus-6.1", "Claude Opus 6.1", "302.AI");
 
-async function mount(query: string, enabled = true, options = [claude, sol, unrelated]) {
-  spyOn(features, "useDesktopFeature").mockImplementation((key) => key === "providerFilterSyncFix" && enabled);
+async function mount(query: string, options = [claude, sol, unrelated]) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -69,7 +67,7 @@ test("an empty scoped match stays empty after a successful search", async () => 
 });
 
 test("a provider-only miss never substitutes the unfiltered catalog", async () => {
-  const { host } = await mount("ow anthropic", true, [sol, unrelated]);
+  const { host } = await mount("ow anthropic", [sol, unrelated]);
   expect(host.querySelectorAll("[data-model-key]")).toHaveLength(0);
   expect(host.textContent).toContain("No models match “ow anthropic”");
   expect(host.textContent).not.toContain("302.AI");
@@ -77,7 +75,7 @@ test("a provider-only miss never substitutes the unfiltered catalog", async () =
 
 test("each provider is reachable without searching through an aggregator's models", async () => {
   const many = Array.from({ length: 200 }, (_, index) => model("302ai", `model-${index}`, `Aggregator model ${index}`, "302.AI"));
-  const { host, onQueryChange } = await mount("", true, [...many, claude, sol]);
+  const { host, onQueryChange } = await mount("", [...many, claude, sol]);
   const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Filter models by provider"]');
   expect(trigger).not.toBeNull();
   await act(async () => trigger?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
@@ -97,7 +95,7 @@ test("each provider is reachable without searching through an aggregator's model
 });
 
 test("a device key and the organization's copy of one provider are told apart", async () => {
-  const { host } = await mount("", true, [model("openai", "gpt-5", "GPT-5", "OpenAI"), model("ipr_c", "gwm_c", "GPT-5", "OpenAI"), sol]);
+  const { host } = await mount("", [model("openai", "gpt-5", "GPT-5", "OpenAI"), model("ipr_c", "gwm_c", "GPT-5", "OpenAI"), sol]);
   const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Filter models by provider"]');
   await act(async () => trigger?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
   const labels = [...document.querySelectorAll<HTMLElement>('[data-slot="select-item"] span.truncate')].map((label) => label.textContent);
@@ -108,7 +106,6 @@ test("a device key and the organization's copy of one provider are told apart", 
 });
 
 test("the command palette's Models mode uses the same scoped search and provider navigation", async () => {
-  spyOn(features, "useDesktopFeature").mockReturnValue(true);
   spyOn(desktopConfig, "useCheckDesktopRestriction").mockReturnValue(() => ({ allowed: true }));
   const host = document.createElement("div");
   document.body.append(host);
@@ -135,10 +132,4 @@ test("the command palette's Models mode uses the same scoped search and provider
   await type("sol 6.1 ow anthropic");
   expect(document.querySelectorAll('[data-testid="palette-model-picker"] [data-model-key]')).toHaveLength(0);
   expect(document.body.textContent).toContain("Show all OpenWork Anthropic models");
-});
-
-test("switching the flag off restores the legacy results", async () => {
-  const { host } = await mount("sol 6.1 ow anthropic", false);
-  expect(host.querySelectorAll("[data-model-key]").length).toBeGreaterThan(0);
-  expect(host.textContent).toContain("Showing other providers");
 });

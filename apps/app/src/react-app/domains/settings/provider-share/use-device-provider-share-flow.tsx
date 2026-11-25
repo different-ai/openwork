@@ -22,7 +22,7 @@ export function useDeviceProviderShareFlow(input: {
   runtimeWorkspaceId: string | null | undefined;
   organizationName: string;
   share: (providerId: string, verifiedToken?: string) => Promise<{ inferenceProviderId: string; name: string }>;
-  guided?: {
+  guided: {
     confirmArrival: (providerId: string, shared: { inferenceProviderId: string; name: string }) => Promise<SharedProviderArrival>;
     removeDeviceKey: (providerId: string, organizationProviderId: string) => Promise<void>;
     showOrganizationProviders: () => void;
@@ -62,11 +62,10 @@ export function useDeviceProviderShareFlow(input: {
       organizationName={organizationName}
       verificationRequired={share.options?.verificationRequired === true}
       onShare={shareAndRemember}
-      onShared={(provider) => {
-        if (!guided) toast.success(`Shared ${provider.name} with ${organizationName}`);
+      onShared={() => {
         void share.refresh();
       }}
-      guided={guided ? {
+      guided={{
         confirmArrival: async (providerId) => {
           const created = shared.current.get(providerId);
           return created ? guided.confirmArrival(providerId, created) : { status: "pending" };
@@ -83,7 +82,7 @@ export function useDeviceProviderShareFlow(input: {
             guided.showOrganizationProviders();
           }
         },
-      } : undefined}
+      }}
       onClose={() => setSelection(null)}
     />
   ) : null;

@@ -1,9 +1,3 @@
-/**
- * Every preview flag. A preview gates unfinished work: it has an owner and a
- * day it expires, and by then it ships (move the key to ./retired.ts and
- * remove its checks) or is cut. The export name is the key, in alphabetical
- * order. Read .opencode/skills/add-a-feature/SKILL.md before adding one.
- */
 import { definePreview, everywhere } from "@openwork/features/define"
 
 export const activationLocalSetup = definePreview({
@@ -257,18 +251,6 @@ export const followUpDelivery = definePreview({
   default: false,
 })
 
-export const gatewayOpenCodeSetup = definePreview({
-  label: "AI Gateway: OpenCode setup",
-  description: "Show members how to install the OpenWork plugin for OpenCode 2 and sign in from My Library › Models.",
-  category: "models",
-  added: "2026-11-17",
-  owner: "benjaminshafii",
-  expiresOn: "2026-12-15",
-  docs: "docs/features/gateway-open-code-setup/README.md",
-  deployments: everywhere,
-  default: false,
-})
-
 export const gmailThreadRead = definePreview({
   label: "Read Gmail threads",
   description: "Read the messages, headers, and labels in a Gmail conversation without loading full message bodies.",
@@ -277,30 +259,6 @@ export const gmailThreadRead = definePreview({
   owner: "yomgui",
   expiresOn: "2027-01-31",
   docs: "docs/features/gmail-thread-read/README.md",
-  deployments: everywhere,
-  default: false,
-})
-
-export const importOpencodeConnections = definePreview({
-  label: "Desktop: import connections from OpenCode",
-  description: "Settings shows how many connections a person set up in their own OpenCode config are not in OpenWork, with an Import from OpenCode action. Importing copies them into OpenWork once, like adding each by hand, then shows each one's real state and anything that was left out. The person's OpenCode files are never changed. Off, Settings does not look at the OpenCode config.",
-  category: "experience",
-  added: "2026-11-13",
-  owner: "benjaminshafii",
-  expiresOn: "2026-12-15",
-  docs: "docs/features/import-opencode-connections/README.md",
-  deployments: everywhere,
-  default: false,
-})
-
-export const lowStorageWarning = definePreview({
-  label: "Desktop: low disk space warning",
-  description: "When the computer running OpenWork is almost out of disk space, the app says how much is left and asks the person to free up space, before saving starts to fail.",
-  category: "experience",
-  added: "2026-11-13",
-  owner: "reachjalil",
-  expiresOn: "2026-12-15",
-  docs: "docs/features/low-storage-warning/README.md",
   deployments: everywhere,
   default: false,
 })
@@ -438,18 +396,6 @@ export const privateValues = definePreview({
   default: false,
 })
 
-export const providerFilterSyncFix = definePreview({
-  label: "Desktop: exact provider search and guided provider sharing",
-  description: "The model picker shows only the provider and model you typed, and sharing a provider from this device waits until it is listed under your organization before saying it is shared.",
-  category: "models",
-  added: "2026-11-16",
-  owner: "benjaminshafii",
-  expiresOn: "2026-12-15",
-  docs: "docs/features/provider-filter-sync-fix/README.md",
-  deployments: everywhere,
-  default: false,
-})
-
 export const questionInThread = definePreview({
   label: "Desktop: questions in the conversation",
   description: "When an agent asks a question, it shows as a card at the end of the conversation instead of above the message box, so the person can scroll and keep typing. Sending a message from the message box skips the question. Off, the question opens above the message box, as before.",
@@ -458,18 +404,6 @@ export const questionInThread = definePreview({
   owner: "reachjalil",
   expiresOn: "2027-01-31",
   docs: "docs/features/question-in-thread/README.md",
-  deployments: everywhere,
-  default: false,
-})
-
-export const questionMinimize = definePreview({
-  label: "Desktop: minimize a pending question",
-  description: "When an agent asks a question, the person can minimize it to one line above the message box to read the conversation, then reopen it with everything they picked or typed still there. The question stays pending the whole time. Turning it off shows the question fully open, as before.",
-  category: "experience",
-  added: "2026-11-13",
-  owner: "benjaminshafii",
-  expiresOn: "2026-12-15",
-  docs: "docs/features/question-minimize/README.md",
   deployments: everywhere,
   default: false,
 })

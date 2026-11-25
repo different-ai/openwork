@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button"
 import { t } from "@/i18n"
 import { PermissionApprovalPanel } from "../chat/permission-approval-modal"
 import { QuestionPanel } from "../modals/question-modal"
-import { useDesktopFeature } from "../status/use-desktop-feature"
 import { answerRemoteThread } from "./remote-thread-actions"
 import type { RemoteThreadEntry } from "./remote-thread-store"
 import type { useRemoteThreadConversation } from "./use-remote-thread-conversation"
@@ -16,7 +15,6 @@ export type RemoteAnswerSubmit = (answer: RemoteSessionAnswerInput) => Promise<F
 type Conversation = ReturnType<typeof useRemoteThreadConversation>
 
 export function RemoteThreadAnswerSlot({ entry, conversation }: { entry: RemoteThreadEntry; conversation: Conversation }) {
-  const collapsible = useDesktopFeature("questionMinimize")
   const { view, page } = conversation
   if (!view.waitingFor) return null
   const pending = page?.pending
@@ -28,7 +26,6 @@ export function RemoteThreadAnswerSlot({ entry, conversation }: { entry: RemoteT
           key={`${entry.start.key}:${pending.kind}:${pending.requestId}`}
           pending={pending}
           computer={view.computer}
-          collapsible={collapsible}
           onAnswer={(answer) => answerRemoteThread(entry, answer)}
         />
       ) : (
@@ -40,11 +37,10 @@ export function RemoteThreadAnswerSlot({ entry, conversation }: { entry: RemoteT
   )
 }
 
-export function RemoteThreadAnswerCard({ pending, computer, onAnswer, collapsible = false }: {
+export function RemoteThreadAnswerCard({ pending, computer, onAnswer }: {
   pending: RemoteSessionPending
   computer: string
   onAnswer: RemoteAnswerSubmit
-  collapsible?: boolean
 }) {
   const [attempt, setAttempt] = useState<{
     answer: RemoteSessionAnswerInput
@@ -91,8 +87,7 @@ export function RemoteThreadAnswerCard({ pending, computer, onAnswer, collapsibl
             requestId={`remote:${pending.requestId}`}
             questions={pending.questions}
             busy={blocked}
-            collapsible={collapsible}
-            variant={collapsible ? "composer" : "thread"}
+            variant="composer"
             onReply={(answers) => submit({ kind: "question", requestId: pending.requestId, answers })}
           />
         </>

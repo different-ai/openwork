@@ -1,9 +1,9 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { record, rows } from "../worlds/org-invite.ts";
-import { providerShareGuided } from "../worlds/provider-share-guided.ts";
+import { providerShareInvite } from "../worlds/provider-share-invite.ts";
 
-const test = spec.world(providerShareGuided, {
+const test = spec.world(providerShareInvite, {
   timeout: 720_000,
   resources: { surfaces: ["appWeb", "web"], services: ["den"] },
 });

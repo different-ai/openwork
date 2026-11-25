@@ -38,25 +38,8 @@ test("a member whose disk is almost full is told how much space is left before s
   const messages = async () => (await probe.dom("[data-sonner-toast]")).elements.map(element => element.text.replace(/\s+/g, " ").trim());
   await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
 
-  await step("before: with 1.4 GB left on the disk, the app says nothing", async () => {
+  await step("with 1.4 GB left on the disk, a message says the disk is almost full and how much is left", async () => {
     await world.showDisk(almostFull);
-    await user.reload();
-    await user.see("composer", { timeoutMs: 60_000 });
-    await user.notSee({ text: ALMOST_FULL }, { timeoutMs: 5_000 });
-    const { asked } = await world.asked();
-    const shown = await messages();
-    evidence.recordAssertionEvidence(
-      "Without the warning, a nearly full disk goes unmentioned",
-      `disk reading on offer: 1.4 GB free of 256 GB; times the app asked for it: ${asked}; messages on screen: ${shown.length}`,
-      asked === 0 && shown.length === 0,
-    );
-    await user.screenshot();
-    expect(asked, "the app does not ask about the disk while the warning is off").toBe(0);
-    expect(shown).toEqual([]);
-  });
-
-  await step("after: with the warning on, a message says the disk is almost full and how much is left", async () => {
-    await world.turnOnWarning();
     await user.reload();
     await user.see({ text: ALMOST_FULL }, { timeoutMs: 90_000 });
     await user.see({ text: ALMOST_FULL_DETAIL });
@@ -73,7 +56,7 @@ test("a member whose disk is almost full is told how much space is left before s
     expect(answer.measured, "the real server reports free space on its own disk").toBe(true);
   });
 
-  await step("after: with 120 MB left, the message says the disk is full and saving cannot continue", async () => {
+  await step("with 120 MB left, the message says the disk is full and saving cannot continue", async () => {
     await world.showDisk(full);
     await user.reload();
     await user.see({ text: FULL }, { timeoutMs: 90_000 });

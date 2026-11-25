@@ -8,7 +8,7 @@ import { useAutomationsDenContext } from "@/react-app/domains/automations/use-au
 
 const FEATURE_STALE_MS = 30_000
 
-type DesktopFeatureKey = "remoteComputers" | "remoteSessionLiveSync" | "questionMinimize" | "questionInThread" | "importOpencodeConnections" | "lowStorageWarning" | "sessionTree" | "sideChatFromSelection" | "sideQuestions" | "providerFilterSyncFix" | "browserSecretHandles" | "officeOutlinePreview" | "composerInlineSuggestions" | "followUpDelivery" | "flatSessionPanes"
+type DesktopFeatureKey = "remoteComputers" | "remoteSessionLiveSync" | "questionInThread" | "sessionTree" | "sideChatFromSelection" | "sideQuestions" | "browserSecretHandles" | "officeOutlinePreview" | "composerInlineSuggestions" | "followUpDelivery" | "flatSessionPanes"
 
 export function useDesktopFeature(key: DesktopFeatureKey): boolean {
   const denAuth = useDenAuth()
