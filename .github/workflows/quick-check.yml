@@ -249,6 +249,11 @@ jobs:
           evals: "false"
       - name: Build the Den API's workspace dependencies
         run: pnpm --filter @openwork-ee/den-api build:workspace-dependencies
+      # Five recorded installation environments (OpenWork Cloud, managed AWS,
+      # the Helm chart, a minimal self-hosted install), each parsed by a new
+      # den-api process and compared field for field with what was recorded.
+      - name: Check that existing installation environments are read unchanged
+        run: pnpm --filter @openwork-ee/den-api test:env
       - name: Wait for MySQL
         run: docker compose -p openwork-den-local -f packaging/docker/docker-compose.web-local.yml -f packaging/docker/docker-compose.ci-mysql.yml up -d --wait mysql
       - name: Run the security tests and check audit route coverage
