@@ -5,7 +5,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { env } from "../../env.js"
 import { harnessFeedbackOrganizationIds, isHarnessFeedbackOrganization, listHarnessFeedbackOrganizations, setHarnessFeedbackOrganization } from "../../harness-feedback/access.js"
-import { listHarnessFeedback, readHarnessFeedbackGroup, readUngroupedHarnessFeedbackReport, retryHarnessFeedbackGroup } from "../../harness-feedback/repository.js"
+import { listHarnessFeedback, readHarnessFeedbackGroup, readUngroupedHarnessFeedbackReport, requeueHarnessFeedbackReports, retryHarnessFeedbackGroup } from "../../harness-feedback/repository.js"
 import { clearHarnessFeedbackWebhook, hasHarnessFeedbackWebhook, readHarnessFeedbackWebhook, setHarnessFeedbackWebhook } from "../../harness-feedback/settings.js"
 import { normalizeHarnessFeedbackWebhook, sendHarnessFeedbackSlackTest } from "../../harness-feedback/slack.js"
 import { adminRoute } from "../../middleware/index.js"
@@ -218,6 +218,18 @@ export function registerAdminHarnessFeedbackRoutes<T extends { Variables: AuthCo
     if (!isDenTypeId("organization", organizationId) || !(await isHarnessFeedbackOrganization(organizationId, { fresh: true })) || !isDenTypeId("harnessFeedbackGroup", groupId)) return notFound()
     const detail = await readHarnessFeedbackGroup(organizationId, groupId)
     return detail ? c.json(detail, 200, headers) : notFound()
+  })
+
+  app.post(`${path}/reclassify`, describeRoute({
+    tags,
+    summary: "Classify harness feedback reports again",
+    description: "Sends reports that need review back through classification for organizations that have harness feedback on.",
+    responses: {
+      200: jsonResponse("Returns how many reports were queued again.", z.object({ requeued: z.number().int().nonnegative() })),
+      ...routeErrors,
+    },
+  }), noStore, adminRoute(), async (c) => {
+    return c.json({ requeued: await requeueHarnessFeedbackReports() }, 200, headers)
   })
 
   app.post(`${path}/:organizationId/:groupId/retry`, describeRoute({

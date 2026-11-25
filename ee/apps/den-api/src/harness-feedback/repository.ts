@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, or, sql, count } from "@openwork-ee/den-db/drizzle"
-import { HarnessFeedbackGroupTable as Groups, HarnessFeedbackReportTable as Reports, MemberTable } from "@openwork-ee/den-db/schema"
+import { HarnessFeedbackGroupTable as Groups, HarnessFeedbackOrganizationTable as Enabled, HarnessFeedbackReportTable as Reports, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { checkFixedWindowRateLimit } from "../utils/rate-limit.js"
@@ -64,14 +64,16 @@ export async function claimDueHarnessFeedback(limit: number, now: Date): Promise
   const organizationIds = await harnessFeedbackOrganizationIds()
   if (!organizationIds.length || limit <= 0) return []
   return db.transaction(async (tx) => {
+    const sessionNow = sessionTimestampFromEpochMs(now.getTime())
     const rows = await tx.select().from(Reports).where(and(
-      inArray(Reports.organizationId, organizationIds), eq(Reports.state, "pending"), lte(Reports.nextAttemptAt, now),
-      or(isNull(Reports.leaseExpiresAt), lte(Reports.leaseExpiresAt, now)),
+      inArray(Reports.organizationId, organizationIds), eq(Reports.state, "pending"), lte(Reports.nextAttemptAt, sessionNow),
+      or(isNull(Reports.leaseExpiresAt), lte(Reports.leaseExpiresAt, sessionNow)),
     )).orderBy(asc(Reports.nextAttemptAt), asc(Reports.id)).limit(limit).for("update", { skipLocked: true })
     if (!rows.length) return []
     const leaseOwner = randomUUID()
     const leaseExpiresAt = new Date(now.getTime() + LEASE_MS)
-    await tx.update(Reports).set({ leaseOwner, leaseExpiresAt }).where(inArray(Reports.id, rows.map((row) => row.id)))
+    await tx.update(Reports).set({ leaseOwner, leaseExpiresAt: sessionTimestampFromEpochMs(leaseExpiresAt.getTime()) })
+      .where(inArray(Reports.id, rows.map((row) => row.id)))
     return rows.map((row) => ({ ...row, leaseOwner, leaseExpiresAt }))
   })
 }
@@ -85,7 +87,7 @@ export async function settleHarnessFeedback(report: ClaimedHarnessFeedback, sett
   return db.transaction(async (tx) => {
     const [row] = await tx.select({ id: Reports.id }).from(Reports).where(and(
       eq(Reports.id, report.id), eq(Reports.organizationId, report.organizationId), eq(Reports.state, "pending"),
-      eq(Reports.leaseOwner, report.leaseOwner), gt(Reports.leaseExpiresAt, now),
+      eq(Reports.leaseOwner, report.leaseOwner), gt(Reports.leaseExpiresAt, sessionTimestampFromEpochMs(now.getTime())),
     )).for("update")
     if (!row) return false
 
@@ -111,7 +113,7 @@ export async function settleHarnessFeedback(report: ClaimedHarnessFeedback, sett
       state: settlement.state, groupId, category, leaseOwner: null, leaseExpiresAt: null,
       ...("judgmentDetail" in settlement
         ? { judgmentDetail: settlement.judgmentDetail }
-        : { attempts: settlement.attempts, nextAttemptAt: settlement.nextAttemptAt }),
+        : { attempts: settlement.attempts, nextAttemptAt: sessionTimestampFromEpochMs(settlement.nextAttemptAt.getTime()) }),
     }).where(eq(Reports.id, row.id))
     return true
   })
@@ -148,11 +150,21 @@ export async function claimDueHarnessFeedbackGroups(limit: number, now: Date, en
 export type ClaimedHarnessFeedbackGroup = Awaited<ReturnType<typeof claimDueHarnessFeedbackGroups>>[number]
 type NotifySettlement = { state: "failed" | "delivered" } | { state: "pending"; retryAt: number }
 
-function updatedGroups(result: unknown): boolean {
-  if (Array.isArray(result)) return updatedGroups(result[0])
-  if (!result || typeof result !== "object") return false
-  if ("rowsAffected" in result && typeof result.rowsAffected === "number") return result.rowsAffected > 0
-  return "affectedRows" in result && typeof result.affectedRows === "number" && result.affectedRows > 0
+function affectedRows(result: unknown): number {
+  if (Array.isArray(result)) return affectedRows(result[0])
+  if (!result || typeof result !== "object") return 0
+  if ("rowsAffected" in result && typeof result.rowsAffected === "number") return result.rowsAffected
+  return "affectedRows" in result && typeof result.affectedRows === "number" ? result.affectedRows : 0
+}
+
+export async function requeueHarnessFeedbackReports() {
+  const enabled = db.$primary.select({ id: Enabled.organizationId }).from(Enabled)
+    .innerJoin(OrganizationTable, eq(Enabled.organizationId, OrganizationTable.id))
+  const result = await db.update(Reports).set({
+    state: "pending", attempts: 0, nextAttemptAt: sessionTimestampFromEpochMs(Date.now()),
+    leaseOwner: null, leaseExpiresAt: null, category: null, judgmentDetail: null, groupId: null,
+  }).where(and(eq(Reports.state, "needs_review"), inArray(Reports.organizationId, enabled)))
+  return affectedRows(result)
 }
 
 export async function settleHarnessFeedbackGroup(group: ClaimedHarnessFeedbackGroup, settlement: NotifySettlement, now: Date) {
@@ -164,14 +176,14 @@ export async function settleHarnessFeedbackGroup(group: ClaimedHarnessFeedbackGr
     eq(Groups.organizationId, group.organizationId), eq(Groups.id, group.id), eq(Groups.notifyState, "pending"),
     eq(Groups.notifyLeaseOwner, group.notifyLeaseOwner), gt(Groups.notifyLeaseExpiresAt, sessionTimestampFromEpochMs(now.getTime())),
   ))
-  return updatedGroups(result)
+  return affectedRows(result) > 0
 }
 
 export async function retryHarnessFeedbackGroup(organizationId: DenTypeId<"organization">, groupId: DenTypeId<"harnessFeedbackGroup">) {
   const result = await db.update(Groups).set({
     notifyState: "pending", notifyAttempts: 0, notifyLeaseOwner: null, notifyLeaseExpiresAt: null, notifiedAt: null,
   }).where(and(eq(Groups.organizationId, organizationId), eq(Groups.id, groupId), eq(Groups.notifyState, "failed")))
-  return updatedGroups(result)
+  return affectedRows(result) > 0
 }
 
 const reportMetadata = {

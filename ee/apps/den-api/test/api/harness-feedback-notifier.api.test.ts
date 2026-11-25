@@ -48,7 +48,7 @@ const clear: EvaluationModel = async ({ questions }) => ({
 
 async function classifyFixture() {
   const id = createDenTypeId("harnessFeedbackReport")
-  await db.insert(Reports).values({ ...fixture, id, organizationId, memberId, clientKind: "app", surface: "tool", tool: "demo_tool", nextAttemptAt: now() })
+  await db.insert(Reports).values({ ...fixture, id, organizationId, memberId, clientKind: "app", surface: "tool", tool: "demo_tool", nextAttemptAt: sql`from_unixtime(${time / 1000})` })
   const [report] = await claimDueHarnessFeedback(1, now())
   assert.ok(report)
   assert.equal(report.id, id)

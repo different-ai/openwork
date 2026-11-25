@@ -178,8 +178,28 @@ function UngroupedReportRow({ item, revision }: { item: z.infer<typeof report>; 
 
 export function HarnessFeedbackPage({ selectedGroup }: { selectedGroup?: string }) {
   const [revision, setRevision] = useState(0);
+  const [reclassifying, setReclassifying] = useState(false);
+  const [reclassifyError, setReclassifyError] = useState<string>();
   const refresh = () => setRevision((value) => value + 1);
   const result = useAdminReport(selectedGroup ? `${PATH}?group=${encodeURIComponent(selectedGroup)}` : PATH, parseInbox, revision);
+
+  async function reclassify() {
+    setReclassifyError(undefined);
+    setReclassifying(true);
+    try {
+      const response = await sendAdmin(`${PATH}/reclassify`, "POST");
+      if (!response.ok) {
+        setReclassifyError(response.message);
+        return;
+      }
+      refresh();
+    } catch {
+      setReclassifyError("Couldn’t check whether reports were queued. Refresh the list before trying again.");
+    } finally {
+      setReclassifying(false);
+    }
+  }
+
   if (result.status === "signed-out" || result.status === "forbidden" || (result.status === "error" && !result.data)) {
     return <AdminAccessScreen state={result.status} message={result.message} onRetry={refresh} />;
   }
@@ -210,7 +230,17 @@ export function HarnessFeedbackPage({ selectedGroup }: { selectedGroup?: string 
                 {data.groups.length ? data.groups.map((item) => <GroupRow key={`${item.id}:${item.id === selectedGroup}`} item={item} revision={revision} selected={item.id === selectedGroup} refresh={refresh} refreshing={result.status === "loading"} />) : <p className="text-sm text-gray-600">No groups yet.</p>}
               </DenCard>
               <DenCard className="!rounded-lg">
-                <h2 className="mb-3 text-sm font-semibold">Ungrouped reports</h2>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold">Ungrouped reports</h2>
+                  {data.ungroupedReports.some((item) => item.state === "needs_review") ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span id="harness-feedback-reclassify-description" className="text-sm text-muted-foreground">Sends reports that need review back through classification.</span>
+                      <DenButton size="sm" variant="secondary" aria-describedby="harness-feedback-reclassify-description"
+                        loading={reclassifying} disabled={result.status === "loading"} onClick={() => void reclassify()}>Classify again</DenButton>
+                    </div>
+                  ) : null}
+                </div>
+                {reclassifyError ? <DenNotice presentation="inline" message={reclassifyError} /> : null}
                 {data.summary.ungrouped > data.ungroupedReports.length ? <p className="mb-3 text-sm text-gray-600">Showing {formatCount(data.ungroupedReports.length)} ungrouped reports, with reports that need review first.</p> : null}
                 {data.ungroupedReports.length ? (
                   <ul className="divide-y divide-gray-100">

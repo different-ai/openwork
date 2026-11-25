@@ -179,6 +179,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("GET", "/v1/admin/harness-feedback/reports/:organizationId/:reportId", "platform.harness_feedback.report.read", "platform.admin", "harness_feedback", "reportId", ADMIN),
   platform("GET", "/v1/admin/harness-feedback/:organizationId/:groupId", "platform.harness_feedback.group.read", "platform.admin", "harness_feedback", "groupId", ADMIN),
   platform("POST", "/v1/admin/harness-feedback/:organizationId/:groupId/retry", "platform.harness_feedback.group.retry", "platform.admin", "harness_feedback", "groupId", ADMIN),
+  platform("POST", "/v1/admin/harness-feedback/reclassify", "platform.harness_feedback.reclassify", "platform.admin", "harness_feedback", null, ADMIN),
   platform("GET", "/v1/admin/harness-feedback/settings", "platform.harness_feedback.settings.read", "platform.admin", "harness_feedback", null, ADMIN),
   platform("PUT", "/v1/admin/harness-feedback/settings/slack", "platform.harness_feedback.slack.set", "platform.admin", "harness_feedback", null, ADMIN),
   platform("DELETE", "/v1/admin/harness-feedback/settings/slack", "platform.harness_feedback.slack.clear", "platform.admin", "harness_feedback", null, ADMIN),

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
-import { eq } from "@openwork-ee/den-db/drizzle"
+import { eq, getTableColumns, sql } from "@openwork-ee/den-db/drizzle"
 import { HarnessFeedbackGroupTable as Groups, HarnessFeedbackReportTable as Reports } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { EvaluationModel } from "../../src/llm/evaluation-model.js"
@@ -30,17 +30,19 @@ const clock = () => time
 const now = () => new Date(time)
 const fixture = { symptom: "The fixture tool failed.", workaround: "Used the fixture guide." }
 
-async function addReport(overrides: Partial<typeof Reports.$inferInsert> = {}) {
+async function addReport({ nextAttemptAt = now(), ...overrides }: Partial<typeof Reports.$inferInsert> = {}) {
   const id = createDenTypeId("harnessFeedbackReport")
   await db.insert(Reports).values({
     id, organizationId, memberId, clientKind: "app", surface: "tool", tool: "demo_tool", errorCode: "DEMO_ERROR",
-    nextAttemptAt: now(), ...fixture, ...overrides,
+    nextAttemptAt: sql`from_unixtime(${nextAttemptAt.getTime() / 1000})`, ...fixture, ...overrides,
   })
   return id
 }
 
 async function readReport(id: Awaited<ReturnType<typeof addReport>>) {
-  const [report] = await db.$primary.select().from(Reports).where(eq(Reports.id, id))
+  const [report] = await db.$primary.select({
+    ...getTableColumns(Reports), nextAttemptMs: sql`unix_timestamp(${Reports.nextAttemptAt}) * 1000`.mapWith(Number),
+  }).from(Reports).where(eq(Reports.id, id))
   assert.ok(report)
   return report
 }
@@ -48,7 +50,7 @@ async function readReport(id: Awaited<ReturnType<typeof addReport>>) {
 function fake(probabilities: Record<string, number>): EvaluationModel {
   return async ({ state, questions }) => {
     assert.deepEqual(state, { report: {
-      surface: "tool", tool: "demo_tool", errorCode: "DEMO_ERROR", ...fixture,
+      surface: "tool", tool: "demo_tool", errorCode: "POLICY_FIXTURE", ...fixture,
     } })
     return {
       durationMs: 1, inputTokens: null,
@@ -73,22 +75,25 @@ async function runOne(id: Awaited<ReturnType<typeof addReport>>, model: Evaluati
   return readReport(id)
 }
 
-test("rejects a clear gate-no and sends ambiguous or low-confidence judgments to review", async () => {
-  const cases: { probabilities: Record<string, number>; state: "rejected" | "needs_review" }[] = [
-    { probabilities: { actionable: 0.1, tool_error: 0.95 }, state: "rejected" },
-    { probabilities: { actionable: 0.5, tool_error: 0.95 }, state: "needs_review" },
-    { probabilities: { actionable: 0.95, tool_error: 0.74 }, state: "needs_review" },
-    { probabilities: { actionable: 0.95, tool_error: 0.91, performance: 0.8 }, state: "needs_review" },
-    { probabilities: { actionable: 0.95, tool_error: 0.91, performance: 0.75 }, state: "needs_review" },
+test("classifies by the top category when both thresholds are met and breaks ties by category order", async () => {
+  const cases: { probabilities: Record<string, number>; state: "classified" | "rejected" | "needs_review"; category?: string }[] = [
+    { probabilities: { actionable: 0.93, instructions_wrong: 0.84, tool_confusing: 0.73 }, state: "classified", category: "instructions_wrong" },
+    { probabilities: { actionable: 0.80, tool_error: 0.56, missing_capability: 0.53, permission_or_auth: 0.53 }, state: "classified", category: "tool_error" },
+    { probabilities: { actionable: 0.76, tool_error: 0.91, performance: 0.87 }, state: "classified", category: "tool_error" },
+    { probabilities: { actionable: 0.92, tool_error: 0.46 }, state: "needs_review" },
+    { probabilities: { actionable: 0.50, tool_error: 0.89 }, state: "needs_review" },
+    { probabilities: { actionable: 0.20, tool_error: 0.99 }, state: "rejected" },
+    { probabilities: { actionable: 0.60, tool_error: 0.50 }, state: "classified", category: "tool_error" },
+    { probabilities: { actionable: 0.95, performance: 0.90, tool_confusing: 0.90 }, state: "classified", category: "tool_confusing" },
   ]
-  for (const { probabilities, state } of cases) {
-    const result = await runOne(await addReport(), fake(probabilities))
+  for (const { probabilities, state, category } of cases) {
+    const result = await runOne(await addReport({ errorCode: "POLICY_FIXTURE" }), fake(probabilities))
     assert.equal(result.state, state)
-    assert.equal(result.groupId, null)
-    assert.equal(result.category, null)
-    assert.ok(result.judgmentDetail)
+    assert.equal(Boolean(result.groupId), state === "classified")
+    assert.equal(result.category, category ?? null)
+    assert.match(result.judgmentDetail ?? "", /"version":2/)
+    await db.delete(Reports).where(eq(Reports.id, result.id))
   }
-  assert.deepEqual(await db.$primary.select().from(Groups), [])
 })
 
 test("initializes a group, increments matches without touching notification fields, and splits on metadata", async () => {
@@ -116,6 +121,50 @@ test("initializes a group, increments matches without touching notification fiel
   assert.equal(new Set([created.id, differentTool.groupId, differentCode.groupId]).size, 3)
 })
 
+test("only platform admins requeue review reports in enabled organizations, and the worker groups them", async () => {
+  const disabled = await den.createOrg(await den.signUp("Disabled Fixture Owner"), "Disabled Fixture Organization")
+  const disabledId = normalizeDenTypeId("organization", disabled.orgId)
+  const storedReview = {
+    state: "needs_review", attempts: 3, nextAttemptAt: new Date(Date.now() + 600_000),
+    leaseOwner: "fixture-owner", leaseExpiresAt: new Date(Date.now() + 600_000),
+    category: "performance", judgmentDetail: '{"version":1}',
+  } satisfies Partial<typeof Reports.$inferInsert>
+  const id = await addReport({ ...storedReview, errorCode: "REQUEUE_FIXTURE", symptom: "The demo export closes the preview." })
+  const disabledReview = await addReport({ ...storedReview, organizationId: disabledId })
+  const rejected = await addReport({ state: "rejected", judgmentDetail: '{"version":1}' })
+  const classified = await runOne(await addReport({ errorCode: "ALREADY_CLASSIFIED" }), clear)
+  const pending = await addReport({ nextAttemptAt: storedReview.nextAttemptAt, attempts: 1 })
+  const untouched = await Promise.all([disabledReview, rejected, classified.id, pending].map(readReport))
+  const path = "/v1/admin/harness-feedback/reclassify"
+  const original = await readReport(id)
+
+  assert.equal((await den.request(null, "POST", path)).status, 401)
+  assert.equal((await den.request(context.owner.token, "POST", path)).status, 403)
+  assert.deepEqual(await readReport(id), original)
+  const before = Date.now()
+  const response = await den.request(admin.token, "POST", path)
+  assert.equal(response.status, 200, summary(response))
+  assert.equal(response.headers.get("cache-control"), "no-store")
+  assert.deepEqual(response.body, { requeued: 1 })
+  assert.deepEqual((await den.request(admin.token, "POST", path)).body, { requeued: 0 })
+  const queued = await readReport(id)
+  assert.ok(queued.nextAttemptMs >= before && queued.nextAttemptMs <= Date.now())
+  assert.deepEqual(queued, {
+    ...original, state: "pending", attempts: 0, nextAttemptAt: queued.nextAttemptAt, nextAttemptMs: queued.nextAttemptMs,
+    leaseOwner: null, leaseExpiresAt: null, category: null, judgmentDetail: null, groupId: null,
+  })
+  assert.deepEqual(await Promise.all(untouched.map((row) => readReport(row.id))), untouched)
+
+  time = Math.max(time, Date.now())
+  const processed = await runOne(id, clear)
+  assert.equal(processed.state, "classified")
+  assert.equal(processed.category, "tool_error")
+  assert.ok(processed.groupId)
+  const [group] = await db.$primary.select().from(Groups).where(eq(Groups.id, processed.groupId))
+  assert.equal(group?.reportCount, 1)
+  assert.equal(group?.notifyState, "pending")
+})
+
 test("malformed answers and a timeout back off, then move to review", async () => {
   const id = await addReport()
   const partial: EvaluationModel = async () => ({ durationMs: 1, inputTokens: null, answers: { actionable: { type: "boolean", probability: 0.1 } } })
@@ -132,9 +181,9 @@ test("malformed answers and a timeout back off, then move to review", async () =
     assert.equal(result.groupId, null)
     assert.equal(result.leaseOwner, null)
     assert.equal(result.leaseExpiresAt, null)
-    assert.equal(result.nextAttemptAt.getTime(), terminal ? time : time + 60_000 * 2 ** attemptIndex)
+    assert.equal(result.nextAttemptMs, terminal ? time : time + 60_000 * 2 ** attemptIndex)
     assert.deepEqual(await claimDueHarnessFeedback(1, now()), [])
-    time = result.nextAttemptAt.getTime()
+    time = result.nextAttemptMs
   }
 })
 
@@ -219,6 +268,13 @@ test("fingerprints normalize case, whitespace, and missing identifiers", () => {
   const key = harnessFeedbackGroupKey(base)
   assert.match(key.fingerprint, /^v1:[0-9a-f]{64}$/)
   assert.deepEqual(harnessFeedbackGroupKey({ ...base, tool: "  ", errorCode: " error-demo " }), key)
+  const bare = harnessFeedbackGroupKey({ ...base, tool: " some_tool " })
+  assert.equal(bare.title, "Tool error (tool: some_tool)")
+  assert.deepEqual(harnessFeedbackGroupKey({ ...base, tool: "functions.Some_Tool" }), bare)
+  assert.deepEqual(harnessFeedbackGroupKey({ ...base, tool: "tools.some_tool" }), bare)
+  assert.equal(harnessFeedbackGroupKey({ ...base, tool: "functions.tools.some_tool" }).tool, "tools.some_tool")
+  assert.notEqual(harnessFeedbackGroupKey({ ...base, tool: "functionsx.some_tool" }).fingerprint, bare.fingerprint)
+  assert.notEqual(harnessFeedbackGroupKey({ ...base, errorCode: "functions.Error-Demo" }).fingerprint, key.fingerprint)
   assert.notEqual(harnessFeedbackGroupKey({ ...base, category: "missing_capability" }).fingerprint, key.fingerprint)
   assert.notEqual(harnessFeedbackGroupKey({ ...base, surface: "environment" }).fingerprint, key.fingerprint)
   assert.equal(harnessFeedbackGroupKey({ ...base, errorCode: null }).fingerprint, harnessFeedbackGroupKey({ ...base, errorCode: " " }).fingerprint)

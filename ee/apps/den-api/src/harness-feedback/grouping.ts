@@ -17,7 +17,7 @@ function normalize(value: string | null) {
 }
 
 export function harnessFeedbackGroupKey({ category, surface, tool, errorCode }: GroupInput) {
-  const normalizedTool = normalize(tool)
+  const normalizedTool = normalize(tool).replace(/^(functions|tools)\./, "")
   const hash = createHash("sha256").update(JSON.stringify([category, surface, normalizedTool, normalize(errorCode)])).digest("hex")
   const subject = normalizedTool ? `${surfaceLabels[surface]}: ${normalizedTool}` : surfaceLabels[surface]
   return {
