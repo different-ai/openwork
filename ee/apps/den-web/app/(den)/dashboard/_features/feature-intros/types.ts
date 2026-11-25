@@ -54,6 +54,7 @@ export type FeatureIntroKey =
   | "desktop-policies"
   | "deployments"
   | "org-settings"
+  | "capabilities"
   | "diagnostics"
   | "billing"
   | "billing.invoices"
