@@ -22,6 +22,7 @@ test("an administrator downloads private work with Whole organization and review
     await source.screenshot();
   });
   await step("the downloaded Config file enters review without a skill mapping decision", async () => {
+    await using download = await world.allowDownload();
     await source.click({ testId: "config-export-download" });
     await expect.poll(world.download, { timeout: 30_000 }).not.toBeNull();
     const path = await world.download();

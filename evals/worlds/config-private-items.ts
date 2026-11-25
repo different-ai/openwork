@@ -29,14 +29,18 @@ export async function configPrivateItemsWorld(seed: Seed) {
   }
   const socket = new URL(version.webSocketDebuggerUrl);
   if (socket.hostname !== base.hostname || socket.port !== base.port) throw new Error("The download endpoint is not the owned browser.");
-  const browser = await connect(socket.href);
-  try {
-    await browser.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: directory });
-  } finally {
-    browser.close();
-  }
   return {
     sourceWeb, targetWeb, name,
+    async allowDownload() {
+      const browser = await connect(socket.href);
+      try {
+        await browser.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: directory, eventsEnabled: true });
+      } catch (error) {
+        browser.close();
+        throw error;
+      }
+      return { async [Symbol.asyncDispose]() { browser.close(); } };
+    },
     async enable() {
       await enableOrganizationCapabilities(seed, source.admin, { configPrivateItems: true });
       await enableOrganizationCapabilities(seed, target.admin, { configPrivateItems: true });
