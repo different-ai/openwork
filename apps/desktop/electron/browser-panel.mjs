@@ -273,8 +273,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       const contents = tab.view.webContents;
       if (contents.isDestroyed() || waiting.some(([waitingTab]) => waitingTab === tab) || showsErrorPage(tab)) continue;
       const url = contents.getURL();
-      if (newlyRestricted(previousRules, previousApprovals, url)) {
-        closeRestrictedPage(tab, url);
+      // A blank popup can contain a live document belonging to its opener.
+      const policyUrl = url === "about:blank" ? contents.mainFrame.origin : url;
+      if (newlyRestricted(previousRules, previousApprovals, policyUrl)) {
+        closeRestrictedPage(tab, policyUrl);
         continue;
       }
       let frames;
@@ -1167,12 +1169,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     view.webContents.setWindowOpenHandler(({ url: targetUrl, disposition }) => {
       if (!isHttpUrl(targetUrl)) {
-        // Let Chromium resolve a generated file with the opener's blob token.
-        const origin = URL.parse(targetUrl)?.origin;
-        if (!targetUrl.startsWith("blob:") || !origin || !isHttpUrl(origin)
-          || origin !== view.webContents.mainFrame.origin) return { action: "deny" };
-        const decision = websiteDecision(targetUrl);
-        if (decision.effect === "deny" || (decision.effect === "ask" && !websiteApproved(targetUrl))) return { action: "deny" };
+        // A site may open a blank tab during a click, then navigate it after an async step.
+        const openerOrigin = view.webContents.mainFrame.origin;
+        const inheritedBlank = targetUrl === "about:blank";
+        const ownBlob = targetUrl.startsWith("blob:") && URL.parse(targetUrl)?.origin === openerOrigin;
+        if (!isHttpUrl(openerOrigin) || (!inheritedBlank && !ownBlob)) return { action: "deny" };
+        const address = inheritedBlank ? openerOrigin : targetUrl;
+        const decision = websiteDecision(address);
+        if (decision.effect === "deny" || (decision.effect === "ask" && !websiteApproved(address))) return { action: "deny" };
       }
       // The shared all-request policy hook checks popup requests too. Never
       // fall back to an external browser when that policy denies a request.
@@ -1181,7 +1185,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         // a different one leaves the synchronous window.open handshake waiting.
         const popup = createBrowserTab("about:blank", { select: disposition !== "background-tab", initializeBlank: false, ownerSessionId: registry.ownerOf(tabId), contentsOptions: options });
         taskHost.inheritNavigation(tabId, popup);
-        if (disposition === "background-tab") runDetachedTask("load background browser popup", () => popup.view.webContents.loadURL(targetUrl));
+        if (disposition === "background-tab" && targetUrl !== "about:blank") runDetachedTask("load background browser popup", () => popup.view.webContents.loadURL(targetUrl));
         return popup.view.webContents;
       } };
     });
