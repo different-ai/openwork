@@ -33,7 +33,7 @@ test("a person can still mention agents without seeing computer run targets", as
   await step("after: the menu has no computer run targets", async () => {
     await user.see({ role: "listbox", label: "Mentions" });
     const labels = (await probe.dom(options)).elements.map(option => option.text);
-    const targets = labels.filter(label => label.includes("Start a task on your"));
+    const targets = labels.filter(label => /^\s*@(cloud|desktop)\b/i.test(label) || label.includes("Start a task on your"));
     evidence.recordAssertionEvidence("Agents remain available without Cloud or Desktop run targets", `Suggestions: ${labels.length}; computer run targets: ${targets.length}.`, targets.length === 0);
     await user.screenshot();
     expect(targets).toEqual([]);

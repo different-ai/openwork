@@ -9,7 +9,6 @@ export { default as automationSimpleReview } from "@openwork/features/flags/auto
 export { default as browserDemonstrations } from "@openwork/features/flags/browser-demonstrations"
 export { default as browserSecretHandles } from "@openwork/features/flags/browser-secret-handles"
 export { default as chatSkillCardShare } from "@openwork/features/flags/chat-skill-card-share"
-export { default as composerComputerMentions } from "@openwork/features/flags/composer-computer-mentions"
 export { default as composerInlineSuggestions } from "@openwork/features/flags/composer-inline-suggestions"
 export { default as connectionSelectedScopesOnly } from "@openwork/features/flags/connection-selected-scopes-only"
 export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-system-proxy"

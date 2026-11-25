@@ -5,7 +5,7 @@ import { filterSessionReferenceCandidates } from "./session-reference-search";
 
 export type MentionItem = {
   id: string;
-  kind: ComposerMentionKind;
+  kind: Exclude<ComposerMentionKind, "computer">;
   value: string;
   label: string;
   description?: string;
@@ -25,10 +25,6 @@ export function inlineMentionAtCaret(text: string, caret: number) {
   if (/^[\s]|[\r\n]/.test(query)) return null;
   const suffix = text.slice(caret).match(/^[^\s@]*/)?.[0] ?? "";
   return { query, offset, end: caret + suffix.length };
-}
-
-export function availableMentionItems(items: MentionItem[], computerMentions: boolean) {
-  return computerMentions ? items : items.filter((item) => item.kind !== "computer");
 }
 
 export function filterMentionItems(items: MentionItem[], query: string, limit = 8) {
