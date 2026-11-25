@@ -522,6 +522,10 @@ export const env = {
     configuredVersion: parsed.DEN_API_VERSION,
     renderGitCommit: parsed.RENDER_GIT_COMMIT,
   }),
+  helm: {
+    chartVersion: optionalString(parsed.OPENWORK_HELM_CHART_VERSION),
+    appVersion: optionalString(parsed.OPENWORK_HELM_APP_VERSION),
+  },
   publicUrlTrustedOrigins,
   publicProxyTrustedOrigins,
   installerArtifactsDir: optionalString(parsed.OPENWORK_INSTALLER_ARTIFACTS_DIR),

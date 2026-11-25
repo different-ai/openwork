@@ -215,6 +215,11 @@ const setByBuildPlatformOrLocalDevelopment = {
   OPENWORK_DAYTONA_ENV_PATH: z.string().optional(),
 }
 
+const setByTheHelmChart = {
+  OPENWORK_HELM_CHART_VERSION: z.string().optional(),
+  OPENWORK_HELM_APP_VERSION: z.string().optional(),
+}
+
 const endpointOverridesForTests = {
   DEN_GOOGLE_OAUTH_AUTHORIZE_URL: z.string().optional(),
   DEN_GOOGLE_OAUTH_TOKEN_URL: z.string().optional(),
@@ -251,6 +256,7 @@ const cloudOnlyEnv = {
 const legacyAliasEnv = {
   ...olderNamesStillRead,
   ...setByBuildPlatformOrLocalDevelopment,
+  ...setByTheHelmChart,
   ...endpointOverridesForTests,
 }
 

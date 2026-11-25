@@ -121,6 +121,10 @@
   ],
   "apiPublicUrl": "https://api.openwork.example.test",
   "serviceVersion": "dev",
+  "helm": {
+    "chartVersion": "<undefined>",
+    "appVersion": "<undefined>"
+  },
   "publicUrlTrustedOrigins": [
     "https://openwork.example.test"
   ],
