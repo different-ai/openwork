@@ -29,12 +29,12 @@ describe("model search", () => {
     expect(result.provider).toEqual({ label: "OpenRouter", found: true });
   });
 
-  test("when the provider has no match, or is not connected, the same model from others shows", () => {
+  test("when the provider has no match, or is not connected, other providers do not fill in", () => {
     const withoutRouter = all.filter((option) => option.providerID !== "openrouter");
     const result = searchModels(withoutRouter, "opus 5.5 openrouter");
     expect(result.provider).toEqual({ label: "OpenRouter", found: false });
     expect(result.modelWords).toEqual(["opus", "5.5"]);
-    expect(top(withoutRouter, "opus 5.5 openrouter").slice(0, 2).sort()).toEqual(["anthropic/claude-opus-5-5", "openwork/claude-opus-5-5"]);
+    expect(result.matches).toEqual([]);
   });
 
   test("versions are exact: 5.5 never finds 4.5", () => {
@@ -96,7 +96,7 @@ describe("model search", () => {
 });
 
 describe("scoped model search", () => {
-  const search = (options: readonly ModelOption[], query: string) => searchModels(options, query, { providerFilterSyncFix: true });
+  const search = (options: readonly ModelOption[], query: string) => searchModels(options, query);
   const managedClaude = model("ipr_managed", "gwm_claude", "Claude Opus 5.5", "OpenWork Anthropic");
   const managedSol = model("ipr_managed_b", "gwm_b", "Sol 6.1", "OpenWork Models");
   const unrelated = model("302ai", "claude-opus-6.1", "Claude Opus 6.1", "302.AI");
@@ -128,12 +128,6 @@ describe("scoped model search", () => {
     expect(result.matches.map((match) => match.option)).toEqual(expect.arrayContaining([managedClaude, openworkOpus]));
     expect(result.matches).toHaveLength(2);
     expect(result.intent).toEqual({ fast: true, effort: "high" });
-  });
-
-  test("the disabled flag preserves legacy provider ranking and partial matching", () => {
-    expect(searchModels(options, "sol 6.1 ow anthropic", { providerFilterSyncFix: false }))
-      .toEqual(searchModels(options, "sol 6.1 ow anthropic"));
-    expect(searchModels(options, "sol 6.1 ow anthropic").matches.length).toBeGreaterThan(0);
   });
 });
 

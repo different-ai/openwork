@@ -12,7 +12,7 @@ export type ShareProviderDialogProps = {
   onShare: (providerId: string, verifiedToken?: string) => Promise<unknown>;
   onShared: (provider: { id: string; name: string }) => void;
   onClose: () => void;
-  guided?: {
+  guided: {
     confirmArrival: (providerId: string) => Promise<SharedProviderArrival>;
     useOrganizationCopy: (provider: { id: string; name: string }, arrival: SharedProviderArrival) => Promise<void>;
     onFinished: (provider: { id: string; name: string }, result: { arrival: SharedProviderArrival; kept: boolean }) => void;
@@ -56,12 +56,12 @@ export function ShareProviderDialog(props: ShareProviderDialogProps) {
     verifiedToken.current = null;
     props.onClose();
     commit?.();
-    if (finished) props.guided?.onFinished(finished.provider, { arrival: finished.arrival, kept });
+    if (finished) props.guided.onFinished(finished.provider, { arrival: finished.arrival, kept });
   };
   const close = () => { if (!pending && !removing) finish(); };
 
   const confirmArrival = async (providerId: string): Promise<SharedProviderArrival> =>
-    props.guided ? props.guided.confirmArrival(providerId).catch((): SharedProviderArrival => ({ status: "pending" })) : { status: "pending" };
+    props.guided.confirmArrival(providerId).catch((): SharedProviderArrival => ({ status: "pending" }));
 
   const checkAgain = async () => {
     if (!provider || checking) return;
@@ -71,7 +71,7 @@ export function ShareProviderDialog(props: ShareProviderDialogProps) {
   };
 
   const useOrganizationCopy = async () => {
-    if (!provider || !arrival || !props.guided || removing) return;
+    if (!provider || !arrival || removing) return;
     setRemoving(true);
     setError(null);
     try {
@@ -92,17 +92,11 @@ export function ShareProviderDialog(props: ShareProviderDialogProps) {
     setError(null);
     try {
       await props.onShare(provider.id, token);
-      if (props.guided) {
-        const next = await confirmArrival(provider.id);
-        setPending(false);
-        setVerifying(false);
-        props.onShared(provider);
-        setArrival(next);
-        return;
-      }
+      const next = await confirmArrival(provider.id);
       setPending(false);
+      setVerifying(false);
       props.onShared(provider);
-      finish();
+      setArrival(next);
     } catch (cause) {
       setPending(false);
       if (!token && shareNeedsVerification(cause)) setVerifying(true);
@@ -155,7 +149,7 @@ export function ShareProviderDialog(props: ShareProviderDialogProps) {
             <ProviderTile providerId={provider.id} name={provider.name} />
             <DialogTitle className="leading-snug">Share {provider.name} with {organization}?</DialogTitle>
           </DialogHeader>
-          <FactRows facts={shareConsentFacts({ providerName: provider.name, organizationName: organization, guided: Boolean(props.guided) })} />
+          <FactRows facts={shareConsentFacts({ providerName: provider.name, organizationName: organization })} />
           {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
           {verifying ? (
             <DenReauthNotice

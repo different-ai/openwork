@@ -4,12 +4,10 @@ import { AUTO_ROUTER_THINKING_LABELS, autoRouterThinkingLevelSchema, type AutoRo
 import { CLAUDE_CODE_LONG_CONTEXT, claudeCodeBaseUrl, claudeDesktopListsModel, codexBaseUrl, cursorBaseUrl } from "@openwork/types/den/gateway-cursor";
 import { Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { orgFeatureEnabled } from "../../_lib/den-org";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenSelect } from "../../_components/ui/select";
 import { claudeCodeToolModelName, claudeModelId, gatewayToolModelLabel, gatewayToolModelName, useGatewayToolModels, type GatewayToolModel } from "./cursor-setup-data";
 import { GATEWAY_API_KEYS_DOCS_URL } from "./gateway-api-keys-data";
-import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 export type GatewayToolId = "cursor" | "codex" | "codex-app" | "claude-code" | "claude-desktop" | "opencode" | "other";
 
@@ -31,12 +29,6 @@ export const CODEX_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/codex";
 export const CODEX_APP_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/codex-desktop";
 export const CLAUDE_DESKTOP_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/claude-desktop";
 export const OPENCODE_DOCS_URL = "https://openworklabs.com/docs/model-context-protocol/opencode-plugin";
-
-export function useGatewayTools(): readonly GatewayTool[] {
-  const { orgContext } = useOrgDashboard();
-  const openCode = orgFeatureEnabled(orgContext, "gatewayOpenCodeSetup");
-  return openCode ? GATEWAY_TOOLS : GATEWAY_TOOLS.filter((tool) => tool.id !== "opencode");
-}
 
 export function GatewayToolPicker({ onPick }: { onPick: (tool: GatewayToolId) => void }) {
   const tools = GATEWAY_TOOLS.filter((tool) => tool.id !== "opencode");

@@ -51,12 +51,10 @@ export function shareLockedLine(managerName: string | null, organizationName: st
   return `${managerName || "Your workspace owner"} manages AI providers for ${organizationName}.`;
 }
 
-export function shareConsentFacts(input: { providerName: string; organizationName: string; guided?: boolean }): Array<{ label: string; value: string }> {
+export function shareConsentFacts(input: { providerName: string; organizationName: string }): Array<{ label: string; value: string }> {
   return [
     { label: "Who can use it", value: `Everyone in ${input.organizationName}, including people you invite later` },
-    { label: "Your key", value: input.guided
-      ? "A copy is stored encrypted in AI Gateway. Members never see it. Afterwards you choose whether it also stays on this device"
-      : "Leaves this device and is stored encrypted in AI Gateway. Members never see it" },
+    { label: "Your key", value: "A copy is stored encrypted in AI Gateway. Members never see it. Afterwards you choose whether it also stays on this device" },
     { label: "Cost", value: `Their usage is billed to your ${input.providerName} account` },
     { label: "Changing it", value: "Limit who uses it, or remove it, in AI Gateway" },
   ];

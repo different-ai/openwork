@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import type { RemoteSessionAnswerInput, RemoteSessionPending } from "@openwork/types/automations"
 
-import { markFeatureUsed } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
@@ -13,7 +12,7 @@ import { isQuestionCollapseChord, QUESTION_COLLAPSE_PANEL_CLASS, questionCollaps
 type Failure = { code: string; message: string; retryable: boolean }
 export type RemoteAnswerSubmit = (answer: RemoteSessionAnswerInput) => Promise<Failure | null>
 
-export function RemoteThreadAnswerCard({ pending, computer, onAnswer, collapsible = false }: { pending: RemoteSessionPending; computer: string; onAnswer: RemoteAnswerSubmit; collapsible?: boolean }) {
+export function RemoteThreadAnswerCard({ pending, computer, onAnswer }: { pending: RemoteSessionPending; computer: string; onAnswer: RemoteAnswerSubmit }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [answered, setAnswered] = useState<string | null>(null)
@@ -44,7 +43,7 @@ export function RemoteThreadAnswerCard({ pending, computer, onAnswer, collapsibl
 
   return pending.kind === "permission"
     ? <PermissionCard key={pending.requestId} pending={pending} computer={computer} busy={busy} error={footerError} onSubmit={submit} />
-    : <QuestionCard key={pending.requestId} pending={pending} computer={computer} busy={busy} error={footerError} onSubmit={submit} collapsible={collapsible} />
+    : <QuestionCard key={pending.requestId} pending={pending} computer={computer} busy={busy} error={footerError} onSubmit={submit} />
 }
 
 type CardProps<Kind extends RemoteSessionPending["kind"]> = {
@@ -101,7 +100,7 @@ function PermissionCard({ pending, computer, busy, error, onSubmit }: CardProps<
   )
 }
 
-function QuestionCard({ pending, computer, busy, error, onSubmit, collapsible }: CardProps<"question"> & { collapsible: boolean }) {
+function QuestionCard({ pending, computer, busy, error, onSubmit }: CardProps<"question">) {
   const [collapsed, setCollapsed] = useState(false)
   const [index, setIndex] = useState(0)
   const [answers, setAnswers] = useState<string[][]>([])
@@ -135,11 +134,6 @@ function QuestionCard({ pending, computer, busy, error, onSubmit, collapsible }:
     setAnswers(all)
     setIndex(index + 1)
   }
-  const changeCollapsed = (next: boolean) => {
-    if (next) markFeatureUsed("questionMinimize")
-    setCollapsed(next)
-  }
-  const minimized = collapsible && collapsed
 
   const details = (
     <>
@@ -206,16 +200,16 @@ function QuestionCard({ pending, computer, busy, error, onSubmit, collapsible }:
     <div
       className={CARD}
       data-remote-answer="question"
-      data-question-collapsed={collapsible ? String(collapsed) : undefined}
+      data-question-collapsed={String(collapsed)}
       role="group"
       aria-label={t("session.remote_answer_question_on", { computer })}
       onKeyDown={(event) => {
-        if (collapsible && !event.repeat && isQuestionCollapseChord(event)) {
+        if (!event.repeat && isQuestionCollapseChord(event)) {
           event.preventDefault()
-          changeCollapsed(!collapsed)
+          setCollapsed(!collapsed)
           return
         }
-        if (minimized) return
+        if (collapsed) return
         if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
           event.preventDefault()
           next()
@@ -230,35 +224,25 @@ function QuestionCard({ pending, computer, busy, error, onSubmit, collapsible }:
         }
       }}
     >
-      {collapsible ? (
-        <div className="flex items-center gap-2">
-          <span className="flex min-w-0 flex-1 items-baseline gap-2">
-            {minimized ? <span className="min-w-0 truncate text-sm font-medium text-foreground">{question.header || question.question}</span> : null}
-            <span className="shrink-0 text-xs text-muted-foreground" role={minimized ? "status" : undefined}>
-              {minimized
-                ? t("question_modal.collapsed_status")
-                : total > 1
-                  ? t("question_modal.question_counter", { current: index + 1, total })
-                  : t("session.remote_answer_question_on", { computer })}
-            </span>
+      <div className="flex items-center gap-2">
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          {collapsed ? <span className="min-w-0 truncate text-sm font-medium text-foreground">{question.header || question.question}</span> : null}
+          <span className="shrink-0 text-xs text-muted-foreground" role={collapsed ? "status" : undefined}>
+            {collapsed
+              ? t("question_modal.collapsed_status")
+              : total > 1
+                ? t("question_modal.question_counter", { current: index + 1, total })
+                : t("session.remote_answer_question_on", { computer })}
           </span>
-          <CollapsibleTrigger render={<Button variant="ghost" size="xs" className="text-muted-foreground aria-expanded:text-muted-foreground aria-expanded:hover:text-foreground" />} data-question-collapse-toggle="">
-            {minimized ? t("question_modal.expand") : t("question_modal.collapse")}
-            <span className="text-[11px] font-normal text-muted-foreground" aria-hidden="true">{questionCollapseChordLabel()}</span>
-          </CollapsibleTrigger>
-        </div>
-      ) : (
-        <Label>
-          {total > 1
-            ? t("question_modal.question_counter", { current: index + 1, total })
-            : t("session.remote_answer_question_on", { computer })}
-        </Label>
-      )}
-      {collapsible ? <CollapsibleContent className={QUESTION_COLLAPSE_PANEL_CLASS}><div className="flex flex-col gap-2">{details}</div></CollapsibleContent> : details}
+        </span>
+        <CollapsibleTrigger render={<Button variant="ghost" size="xs" className="text-muted-foreground aria-expanded:text-muted-foreground aria-expanded:hover:text-foreground" />} data-question-collapse-toggle="">
+          {collapsed ? t("question_modal.expand") : t("question_modal.collapse")}
+          <span className="text-[11px] font-normal text-muted-foreground" aria-hidden="true">{questionCollapseChordLabel()}</span>
+        </CollapsibleTrigger>
+      </div>
+      <CollapsibleContent className={QUESTION_COLLAPSE_PANEL_CLASS}><div className="flex flex-col gap-2">{details}</div></CollapsibleContent>
     </div>
   )
 
-  return collapsible
-    ? <Collapsible open={!collapsed} onOpenChange={(open) => changeCollapsed(!open)}>{card}</Collapsible>
-    : card
+  return <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>{card}</Collapsible>
 }

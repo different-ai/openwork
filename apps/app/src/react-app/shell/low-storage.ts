@@ -1,8 +1,6 @@
 import type { OpenworkDiskSpace } from "@/app/lib/openwork-server"
 import { formatFileSize } from "@/lib/utils"
 
-export const LOW_STORAGE_FEATURE = "lowStorageWarning"
-
 export const LOW_STORAGE_CLEANED_UP_BYTES = 4 * 1024 ** 3
 
 export const LOW_STORAGE_SAVE_FAILED_REPEAT_MS = 60 * 60 * 1000

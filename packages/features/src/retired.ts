@@ -86,4 +86,6 @@ export const RETIRED_FEATURE_KEYS = [
   "nativeMcpEvents",
   "connectEngineTools", "connectStandardTools", "connectionMcpServers",
   "sandboxGateway", "workbotDocumentEditing",
+  "gatewayOpenCodeSetup", "importOpencodeConnections", "lowStorageWarning",
+  "providerFilterSyncFix", "questionMinimize",
 ] as const

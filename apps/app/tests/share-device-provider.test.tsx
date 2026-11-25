@@ -74,7 +74,8 @@ test("the confirmation names who can use the key, where it goes, who pays and ho
   const facts = shareConsentFacts({ providerName: "Anthropic", organizationName: "Acme" });
   expect(facts.map((fact) => fact.label)).toEqual(["Who can use it", "Your key", "Cost", "Changing it"]);
   expect(facts[0]?.value).toContain("Everyone in Acme, including people you invite later");
-  expect(facts[1]?.value).toContain("Leaves this device");
+  expect(facts[1]?.value).toContain("A copy is stored encrypted in AI Gateway");
+  expect(facts[1]?.value).not.toContain("Leaves this device");
   expect(facts[2]?.value).toContain("billed to your Anthropic account");
 });
 
@@ -181,10 +182,4 @@ test("after a share the dialog reports where the provider is and what each choic
   // Not here yet is said plainly, and never reads as a failed share.
   expect(shareOutcomeTitle({ ...input, arrival: { status: "pending" } })).toBe("Anthropic is shared, but not on this device yet");
   expect(shareOutcomeFacts({ ...input, arrival: { status: "pending" } }).map((fact) => fact.label)).toEqual(["Shared", "This device"]);
-});
-
-test("the guided confirmation says the key is copied, not that it leaves this device", () => {
-  const guided = shareConsentFacts({ providerName: "Anthropic", organizationName: "Acme", guided: true });
-  expect(guided[1]?.value).toContain("A copy is stored encrypted in AI Gateway");
-  expect(guided[1]?.value).not.toContain("Leaves this device");
 });

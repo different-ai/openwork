@@ -1,5 +1,7 @@
 # Exact provider search and guided provider sharing
 
+> **Generally available:** `providerFilterSyncFix` is retired; the enabled behavior is now standard. Rollout, off-state and kill-switch notes below describe the historical rollout.
+
 Feature key: `providerFilterSyncFix` (cloud and self-hosted, off by default).
 
 ## What changes

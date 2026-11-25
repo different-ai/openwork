@@ -1,5 +1,7 @@
 # AI Gateway: OpenCode setup
 
+> **Generally available:** `gatewayOpenCodeSetup` is retired; the enabled behavior is now standard. Rollout, off-state and kill-switch notes below describe the historical rollout.
+
 - **Feature key:** `gatewayOpenCodeSetup`
 - **Deployments:** cloud and self-hosted, off by default
 - **Author:** benjaminshafii

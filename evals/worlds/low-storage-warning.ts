@@ -1,6 +1,5 @@
 import { addInitScript, browserScript, reload } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 
 export type DiskReading = { freeBytes: number; totalBytes: number; level: "ok" | "low" | "critical" };
@@ -12,7 +11,7 @@ const READING_KEY = "openwork.eval.diskReading";
 
 /**
  * A member signed in to the app in a browser, with its OpenWork server on the
- * same machine, and the low disk space warning off for their organization.
+ * same machine.
  *
  * Filling a real disk is not an option, so the reading the app receives is
  * test-owned. Every question still goes to the real server first, and its
@@ -53,8 +52,6 @@ export async function lowStorageWarningWorld(seed: Seed) {
       if (!disk) throw new Error("The disk reading is not installed");
       return { asked: disk.asked, real: disk.real };
     }),
-    /** A platform admin turns the warning on for the organization. */
-    turnOnWarning: () => enableOrganizationCapabilities(seed, den.admin, { lowStorageWarning: true }),
     async [Symbol.asyncDispose]() { await registration.dispose(); },
   };
 }
