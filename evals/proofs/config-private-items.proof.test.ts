@@ -40,14 +40,14 @@ test("an administrator downloads private work with Whole organization and review
     await target.click({ role: "button", label: /^Approve$/ });
     await target.click({ role: "button", label: "Apply now" });
     await target.see({ text: "Applied" }, { timeoutMs: 60_000 });
-    const creator = user.on(await world.joinCreator());
+    const recipient = await world.joinCreator();
+    const creator = user.on(recipient.web);
     await creator.see({ testId: "library-screen" }, { timeoutMs: 60_000 });
     await creator.click({ role: "link", label: world.name });
     await creator.click({ text: "Field notes migration" });
     await creator.see({ text: "Read the synthetic field notes." });
-    await creator.click({ role: "link", label: "Edit skill" });
-    await creator.type({ role: "textbox", label: /Skill body/ }, "Read the revised destination notes.", { replace: true });
-    await creator.click({ role: "button", label: "Save changes" });
+    await recipient.editSkill("Read the revised destination notes.");
+    await creator.reload();
     await creator.click({ text: "Field notes migration" });
     await creator.see({ text: "Read the revised destination notes." });
     await creator.screenshot();

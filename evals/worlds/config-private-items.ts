@@ -54,7 +54,26 @@ export async function configPrivateItemsWorld(seed: Seed) {
       const member = await createAdmin(target, { email: creator.email, name: "Skill Creator", password: "SyntheticConfig123!" });
       const accepted = await seed.api(member, "/v1/orgs/invitations/accept", { method: "POST", body: JSON.stringify({ id }) });
       if (!accepted.response.ok) throw new Error(`Could not accept the imported invitation: HTTP ${accepted.response.status}.`);
-      return seed.web({ den: target, signedInAs: member, startPath: "/dashboard/library", headless: true });
+      const web = await seed.web({ den: target, signedInAs: member, startPath: "/dashboard/library", headless: true });
+      return {
+        web,
+        async editSkill(body: string) {
+          const listed = await seed.api(member, `/v1/plugins?name=${encodeURIComponent(name)}`);
+          const matches = isRecord(listed.body) && Array.isArray(listed.body.items) ? listed.body.items.filter((item: unknown) => isRecord(item) && item.name === name) : [];
+          const [match] = matches;
+          if (matches.length !== 1 || !isRecord(match) || typeof match.id !== "string") throw new Error("The recipient did not have one imported plugin.");
+          const pluginId = match.id;
+          const detail = await seed.api(member, `/v1/plugins/${encodeURIComponent(pluginId)}`);
+          const plugin = isRecord(detail.body) && isRecord(detail.body.item) ? detail.body.item : null;
+          const skills = plugin && Array.isArray(plugin.skills) ? plugin.skills : [];
+          const skill = skills.find((item: unknown) => isRecord(item) && item.name === name);
+          if (!isRecord(skill) || typeof skill.id !== "string") throw new Error("The recipient's plugin does not contain the imported skill.");
+          const edit = await seed.api(member, `/v1/config-objects/${encodeURIComponent(skill.id)}/versions`, {
+            method: "POST", body: JSON.stringify({ input: { rawSourceText: `---\nname: ${name}\ndescription: Summarize synthetic field notes.\n---\n\n${body}` } }),
+          });
+          if (!edit.response.ok) throw new Error(`The recipient could not edit the imported skill: HTTP ${edit.response.status}.`);
+        },
+      };
     },
     async enable() {
       await enableOrganizationCapabilities(seed, source.admin, { configPrivateItems: true });
