@@ -6,7 +6,7 @@ import {
   heartbeatProof, quickCreateUrl, runnerRoleName, throughAccessPortal, updateStackCommand, verifyAwsIdentity, type AwsLaunch,
 } from "@openwork/managed-deployments/aws"
 import { cloudShellCommand, consoleUrl as gcpConsoleUrl, enrollmentAudience, gcpEnrollmentSchema, heartbeatAudience, serviceAccountEmail, verifyGcpIdentity, type GcpLaunch } from "@openwork/managed-deployments/gcp"
-import { compareVersions, hashToken, summarizeHealth, tokenMatches, validateEventTransition } from "@openwork/managed-deployments/lifecycle"
+import { compareInstallerRelease, hashToken, installerRevisionOf, summarizeHealth, tokenMatches, validateEventTransition } from "@openwork/managed-deployments/lifecycle"
 import {
   assistantsEnabled, awsSignInInputSchema, awsSignInSchema, awsTargetSchema, normalizeAwsTargetForCreate, normalizeAwsTargetForView, gcpTargetSchema, deploymentEventInputSchema, healthCheckSchema, healthReportSchema, managedDeploymentConfigurationSchema,
   managedDeploymentInputSchema, managedDeploymentLaunchInputSchema, managedDeploymentLaunchSchema, managedDeploymentListSchema,
@@ -139,17 +139,20 @@ async function deploymentViews(rows: DeploymentRow[], signIn: AwsSignIn | null, 
     const run = runs.find((entry) => entry.id === row.active_run_id) ?? null
     const report = health.find((entry) => entry.deployment_id === row.id) ?? null
     const checks = report ? z.array(healthCheckSchema).catch([]).parse(report.checks) : []
-    const available = (row.provider === "aws" ? aws : row.provider === "gcp" ? gcp : null)?.version ?? null
+    const published = row.provider === "aws" ? aws : row.provider === "gcp" ? gcp : null
     const installed = report?.version ?? row.installed_version
+    const revisionRecordedForInstalled = installed === row.installed_version ? row.installed_installer_revision : null
+    const installedRevision = installed ? installerRevisionOf(revisionRecordedForInstalled) : null
     const target = row.provider === "gcp" ? gcpTargetSchema.parse(row.target) : awsTarget(row)
     return managedDeploymentSchema.parse({
       id: row.id, name: row.name, provider: row.provider, target, domainName: row.domain_name, ownerEmail: row.owner_email,
       size: row.size, updateMode: "approval", createdAt: row.created_at.toISOString(), webUrl: `https://${row.domain_name}`,
-      consoleUrl: row.provider === "gcp" ? gcpConsoleUrl(gcpTargetSchema.parse(row.target).projectId) : throughAccessPortal(consoleUrl(row.id, target.region), awsTarget(row).accountId, signIn), installedVersion: installed, availableVersion: available,
-      updateAvailable: Boolean(installed && available && (compareVersions(installed, available) ?? 0) < 0),
+      consoleUrl: row.provider === "gcp" ? gcpConsoleUrl(gcpTargetSchema.parse(row.target).projectId) : throughAccessPortal(consoleUrl(row.id, target.region), awsTarget(row).accountId, signIn), installedVersion: installed, installedInstallerRevision: installedRevision,
+      availableVersion: published?.version ?? null, availableInstallerRevision: published ? installerRevisionOf(published.installerRevision) : null,
+      updateAvailable: Boolean(installed && published && (compareInstallerRelease({ version: installed, installerRevision: installedRevision }, published) ?? 0) < 0),
       health: summarizeHealth({ checks, reportedAt: report?.reported_at ?? null, version: report?.version ?? null }, now),
       run: run ? {
-        id: run.id, kind: run.kind, version: run.version, state: run.state, createdAt: run.created_at.toISOString(),
+        id: run.id, kind: run.kind, version: run.version, installerRevision: run.installer_revision, state: run.state, createdAt: run.created_at.toISOString(),
         lastSeenAt: run.last_seen_at?.toISOString() ?? null, expiresAt: run.expires_at.toISOString(),
         expired: run.expires_at < now && (run.state === "awaiting_approval" || run.state === "provisioning"),
         events: events.filter((event) => event.run_id === run.id).map((event) => ({
@@ -275,7 +278,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       return c.json({ ok: true })
     })
 
-  app.post(`${PATH}/:deploymentId/launch`, operation("Prepare an install, retry or approved update", "Creates or reuses an installer run pinned to the published release and returns the customer's cloud approval handoff. OpenWork never executes it. Existing AWS installations remain legacy until an explicit version-increasing Update supplies runtimeProfile gateway; Retry never changes profiles or computer settings. Gateway includes Den, the native model gateway, runner, Workbot and Slack/Automations; no direct model configuration is accepted as a new runtime. Upstream providers/keys and Slack app credentials are configured only inside the installed Den after first sign-in. Optional computers remain off unless selected. Profile and settings freeze atomically with the run: changed pending input returns 409; unchanged input reopens the identical command/run. Gateway-profile launches and reopening are blocked while configuration.assistantsAvailable is false; authenticated progress/health continue. GCP does not accept AWS profile/settings.", managedDeploymentLaunchSchema, { mcp: true }),
+  app.post(`${PATH}/:deploymentId/launch`, operation("Prepare an install, retry or approved update", "Creates or reuses an installer run pinned to the published release and returns the customer's cloud approval handoff. OpenWork never executes it. Existing AWS installations remain legacy until an explicit Update to a newer version or installer revision supplies runtimeProfile gateway; Retry never changes profiles or computer settings. Gateway includes Den, the native model gateway, runner, Workbot and Slack/Automations; no direct model configuration is accepted as a new runtime. Upstream providers/keys and Slack app credentials are configured only inside the installed Den after first sign-in. Optional computers remain off unless selected. Profile and settings freeze atomically with the run: changed pending input returns 409; unchanged input reopens the identical command/run. Gateway-profile launches and reopening are blocked while configuration.assistantsAvailable is false; authenticated progress/health continue. GCP does not accept AWS profile/settings.", managedDeploymentLaunchSchema, { mcp: true }),
     orgPermissionRoute("deployments.manage"), requireFeature("managedDeployments"), paramValidator(deploymentParam), jsonValidator(managedDeploymentLaunchInputSchema), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
@@ -311,14 +314,14 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         if (kind !== "install" && !everStarted) return { error: "not_installed", status: 409 } as const
         if (kind === "update") {
           const current = row.installed_version
-          if (!current || (compareVersions(current, release.version) ?? 0) >= 0) return { error: "already_current", status: 409 } as const
+          if (!current || (compareInstallerRelease({ version: current, installerRevision: row.installed_installer_revision }, release) ?? 0) >= 0) return { error: "already_current", status: 409 } as const
         }
         if (active && active.state !== "failed" && active.state !== "ready") {
           await tx.update(ManagedDeploymentRunTable).set({ state: "failed" }).where(eq(ManagedDeploymentRunTable.id, active.id))
         }
         const runId = randomUUID()
         await tx.insert(ManagedDeploymentRunTable).values({
-          id: runId, deployment_id: id, kind, version: release.version, template_url: release.templateUrl, bundle_url: release.bundleUrl,
+          id: runId, deployment_id: id, kind, version: release.version, installer_revision: installerRevisionOf(release.installerRevision), template_url: release.templateUrl, bundle_url: release.bundleUrl,
           bundle_sha256: release.bundleSha256, api_origin: release.apiOrigin, challenge: randomBytes(32).toString("hex"),
           state: "awaiting_approval", expires_at: new Date(now.getTime() + RUN_LIFETIME_MS),
         })
@@ -412,7 +415,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const ready = body.outcome === "succeeded" && body.step === "health_verified"
         await tx.insert(ManagedDeploymentEventTable).values({ id: randomUUID(), run_id: runId, sequence: body.sequence, step: body.step, outcome: body.outcome, error_code: body.errorCode ?? null, received_at: now })
         await tx.update(ManagedDeploymentRunTable).set({ last_sequence: body.sequence, last_seen_at: now, state: body.outcome === "failed" ? "failed" : ready ? "ready" : "provisioning" }).where(eq(ManagedDeploymentRunTable.id, runId))
-        if (ready) await tx.update(ManagedDeploymentTable).set({ installed_version: run.version, ...(run.kind === "configure" ? appliedConfiguration(run) : {}) }).where(eq(ManagedDeploymentTable.id, deploymentId))
+        if (ready) await tx.update(ManagedDeploymentTable).set({ installed_version: run.version, installed_installer_revision: run.installer_revision, ...(run.kind === "configure" ? appliedConfiguration(run) : {}) }).where(eq(ManagedDeploymentTable.id, deploymentId))
         return "ok"
       })
       if (outcome === "unauthorized") return c.json({ error: "unauthorized" }, 401)

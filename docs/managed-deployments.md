@@ -235,10 +235,14 @@ and the kill switch: `docs/features/managed-deployment-config-updates/README.md`
 1. Build an installer for an **already published** image version:
    `node infra/managed-deployments/tools/build-release.mjs aws <version> <dir>`
    (or run the **Managed Deployments** workflow with that version).
-   A separately approved isolated test may use a newer installer version plus
-   `--image-pins <approved-json-file>` for a registry-verified existing application
-   pair. That is a real version-increasing Update, not Retry or a fictitious image
-   tag. Never point production Den at those test-only artifacts.
+   For an installer-only fix, or to test an Update against a registry-verified
+   existing application pair, build the next installer revision of the same
+   version: add `--installer-revision <n>` (and `--image-pins <approved-json-file>`
+   for the test). Revision 1 is the installer without a revision; a higher one
+   publishes beside it at `releases/<provider>/<version>_r<n>/`. Den offers it as
+   an Update to deployments on that version. **Deploy Den before publishing any
+   revision above 1**: an older Den reads the revision as invalid and offers no
+   installer. Never point production Den at test artifacts.
 2. Publish from a dedicated release account into a versioned, encrypted S3
    bucket whose `releases/*` objects and pinned versions are publicly readable
    (`s3:GetObject` and `s3:GetObjectVersion`, not public listing) and nothing else:
@@ -290,7 +294,10 @@ cloud qualification gate is automated. Qualify the exact retained candidate on
 an isolated account, including a fresh install and version-increasing Update,
 and retain the manifest SHA-256 and review URL. Dispatch the workflow from the
 trusted default branch with `promote=true`, that manifest hash, and the trusted
-repository qualification review URL. The URL is the operator's attestation,
+repository qualification review URL. To prepare or promote an installer-only fix
+for the latest stable version, also set `installer_revision` to the next
+revision; the workflow refuses a release that is not newer than the current one
+by version, then revision. The URL is the operator's attestation,
 not an automated assertion that its contents passed. The dedicated
 `managed-installer-production` environment must have nonempty required
 reviewers and prevent self-review. The workflow verifies that policy before
@@ -328,7 +335,9 @@ qualification. Existing explicit GCP publication steps below still apply.
 
 Promotion writes **one** non-secret coordinate record on hosted Den:
 `DEN_MANAGED_DEPLOYMENT_AWS_RELEASE` (the configuration reader also supports
-`DEN_MANAGED_DEPLOYMENT_GCP_RELEASE`). Its value is a JSON object with exactly:
+`DEN_MANAGED_DEPLOYMENT_GCP_RELEASE`). Its value is a JSON object with exactly
+these fields, plus `"installerRevision": <n>` when the installer revision is
+above 1:
 
 ```json
 {
@@ -345,6 +354,8 @@ uses exact GCS generation URLs. The control-plane origin still comes only from
 `DEN_API_PUBLIC_URL`; the coordinate record cannot override it.
 
 When the record is absent, the four legacy provider fields remain supported.
+They describe revision 1 only: a higher installer revision exists only in this
+record, which is what the publishers print for one.
 When present but invalid, Den fails closed: it never silently revives an older
 legacy pin. Production promotion changes only this selected record and requests
 one Den deploy; it never bulk-rewrites unrelated environment values. Workflow
@@ -352,12 +363,13 @@ writers share the `den-api-env` concurrency lock and re-read the selected key
 before writing. Render has no server-side compare-and-swap: dashboard/external
 API writers must respect that operational lock too.
 
-An old/out-of-order candidate cannot downgrade the advertised release. The
-same version with different bytes or coordinates is refused. Re-running a
+An old/out-of-order candidate cannot downgrade the advertised release: releases
+are ordered by version, then installer revision. The same version and revision
+with different bytes or coordinates is refused. Re-running a
 partial publication reuses only identical, publicly verified immutable object
 versions; conflicting bytes fail before uploads. If an installer fix changes
-an already-published version, publish a new reviewed version rather than
-replace its objects. Deterministic archives require Python 3 alongside the
+an already-published version, publish it as the next reviewed installer revision
+of that version rather than replace its objects. Deterministic archives require Python 3 alongside the
 registry tooling.
 
 On ambiguous publication/configuration/deploy failure, inspect the actual
@@ -410,8 +422,9 @@ but a later health failure can happen after traffic resumes. Revision tags are
 removed and must be recreated on the new revisions if needed.
 The managed-deployments owners must still accept this behavior before merge or
 publication. Before publishing newer application images, qualify that exact
-image set with a live upgrade. Use a genuinely newer isolated test installer for
-Den Update; same-version protection stays unchanged.
+image set with a live upgrade. Use the next installer revision of the version
+under test for Den Update; Den still refuses an Update to the release that is
+already installed.
 
 Use a dedicated billing-enabled project, a supported region, and an already
 public authoritative Cloud DNS zone for the chosen address. The region list is

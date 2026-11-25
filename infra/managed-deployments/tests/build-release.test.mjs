@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import "./aws-assistant-bootstrap.test.mjs";
-import { AWS_REPOSITORIES, buildRelease, GCP_REPOSITORIES, HEALTH_SOURCE, resolveGcpImages, resolveAwsImages, validateModuleReferences } from "../tools/build-release.mjs";
+import { AWS_REPOSITORIES, buildRelease, GCP_REPOSITORIES, HEALTH_SOURCE, parseInstallerRevision, releaseFolder, resolveGcpImages, resolveAwsImages, validateModuleReferences } from "../tools/build-release.mjs";
 
 const digest = (character) => "sha256:" + character.repeat(64);
 const metadata = (character, os = "linux", architecture = "amd64") => ({
@@ -95,6 +95,49 @@ test("default AWS release resolves current image tags without adding GCP invento
   } finally {
     rmSync(output, { recursive: true, force: true });
   }
+});
+
+test("an installer revision above 1 is written to the manifest and release, and revision 1 changes no bytes", () => {
+  const output = mkdtempSync(join(tmpdir(), "openwork-revision-build-test-"));
+  const read = (directory) => ({
+    manifest: readFileSync(join(directory, "manifest.json"), "utf8"),
+    bundle: readFileSync(join(directory, "bundle.tar.gz")),
+    release: execFileSync("tar", ["-xOf", join(directory, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }),
+  });
+  try {
+    for (const provider of ["aws", "gcp"]) {
+      const plain = join(output, provider, "plain");
+      const first = join(output, provider, "first");
+      const second = join(output, provider, "second");
+      buildRelease([provider, "0.18.65", plain], inspect);
+      buildRelease([provider, "0.18.65", first, "--installer-revision", "1"], inspect);
+      buildRelease([provider, "0.18.65", second, "--installer-revision", "2"], inspect);
+      assert.deepEqual(read(first), read(plain), "revision 1 is the release that was always built");
+      assert.equal(Object.hasOwn(JSON.parse(read(plain).manifest), "installerRevision"), false);
+      assert.equal(Object.hasOwn(JSON.parse(read(plain).release), "installerRevision"), false);
+      const revised = read(second);
+      const manifest = JSON.parse(revised.manifest);
+      assert.deepEqual(Object.keys(manifest), ["provider", "version", "installerRevision", "protocolVersion", "bundleSha256", "templateSha256"]);
+      assert.deepEqual([manifest.version, manifest.installerRevision, manifest.protocolVersion], ["0.18.65", 2, 1]);
+      assert.equal(manifest.bundleSha256, createHash("sha256").update(revised.bundle).digest("hex"));
+      const release = JSON.parse(revised.release);
+      assert.deepEqual([release.version, release.installerRevision, release.protocolVersion], ["0.18.65", 2, 1]);
+      assert.deepEqual(release.files, JSON.parse(read(plain).release).files, "the same source files: only the identity differs");
+      assert.deepEqual(release.images, JSON.parse(read(plain).release).images, "the same app images as revision 1");
+      assert.notEqual(manifest.bundleSha256, JSON.parse(read(plain).manifest).bundleSha256);
+    }
+    for (const options of [["--installer-revision"], ["--installer-revision", "0"], ["--installer-revision", "02"], ["--installer-revision", "1.5"],
+      ["--installer-revision", "10000"], ["--installer-revision", "two"], ["--installer-revision", "2", "--installer-revision", "3"]]) {
+      assert.throws(() => buildRelease(["aws", "0.18.65", join(output, "refused"), ...options], inspect), /installer-revision/);
+    }
+    assert.throws(() => buildRelease(["aws", "0.18.65-rc.1", join(output, "refused"), "--installer-revision", "2"], inspect), /stable versions only/);
+  } finally {
+    rmSync(output, { recursive: true, force: true });
+  }
+  assert.equal(parseInstallerRevision("9999"), 9999);
+  assert.equal(releaseFolder("0.18.65"), "0.18.65");
+  assert.equal(releaseFolder("0.18.65", 1), "0.18.65");
+  assert.equal(releaseFolder("0.18.65", 2), "0.18.65_r2");
 });
 
 test("GCP CLI cannot disable registry verification or use unsupported options", () => {

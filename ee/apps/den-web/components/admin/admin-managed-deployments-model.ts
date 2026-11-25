@@ -10,6 +10,7 @@ import {
   type ManagedInstallerQualification,
   type ManagedInstallerValidation,
 } from "@openwork/types/den/managed-installer-releases";
+import { installerReleaseLabel, installerRevisionOf, isInstallerRevision } from "@openwork/types/den/managed-deployments";
 
 export const MANAGED_RELEASES_API = "/v1/admin/managed-releases";
 
@@ -38,9 +39,24 @@ export function versionInputError(state: ManagedInstallerProviderState, version:
     ? null : "Enter a release version such as 1.2.3.";
 }
 
-export function pinBlockedReason(validation: ManagedInstallerValidation | null, state: ManagedInstallerProviderState, version: string, qualification: ManagedInstallerQualification, now: number, stale: boolean) {
+export function installerRevisionInput(text: string): number | null {
+  const value = text.trim();
+  if (!value) return 1;
+  const revision = /^[1-9]\d*$/.test(value) ? Number(value) : null;
+  return isInstallerRevision(revision) ? revision : null;
+}
+
+export function installerRevisionInputError(text: string) {
+  return installerRevisionInput(text) === null ? "Enter an installer revision such as 2, or leave it empty for the first installer of this version." : null;
+}
+
+export function managedReleaseLabel(release: { version: string; installerRevision?: number | null }) {
+  return installerReleaseLabel(release.version, release.installerRevision);
+}
+
+export function pinBlockedReason(validation: ManagedInstallerValidation | null, state: ManagedInstallerProviderState, version: string, qualification: ManagedInstallerQualification, now: number, stale: boolean, installerRevision: number | null = 1) {
   if (stale) return "The default changed. Refresh the current default, then verify this release again.";
-  if (!validation || validation.provider !== state.provider || validation.release.version !== version.trim()) return "Verify this release before pinning it.";
+  if (!validation || validation.provider !== state.provider || validation.release.version !== version.trim() || installerRevisionOf(validation.release.installerRevision) !== installerRevision) return "Verify this release before pinning it.";
   if (Date.parse(validation.expiresAt) <= now) return "Verification expired. Verify this release again.";
   if (!validation.canPin) return "Another platform administrator must pin this verified release.";
   if (!managedInstallerQualificationSchema.safeParse(qualification).success) return "Add HTTPS links to a successful fresh install and an approved update for this exact release.";

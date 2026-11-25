@@ -8,7 +8,7 @@ import { DenInput } from "../../app/(den)/_components/ui/input";
 import { DenSegmented } from "../../app/(den)/_components/ui/segmented";
 import { AdminAccessScreen } from "./admin-access-screen";
 import { requestAdmin, sendAdmin, type AdminAccess } from "./admin-request";
-import { MANAGED_RELEASES_API, managedApprovalLabel, managedServiceLabel, managedSourceLabel, parseManagedLatest, parseManagedReport, parseManagedValidation, pinBlockedReason, sourceInputError, versionInputError } from "./admin-managed-deployments-model";
+import { installerRevisionInput, installerRevisionInputError, MANAGED_RELEASES_API, managedApprovalLabel, managedReleaseLabel, managedServiceLabel, managedSourceLabel, parseManagedLatest, parseManagedReport, parseManagedValidation, pinBlockedReason, sourceInputError, versionInputError } from "./admin-managed-deployments-model";
 
 const EMPTY_QUALIFICATION: ManagedInstallerQualification = { freshInstallUrl: "", approvedUpdateUrl: "" };
 const SUMMARY_CLASS = "flex cursor-pointer list-none items-center gap-2 py-3 font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 [&::-webkit-details-marker]:hidden";
@@ -36,7 +36,7 @@ export function ManagedDeploymentsSkeleton() {
 export function ManagedDeploymentCurrent({ state }: { state: ManagedInstallerProviderState }) {
   return <section aria-label="Current default" className="border-y border-border py-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><p className="text-muted-foreground">Current default</p><p className="mt-1 text-xl font-semibold tracking-tight" data-testid="managed-current-version">{state.release?.version ?? "Not configured"}</p></div>
+      <div><p className="text-muted-foreground">Current default</p><p className="mt-1 text-xl font-semibold tracking-tight" data-testid="managed-current-version">{state.release ? managedReleaseLabel(state.release) : "Not configured"}</p></div>
       <dl className="text-right"><dt className="text-muted-foreground">Source</dt><dd className="mt-1 font-medium">{managedSourceLabel(state.source)}</dd></dl>
     </div>
     <dl className="mt-3 flex justify-between gap-3"><dt className="text-muted-foreground">Approval</dt><dd>{managedApprovalLabel(state.approvalMode)}</dd></dl>
@@ -48,7 +48,7 @@ export function ManagedDeploymentCurrent({ state }: { state: ManagedInstallerPro
 
 export function ManagedDeploymentPreview({ validation }: { validation: ManagedInstallerValidation }) {
   return <section aria-label="Verified release" className="space-y-3 border-t border-border pt-4" data-testid="managed-release-preview">
-    <div className="flex flex-wrap justify-between gap-2"><h2 className="font-medium">Verified release {validation.release.version}</h2><p className="text-muted-foreground">{timestamp(validation.verifiedAt)}</p></div>
+    <div className="flex flex-wrap justify-between gap-2"><h2 className="font-medium">Verified release {managedReleaseLabel(validation.release)}</h2><p className="text-muted-foreground">{timestamp(validation.verifiedAt)}</p></div>
     <dl className="space-y-2"><div><dt className="text-muted-foreground">Included services</dt><dd className="mt-1">{validation.services.map(managedServiceLabel).join(", ") || "No services reported"}</dd></div><div className="flex flex-wrap justify-between gap-2"><dt className="text-muted-foreground">Verification expires</dt><dd>{timestamp(validation.expiresAt)}</dd></div></dl>
     <p className="text-muted-foreground">Published files verified. Cloud qualification requires the test reports below.</p>
   </section>;
@@ -59,7 +59,7 @@ export function ManagedDeploymentHistory({ history, provider }: { history: Manag
   return <section aria-label="Release history" className="border-t border-border pt-4">
     <h2 className="font-medium">Release history</h2>
     {entries.length ? <ul className="mt-2 divide-y divide-border">{entries.map(entry => <li key={entry.id} className="py-3">
-      <div className="flex flex-wrap justify-between gap-2"><span>{entry.action === "pinned" ? `Pinned ${entry.version}` : entry.action === "source_saved" ? "Saved release source" : entry.action === "approval_saved" ? "Changed approval policy" : "Restored environment default"}</span><time className="text-muted-foreground" dateTime={entry.createdAt}>{timestamp(entry.createdAt)}</time></div>
+      <div className="flex flex-wrap justify-between gap-2"><span>{entry.action === "pinned" ? `Pinned ${entry.version ? managedReleaseLabel({ version: entry.version, installerRevision: entry.installerRevision }) : ""}` : entry.action === "source_saved" ? "Saved release source" : entry.action === "approval_saved" ? "Changed approval policy" : "Restored environment default"}</span><time className="text-muted-foreground" dateTime={entry.createdAt}>{timestamp(entry.createdAt)}</time></div>
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground"><span>{entry.actor}</span>{entry.qualification ? <><a className="underline underline-offset-2" href={entry.qualification.freshInstallUrl} target="_blank" rel="noreferrer">Fresh install report</a><a className="underline underline-offset-2" href={entry.qualification.approvedUpdateUrl} target="_blank" rel="noreferrer">Approved update report</a></> : null}</div>
     </li>)}</ul> : <p className="mt-2 text-muted-foreground">No admin changes recorded.</p>}
   </section>;
@@ -101,6 +101,7 @@ export function ManagedDeploymentsPage() {
 
 export function ManagedDeploymentEditor({ state, report, onReport, onAccess, refresh, refreshing }: { state: ManagedInstallerProviderState; report: ManagedInstallerReport; onReport: (report: ManagedInstallerReport) => void; onAccess: (access: AdminAccess) => void; refresh: () => void; refreshing: boolean }) {
   const [version, setVersion] = useState(state.pendingValidation?.release.version ?? "");
+  const [revision, setRevision] = useState(state.pendingValidation?.release.installerRevision ? String(state.pendingValidation.release.installerRevision) : "");
   const [source, setSource] = useState(state.sourceBaseUrl ?? "");
   const [approvalMode, setApprovalMode] = useState<ManagedInstallerApprovalMode>(state.approvalMode);
   const [approvalConfirmation, setApprovalConfirmation] = useState(false);
@@ -110,12 +111,13 @@ export function ManagedDeploymentEditor({ state, report, onReport, onAccess, ref
   const [error, setError] = useState<string | null>(null);
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [versionError, setVersionError] = useState<string | null>(null);
+  const [revisionError, setRevisionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
   const [restoreConfirmation, setRestoreConfirmation] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const disabled = busy !== null || refreshing;
-  const blocked = pinBlockedReason(validation, state, version, qualification, now, stale);
+  const blocked = pinBlockedReason(validation, state, version, qualification, now, stale, installerRevisionInput(revision));
 
   useEffect(() => {
     if (!validation) return;
@@ -164,6 +166,7 @@ export function ManagedDeploymentEditor({ state, report, onReport, onAccess, ref
   }
 
   function changeVersion(value: string) { setVersion(value); setValidation(null); setQualification(EMPTY_QUALIFICATION); setVersionError(null); setNotice(null); }
+  function changeRevision(value: string) { setRevision(value); setValidation(null); setQualification(EMPTY_QUALIFICATION); setRevisionError(null); setNotice(null); }
 
   async function saveApproval() {
     await run("approval", async () => {
@@ -174,13 +177,16 @@ export function ManagedDeploymentEditor({ state, report, onReport, onAccess, ref
 
   async function verify() {
     const problem = versionInputError(state, version);
+    const revisionProblem = installerRevisionInputError(revision);
+    const installerRevision = installerRevisionInput(revision);
     setVersionError(problem);
-    if (problem) return;
+    setRevisionError(revisionProblem);
+    if (problem || revisionProblem || installerRevision === null) return;
     setValidation(null);
     setQualification(EMPTY_QUALIFICATION);
     await run("verify", async () => {
-      const parsed = parseManagedValidation(await write("/validate", "POST", { provider: state.provider, version: version.trim(), expectedRevision: state.revision }));
-      if (!parsed || parsed.provider !== state.provider || parsed.release.version !== version.trim()) throw new Error("The server returned a different release. Verify this release again.");
+      const parsed = parseManagedValidation(await write("/validate", "POST", { provider: state.provider, version: version.trim(), ...(installerRevision > 1 ? { installerRevision } : {}), expectedRevision: state.revision }));
+      if (!parsed || parsed.provider !== state.provider || parsed.release.version !== version.trim() || (parsed.release.installerRevision ?? 1) !== installerRevision) throw new Error("The server returned a different release. Verify this release again.");
       setNow(Date.now()); setValidation(parsed);
     });
   }
@@ -196,13 +202,14 @@ export function ManagedDeploymentEditor({ state, report, onReport, onAccess, ref
         if (result.access !== "ready") { if (result.access !== "error") onAccess(result.access); throw new Error(result.message); }
         changeVersion(result.data.version);
       })}>Use latest stable</DenButton></div>
-      <div className="flex flex-wrap gap-2"><div className="min-w-48 flex-1"><DenInput id="managed-version" value={version} onChange={event => changeVersion(event.target.value)} disabled={disabled || stale} placeholder="1.2.3" aria-invalid={!!versionError} aria-describedby={versionError ? "managed-version-error" : undefined} /></div><DenButton variant="secondary" disabled={disabled || stale || !state.sourceBaseUrl} loading={busy === "verify"} onClick={() => void verify()}>Verify release</DenButton></div>
+      <div className="flex flex-wrap gap-2"><div className="min-w-48 flex-1"><DenInput id="managed-version" value={version} onChange={event => changeVersion(event.target.value)} disabled={disabled || stale} placeholder="1.2.3" aria-invalid={!!versionError} aria-describedby={versionError ? "managed-version-error" : undefined} /></div><div className="w-36"><DenInput id="managed-installer-revision" inputMode="numeric" aria-label="Installer revision" value={revision} onChange={event => changeRevision(event.target.value)} disabled={disabled || stale} placeholder="Revision 1" aria-invalid={!!revisionError} aria-describedby={revisionError ? "managed-installer-revision-error" : undefined} /></div><DenButton variant="secondary" disabled={disabled || stale || !state.sourceBaseUrl} loading={busy === "verify"} onClick={() => void verify()}>Verify release</DenButton></div>
       {versionError ? <p id="managed-version-error" className="text-destructive">{versionError}</p> : null}
+      {revisionError ? <p id="managed-installer-revision-error" className="text-destructive">{revisionError}</p> : null}
     </div>
     {validation ? <>
       <ManagedDeploymentPreview validation={validation} />
       <div className="space-y-3">
-        <h2 className="font-medium">Qualification reports for {validation.release.version}</h2>
+        <h2 className="font-medium">Qualification reports for {managedReleaseLabel(validation.release)}</h2>
         <div className="space-y-1"><label htmlFor="managed-fresh-install">Successful fresh install report</label><DenInput id="managed-fresh-install" type="url" placeholder="https://…" value={qualification.freshInstallUrl} disabled={disabled || stale} onChange={event => setQualification({ ...qualification, freshInstallUrl: event.target.value.trim() })} /></div>
         <div className="space-y-1"><label htmlFor="managed-approved-update">Approved update report</label><DenInput id="managed-approved-update" type="url" placeholder="https://…" value={qualification.approvedUpdateUrl} disabled={disabled || stale} onChange={event => setQualification({ ...qualification, approvedUpdateUrl: event.target.value.trim() })} /></div>
         <p className="text-muted-foreground">Pinning attests that both reports qualify this exact release and its verified hash.</p>
@@ -211,8 +218,8 @@ export function ManagedDeploymentEditor({ state, report, onReport, onAccess, ref
     <div className="flex flex-wrap items-center gap-3"><DenButton disabled={disabled || !!blocked} loading={busy === "pin"} aria-describedby={blocked ? "managed-pin-blocked" : "managed-pin-impact"} onClick={() => void run("pin", async () => {
       if (!validation || blocked) return;
       acceptReport(await write("/pin", "POST", { provider: state.provider, validationId: validation.id, expectedRevision: state.revision, qualification }));
-      setNotice(`Pinned ${validation.release.version} for new ${state.provider.toUpperCase()} installs and available updates.`);
-    })}>Pin {validation?.release.version ?? "release"}</DenButton>{blocked ? <p id="managed-pin-blocked" className="flex min-w-0 flex-1 items-start gap-2 text-muted-foreground"><LockKeyhole size={16} strokeWidth={1.5} aria-hidden="true" className="mt-0.5 shrink-0" />{blocked}</p> : <p id="managed-pin-impact" className="text-muted-foreground">Sets the {state.provider.toUpperCase()} default for new installs and offered updates. Pinned runs stay frozen.</p>}</div>
+      setNotice(`Pinned ${managedReleaseLabel(validation.release)} for new ${state.provider.toUpperCase()} installs and available updates.`);
+    })}>Pin {validation ? managedReleaseLabel(validation.release) : "release"}</DenButton>{blocked ? <p id="managed-pin-blocked" className="flex min-w-0 flex-1 items-start gap-2 text-muted-foreground"><LockKeyhole size={16} strokeWidth={1.5} aria-hidden="true" className="mt-0.5 shrink-0" />{blocked}</p> : <p id="managed-pin-impact" className="text-muted-foreground">Sets the {state.provider.toUpperCase()} default for new installs and offered updates. Pinned runs stay frozen.</p>}</div>
     <Disclosure title="Advanced">
       <div className="space-y-5">
         <section className="space-y-3" aria-label="Approval policy">

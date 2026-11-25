@@ -107,6 +107,32 @@ test("a platform administrator verifies and pins an installer without changing a
     evidence.recordAssertionEvidence("No installation or approval is silently upgraded", "Available version 1.2.3; original run ID and approved version 1.2.2 unchanged; target still uninstalled", pending.availableVersion === "1.2.3" && pending.run.version === "1.2.2" && pending.run.id === pending.originalRunId && pending.installedVersion === null);
   });
 
+  await step("after: an installer-only fix is verified and pinned as revision 2 of the same version", async () => {
+    await person.type({ label: "Choose version" }, "1.2.3", { replace: true });
+    await person.type({ label: "Installer revision" }, "2", { replace: true });
+    await person.click({ role: "button", label: "Verify release" });
+    await person.see({ text: "Verified release 1.2.3 (revision 2)" }, { timeoutMs: 30_000 });
+    const reads = await world.artifactReads();
+    expect(reads.some(line => line.includes("/releases/aws/1.2.3_r2/manifest.json"))).toBe(true);
+    await person.screenshot();
+    await person.type({ label: "Successful fresh install report" }, "https://example.test/reports/fresh-install-revision-2", { replace: true });
+    await person.type({ label: "Approved update report" }, "https://example.test/reports/approved-update-revision-2", { replace: true });
+    await person.click({ role: "button", label: "Pin 1.2.3 (revision 2)" });
+    await person.see({ testId: "managed-current-version", text: "1.2.3 (revision 2)" }, { timeoutMs: 30_000 });
+    await person.reload();
+    await person.see({ testId: "managed-current-version", text: "1.2.3 (revision 2)" }, { timeoutMs: 30_000 });
+    await person.see({ text: "Pinned 1.2.3 (revision 2)" });
+    const report = await world.report();
+    const pin = report.history.find(change => change.action === "pinned" && change.version === "1.2.3" && change.installerRevision === 2);
+    const pending = await world.pendingApproval();
+    expect(pin?.qualification?.approvedUpdateUrl).toBe("https://example.test/reports/approved-update-revision-2");
+    expect(pending.availableVersion).toBe("1.2.3");
+    expect(pending.availableInstallerRevision).toBe(2);
+    expect(pending.run.version).toBe("1.2.2");
+    evidence.recordAssertionEvidence("The installer has its own revision", "Revision 2 of 1.2.3 was read from its own published folder and pinned with its own reports; the app version offered is still 1.2.3 and the earlier approval is unchanged", Boolean(pin) && pending.availableInstallerRevision === 2 && pending.run.version === "1.2.2");
+    await person.screenshot();
+  });
+
   await step("an ordinary member cannot see or change the platform release configuration", async () => {
     const member = user.on(world.member);
     await member.see({ text: /administrator|restricted|not authorized|access/i }, { timeoutMs: 90_000 });

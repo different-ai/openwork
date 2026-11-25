@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { managedDeploymentSchema } from "@openwork/types/den/managed-deployments";
-import { assistantSettingsState, deploymentStatus, providerName, readinessMessage, type ProviderReadiness } from "./managed-deployments-state";
+import { assistantSettingsState, availableUpdate, deploymentStatus, providerName, readinessMessage, updateLabel, type ProviderReadiness } from "./managed-deployments-state";
 
 function deployment(provider: "aws" | "gcp" = "aws") {
   return managedDeploymentSchema.parse({
@@ -97,4 +97,30 @@ test("a configuration change has its own status, and one nobody approved in time
   assert.deepEqual(deploymentStatus(item), { label: "Configuration change failed", tone: "danger" });
   item.run.state = "ready";
   assert.deepEqual(deploymentStatus(item), { label: "Operational", tone: "neutral" });
+});
+
+test("an update that keeps the installed version is named as an installer update, by its revision", () => {
+  const item = deployment();
+  assert.equal(item.installedInstallerRevision, null, "a view from before revisions existed still parses");
+  assert.equal(item.run?.installerRevision, 1);
+  assert.deepEqual(availableUpdate(item), { action: "Update to 0.18.57", note: "0.18.57 available" }, "a version update reads as it always has");
+
+  const installerOnly = { ...item, installedVersion: "0.18.57", installedInstallerRevision: 1, availableVersion: "0.18.57", availableInstallerRevision: 2 };
+  assert.deepEqual(availableUpdate(installerOnly), { action: "Update installer for 0.18.57 (revision 2)", note: "installer revision 2 available" });
+  assert.equal(availableUpdate({ ...installerOnly, updateAvailable: false }), null);
+  assert.equal(availableUpdate({ ...installerOnly, availableVersion: null }), null);
+
+  const both = { ...item, availableVersion: "0.18.58", availableInstallerRevision: 3 };
+  assert.deepEqual(availableUpdate(both), { action: "Update to 0.18.58 (revision 3)", note: "0.18.58 (revision 3) available" });
+
+  // The run an approved update becomes keeps the name its button had.
+  assert.equal(updateLabel(installerOnly, { version: "0.18.57", installerRevision: 2 }), "Update installer for 0.18.57 (revision 2)");
+  assert.equal(updateLabel(item, { version: "0.18.57", installerRevision: 1 }), "Update to 0.18.57");
+  assert.equal(updateLabel(item, { version: "0.18.58", installerRevision: 3 }), "Update to 0.18.58 (revision 3)");
+  assert.equal(updateLabel({ installedVersion: "0.18.57" }, { version: "0.18.57" }), "Update to 0.18.57", "without a revision there is nothing to tell apart");
+});
+
+test("an installer-only update unlocks the runtime profile and computers like any other Update", () => {
+  const item = { ...deployment(), installedVersion: "0.18.57", installedInstallerRevision: 1, availableVersion: "0.18.57", availableInstallerRevision: 2, run: null };
+  assert.equal(assistantSettingsState(item, true, true).editable, true);
 });

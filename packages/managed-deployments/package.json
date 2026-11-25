@@ -30,6 +30,13 @@
       },
       "default": "./src/lifecycle.ts"
     },
+    "./installer-release": {
+      "types": {
+        "openwork-build": "./dist/types/src/installer-release.d.ts",
+        "default": "./src/installer-release.ts"
+      },
+      "default": "./src/installer-release.ts"
+    },
     "./gcp": {
       "types": {
         "openwork-build": "./dist/types/src/gcp.d.ts",

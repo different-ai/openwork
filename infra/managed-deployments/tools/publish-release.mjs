@@ -17,10 +17,17 @@ const artifacts = ["bundle.tar.gz", "cloudformation.json", "manifest.json"];
 const digests = Object.fromEntries(artifacts.map((name) => [name, createHash("sha256").update(readFileSync(resolve(directory, name))).digest("hex")]));
 const manifest = JSON.parse(readFileSync(resolve(directory, "manifest.json"), "utf8"));
 if (manifest?.provider !== "aws" || typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(manifest.version)) throw new Error("Invalid release manifest.");
+// The installer's own revision for this version. Revision 1 is never written,
+// so its folder, objects and output are unchanged. A higher revision is a
+// separate immutable release in a sibling folder; it never joins or replaces
+// the objects of revision 1.
+const revision = manifest.installerRevision ?? 1;
+if (!Number.isInteger(revision) || revision > 9999 || (manifest.installerRevision !== undefined && revision < 2)) throw new Error("Invalid installer revision in the release manifest.");
+if (revision > 1 && manifest.version.includes("-")) throw new Error("Installer revisions apply to stable versions only.");
 for (const [name, expected] of [["bundle.tar.gz", manifest.bundleSha256], ["cloudformation.json", manifest.templateSha256]]) {
   if (digests[name] !== expected) throw new Error("Release artifact changed after packaging.");
 }
-const prefix = `releases/aws/${manifest.version}/`;
+const prefix = `releases/aws/${manifest.version}${revision > 1 ? `_r${revision}` : ""}/`;
 const uploaded = {};
 const publicUrl = (key, versionId) => {
   if (typeof versionId !== "string" || !versionId || versionId === "null") throw new Error("Upload did not return an immutable version ID.");
@@ -54,7 +61,14 @@ for (const name of artifacts) {
 // exact pinned bytes without credentials. Never change IAM or public policy here.
 for (const [name, url] of Object.entries(uploaded)) await verify(name, url);
 // Public installer URLs and hashes only. There are no credentials in these values.
-console.log(JSON.stringify({
+// A revision above 1 exists only in the single release value: the four separate
+// settings cannot carry it, and Den would record such a release as revision 1.
+console.log(JSON.stringify(revision > 1 ? {
+  DEN_MANAGED_DEPLOYMENT_AWS_RELEASE: JSON.stringify({
+    version: manifest.version, installerRevision: revision,
+    templateUrl: uploaded["cloudformation.json"], bundleUrl: uploaded["bundle.tar.gz"], bundleSha256: manifest.bundleSha256,
+  }),
+} : {
   DEN_MANAGED_DEPLOYMENT_AWS_VERSION: manifest.version,
   DEN_MANAGED_DEPLOYMENT_AWS_TEMPLATE_URL: uploaded["cloudformation.json"],
   DEN_MANAGED_DEPLOYMENT_AWS_BUNDLE_URL: uploaded["bundle.tar.gz"],

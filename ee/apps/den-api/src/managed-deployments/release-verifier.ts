@@ -2,6 +2,8 @@ import { Buffer } from "node:buffer"
 import { createHash } from "node:crypto"
 import { gunzipSync } from "node:zlib"
 import { z } from "zod"
+import { installerReleaseFolder, installerRevisionField, installerRevisionOf } from "@openwork/managed-deployments/installer-release"
+import { installerRevisionSchema } from "@openwork/managed-deployments/schema"
 import type { ManagedInstallerProvider } from "@openwork/types/den/managed-installer-releases"
 
 export class InstallerReleaseError extends Error {
@@ -10,7 +12,8 @@ export class InstallerReleaseError extends Error {
 export const sha256 = (value: string | Buffer) => createHash("sha256").update(typeof value === "string" ? value : new Uint8Array(value)).digest("hex")
 const stable = z.string().max(80).regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/)
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
-const manifestSchema = z.object({ provider: z.enum(["aws", "gcp"]), version: stable, protocolVersion: z.literal(1), bundleSha256: hash, templateSha256: hash }).strict()
+const revisionAboveOne = installerRevisionSchema.min(2).optional()
+const manifestSchema = z.object({ provider: z.enum(["aws", "gcp"]), version: stable, installerRevision: revisionAboveOne, protocolVersion: z.literal(1), bundleSha256: hash, templateSha256: hash }).strict()
 const invalid = () => new InstallerReleaseError("invalid_source", "Use a public regional S3 or Google Cloud Storage release prefix without credentials, query parameters or encoded paths.")
 
 export function installerSourceBaseUrl(provider: ManagedInstallerProvider, input: string) {
@@ -41,7 +44,7 @@ export function inferInstallerSource(provider: ManagedInstallerProvider, templat
   if (!templateUrl || !URL.canParse(templateUrl)) return null
   const url = new URL(templateUrl)
   url.search = ""
-  const suffix = new RegExp(`/[0-9]+\\.[0-9]+\\.[0-9]+/${provider === "aws" ? "cloudformation\\.json" : "tutorial\\.md"}$`)
+  const suffix = new RegExp(`/[0-9]+\\.[0-9]+\\.[0-9]+(?:_r[1-9][0-9]*)?/${provider === "aws" ? "cloudformation\\.json" : "tutorial\\.md"}$`)
   if (!suffix.test(url.pathname)) return null
   url.pathname = url.pathname.replace(suffix, "/")
   try { return installerSourceBaseUrl(provider, url.href) } catch { return null }
@@ -96,7 +99,7 @@ const repositories = {
   headless_runner: "ghcr.io/different-ai/openwork-headless-runner", workbot: "ghcr.io/different-ai/openwork-workbot", ai_gateway: "ghcr.io/different-ai/openwork-inference",
 }
 
-export function inspectInstallerBundle(provider: ManagedInstallerProvider, version: string, compressed: Buffer) {
+export function inspectInstallerBundle(provider: ManagedInstallerProvider, version: string, compressed: Buffer, installerRevision = 1) {
   const tar = gunzipSync(new Uint8Array(compressed), { maxOutputLength: 64 * 1024 * 1024 })
   const files = new Map<string, Buffer>()
   for (let offset = 0; offset + 512 <= tar.length;) {
@@ -125,7 +128,8 @@ export function inspectInstallerBundle(provider: ManagedInstallerProvider, versi
     if (files.size > 2048) throw new Error("Archive limit")
     offset += 512 + Math.ceil(size / 512) * 512
   }
-  const release = z.object({ provider: z.literal(provider), version: z.literal(version), protocolVersion: z.literal(1), files: z.record(z.string(), hash), images: z.record(z.string(), z.string()) }).strict().parse(JSON.parse(files.get("release.json")?.toString() ?? "null"))
+  const release = z.object({ provider: z.literal(provider), version: z.literal(version), installerRevision: revisionAboveOne, protocolVersion: z.literal(1), files: z.record(z.string(), hash), images: z.record(z.string(), z.string()) }).strict().parse(JSON.parse(files.get("release.json")?.toString() ?? "null"))
+  if (installerRevisionOf(release.installerRevision) !== installerRevision) throw new Error("Installer revision mismatch")
   const expected = provider === "aws" ? repositories : { den_api: repositories.den_api, den_web: repositories.den_web, health: "docker.io/library/python" }
   if (Object.keys(release.images).sort().join() !== Object.keys(expected).sort().join()) throw new InstallerReleaseError("runtime_inventory_mismatch", `bundle.tar.gz must include exactly these runtime images in release.json: ${Object.keys(expected).join(", ")}. Publish a new release with a complete inventory.`, 502)
   for (const [key, repository] of Object.entries(expected)) {
@@ -140,31 +144,33 @@ export function inspectInstallerBundle(provider: ManagedInstallerProvider, versi
   return Object.keys(expected)
 }
 
-export async function verifyInstallerRelease(provider: ManagedInstallerProvider, source: string, version: string, fetcher: typeof fetch = fetch) {
+export async function verifyInstallerRelease(provider: ManagedInstallerProvider, source: string, version: string, fetcher: typeof fetch = fetch, installerRevision = 1) {
   const base = installerSourceBaseUrl(provider, source)
   stable.parse(version)
+  installerRevisionSchema.parse(installerRevision)
+  const folder = `${base}${installerReleaseFolder(version, installerRevision)}`
   const signal = AbortSignal.timeout(5000)
   try {
-    const manifest = await immutableGet(provider, `${base}${version}/manifest.json`, 32768, signal, fetcher)
+    const manifest = await immutableGet(provider, `${folder}/manifest.json`, 32768, signal, fetcher)
     const parsed = (() => {
       try { return manifestSchema.parse(JSON.parse(manifest.body.toString())) }
-      catch { throw new InstallerReleaseError("manifest_invalid", "manifest.json must be valid release metadata with protocolVersion 1 and SHA-256 bundle and template checksums. Publish a new compatible release.", 502) }
+      catch { throw new InstallerReleaseError("manifest_invalid", "manifest.json must be valid release metadata with protocolVersion 1, an optional installer revision, and SHA-256 bundle and template checksums. Publish a new compatible release.", 502) }
     })()
-    if (parsed.provider !== provider || parsed.version !== version) throw new InstallerReleaseError("manifest_identity_mismatch", "manifest.json does not match the selected provider and version. Publish the matching release at this source.", 502)
+    if (parsed.provider !== provider || parsed.version !== version || installerRevisionOf(parsed.installerRevision) !== installerRevision) throw new InstallerReleaseError("manifest_identity_mismatch", "manifest.json does not match the selected provider, version and installer revision. Publish the matching release at this source.", 502)
     const [template, bundle] = await Promise.all([
-      immutableGet(provider, `${base}${version}/${provider === "aws" ? "cloudformation.json" : "tutorial.md"}`, 1024 * 1024, signal, fetcher),
-      immutableGet(provider, `${base}${version}/bundle.tar.gz`, 16 * 1024 * 1024, signal, fetcher),
+      immutableGet(provider, `${folder}/${provider === "aws" ? "cloudformation.json" : "tutorial.md"}`, 1024 * 1024, signal, fetcher),
+      immutableGet(provider, `${folder}/bundle.tar.gz`, 16 * 1024 * 1024, signal, fetcher),
     ])
     if (sha256(template.body) !== parsed.templateSha256) throw new InstallerReleaseError("artifact_checksum_mismatch", `${provider === "aws" ? "cloudformation.json" : "tutorial.md"} does not match templateSha256 in manifest.json. Publish a new release with matching checksums.`, 502)
     if (sha256(bundle.body) !== parsed.bundleSha256) throw new InstallerReleaseError("artifact_checksum_mismatch", "bundle.tar.gz does not match bundleSha256 in manifest.json. Publish a new release with matching checksums.", 502)
     const services = (() => {
-      try { return inspectInstallerBundle(provider, version, bundle.body) }
+      try { return inspectInstallerBundle(provider, version, bundle.body, installerRevision) }
       catch (error) {
         if (error instanceof InstallerReleaseError) throw error
-        throw new InstallerReleaseError("bundle_invalid", "bundle.tar.gz must be a bounded regular-file archive with valid checksums and release.json matching this provider, version and protocolVersion 1. Publish a new compatible release.", 502)
+        throw new InstallerReleaseError("bundle_invalid", "bundle.tar.gz must be a bounded regular-file archive with valid checksums and release.json matching this provider, version, installer revision and protocolVersion 1. Publish a new compatible release.", 502)
       }
     })()
-    return { release: { version, templateUrl: template.url, bundleUrl: bundle.url, bundleSha256: parsed.bundleSha256 }, services, manifestUrl: manifest.url, manifestSha256: sha256(manifest.body), templateSha256: parsed.templateSha256 }
+    return { release: { version, ...installerRevisionField(installerRevision), templateUrl: template.url, bundleUrl: bundle.url, bundleSha256: parsed.bundleSha256 }, services, manifestUrl: manifest.url, manifestSha256: sha256(manifest.body), templateSha256: parsed.templateSha256 }
   } catch (error) {
     if (error instanceof InstallerReleaseError) throw error
     throw new InstallerReleaseError("release_verification_failed", "Release verification failed. Check public immutable objects, checksums, protocol and complete digest-pinned runtime images.", 502)

@@ -2,7 +2,7 @@
 
 Platform administrators manage published installer sources and default versions at
 `/admin/managed-deployments`. Organization owners still approve each installation
-or version-increasing Update in their own cloud account.
+or Update in their own cloud account.
 
 ## Pin a published release
 
@@ -10,10 +10,14 @@ or version-increasing Update in their own cloud account.
    it comes from Admin or the deployment environment.
 2. Under **Advanced**, configure the public release folder if it could not be
    inferred from the current environment default. The folder contains one
-   subfolder per installer version. It is not a credentials field.
+   subfolder per installer release: `<version>/` for the first installer of a
+   version and `<version>_r<n>/` for installer revision `n`. It is not a
+   credentials field.
 3. Enter a stable numeric version, or choose **Use latest stable** to look up the
    latest published application release. A latest application release is not
    necessarily a published managed installer; an unpublished installer is refused.
+   To pin an installer-only fix, also enter its **Installer revision**. Leave it
+   empty for the first installer of the version.
 4. Choose **Verify release**. Den reads the manifest, template and bundle from the
    supported object-storage provider, checks their hashes and image inventory,
    and resolves immutable object versions. Verification does not create cloud
@@ -24,8 +28,14 @@ or version-increasing Update in their own cloud account.
 
 Verification expires. Editing the source or another administrator changing the
 configuration invalidates an older preview. Refresh and verify again rather than
-replaying a stale change. An older version or different bytes under the current
-version cannot accidentally replace the pin.
+replaying a stale change. An older release (an older version, or the same version
+at a lower installer revision) or different bytes under the current version and
+revision cannot accidentally replace the pin.
+
+A deployment already on the pinned version is offered a higher installer
+revision as an Update, named **Update installer for `<version>` (revision
+`<n>`)**. Deploy Den before publishing any revision above 1: an older Den refuses
+a manifest that names a revision.
 
 ## Approval policy
 
@@ -87,8 +97,9 @@ found. Neither failure changes the current default or grants pin approval.
    Gateway installation and a separately approved version-increasing Update.
    Container smoke or an older candidate's report is not cloud qualification.
 3. With authenticated release-account access, inspect every object version and
-   delete marker under `releases/aws/<version>/`. Use the existing operator
-   publisher only for the reviewed candidate:
+   delete marker under `releases/aws/<version>/` (`releases/aws/<version>_r<n>/`
+   for installer revision `n`). Use the existing operator publisher only for the
+   reviewed candidate:
 
    ```sh
    node infra/managed-deployments/tools/publish-release.mjs \
@@ -99,7 +110,9 @@ found. Neither failure changes the current default or grants pin approval.
    bytes and unauthenticated downloads of each pinned object. It refuses immutable
    collisions and does not change bucket permissions or installer defaults. If
    access fails, investigate the exact release bucket's policy; do not weaken
-   unrelated storage access or overwrite a published version.
+   unrelated storage access or overwrite a published version. If the folder
+   already holds different bytes, dispatch the workflow again with
+   `installer_revision` set to the next revision and qualify that candidate.
 4. Back in Admin, verify the published version, supply both qualification reports
    and pin it under the configured approval policy. Keep pending approvals and
    installed deployments unchanged. A successful upload alone is not a pin.

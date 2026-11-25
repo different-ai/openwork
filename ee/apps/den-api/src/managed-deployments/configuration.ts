@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { ManagedDeploymentRunTable, ManagedDeploymentTable } from "@openwork-ee/den-db/schema"
 import type { DeploymentConfiguration } from "@openwork/managed-deployments/configuration"
+import { installerRevisionOf } from "@openwork/managed-deployments/installer-release"
 import {
   deploymentConfigurationChangeRecordSchema, deploymentConfigurationLockSchema, deploymentConfigurationViewSchema, normalizeAwsTargetForView,
 } from "@openwork/managed-deployments/schema"
@@ -16,7 +17,7 @@ export type ConfigurationChangeRecord = z.infer<typeof deploymentConfigurationCh
 export type ConfigurationLock = z.infer<typeof deploymentConfigurationLockSchema>
 type ConfigurationView = z.infer<typeof deploymentConfigurationViewSchema>
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
-type Coordinates = Pick<ManagedDeploymentRelease, "version" | "templateUrl" | "bundleUrl" | "bundleSha256">
+type Coordinates = Pick<ManagedDeploymentRelease, "version" | "installerRevision" | "templateUrl" | "bundleUrl" | "bundleSha256">
 
 export type ConfigurationBasis =
   | { lock: ConfigurationLock }
@@ -64,7 +65,7 @@ export function heldByCloud(run: RunRow) {
 }
 
 function sameCoordinates(run: RunRow, release: Coordinates | null) {
-  return Boolean(release) && run.version === release?.version && run.template_url === release.templateUrl && run.bundle_url === release.bundleUrl && run.bundle_sha256 === release.bundleSha256
+  return Boolean(release) && run.version === release?.version && run.installer_revision === installerRevisionOf(release.installerRevision) && run.template_url === release.templateUrl && run.bundle_url === release.bundleUrl && run.bundle_sha256 === release.bundleSha256
 }
 
 export function configurationBasis(row: DeploymentRow, runs: RunRow[], published: Coordinates | null, now: Date): ConfigurationBasis {
@@ -74,7 +75,7 @@ export function configurationBasis(row: DeploymentRow, runs: RunRow[], published
   if (active && heldByCloud(active)) return { lock: "run_in_progress" }
   if (active && active.kind !== "configure" && active.expires_at > now && (active.state === "provisioning" || active.state === "awaiting_approval")) return { lock: "run_in_progress" }
   const base = runs.filter((run) => run.state === "ready").sort((left, right) => right.created_at.getTime() - left.created_at.getTime())[0]
-  if (!base || base.version !== row.installed_version) return { lock: "installer_unknown" }
+  if (!base || base.version !== row.installed_version || base.installer_revision !== installerRevisionOf(row.installed_installer_revision)) return { lock: "installer_unknown" }
   if (runs.some((run) => run.kind !== "configure" && run.created_at > base.created_at)) return { lock: "unfinished_run" }
   if (!immutableInstallerUrl("aws", base.template_url) || !immutableInstallerUrl("aws", base.bundle_url)) return { lock: "installer_unavailable" }
   const gatewayAvailable = sameCoordinates(base, published)

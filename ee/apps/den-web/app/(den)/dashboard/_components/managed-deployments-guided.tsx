@@ -2,7 +2,7 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import {
-  assistantsEnabled, awsSignInSchema, deploymentStepSchema, gatewayAssistants,
+  assistantsEnabled, awsSignInSchema, deploymentStepSchema, gatewayAssistants, installerReleaseLabel,
   type AwsAssistants, type AwsRuntimeProfile, type AwsSignIn, type DeploymentLaunchKind, type ManagedDeployment,
 } from "@openwork/types/den/managed-deployments";
 import { CheckCircle2, ChevronRight, CircleDashed, Copy, ExternalLink, LockKeyhole, X, XCircle } from "lucide-react";
@@ -20,7 +20,7 @@ import { ManagedDeploymentAssistants } from "./managed-deployment-assistants";
 import {
   CHECK_LABELS, CreateDeploymentDialog, FAILURE_LABELS, ProviderLock, STEP_LABELS, StatusIcon, checkDetail, gcpFailureMessage, networkLabel, relativeTime,
 } from "./managed-deployments-screen";
-import { assistantSettingsState, deploymentStatus, providerName, type DeploymentTone } from "./managed-deployments-state";
+import { assistantSettingsState, availableUpdate, deploymentStatus, providerName, updateLabel, type DeploymentTone } from "./managed-deployments-state";
 import { useManagedDeployments, type DeploymentLaunch } from "./use-managed-deployments";
 import { ManagedDeploymentConfigurationDialog } from "./managed-deployment-configuration-dialog";
 import { CHANGE_STOPPED_REPORTING, approvalReserved, changeFailureMessage, changeNeverApproved, configurationEntry, currentHandoff, runtimeBlock } from "./managed-deployment-configuration-state";
@@ -316,7 +316,8 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
   const neverStarted = !installed && (!run || run.state === "awaiting_approval");
   const health = deployment.health;
   const until = run ? clock(run.expiresAt) : "";
-  const canUpdate = canManage && installed && deployment.updateAvailable && !(run?.state === "provisioning" && !run.expired) && !awaiting && !(changeRun && deployment.configuration?.lock === "run_in_progress");
+  const update = availableUpdate(deployment);
+  const canUpdate = canManage && installed && Boolean(update) && !(run?.state === "provisioning" && !run.expired) && !awaiting && !(changeRun && deployment.configuration?.lock === "run_in_progress");
   const shellUrl = launch?.handoff?.url ?? (deployment.provider === "gcp"
     ? `https://console.cloud.google.com/?project=${encodeURIComponent(deployment.target.projectId)}&cloudshell=true`
     : `https://${deployment.target.region}.console.aws.amazon.com/cloudshell/home?region=${deployment.target.region}`);
@@ -392,7 +393,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
   const started = run?.events[0]?.receivedAt ?? null;
   const steps = run && run.state !== "ready" && !awaiting && !changeNeverApproved(run) ? (
     <section className="flex flex-col gap-2.5">
-      <SectionTitle title={changeRun ? "Configuration change" : `${run.kind === "update" ? "Update to" : run.kind === "retry" ? "Retry" : "Install"} ${run.version}`}
+      <SectionTitle title={changeRun ? "Configuration change" : run.kind === "update" ? updateLabel(deployment, run) : `${run.kind === "retry" ? "Retry" : "Install"} ${installerReleaseLabel(run.version, run.installerRevision)}`}
         meta={failure ? `Stopped at ${clock(failure.receivedAt)}` : started ? `Started ${clock(started)}` : undefined} />
       <ol data-testid="managed-deployment-steps" className="flex flex-col divide-y divide-[var(--den-list-line)] border-y border-[var(--den-list-line)]">
         {deploymentStepSchema.options.map((step, index) => {
@@ -420,7 +421,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
         actions={<>
           {canManage && !installed && !run ? <DenButton type="button" loading={busy} disabled={!canPrepare} data-testid="deployment-prepare" onClick={() => onPrepare("install")}>Prepare {cloud} approval</DenButton> : null}
           {canManage && runFailed && !changeRun ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare(installed || run?.events.length || run?.state === "failed" ? "retry" : "install")}>Prepare retry</DenButton> : null}
-          {canUpdate ? <DenButton type="button" loading={busy} disabled={!canPrepare || (runtimeProfileDraft === "gateway" && !assistantsAvailable)} onClick={() => onPrepare("update", assistantState.editable ? assistantDraft ?? undefined : undefined, assistantState.editable ? runtimeProfileDraft ?? undefined : undefined)}>Update to {deployment.availableVersion}</DenButton> : null}
+          {canUpdate ? <DenButton type="button" loading={busy} disabled={!canPrepare || (runtimeProfileDraft === "gateway" && !assistantsAvailable)} onClick={() => onPrepare("update", assistantState.editable ? assistantDraft ?? undefined : undefined, assistantState.editable ? runtimeProfileDraft ?? undefined : undefined)}>{update?.action}</DenButton> : null}
           {installed ? <a className={buttonVariants({ variant: canUpdate || (canManage && runFailed) ? "secondary" : "primary" })} href={deployment.webUrl} target="_blank" rel="noopener noreferrer">Open OpenWork<ExternalLink aria-hidden className="size-4" /></a> : null}
           {configurationControl.shown ? <DenButton type="button" variant="secondary" data-testid="managed-deployment-edit-configuration" disabled={configurationControl.disabled || busy} onClick={configurationControls?.onEdit}>Edit configuration</DenButton> : null}
           <ItemMenu label="More" size="md" entries={menu} testId="managed-deployment-more" />
@@ -463,7 +464,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
           { label: "Cloud", value: `${cloud} · ${account} · ${deployment.target.region}` },
           ...(deployment.provider === "aws" ? [{ label: "Network", value: networkLabel(deployment.target.network) }]
             : [{ label: "Project number", value: deployment.target.projectNumber }, { label: "DNS zone", value: deployment.target.dnsZoneName }]),
-          { label: "Version", value: `${deployment.installedVersion ?? "Not installed"}${deployment.updateAvailable && deployment.availableVersion ? ` · ${deployment.availableVersion} available` : ""}` },
+          { label: "Version", value: `${deployment.installedVersion ?? "Not installed"}${update ? ` · ${update.note}` : ""}` },
           { label: "Updates", value: "Approval required" },
           ...(configurationControls ? [{ label: "First administrator", value: deployment.ownerEmail }] : []),
           ...(aws ? [{

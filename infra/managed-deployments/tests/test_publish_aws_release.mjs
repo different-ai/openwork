@@ -66,12 +66,13 @@ globalThis.fetch = async (input, options) => {
 };
 `;
 
-function fixture(t, overrides = {}) {
+// `overrides.version` is the folder the fake bucket serves; `manifestOverrides` changes what the manifest declares.
+function fixture(t, overrides = {}, manifestOverrides = {}) {
   const root = mkdtempSync(join(tmpdir(), "openwork-aws-publisher-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bundle = Buffer.from("offline bundle fixture\n");
   const template = Buffer.from('{"Description":"Offline template fixture"}\n');
-  const manifest = { provider: "aws", version, bundleSha256: sha256(bundle), templateSha256: sha256(template) };
+  const manifest = { provider: "aws", version, bundleSha256: sha256(bundle), templateSha256: sha256(template), ...manifestOverrides };
   const config = { bucket, accountId, identityAccount: accountId, versioning: "Enabled", version, versionIds, ...overrides };
   writeFileSync(join(root, "bundle.tar.gz"), bundle);
   writeFileSync(join(root, "cloudformation.json"), template);
@@ -130,6 +131,35 @@ test("AWS publisher verifies all unauthenticated pinned bytes and expected bucke
   }
   assert.ok(commands.every((args) => ["get-caller-identity", "get-bucket-versioning", "list-object-versions", "put-object"].includes(args[1])));
 });
+
+test("AWS publishes a higher installer revision beside its version, as one release value", (t) => {
+  const f = fixture(t, { version: "1.2.3_r2" }, { version: "1.2.3", installerRevision: 2 });
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(Object.keys(output), ["DEN_MANAGED_DEPLOYMENT_AWS_RELEASE"], "the four separate settings cannot carry a revision");
+  assert.deepEqual(JSON.parse(output.DEN_MANAGED_DEPLOYMENT_AWS_RELEASE), {
+    version: "1.2.3", installerRevision: 2,
+    templateUrl: `https://${bucket}.s3.${region}.amazonaws.com/releases/aws/1.2.3_r2/cloudformation.json?versionId=${encodeURIComponent(versionIds["cloudformation.json"])}`,
+    bundleUrl: `https://${bucket}.s3.${region}.amazonaws.com/releases/aws/1.2.3_r2/bundle.tar.gz?versionId=${encodeURIComponent(versionIds["bundle.tar.gz"])}`,
+    bundleSha256: f.manifest.bundleSha256,
+  });
+  const storage = f.commands().filter((args) => args[0] === "s3api");
+  assert.equal(storage.find((args) => args[1] === "list-object-versions").at(storage.find((args) => args[1] === "list-object-versions").indexOf("--prefix") + 1), "releases/aws/1.2.3_r2/",
+    "the sibling folder is inventoried alone: revision 1 objects are neither read nor refused");
+  assert.deepEqual(storage.filter((args) => args[1] === "put-object").map((args) => args[args.indexOf("--key") + 1]), names.map((name) => `releases/aws/1.2.3_r2/${name}`));
+});
+
+for (const [label, manifestOverrides, pattern] of [
+  ["an explicit revision 1", { version: "1.2.3", installerRevision: 1 }, /Invalid installer revision/],
+  ["a zero revision", { version: "1.2.3", installerRevision: 0 }, /Invalid installer revision/],
+  ["a text revision", { version: "1.2.3", installerRevision: "2" }, /Invalid installer revision/],
+  ["a fractional revision", { version: "1.2.3", installerRevision: 2.5 }, /Invalid installer revision/],
+  ["a revision above the limit", { version: "1.2.3", installerRevision: 10000 }, /Invalid installer revision/],
+  ["a revision of a prerelease", { installerRevision: 2 }, /stable versions only/],
+]) {
+  test(`AWS publisher refuses ${label} before uploading`, (t) => refused(fixture(t, {}, manifestOverrides), pattern));
+}
 
 for (const [label, overrides, pattern] of [
   ["wrong account", { identityAccount: "999999999999" }, /Wrong AWS release account/],

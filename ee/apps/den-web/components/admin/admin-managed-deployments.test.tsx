@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ManagedInstallerProviderState, ManagedInstallerQualification, ManagedInstallerReport, ManagedInstallerValidation } from "@openwork/types/den/managed-installer-releases";
 import { ManagedDeploymentEditor, ManagedDeploymentCurrent, ManagedDeploymentHistory, ManagedDeploymentPreview, ManagedDeploymentsSkeleton } from "./admin-managed-deployments";
-import { managedServiceLabel, managedSourceLabel, parseManagedLatest, parseManagedReport, parseManagedValidation, pinBlockedReason, sourceInputError, versionInputError } from "./admin-managed-deployments-model";
+import { installerRevisionInput, installerRevisionInputError, managedReleaseLabel, managedServiceLabel, managedSourceLabel, parseManagedLatest, parseManagedReport, parseManagedValidation, pinBlockedReason, sourceInputError, versionInputError } from "./admin-managed-deployments-model";
 
 const source = "https://example.s3.us-east-1.amazonaws.com/releases/aws/";
 const current: ManagedInstallerProviderState = {
@@ -103,4 +103,35 @@ test("loading preserves the destination layout without exposing configuration fi
   const html = renderToStaticMarkup(<ManagedDeploymentsSkeleton />);
   assert.ok(html.includes('aria-busy="true"') && html.includes("Managed deployments"));
   assert.ok(!html.includes("<input") && !html.includes("Checking admin access"));
+});
+
+test("an installer revision is typed beside the version, and only its own verification unlocks its pin", () => {
+  assert.equal(installerRevisionInput(""), 1, "empty is the first installer of the version");
+  assert.equal(installerRevisionInput(" 2 "), 2);
+  for (const text of ["0", "-1", "1.5", "two", "02", "10000"]) {
+    assert.equal(installerRevisionInput(text), null);
+    assert.ok(installerRevisionInputError(text));
+  }
+  assert.equal(installerRevisionInputError("2"), null);
+  const revised: ManagedInstallerValidation = { ...validation, release: { ...validation.release, installerRevision: 2 } };
+  assert.equal(pinBlockedReason(revised, current, "1.2.3", qualification, now, false, 2), null);
+  assert.match(pinBlockedReason(revised, current, "1.2.3", qualification, now, false, 1) ?? "", /Verify/, "revision 2 was verified, not revision 1");
+  assert.match(pinBlockedReason(validation, current, "1.2.3", qualification, now, false, 2) ?? "", /Verify/);
+  assert.match(pinBlockedReason(revised, current, "1.2.3", qualification, now, false, null) ?? "", /Verify/);
+  assert.equal(managedReleaseLabel(validation.release), "1.2.3");
+  assert.equal(managedReleaseLabel(revised.release), "1.2.3 (revision 2)");
+});
+
+test("a pinned or pending installer revision is named wherever its version is", () => {
+  const revised: ManagedInstallerValidation = { ...validation, expiresAt: "2099-11-17T12:15:00.000Z", release: { ...validation.release, installerRevision: 2 } };
+  const state: ManagedInstallerProviderState = { ...current, release: { ...validation.release, installerRevision: 2 }, pendingValidation: revised };
+  assert.ok(renderToStaticMarkup(<ManagedDeploymentCurrent state={state} />).includes("1.2.3 (revision 2)"));
+  assert.ok(renderToStaticMarkup(<ManagedDeploymentPreview validation={revised} />).includes("Verified release 1.2.3 (revision 2)"));
+  const history: ManagedInstallerReport["history"] = [{ id: "change-2", provider: "aws", action: "pinned", version: "1.2.3", installerRevision: 2, actor: "Developer", createdAt: validation.verifiedAt, manifestSha256: validation.manifestSha256, qualification }];
+  assert.ok(renderToStaticMarkup(<ManagedDeploymentHistory history={history} provider="aws" />).includes("Pinned 1.2.3 (revision 2)"));
+  const unexpectedWrite = () => { throw new Error("Rendering must not change policy or pin a release."); };
+  const html = renderToStaticMarkup(<ManagedDeploymentEditor state={state} report={{ providers: [state], history: [] }} onReport={unexpectedWrite} onAccess={unexpectedWrite} refresh={unexpectedWrite} refreshing={false} />);
+  for (const text of ['aria-label="Installer revision"', 'value="2"', "Qualification reports for 1.2.3 (revision 2)", "Pin 1.2.3 (revision 2)"]) assert.ok(html.includes(text), `missing: ${text}`);
+  const first = renderToStaticMarkup(<ManagedDeploymentEditor state={current} report={{ providers: [current], history: [] }} onReport={unexpectedWrite} onAccess={unexpectedWrite} refresh={unexpectedWrite} refreshing={false} />);
+  assert.ok(first.includes('placeholder="Revision 1"') && !first.includes("(revision"));
 });

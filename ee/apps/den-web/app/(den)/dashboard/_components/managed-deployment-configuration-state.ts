@@ -4,6 +4,8 @@ import {
   type DeploymentConfigurationPlan, type ManagedDeployment,
 } from "@openwork/types/den/managed-deployments";
 
+import { availableUpdate } from "./managed-deployments-state";
+
 export type AwsDeployment = Extract<ManagedDeployment, { provider: "aws" }>;
 export type ConfigurationView = NonNullable<AwsDeployment["configuration"]>;
 export type ConfigurationChangeView = NonNullable<ConfigurationView["change"]>;
@@ -72,8 +74,9 @@ export function planConfigurationDraft(deployment: AwsDeployment, draft: AwsMana
 export function gatewayLockReason(deployment: EditableDeployment, assistantsAvailable: boolean): string | null {
   if (!assistantsAvailable) return GATEWAY_RUNTIME_NOT_ENABLED;
   if (deployment.configuration.gatewayAvailable) return null;
-  return deployment.updateAvailable && deployment.availableVersion
-    ? `Turn this on with Update to ${deployment.availableVersion}.`
+  const update = availableUpdate(deployment);
+  return update
+    ? `Turn this on with ${update.action}.`
     : "This deployment's installer isn't the published one. Ask your OpenWork operator.";
 }
 

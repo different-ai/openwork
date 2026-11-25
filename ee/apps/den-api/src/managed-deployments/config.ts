@@ -1,5 +1,7 @@
 import { z } from "zod"
 import { gcpBundleUrlSchema } from "@openwork/managed-deployments/gcp"
+import { installerRevisionField } from "@openwork/managed-deployments/installer-release"
+import { installerRevisionSchema } from "@openwork/managed-deployments/schema"
 
 const httpsUrl = z.string().url().refine((value) => {
   if (!URL.canParse(value)) return false
@@ -11,6 +13,7 @@ const releaseSchema = z.object({
   bundleUrl: httpsUrl,
   bundleSha256: z.string().regex(/^[a-f0-9]{64}$/),
   version: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/),
+  installerRevision: installerRevisionSchema.optional(),
   apiOrigin: z.string().url().refine((value) => {
     if (!URL.canParse(value)) return false
     const url = new URL(value)
@@ -36,6 +39,11 @@ const atomicSchemaFor = (provider: Provider) => provider === "gcp"
   ? atomicCoordinates.extend({ templateUrl: gcpBundleUrlSchema, bundleUrl: gcpBundleUrlSchema })
   : atomicCoordinates.extend({ templateUrl: awsVersionedUrl, bundleUrl: awsVersionedUrl })
 
+function withCanonicalRevision(release: ManagedDeploymentRelease): ManagedDeploymentRelease {
+  const { installerRevision, ...coordinates } = release
+  return { ...coordinates, ...installerRevisionField(installerRevision) }
+}
+
 function releaseInput(provider: Provider, environment: NodeJS.ProcessEnv) {
   const prefix = `DEN_MANAGED_DEPLOYMENT_${provider.toUpperCase()}`
   return {
@@ -59,7 +67,7 @@ function atomicRelease(provider: Provider, environment: NodeJS.ProcessEnv) {
   }
   const coordinates = atomicSchemaFor(provider).safeParse(input)
   const origin = releaseSchema.shape.apiOrigin.safeParse(environment.DEN_API_PUBLIC_URL)
-  const release = coordinates.success && origin.success ? { ...coordinates.data, apiOrigin: origin.data } : null
+  const release = coordinates.success && origin.success ? withCanonicalRevision({ ...coordinates.data, apiOrigin: origin.data }) : null
   return {
     release,
     readiness: {
