@@ -174,6 +174,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   platform("PUT", "/v1/admin/support-triage/settings", "platform.support_triage.settings.update", "platform.admin", "support_triage", null, ADMIN),
   platform("POST", "/v1/admin/support-triage/plain/test", "platform.support_triage.plain.test", "platform.admin", "support_triage", null, ADMIN),
   platform("POST", "/v1/admin/support-triage/slack/test", "platform.support_triage.slack.test", "platform.admin", "support_triage", null, ADMIN),
+  platform("POST", "/v1/admin/support-triage/slack/leads/test", "platform.support_triage.slack_leads.test", "platform.admin", "support_triage", null, ADMIN),
   platform("GET", "/v1/admin/support-triage/threads", "platform.support_triage.threads.read", "platform.admin", "support_triage", null, ADMIN),
   platform("GET", "/v1/admin/harness-feedback", "platform.harness_feedback.read", "platform.admin", "harness_feedback", null, ADMIN),
   platform("GET", "/v1/admin/harness-feedback/reports/:organizationId/:reportId", "platform.harness_feedback.report.read", "platform.admin", "harness_feedback", "reportId", ADMIN),

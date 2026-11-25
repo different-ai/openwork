@@ -22,6 +22,11 @@ export function sendTriagedThread(options: SlackOptions & { webUrl: string }, ca
   })
 }
 
-export function sendSupportTriageSlackTest(options: SlackOptions) {
-  return postToSlack(options, slackPayload("Test message from OpenWork support triage."))
+export function slackWebhookFor(category: SlackCategory, webhooks: { slackWebhookUrl: string | null; leadsSlackWebhookUrl: string | null }) {
+  return category === "enterprise" ? webhooks.leadsSlackWebhookUrl ?? webhooks.slackWebhookUrl : webhooks.slackWebhookUrl
+}
+
+export function sendSupportTriageSlackTest(options: SlackOptions, destination: "bugs" | "leads" = "bugs") {
+  const text = destination === "leads" ? "Test message from OpenWork support triage. Enterprise leads will post here." : "Test message from OpenWork support triage."
+  return postToSlack(options, slackPayload(text))
 }

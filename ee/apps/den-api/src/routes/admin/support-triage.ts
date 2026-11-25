@@ -16,10 +16,12 @@ import { sendSupportTriageSlackTest } from "../../support-triage/slack.js"
 const root = "/v1/admin/support-triage"
 const key = z.string().max(2048).trim().regex(/^[\x21-\x7e]+$/u)
 const webhook = z.string().max(2048).transform(normalizeHarnessFeedbackWebhook).pipe(z.string())
-const settingsBody = z.strictObject({ enabled: z.boolean().optional(), plainApiKey: key.nullable().optional(), slackWebhookUrl: webhook.nullable().optional() })
+const settingsBody = z.strictObject({ enabled: z.boolean().optional(), plainApiKey: key.nullable().optional(), slackWebhookUrl: webhook.nullable().optional(),
+  leadsSlackWebhookUrl: webhook.nullable().optional() })
   .refine((value) => Object.keys(value).length > 0)
 const plainTestBody = z.strictObject({ plainApiKey: key.optional() })
 const slackTestBody = z.strictObject({ slackWebhookUrl: webhook.optional() })
+const leadsSlackTestBody = z.strictObject({ leadsSlackWebhookUrl: webhook.optional() })
 const listQuery = z.strictObject({
   category: supportTriageCategory.optional(), limit: z.coerce.number().int().min(1).max(100).default(25),
   offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
@@ -32,7 +34,7 @@ const routeErrors = {
 }
 const errorSchema = (...codes: [string, ...string[]]) => z.object({ error: z.enum(codes), message: z.string() })
 const settingsSchema = z.object({
-  enabledAt: z.string().datetime().nullable(), plainConfigured: z.boolean(), slackConfigured: z.boolean(), jevConfigured: z.boolean(),
+  enabledAt: z.string().datetime().nullable(), plainConfigured: z.boolean(), slackConfigured: z.boolean(), leadsSlackConfigured: z.boolean(), jevConfigured: z.boolean(),
   updatedAt: z.string().datetime().nullable(), updatedBy: z.string().nullable(),
 })
 const threadsSchema = z.object({
@@ -51,14 +53,14 @@ export function registerAdminSupportTriageRoutes<T extends { Variables: AuthCont
   app.get(`${root}/settings`, describeRoute({
     tags,
     summary: "Get support triage settings",
-    description: "Returns when support triage was turned on and whether the Plain key, the Slack webhook and the evaluation service are configured. Saved credentials are never returned.",
+    description: "Returns when support triage was turned on and whether the Plain key, the bugs and leads Slack webhooks and the evaluation service are configured. Saved credentials are never returned.",
     responses: { 200: jsonResponse("Support triage settings returned.", settingsSchema), ...routeErrors },
   }), noStore, adminRoute(), async (c) => c.json(publicTriageSettings(await readTriageSettings())))
 
   app.put(`${root}/settings`, describeRoute({
     tags,
     summary: "Update support triage settings",
-    description: "Saves the Plain API key or the Slack webhook, or turns support triage on or off. Turning it on starts triage only for threads created after that moment. Clearing the Plain key turns triage off.",
+    description: "Saves the Plain API key or a Slack webhook (bugs, or enterprise leads), or turns support triage on or off. Turning it on starts triage only for threads created after that moment. Clearing the Plain key turns triage off.",
     responses: {
       200: jsonResponse("Support triage settings saved.", settingsSchema),
       400: invalidResponse,
@@ -104,7 +106,7 @@ export function registerAdminSupportTriageRoutes<T extends { Variables: AuthCont
   app.post(`${root}/slack/test`, describeRoute({
     tags,
     summary: "Send a support triage Slack test message",
-    description: "Posts a test message to the given Slack webhook, or the saved one, so an admin can check where triage alerts will appear.",
+    description: "Posts a test message to the given bugs Slack webhook, or the saved one, so an admin can check where triage alerts will appear.",
     responses: {
       200: jsonResponse("The test message was delivered.", z.object({ ok: z.literal(true) })),
       400: invalidResponse,
@@ -119,6 +121,30 @@ export function registerAdminSupportTriageRoutes<T extends { Variables: AuthCont
       const webhookUrl = parsed.data.slackWebhookUrl ?? (await readTriageSettings())?.slackWebhookUrl
       if (!webhookUrl) return c.json({ error: "slack_not_configured", message: "Enter a Slack webhook to send a test message." }, 409)
       if (await sendSupportTriageSlackTest({ webhookUrl, fetch: slackFetch }) === "delivered") return c.json({ ok: true })
+    } catch {
+      return c.json({ error: "slack_test_failed", message: "Couldn’t send the Slack test message. Check the webhook and try again." }, 502)
+    }
+    return c.json({ error: "slack_test_failed", message: "Couldn’t send the Slack test message. Check the webhook and try again." }, 502)
+  })
+
+  app.post(`${root}/slack/leads/test`, describeRoute({
+    tags,
+    summary: "Send a support triage leads Slack test message",
+    description: "Posts a test message to the given leads Slack webhook, or the saved one, so an admin can check where enterprise lead alerts will appear.",
+    responses: {
+      200: jsonResponse("The test message was delivered.", z.object({ ok: z.literal(true) })),
+      400: invalidResponse,
+      409: jsonResponse("No leads Slack webhook was given or saved.", errorSchema("slack_not_configured")),
+      502: jsonResponse("Slack did not accept the test message.", errorSchema("slack_test_failed")),
+      ...routeErrors,
+    },
+  }), noStore, adminRoute(), async (c) => {
+    const parsed = leadsSlackTestBody.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json(invalid, 400)
+    try {
+      const webhookUrl = parsed.data.leadsSlackWebhookUrl ?? (await readTriageSettings())?.leadsSlackWebhookUrl
+      if (!webhookUrl) return c.json({ error: "slack_not_configured", message: "Enter a leads Slack webhook to send a test message." }, 409)
+      if (await sendSupportTriageSlackTest({ webhookUrl, fetch: slackFetch }, "leads") === "delivered") return c.json({ ok: true })
     } catch {
       return c.json({ error: "slack_test_failed", message: "Couldn’t send the Slack test message. Check the webhook and try again." }, 502)
     }

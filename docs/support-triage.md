@@ -4,18 +4,24 @@ Platform admins can turn on support triage in **Admin → Support triage**. Tria
 
 | Permission | Used for |
 | --- | --- |
-| `thread:read` | List new threads, read the first message, and verify current thread status and priority. |
+| `workspace:read` | Find the Plain workspace the key belongs to (also used by **Test connection**). |
+| `thread:read` | List new threads and verify current thread status and priority. |
+| `timeline:read` | Read the first inbound message of a thread. |
 | `customer:read` | Read the sender's email domain. |
 | `labelType:read`, `labelType:create` | Look up and provision the four triage label types. |
-| `label:create` | Apply the selected label to a thread. |
-| `thread:edit` | Change a thread's priority or mark it Done. |
+| `label:read`, `label:create` | Check a thread's labels and apply the selected label. |
+| `thread:setPriority` | Change a thread's priority. |
+| `thread:setStatus` | Mark a thread Done. |
 
-**Test connection** verifies the key reaches its Plain workspace. It doesn't exercise write permissions. Optionally add a Slack incoming webhook and send a test message to check its destination, then turn on triage.
+**Test connection** verifies the key reaches its Plain workspace. It doesn't exercise write permissions. Optionally add Slack incoming webhooks and send a test message to each to check its destination, then turn on triage:
+
+- **Bugs Slack webhook** receives product bugs.
+- **Leads Slack webhook** receives enterprise leads. When it isn't set, enterprise leads go to the bugs webhook instead.
 
 | Result | Action |
 | --- | --- |
-| Product bug | Label Product bug, set priority to High, and notify Slack if configured. |
-| Enterprise lead | Label Enterprise lead, set priority to Urgent, and notify Slack if configured. |
+| Product bug | Label Product bug, set priority to High, and notify the bugs Slack webhook if configured. |
+| Enterprise lead | Label Enterprise lead, set priority to Urgent, and notify the leads Slack webhook (or the bugs webhook when no leads webhook is set) if configured. |
 | Job ask or pitch | Apply the matching label and mark the thread Done. |
 | Needs review or Other | Leave the thread unchanged. Filter the list to Needs review to find unclear threads. |
 
