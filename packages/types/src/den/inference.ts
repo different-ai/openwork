@@ -231,6 +231,7 @@ export type InferenceAccess = {
   remainingUsd: number | null;
   resetsAt: string | null;
   reason: InferenceAccessReason | null;
+  reasonDetail?: "free_sandbox_ended";
   canUpgrade?: boolean;
   catalog?: ManagedModelRecommendation[];
   defaultPinned?: boolean;
@@ -239,6 +240,7 @@ export type InferenceAccess = {
 export type FreeInferenceProviderSummary = {
   state: "available" | "disabled" | "unavailable";
   reason: InferenceAccessReason | null;
+  reasonDetail?: "free_sandbox_ended";
   defaultPinned: boolean;
   modelGroup: { id: "free"; name: "Free" };
   catalog: ManagedModelRecommendation[];
@@ -256,8 +258,10 @@ export type FreeInferenceProviderSummary = {
   };
 };
 
+export const freeAccessReasonDetailSchema = z.literal("free_sandbox_ended").optional().describe("The sandbox trial has ended. A platform admin can reopen it.");
+
 export const freeInferenceProviderSummarySchema = z.object({
-  state: z.enum(["available", "disabled", "unavailable"]), reason: z.union([z.enum(INFERENCE_ACCESS_REASONS), z.null()]),
+  state: z.enum(["available", "disabled", "unavailable"]), reasonDetail: freeAccessReasonDetailSchema, reason: z.union([z.enum(INFERENCE_ACCESS_REASONS), z.null()]),
   defaultPinned: z.boolean(), modelGroup: z.object({ id: z.literal("free"), name: z.literal("Free") }),
   catalog: z.array(z.object({ modelID: z.string(), displayName: z.string(), providerName: z.string(), summary: z.string(), recommended: z.boolean(), rank: z.number(), capabilities: z.array(z.string()) })),
   allowance: z.object({

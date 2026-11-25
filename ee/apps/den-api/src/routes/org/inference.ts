@@ -4,7 +4,7 @@ import { z } from "zod"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } from "../../organization-metadata.js"
 import { allowFreeInferenceOffer, getInferenceStatus, setInferenceEnabled, getMemberInferenceAccess, issueMemberFreeInferenceCredential, getFreeInferenceProviderSummary } from "../../inference.js"
-import { INFERENCE_ACCESS_REASONS, freeInferenceProviderSummarySchema, withFreeInferenceDefaultPinned, freeInferenceDefaultPinned } from "@openwork/types/den/inference"
+import { INFERENCE_ACCESS_REASONS, freeAccessReasonDetailSchema, freeInferenceProviderSummarySchema, withFreeInferenceDefaultPinned, freeInferenceDefaultPinned } from "@openwork/types/den/inference"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
 import { isBillingProductConfigured, organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
@@ -53,7 +53,7 @@ const managedModelsPolicyErrorSchema = z.object({
 const freeAccessSchema = z.object({
   access: z.object({ kind: z.enum(["free", "paid", "exhausted", "unavailable"]), modelID: z.string().nullable(),
     weeklyLimitUsd: z.number().nullable(), usedUsd: z.number().nullable(),
-    remainingUsd: z.number().nullable(), resetsAt: z.string().datetime().nullable(), reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
+    remainingUsd: z.number().nullable(), resetsAt: z.string().datetime().nullable(), reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(), reasonDetail: freeAccessReasonDetailSchema,
     defaultPinned: z.boolean().optional().describe("Organization-managed Auto pin for this membership. False removes only the organization pin; model access and personal pins are unchanged. Pins never grant access."), canUpgrade: z.literal(false), catalog: z.array(z.object({ modelID: z.string(), displayName: z.string(), providerName: z.string(),
       summary: z.string(), recommended: z.boolean(), rank: z.number(), capabilities: z.array(z.string()) })).optional() }),
 }).meta({ ref: "InferenceAccessResponse" })

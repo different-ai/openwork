@@ -8,7 +8,7 @@ import { GATEWAY_USAGE_LIMIT_ERROR_CODE, GATEWAY_USAGE_LIMIT_MESSAGE } from "@op
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "gateway-usage-limit" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "provider-unreachable" | "provider-connection-dropped" | "model-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-provider-authentication-failed" | "gateway-provider-permission-denied" | "gateway-selection-required" | "session-group-assignment" | "config-invalid" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "gateway-usage-limit" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "provider-unreachable" | "provider-connection-dropped" | "model-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "sandbox-trial-ended" | "gateway-provider-authentication-failed" | "gateway-provider-permission-denied" | "gateway-selection-required" | "session-group-assignment" | "config-invalid" | "generic";
 
 export function sessionErrorAnalyticsProperties(
   kind: OpencodeSessionErrorKind,
@@ -167,6 +167,7 @@ function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "model-unavailable") return "This model isn’t available";
   if (kind === "free-model-limit") return "The free starter model is busy right now";
   if (kind === "gateway-auth-required") return GATEWAY_AUTH_REQUIRED_TITLE;
+  if (kind === "sandbox-trial-ended") return "This sandbox trial has ended";
   if (kind === "gateway-provider-authentication-failed") return "The provider rejected its credential";
   if (kind === "gateway-provider-permission-denied") return "The provider denied access";
   if (kind === "gateway-selection-required") return "Choose a Gateway model group and credential set";
@@ -249,7 +250,7 @@ function detectGatewayUsageLimitFromText(fields: ReturnType<typeof sessionErrorF
 }
 
 type GatewayProviderAuthFailure = {
-  kind: "gateway-provider-authentication-failed" | "gateway-provider-permission-denied";
+  kind: "sandbox-trial-ended" | "gateway-provider-authentication-failed" | "gateway-provider-permission-denied";
   message: string | null;
 };
 
@@ -263,6 +264,7 @@ function detectGatewayProviderAuthFailure(fields: ReturnType<typeof sessionError
       const body = recordValue(parsed, "error");
       if (recordValue(body, "source") !== "openwork_gateway") continue;
       const code = recordValue(body, "code");
+      if (code === "sandbox_trial_ended") return { kind: "sandbox-trial-ended", message: "Ask a platform admin to reopen this sandbox to use this model." };
       if (code !== "provider_authentication_failed" && code !== "provider_permission_denied") continue;
       return {
         kind: code === "provider_authentication_failed" ? "gateway-provider-authentication-failed" : "gateway-provider-permission-denied",

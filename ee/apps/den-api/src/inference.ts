@@ -76,7 +76,9 @@ export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<
     if (!freeInferenceOrganizationAllowed(row.metadata)) return unavailable("admin_disabled")
     const now = new Date(Number(row.nowMs))
     if (!env.inferenceFree.enabled) return { ...freeInferenceAccess({ config: env.inferenceFree, now, reason: "free_disabled" }), defaultPinned }
-    if (await freeAutoPolicyRefusal(input)) return unavailable("admin_disabled")
+    const refusal = await freeAutoPolicyRefusal(input)
+    if (refusal === "free_sandbox_ended") return { ...unavailable("admin_disabled"), reasonDetail: refusal }
+    if (refusal) return unavailable("admin_disabled")
     const identity = freeHash("member", input.userId)
     const [bucket] = await db.select({ used_amount: InferenceFreeUsageBucketTable.used_amount }).from(InferenceFreeUsageBucketTable).where(and(
       eq(InferenceFreeUsageBucketTable.identity_hash, identity), eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start))).limit(1)
@@ -103,9 +105,11 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
     reason = "admin_disabled"
   }
   if (!freeInferenceOrganizationAllowed(organization.metadata)) reason = "admin_disabled"
-  if (await sandboxFreeAutoStopped(db, organizationId)) reason = "admin_disabled"
+  const trialEnded = reason === null && await sandboxFreeAutoStopped(db, organizationId)
+  if (trialEnded) reason = "admin_disabled"
   const summary: FreeInferenceProviderSummary = {
     state: reason ? "disabled" : "available", reason,
+    ...(trialEnded ? { reasonDetail: "free_sandbox_ended" } : {}),
     defaultPinned: freeInferenceDefaultPinned(organization.metadata),
     modelGroup: { id: "free", name: "Free" }, catalog: managedModelCatalog(),
     allowance: { usageScope: "organization", allowanceScope: "person", windowStartAt: window.start.toISOString(), resetsAt: window.end.toISOString(),

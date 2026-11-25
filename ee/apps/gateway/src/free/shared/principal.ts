@@ -39,7 +39,10 @@ function freeOrganization(metadata: Record<string, unknown> | null) {
 async function freePolicyAllowed(identity: Pick<MemberPrincipal, "memberId" | "organizationId">, database: Database) {
   const policy = await readDesktopPolicyForOrgMember(database, { organizationId: identity.organizationId, orgMemberId: identity.memberId })
   if (policy.allowZenModel === false) return false
-  return !await sandboxFreeAutoStopped(database, identity.organizationId)
+  if (await sandboxFreeAutoStopped(database, identity.organizationId)) {
+    throw new FreeRequestError(403, "free_sandbox_ended", "This sandbox trial has ended. Ask a platform admin to reopen it to use OpenWork Free.")
+  }
+  return true
 }
 
 function requireVerifiedEmail(verified: boolean) {

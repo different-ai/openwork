@@ -62,6 +62,7 @@ export type GatewayDependencies = {
   insertRequestLog: InsertRequestLog
   updateRequestLog?: RequestLogRecorderDependencies["updateRequestLog"]
   reporter: InferenceReporter
+  sponsoredTrialEnded?: (organizationId: string, credentialSetId: string) => Promise<boolean>
   loadGatewayProvider: LoadGatewayProvider
   loadGatewayAccess: LoadGatewayAccess
   loadMemberGatewayAccess: LoadMemberGatewayAccess
@@ -1108,6 +1109,19 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
           upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
           status: upstream.status,
         })
+      }
+
+      if ((upstream.status === 401 || upstream.status === 403) && selection.row.credentialSet.credential_mode === "org"
+        && await input.sponsoredTrialEnded?.(identity.organizationId, selection.row.credentialSet.id).catch(() => false)) {
+        const code = "sandbox_trial_ended"
+        const response = gatewayError(403, code, "This sandbox trial has ended. Ask a platform admin to reopen it to use this model.", {
+          source: "openwork_gateway", provider_id: provider.id,
+        })
+        response.headers.set("x-openwork-request-id", openworkRequestId)
+        void recorder.finish({ status: 403, outcome: "rejected", errorCode: code, upstreamRequestId: upstreamRequestId(upstream.headers) })
+        lifetime.dispose()
+        await upstream.body?.cancel().catch(() => {})
+        return response
       }
 
       if ((resolved.family === "google_vertex" || resolved.family === "google_vertex_anthropic") && (upstream.status === 401 || upstream.status === 403)) {

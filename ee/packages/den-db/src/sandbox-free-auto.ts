@@ -9,11 +9,14 @@ import { SandboxOrganizationTable } from "./schema/sandbox-organizations"
  * the Gateway refuses requests. Reopening (extending) the sandbox restores it.
  * Uses the database clock so Den API and the Gateway agree on expiry.
  */
-export async function sandboxFreeAutoStopped(database: FeatureDatabase, organizationId: string): Promise<boolean> {
+export async function sandboxTrialEnded(database: FeatureDatabase, organizationId: string, sponsoredSetId?: string): Promise<boolean> {
   const id = normalizeDenTypeId("organization", organizationId)
   const [row] = await database.select({ id: SandboxOrganizationTable.id }).from(SandboxOrganizationTable).where(and(
     eq(SandboxOrganizationTable.organizationId, id),
+    sponsoredSetId === undefined ? undefined : eq(SandboxOrganizationTable.sponsoredSetId, normalizeDenTypeId("gatewayCredentialSet", sponsoredSetId)),
     or(isNotNull(SandboxOrganizationTable.closedAt), lte(SandboxOrganizationTable.expiresAt, sql`current_timestamp(3)`)),
   )).limit(1)
   return Boolean(row)
 }
+
+export { sandboxTrialEnded as sandboxFreeAutoStopped }

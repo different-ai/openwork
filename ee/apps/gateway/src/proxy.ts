@@ -98,6 +98,13 @@ const blockedServerToolTypes = new Set([
 ])
 
 const defaultProxyDependencies: ProxyDependencies = {
+  gateway: {
+    async sponsoredTrialEnded(organizationId, credentialSetId) {
+      const { db } = await import("./db.js")
+      const { sandboxTrialEnded } = await import("@openwork-ee/den-db")
+      return sandboxTrialEnded(db.$primary, organizationId, credentialSetId)
+    },
+  },
   fundedModelGuard: async (identity, route) => (await import("./funded-model-access.js")).checkFundedModelAccess(identity, route),
   async findActiveInferenceKey(key) {
     const keys = await import("./keys.js")
