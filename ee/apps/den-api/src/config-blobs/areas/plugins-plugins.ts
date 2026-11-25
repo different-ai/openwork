@@ -149,7 +149,7 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const { rows: allRows, shared } = await loadSharedPlugins(ctx.db, organizationId)
   const wanted = ids ? new Set(ids) : null
-  const rows = wanted ? allRows.filter((row) => wanted.has(row.id)) : allRows
+  const rows = allRows.filter((row) => wanted ? wanted.has(row.id) : ctx.features.configPrivateItems || shared.ids.has(row.id))
   if (rows.length === 0) return []
   const pluginIds = rows.map((row) => row.id)
 
@@ -195,8 +195,7 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
   const componentTitles = new Map(memberships.map((entry) => [entry.object.id, entry.object.title]))
   const names = await loadAudienceNames(ctx.db, organizationId, grants)
 
-  const skillPluginIds = new Set(components.filter((entry) => entry.object.objectType === "skill").map((entry) => entry.pluginId))
-  const items = rows.filter((row) => wanted || shared.ids.has(row.id) || skillPluginIds.has(row.id)).map((row): ConfigItem => {
+  const items = rows.map((row): ConfigItem => {
     const ownComponents = components.filter((entry) => entry.pluginId === row.id)
       .sort((left, right) => left.object.id.localeCompare(right.object.id))
       .map((entry) => ({ $ref: `plugins.skills/${entry.object.id}`, name: entry.object.title }))

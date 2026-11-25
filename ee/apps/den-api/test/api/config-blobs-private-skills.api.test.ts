@@ -27,7 +27,7 @@ async function settle(api: ReturnType<typeof den.as>, id: string) {
   throw new Error("Config request did not settle")
 }
 
-test("Config moves a private skill and its file to a member joining later, without duplicates", async (t) => {
+test("Config moves a private skill and its file to a member joining later, without duplicates", async () => {
   const source = await den.createOrg(await den.signUp("Source Admin"), "Source workspace")
   const target = await den.createOrg(await den.signUp("Target Admin"), "Target workspace")
   const creator = await den.newMember(source.owner, source.orgId, "Skill Creator")
@@ -40,7 +40,7 @@ test("Config moves a private skill and its file to a member joining later, witho
   expectStatus(await den.as(creator, source.orgId)("POST", "/v1/plugins", { name, components: [{ type: "skill", input: {
     rawSourceText: `---\nname: ${name}\ndescription: Summarize field notes.\n---\n\n${contents}`,
     normalizedPayloadJson: { files: [{ path: "references/guide.md", text: guide }] },
-  } }] }), 201)
+  } }, { type: "command", input: { rawSourceText: "---\nname: field-command\n---\n\nRead field notes.", metadata: { title: "field-command" } } }] }), 201)
   const flagOff = expectStatus(await a("GET", "/v1/config-blobs/export?areas=plugins.skills,plugins.plugins"), 200)
   for (const area of ["skills", "plugins"]) {
     assert.equal(list(field(flagOff, "areas", "plugins", area, "items")).some((item) => item.name === name), false, `Flag off: private ${area} are not exported`)
@@ -96,7 +96,7 @@ test("Config moves a private skill and its file to a member joining later, witho
   assert.equal((await den.callMcpTool(creatorToken, "get_skill", { name, file: "references/guide.md" })).text, guide)
   assert.equal((await load(peerToken)).isError, true)
   const adminRead = await load(adminToken)
-  t.diagnostic(`Importing admin agent can load the imported private skill: ${!adminRead.isError && adminRead.text.includes(contents)}`)
+  assert.equal(adminRead.isError, true, "the importing admin agent does not acquire the creator-only skill")
 
   await importConfig()
   const after = expectStatus(await b("GET", "/v1/config-blobs/export?areas=plugins.skills,plugins.plugins"), 200)

@@ -88,10 +88,10 @@ async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null)
     const version = latest.get(row.id)
     return !(row.objectType === "app" && version && isAuthoredMcpAppVersion(version))
   })
-  if (ids === null) {
+  if (ids === null && !ctx.features.configPrivateItems) {
     const { shared } = await loadSharedPlugins(ctx.db, organizationId)
     const sharedIds = await sharedConfigObjectIds({ db: ctx.db, organizationId, objects: rows, sharedPluginIds: shared.ids })
-    rows = rows.filter((row) => row.objectType === "skill" || sharedIds.has(row.id))
+    rows = rows.filter((row) => sharedIds.has(row.id))
   }
   if (rows.length === 0) return []
   const objectIds = rows.map((row) => row.id)
