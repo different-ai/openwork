@@ -1,4 +1,4 @@
-import { isSandboxError, type SandboxProvider } from "@openwork/sandbox"
+import type { SandboxProvider } from "@openwork/sandbox"
 import { computerSnapshotSlug } from "./image.js"
 
 const COMPUTER_RESOURCES = { cpu: 2, memoryGb: 4, diskGb: 8 }
@@ -14,43 +14,6 @@ export type ComputerProviderConfig = {
   keepDays?: number
   persistent?: boolean
   endpointDomain?: string
-}
-
-/**
- * A sandbox gateway in front of several providers (Differently): the runner holds one key for it, and the gateway
- * holds the provider keys and decides by its own policies which provider runs each computer.
- */
-export type SandboxGatewayConfig = {
-  kind: "differently"
-  url: string
-  apiKey: string
-  template: string
-}
-
-/**
- * The gateway's adapter loads only when the runner opts into a gateway. Computers ask for Daytona's size, and are
- * idled only as the gateway's pools allow: the adapter reads that as it creates them, never at startup.
- */
-export async function createGatewayProvider(config: SandboxGatewayConfig): Promise<SandboxProvider> {
-  const { createDifferentlyProvider } = await import("@openwork/sandbox-differently")
-  return createDifferentlyProvider({
-    url: config.url, apiKey: config.apiKey, template: config.template, platform: { os: "linux", isolation: "unknown" },
-    resources: COMPUTER_RESOURCES, discoverLifecycle: true,
-  })
-}
-
-/** Whether the gateway can create computers right now (infrastructure only, never its policies). */
-export async function createGatewayHealth(config: SandboxGatewayConfig): Promise<() => Promise<{ up: boolean; reason: string }>> {
-  const { differentlyHealth } = await import("@openwork/sandbox-differently")
-  return () => differentlyHealth({ url: config.url, apiKey: config.apiKey })
-}
-
-/**
- * A provider or gateway that could not be reached or could not start the computer. Refusals (quotas, placement
- * policy, permissions, unsupported requests) are not: they answer the request and must not be routed around.
- */
-export function isInfrastructureError(error: unknown) {
-  return isSandboxError(error) && (error.code === "transient" || error.code === "timeout")
 }
 
 /** Provider SDKs load only when the runner opts into that provider. */

@@ -44,6 +44,7 @@ import {
   mcpMock,
   server,
   requestBrowserTask,
+  requestPrivateValues,
   requestComputerProgram,
   readBrowserFixtureState,
   setBrowserFixtureDiscovery,
@@ -1029,6 +1030,12 @@ export class AgentChannel implements Agent {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("agent", "browserTask", `browserTask(${input.operation}, session=${input.sessionId}, tab=${input.args?.tabId ?? "owned"})`, surface,
       () => requestBrowserTask(surface, input));
+  }
+
+  privateValues(input: import("@openwork/behaviors").PrivateValuesInput) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "privateValues", `privateValues(session=${input.sessionId}, ${input.args.run ? "run" : "request"})`, surface,
+      () => requestPrivateValues(surface, input));
   }
 
   run(action: string, args?: unknown): Promise<unknown> {

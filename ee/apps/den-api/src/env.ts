@@ -12,6 +12,7 @@ import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
+import { readWorkbotFreeGrantSecret } from "@openwork/free-auto/node"
 import { parseFeatureEnvironment } from "@openwork/features"
 import { partitionConfigSecretEnvAllowlist } from "./config-blobs/env-secrets.js"
 
@@ -97,11 +98,6 @@ const EnvSchema = z.object({
   CORS_ORIGINS: z.string().optional(),
   DEN_CORS_HANDLED_BY_EDGE: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
-  DEN_DOCUMENTS_COLLABORA_URL: z.string().url().optional(),
-  DEN_DOCUMENTS_HOST_ORIGIN: z.string().url().optional(),
-  DEN_DOCUMENTS_CALLBACK_BASE_URL: z.string().url().optional(),
-  DEN_DOCUMENTS_EDITOR: z.enum(["fixed", "cloud-worker"]).optional(),
-  DEN_DOCUMENTS_WORKER_EDITOR_PORT: z.string().optional(),
   DEN_API_VERSION: z.string().optional(),
   RENDER_GIT_COMMIT: z.string().optional(),
   OPENWORK_INSTALLER_ARTIFACTS_DIR: z.string().optional(),
@@ -220,6 +216,8 @@ const EnvSchema = z.object({
   STRIPE_SECRET_KEY: z.string().optional(),
   OPENAI_SAFETY_WEBHOOK_SECRET: z.string().optional(),
   OPENAI_SAFETY_READ_KEY: z.string().optional(),
+  DEN_WORKSPACE_CREATE_LIMIT: z.coerce.number().int().min(0).default(3),
+  DEN_WORKSPACE_CREATE_LIMIT_CONTACT: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_INFERENCE_PRICE_ID: z.string().optional(),
   STRIPE_SEAT_PRICE_ID: z.string().optional(),
@@ -769,13 +767,6 @@ export const env = {
   },
   port,
   corsOrigins,
-  documentsOffice: {
-    mode: parsed.DEN_DOCUMENTS_EDITOR ?? (optionalString(parsed.DEN_DOCUMENTS_COLLABORA_URL) ? "fixed" : null),
-    workerPort: Number(parsed.DEN_DOCUMENTS_WORKER_EDITOR_PORT ?? "9980"),
-    serverUrl: optionalString(parsed.DEN_DOCUMENTS_COLLABORA_URL),
-    hostOrigin: optionalString(parsed.DEN_DOCUMENTS_HOST_ORIGIN),
-    callbackBaseUrl: optionalString(parsed.DEN_DOCUMENTS_CALLBACK_BASE_URL) ?? apiPublicUrl,
-  },
   apiPublicUrl,
   serviceVersion: resolveDenServiceVersion({
     configuredVersion: parsed.DEN_API_VERSION,
@@ -847,8 +838,13 @@ export const env = {
   auditSelfHostedEnabled: parsed.DEN_AUDIT_SELF_HOSTED_ENABLED === "true",
   corsHandledByEdge,
   openworkWebEnabled,
+  workspaceCreateLimit: {
+    limit: parsed.DEN_WORKSPACE_CREATE_LIMIT,
+    contact: optionalString(parsed.DEN_WORKSPACE_CREATE_LIMIT_CONTACT) ?? "mailto:team@openworklabs.com",
+  },
   openaiSafety: { webhookSecret: optionalString(parsed.OPENAI_SAFETY_WEBHOOK_SECRET), readKey: optionalString(parsed.OPENAI_SAFETY_READ_KEY) },
   inferenceFree: readFreeInferenceConfig(process.env),
+  workbotFreeGrantSecret: readWorkbotFreeGrantSecret(process.env),
   inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   modelsPublicBaseUrl: gatewayDeployment.modelsPublicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   gatewayEnabled: gatewayDeployment.enabled,

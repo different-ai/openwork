@@ -1,4 +1,4 @@
-import type { ComputerProviderConfig, SandboxGatewayConfig } from "@openwork-ee/headless-computer"
+import type { ComputerProviderConfig } from "@openwork-ee/headless-computer"
 import { dirname, join } from "node:path"
 import { z } from "zod"
 import { parseDsn, type ErrorReportingConfig } from "./error-reporting.js"
@@ -80,12 +80,7 @@ const configSchema = z.object({
     .optional()
     .transform((value) => value || undefined),
   HEADLESS_COMPUTER_SNAPSHOT: z.string().min(1).optional(),
-  SANDBOX_GATEWAY: z.enum(["off", "differently"]).default("off"),
-  SANDBOX_GATEWAY_URL: safeUrl.optional(),
-  SANDBOX_GATEWAY_API_KEY: z.string().min(1).optional(),
-  SANDBOX_GATEWAY_TEMPLATE: z.string().min(1).optional(),
   HEADLESS_COMPUTER_PAUSE_SECONDS: z.coerce.number().int().min(10).default(300),
-  SANDBOX_GATEWAY_PAUSE_SECONDS: z.coerce.number().int().min(10).optional(),
   HEADLESS_COMPUTER_KEEP_DAYS: z.coerce.number().int().min(1).max(365).default(14),
   HEADLESS_COMPUTER_PERSISTENT: z.enum(["true", "false"]).default("false"),
   HEADLESS_COMPUTER_DOMAIN: z.string().regex(/^(?=.{1,40}$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/, "HEADLESS_COMPUTER_DOMAIN must be a lowercase domain of at most 40 characters").optional(),
@@ -126,7 +121,6 @@ export type Config = {
   fileLimits: { maxFileBytes: number; maxSessionBytes: number }
   storage: { segments: boolean; hotLimitBytes: number; segmentTargetBytes: number; largeBodyBytes: number }
   computer?: ComputerProviderConfig & ComputerSettings
-  computerGateway?: SandboxGatewayConfig & ComputerSettings
   errorReporting?: ErrorReportingConfig
   selfResume?: SelfResumeConfig
 }
@@ -169,7 +163,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     fileLimits: { maxFileBytes: value.HEADLESS_FILES_MAX_BYTES, maxSessionBytes: value.HEADLESS_FILES_MAX_SESSION_BYTES },
     storage: storageConfig(value),
     computer: computerConfig(value),
-    computerGateway: gatewayConfig(value),
     errorReporting: errorReportingConfig(value),
     selfResume: selfResumeConfig(value),
   }
@@ -232,23 +225,6 @@ function computerConfig(value: z.infer<typeof configSchema>): Config["computer"]
 }
 
 type ComputerSettings = { scope?: string; idlePauseMs: number; keepDays: number; persistent?: boolean; desktop?: boolean }
-
-function gatewayConfig(value: z.infer<typeof configSchema>): Config["computerGateway"] {
-  if (value.SANDBOX_GATEWAY === "off") return undefined
-  const missing = [!value.SANDBOX_GATEWAY_URL && "SANDBOX_GATEWAY_URL", !value.SANDBOX_GATEWAY_API_KEY && "SANDBOX_GATEWAY_API_KEY", !value.SANDBOX_GATEWAY_TEMPLATE && "SANDBOX_GATEWAY_TEMPLATE"].filter(Boolean)
-  if (missing.length) throw new Error(`Invalid headless-runner configuration: SANDBOX_GATEWAY=${value.SANDBOX_GATEWAY} needs ${missing.join(", ")}`)
-  return {
-    kind: value.SANDBOX_GATEWAY,
-    url: value.SANDBOX_GATEWAY_URL!,
-    apiKey: value.SANDBOX_GATEWAY_API_KEY!,
-    template: value.SANDBOX_GATEWAY_TEMPLATE!,
-    scope: value.HEADLESS_COMPUTER_SCOPE,
-    desktop: value.HEADLESS_COMPUTER_DESKTOP === "true",
-    idlePauseMs: (value.SANDBOX_GATEWAY_PAUSE_SECONDS ?? value.HEADLESS_COMPUTER_PAUSE_SECONDS) * 1000,
-    keepDays: value.HEADLESS_COMPUTER_KEEP_DAYS,
-    persistent: value.HEADLESS_COMPUTER_PERSISTENT === "true",
-  }
-}
 
 function filesConfig(value: z.infer<typeof configSchema>): Config["files"] {
   if (value.HEADLESS_FILES === "disk") return { kind: "disk", directory: value.HEADLESS_FILES_DIR ?? join(dirname(value.HEADLESS_DB_PATH), "files") }

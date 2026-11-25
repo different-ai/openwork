@@ -1,5 +1,5 @@
 import { agentSendCheckRequest, decideSendCheck, type AgentSendCheckVerdict } from "@openwork/automations/proactive-brief"
-import type { EvaluationModel } from "./evaluation-model.js"
+import type { EvaluationModel } from "../llm/evaluation-model.js"
 
 export type AgentSendCheckInput = { brief: string; message: string; update: boolean; toldToday: readonly string[]; holdAt?: number }
 export type AgentSendCheckResult = {

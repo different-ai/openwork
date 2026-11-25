@@ -54,6 +54,9 @@ import {
 } from "./background-shell-tasks";
 import { SUBAGENT_NOTICE_KEY, readSubagentCompletion, subagentNoticeLabel, type SubagentNotice } from "./subagent-notices";
 
+export const FOLLOW_UP_WAITING_EVENT = "session.follow_up.waiting";
+export const FOLLOW_UP_SETTLED_EVENT = "session.follow_up.settled";
+
 type RequestOptions = {
   signal?: AbortSignal;
   throwOnError?: boolean;
@@ -399,6 +402,76 @@ function taskSessionStorage(): Storage | null {
     return typeof globalThis.sessionStorage === "undefined" ? null : globalThis.sessionStorage;
   } catch {
     return null;
+  }
+}
+
+type LiveStepInvocation = { sessionID: string; messageID: string; callID: string };
+type LiveCodeModeStep = { tool: string; status: string };
+type LiveStepSnapshot = { key: string; updatedAt: number; steps: LiveCodeModeStep[] };
+
+const LIVE_STEPS_KEY = "openwork.v2.live-steps.v1";
+const LIVE_STEPS_LIFETIME_MS = 6 * 60 * 60 * 1000;
+const MAX_LIVE_STEP_ENTRIES = 64;
+const MAX_LIVE_STEPS_LENGTH = 256 * 1024;
+
+function liveStepKey(scope: string | null, call: LiveStepInvocation): string | null {
+  if (!scope || !URL.canParse(scope)) return null;
+  const url = new URL(scope);
+  if (url.username || url.password || url.search || url.hash) return null;
+  return JSON.stringify([scope, call.sessionID, call.messageID, call.callID]);
+}
+
+function isLiveCodeModeStep(value: unknown): value is LiveCodeModeStep {
+  return typeof value === "object" && value !== null && "tool" in value && typeof value.tool === "string"
+    && "status" in value && typeof value.status === "string";
+}
+
+function liveStepSnapshots(): LiveStepSnapshot[] {
+  const raw = taskSessionStorage()?.getItem(LIVE_STEPS_KEY);
+  if (!raw || raw.length > MAX_LIVE_STEPS_LENGTH) return [];
+  let entries: unknown;
+  try {
+    entries = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(entries)) return [];
+  const now = Date.now();
+  return entries.filter((entry): entry is LiveStepSnapshot => entry && typeof entry.key === "string"
+    && typeof entry.updatedAt === "number" && entry.updatedAt <= now && now - entry.updatedAt < LIVE_STEPS_LIFETIME_MS
+    && Array.isArray(entry.steps) && entry.steps.every(isLiveCodeModeStep)).slice(-MAX_LIVE_STEP_ENTRIES);
+}
+
+function readLiveSteps(scope: string | null, call: LiveStepInvocation): LiveCodeModeStep[] | undefined {
+  const key = liveStepKey(scope, call);
+  if (!key) return;
+  try {
+    return liveStepSnapshots().find(entry => entry.key === key)?.steps;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeLiveSteps(scope: string | null, call: LiveStepInvocation, calls: unknown): void {
+  const key = liveStepKey(scope, call);
+  if (!key || (calls !== null && !Array.isArray(calls))) return;
+  try {
+    const entries = liveStepSnapshots().filter(entry => entry.key !== key);
+    if (Array.isArray(calls)) {
+      const steps = calls.filter(isLiveCodeModeStep).map(({ tool, status }) => ({ tool, status }));
+      const snapshot = { key, updatedAt: Date.now(), steps };
+      if (steps.length && JSON.stringify(snapshot).length <= MAX_LIVE_STEPS_LENGTH) entries.push(snapshot);
+    }
+    const recent = entries.slice(-MAX_LIVE_STEP_ENTRIES);
+    let data = JSON.stringify(recent);
+    while (recent.length && data.length > MAX_LIVE_STEPS_LENGTH) {
+      recent.shift();
+      data = JSON.stringify(recent);
+    }
+    if (recent.length) taskSessionStorage()?.setItem(LIVE_STEPS_KEY, data);
+    else taskSessionStorage()?.removeItem(LIVE_STEPS_KEY);
+  } catch {
+    return;
   }
 }
 
@@ -758,6 +831,17 @@ function mapV2ToolPart(
   const end = readNumber(time, "completed") ?? start;
   const title = readString(state, "title") ?? tool;
   const metadata = toolMetadata(sourceTool, readRecord(state, "metadata") ?? {}, sessionID, messageID, callID, taskSessions);
+  if (sourceTool === "execute") {
+    const call = { sessionID, messageID, callID };
+    if (status === "running" && Array.isArray(metadata.toolCalls)) {
+      writeLiveSteps(taskSessions.scope, call, metadata.toolCalls);
+    } else if (status === "running") {
+      const steps = readLiveSteps(taskSessions.scope, call);
+      if (steps) metadata.toolCalls = steps;
+    } else if (status === "completed" || status === "error") {
+      writeLiveSteps(taskSessions.scope, call, null);
+    }
+  }
   const base: Omit<ToolPart, "state"> = {
     id: callID,
     messageID,
@@ -1186,7 +1270,8 @@ export function mapV2SessionError(value: unknown): UnknownError | ApiError {
   const statuses = [readNumber(value, "statusCode"), readNumber(value, "status"), readNumber(data, "status"),
     readNumber(readRecord(value, "response"), "status"), readNumber(readRecord(data, "response"), "status")];
   const statusCode = reportedStatus === 429 ? statuses.find((status) => status !== undefined && status !== 429) ?? reportedStatus : reportedStatus ?? statuses.find((status) => status !== undefined);
-  const responseBody = readString(data, "responseBody") ?? readString(value, "responseBody");
+  const responseBody = readString(data, "responseBody") ?? readString(value, "responseBody")
+    ?? readString(readRecord(data, "response"), "body") ?? readString(readRecord(value, "response"), "body");
   if (statusCode !== undefined) {
     const rawHeaders = readRecord(data, "responseHeaders");
     const responseHeaders: Record<string, string> = {};
@@ -1341,6 +1426,8 @@ function pendingToolPart(stream: ToolStream): ToolPart {
 }
 
 function runningToolPart(stream: ToolStream, start: number, taskSessions: TaskSessionAssociations): ToolPart {
+  const metadata = toolMetadata(stream.tool, stream.metadata, stream.sessionID, stream.messageID, stream.callID, taskSessions);
+  if (stream.tool === "execute") writeLiveSteps(taskSessions.scope, stream, metadata.toolCalls);
   return {
     id: stream.partID,
     messageID: stream.messageID,
@@ -1353,7 +1440,7 @@ function runningToolPart(stream: ToolStream, start: number, taskSessions: TaskSe
       status: "running",
       input: stream.input,
       title: compatibleToolName(stream.tool),
-      metadata: toolMetadata(stream.tool, stream.metadata, stream.sessionID, stream.messageID, stream.callID, taskSessions),
+      metadata,
       time: { start },
     },
   };
@@ -1567,13 +1654,24 @@ export function translateV2Event(
     return [
       { type: "message.updated", properties: { info: message.info } },
       ...message.parts.map((part): OpencodeEvent => ({ type: "message.part.updated", properties: { part } })),
+      { type: FOLLOW_UP_WAITING_EVENT, properties: { sessionID, messageID } },
     ];
+  }
+
+  if (type === "session.inbox.delivered") {
+    const messageID = readString(properties, "inboxID");
+    return sessionID && messageID
+      ? [{ type: FOLLOW_UP_SETTLED_EVENT, properties: { sessionID, messageID } }]
+      : null;
   }
 
   if (type === "session.inbox.cancelled") {
     const messageID = readString(properties, "inboxID");
     return sessionID && messageID
-      ? [{ type: "message.removed", properties: { sessionID, messageID } }]
+      ? [
+        { type: "message.removed", properties: { sessionID, messageID } },
+        { type: FOLLOW_UP_SETTLED_EVENT, properties: { sessionID, messageID } },
+      ]
       : null;
   }
 
@@ -1851,6 +1949,7 @@ export function translateV2Event(
       return background.length || refresh.length ? [...refresh, ...background] : null;
     }
     updateToolStreamMetadata(stream, properties);
+    if (stream.tool === "execute") writeLiveSteps(state.taskSessions.scope, stream, null);
     const part = completedToolPart(stream, properties, toolEventTimestamp(value, properties), state.taskSessions);
     state.tools.set(toolStreamKey(stream.sessionID, stream.callID), null);
     clearV2SessionTranslation(state, stream.sessionID);
@@ -1864,6 +1963,7 @@ export function translateV2Event(
     const stream = resolveToolStream(properties, state);
     if (!stream) return refreshMissingV2Message(value, properties, state, "tool");
     updateToolStreamMetadata(stream, properties);
+    if (stream.tool === "execute") writeLiveSteps(state.taskSessions.scope, stream, null);
     const part = failedToolPart(stream, properties, toolEventTimestamp(value, properties), state.taskSessions);
     state.tools.set(toolStreamKey(stream.sessionID, stream.callID), null);
     clearV2SessionTranslation(state, stream.sessionID);

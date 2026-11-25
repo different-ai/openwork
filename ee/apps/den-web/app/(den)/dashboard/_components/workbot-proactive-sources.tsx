@@ -6,8 +6,6 @@ import {
   AGENT_CORE_SOURCE_COPY,
   AGENT_SOURCE_POLICIES,
   AGENT_SOURCE_POLICY_COPY,
-  agentOtherConnections,
-  agentSourcePolicy,
   type AgentOtherSourceConnection,
   type AgentSourceOption,
   type AgentSourcePolicy,
@@ -27,12 +25,6 @@ import { connectorPolicyChanges } from "./my-agent-enable-connectors";
 import { AgentConnectionToolsButton } from "./workbot-agent-tools";
 
 type SourcesView = Pick<WorkbotProactiveView, "settings" | "sourceConnections">;
-
-export function listedConnections(view: SourcesView): AgentSourceOption[] {
-  const all = view.sourceConnections?.all ?? [];
-  const ids = agentOtherConnections(view.settings.sources) ?? view.sourceConnections?.other.map((connection) => connection.id) ?? [];
-  return ids.flatMap((id) => all.filter((option) => option.id === id));
-}
 
 export function calendarStateLine(view: SourcesView): string {
   if (view.settings.sources.calendar === "off") return "Agents don't read it";
@@ -57,19 +49,6 @@ export function otherConnectionsRestLine(count: number): string {
 
 export function connectionCount(count: number): string {
   return `${count} connection${count === 1 ? "" : "s"}`;
-}
-
-export function addableConnections(view: SourcesView): AgentSourceOption[] {
-  const here = new Set(listedConnections(view).map((option) => option.id));
-  return (view.sourceConnections?.all ?? []).filter((option) => option.slots.includes("other") && !here.has(option.id));
-}
-
-export function addConnectionChange(view: SourcesView, connectionId: string): AgentSourcesPolicyInput {
-  return { otherConnections: [...listedConnections(view).map((option) => option.id), connectionId] };
-}
-
-export function removeConnectionChange(view: SourcesView, connectionId: string): AgentSourcesPolicyInput {
-  return { otherConnections: listedConnections(view).map((option) => option.id).filter((id) => id !== connectionId), connections: { [connectionId]: null } };
 }
 
 function policyFrom(value: string): AgentSourcePolicy | null {
@@ -156,9 +135,8 @@ export function AgentCalendarPolicy({ view, disabled, onChange }: {
   );
 }
 
-export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true, bulkControls = false }: {
+export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true }: {
   heading?: boolean;
-  bulkControls?: boolean;
   view: WorkbotProactiveView;
   canManage: boolean;
   saving: boolean;
@@ -168,18 +146,15 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
   const headingId = useId();
   const [filter, setFilter] = useState("");
   const locked = !canManage || saving;
-  const { sources } = view.settings;
   const connections = view.sourceConnections;
-  const anyConnector = view.brief !== undefined;
 
   const save = (change: AgentSourcesPolicyInput) => onChange({ sources: change });
-  const choices = bulkControls && connections
-    ? anyConnector ? connections.other.map((option) => ({ id: option.id, policy: otherPolicy(view, option) }))
-      : listedConnections(view).map((option) => ({ id: option.id, policy: agentSourcePolicy(sources, option.id) }))
+  const choices = connections
+    ? connections.other.map((option) => ({ id: option.id, policy: otherPolicy(view, option) }))
     : [];
   const enable = connectorPolicyChanges(choices, "everyone");
   const disable = connectorPolicyChanges(choices, "off");
-  const toolsButtonOf = (option: { id: string; name: string }) => tools && anyConnector ? (
+  const toolsButtonOf = (option: { id: string; name: string }) => tools ? (
     <AgentConnectionToolsButton orgId={tools.orgId} scope={tools.scope} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
   ) : null;
 
@@ -233,32 +208,6 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
     );
   };
 
-  const listedRows = () => {
-    const members = listedConnections(view);
-    return (
-      <>
-        {members.length === 0 ? <p className="px-6 py-3 text-[13px] text-gray-500" data-testid="workbot-source-other-empty">No connectors</p> : null}
-        {members.map((option) => (
-          <div key={option.id} className="flex min-h-[44px] flex-wrap items-center justify-between gap-3 px-6 py-2" data-testid={`workbot-source-other-${option.id}`}>
-            <span className="flex min-w-0 items-center gap-3">
-              <ConnectorLogo name={option.name} url={option.url} size="xs" />
-              <span className="truncate text-[13px] text-gray-900">{option.name}</span>
-            </span>
-            <span className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-              <PolicySelect label={option.name} value={agentSourcePolicy(sources, option.id)} disabled={locked}
-                onChange={(policy) => save({ connections: { [option.id]: policy } })} />
-              <DenButton variant="ghost" size="xs" disabled={locked} aria-label={`Remove ${option.name} from Connectors`}
-                onClick={() => save(removeConnectionChange(view, option.id))}>
-                Remove
-              </DenButton>
-            </span>
-          </div>
-        ))}
-        <AddConnector options={addableConnections(view)} disabled={locked} onPick={(option) => save(addConnectionChange(view, option.id))} />
-      </>
-    );
-  };
-
   return (
     <section aria-labelledby={heading ? headingId : undefined} aria-label={heading ? undefined : "Connectors"} className="grid gap-2" data-section="workbot-proactive-sources">
       {heading ? (
@@ -277,7 +226,7 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
                   onClick={() => save({ connections: disable })}>Turn all off</DenButton>
               </div>
             ) : null}
-            {anyConnector ? everyConnectionRows() : listedRows()}
+            {everyConnectionRows()}
           </div>
         ) : (
           <p className="flex items-center gap-2 px-6 py-3 text-[12px] text-gray-500" data-testid="workbot-source-others-locked">
@@ -286,7 +235,7 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
           </p>
         )}
         <p className="border-t border-gray-100 px-6 py-3 text-[12px] text-gray-500" data-testid="workbot-source-footer">
-          {anyConnector && connections ? `${connectionCount(connections.other.length)}. ` : ""}Read only. Agents never send, edit or delete through these.
+          {connections ? `${connectionCount(connections.other.length)}. ` : ""}Read only. Agents never send, edit or delete through these.
         </p>
       </div>
     </section>

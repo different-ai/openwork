@@ -96,10 +96,11 @@ export function buildAuthHeader(family: ProtocolFamily, secret: string, bearer =
   }
 }
 
-export function isAllowedRequestHeader(family: ProtocolFamily, name: string) {
+export function isAllowedRequestHeader(family: ProtocolFamily, name: string, providerHeaders: readonly string[] = []) {
   const lower = name.toLowerCase()
   if (lower.startsWith("x-stainless-")) return true
   if (commonHeaderAllowlist.includes(lower)) return true
+  if (providerHeaders.includes(lower)) return true
   return familyHeaderAllowlist[family].includes(lower)
 }
 

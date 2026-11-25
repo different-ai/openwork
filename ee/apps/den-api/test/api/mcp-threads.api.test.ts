@@ -83,7 +83,6 @@ test("without the flag a started session says nothing about events and poll deli
     computer: { label: "Thread laptop", platform: "darwin", appVersion: "1.6.0" },
     workspaces: [{ workspaceId: "fixture-workspace", name: "Fixture", active: true, engine: "v2", defaultModel: null, models: [] }],
   })).status, 200)
-  assert.equal((await den.setFeature(org.orgId, "nativeMcpEvents", true)).status, 200)
   const created = await create(token)
   assert.equal(created.isError, false, created.raw)
   assert.equal(field(created.body, "event"), undefined)
@@ -132,7 +131,6 @@ test("a started session names its event, and a poll reports each settled change 
 })
 
 test("a hosted chat that starts a session is watched at once and gets one turn when it settles", async () => {
-  await den.setFeature(org.orgId, "mcpThreadEvents", true)
   sessions.set(chat, workbotOwner(org.orgId, org.owner.memberId))
   const minted = await den.request(token, "POST", "/v1/workbot/run-token", { body: { sessionId: chat, messageId: "fixture-thread-initial", model: models["gpt-6-luna"] } })
   assert.equal(minted.status, 200, summary(minted))

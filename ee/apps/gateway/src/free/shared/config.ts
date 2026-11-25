@@ -1,3 +1,4 @@
+import { readWorkbotFreeGrantSecret } from "@openwork/free-auto/node"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_SESSION_POW_BITS, DESKTOP_FREE_SESSION_POW_MAX_BITS, DESKTOP_FREE_SESSION_POW_MAX_ROUNDS, DESKTOP_FREE_SESSION_POW_ROUNDS, parseDesktopVersion } from "@openwork/free-auto"
 import { DEFAULT_INSTALL_RAMP, parseInstallRamp } from "@openwork/free-auto/accounting"
@@ -34,16 +35,18 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
   const releaseKeyPrevious = environment.DESKTOP_FREE_RELEASE_KEY_PREVIOUS?.trim() || ""
   const devMode = environment.OPENWORK_DEV_MODE === "1" && environment.NODE_ENV !== "production"
   const devReleaseSecret = devMode ? environment.DESKTOP_FREE_DEV_RELEASE_SECRET?.trim() || "" : ""
-  const distinct = new Set([releaseKey, releaseKeyPrevious, devReleaseSecret, tokenSecret, accountingIdentityKey].filter(Boolean))
-  if (distinct.size !== [releaseKey, releaseKeyPrevious, devReleaseSecret, tokenSecret, accountingIdentityKey].filter(Boolean).length) throw new Error("Free Auto secrets must be distinct")
+  const workbotGrantSecret = readWorkbotFreeGrantSecret(environment)
+  if (minimumVersion && !workbotGrantSecret) throw new Error("DESKTOP_FREE_MIN_VERSION needs WORKBOT_FREE_GRANT_SECRET so hosted Workbot keeps free models")
+  const secrets = [releaseKey, releaseKeyPrevious, devReleaseSecret, tokenSecret, accountingIdentityKey, workbotGrantSecret].filter(Boolean)
+  if (new Set(secrets).size !== secrets.length) throw new Error("Free Auto secrets must be distinct")
   return {
     member, memberEnabled: member.enabled && ready,
     anonymousEnabled: flag("ANONYMOUS_INFERENCE_ENABLED") && ready && tokenSecret.length >= 32 && tokenSecret !== accountingIdentityKey && releaseKey.length >= 32,
-    apiKey, upstreamModel, tokenSecret, accountingIdentityKey,
+    apiKey, upstreamModel, tokenSecret, accountingIdentityKey, workbotGrantSecret,
     releaseKey, releaseKeyPrevious: releaseKeyPrevious.length >= 32 ? releaseKeyPrevious : "",
     devReleaseSecret: devReleaseSecret.length >= 32 ? devReleaseSecret : "",
     orgWeeklyAmount: integer("INFERENCE_FREE_ORG_WEEKLY_MICRO_USD", 25000000, 0, 10000000000) * 100,
-    memberGlobalDailyAmount: integer("INFERENCE_FREE_MEMBER_GLOBAL_DAILY_MICRO_USD", 100000000, 0, 10000000000) * 100,
+    memberGlobalDailyAmount: integer("INFERENCE_FREE_MEMBER_GLOBAL_DAILY_MICRO_USD", 350000000, 0, 10000000000) * 100,
     maxConcurrent: integer("FREE_AUTO_MAX_CONCURRENT", 8, 1, 200),
     maxQueued: integer("FREE_AUTO_MAX_QUEUED", 32, 0, 1000),
     minimumVersion,

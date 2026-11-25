@@ -1,5 +1,7 @@
 # Packaged sandbox execution repair
 
+> Historical record from before the sandbox rollout switch was retired. See [modes.md](modes.md) for current behavior.
+
 Feature: `sandboxTools` (cloud and self-hosted, off by default). This repair keeps the existing rollout; it does not enable a production feature or publish an alpha.
 
 ## Acceptance boundary

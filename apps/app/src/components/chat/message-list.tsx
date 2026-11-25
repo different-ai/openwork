@@ -37,6 +37,7 @@ import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } fr
 import { TaskRecovery } from "./task-recovery"
 import { BackgroundTaskNotice, SubagentNoticeRow, backgroundShellNoticeFromMessage, subagentNoticeFromMessage } from "./background-tasks"
 import { messageAutoAccessWall } from "@/app/lib/inference-access"
+import { markFeatureUsed } from "@/app/lib/den"
 import { AutoAccessNotice } from "@/react-app/domains/cloud/auto-access-ui"
 import { OpenWorkModelsLimitCard } from "@/react-app/domains/cloud/usage-limit-card"
 import type { OpenWorkModelsLimit } from "@/react-app/domains/cloud/usage-limit-state"
@@ -929,12 +930,29 @@ function renderUserText(text: string, highlightQuery: string | undefined, refere
   return nodes
 }
 
+const FOLLOW_UP_WAITING_DELAY_MS = 600
+
+function FollowUpWaitingStatus() {
+  return (
+    <span
+      role="status"
+      data-follow-up-waiting
+      className="px-1 text-xs text-muted-foreground animate-in fade-in duration-200"
+      style={{ animationDelay: `${FOLLOW_UP_WAITING_DELAY_MS}ms`, animationFillMode: "backwards" }}
+      onAnimationEnd={() => markFeatureUsed("followUpDelivery")}
+    >
+      {t("session.follow_up_waiting")}
+    </span>
+  )
+}
+
 const UserMessage = React.memo(
   ({ message }: UserMessageProps) => {
-    const { onRevertToUserMessage, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
+    const { onRevertToUserMessage, onEditUserMessage, highlightQuery, readOnly, waitingFollowUpIds } = useMessageList()
     const references = useSessionReferencesMaybe()
     const wall = messageAutoAccessWall(message.metadata)
     const { sessionId, workspaceId } = useMessageList()
+    const waitingForStep = waitingFollowUpIds.includes(message.id)
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
       if (event.defaultPrevented || !onOpenTarget || !(event.target instanceof Element)) return
@@ -1011,6 +1029,7 @@ const UserMessage = React.memo(
                     })}
                   </MessageContent>
                 ) : null}
+                {waitingForStep ? <FollowUpWaitingStatus /> : null}
                 {!wall && (
                   <MessageActions
                     className="flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100"

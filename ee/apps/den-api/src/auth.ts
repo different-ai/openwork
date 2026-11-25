@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
-import { recordFreeAutoFounder, recordFreeAutoSignIn } from "@openwork-ee/den-db";
+import { recordFreeAutoSignIn } from "@openwork-ee/den-db";
+import { WorkspaceLimitReachedError, recordFounderWithinLimit, recordWorkspaceLimitReached } from "./workspace-create-limit.js";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
 import { invalidateTeamInferenceOAuth, revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js";
@@ -1589,7 +1590,14 @@ export const auth = betterAuth({
           }
         },
         afterCreateOrganization: async ({ organization, user }) => {
-          await recordFreeAutoFounder(db, normalizeDenTypeId("organization", organization.id), normalizeDenTypeId("user", user.id));
+          const userId = normalizeDenTypeId("user", user.id);
+          try {
+            await recordFounderWithinLimit(normalizeDenTypeId("organization", organization.id), userId);
+          } catch (error) {
+            if (!(error instanceof WorkspaceLimitReachedError)) throw error;
+            await recordWorkspaceLimitReached({ requestId: null, method: "POST", route: "/api/auth/organization/create", userId });
+            throw new APIError("FORBIDDEN", { ...error.body, code: error.body.error });
+          }
         },
         beforeUpdateOrganization: async ({ organization }) => {
           if ("metadata" in organization) {

@@ -12,7 +12,7 @@ import { t } from "@/i18n";
 import { sandboxEffectiveMode } from "@/react-app/kernel/sandbox-chat";
 import { sandboxSettingsQuery, useSandboxSettings, useSandboxStatus } from "@/react-app/infra/use-sandbox";
 import { LayoutSectionItem, LayoutSectionItemDescription, LayoutSectionItemFootnote, LayoutSectionItemHeader, LayoutSectionItemHeaderActions, LayoutSectionItemTitle, LayoutSectionTitle } from "../settings-layout";
-import { sandboxEditableToggleUpdate, sandboxPanelState, sandboxPanelVisibility, sandboxRetryStarted, sandboxSavedChoiceMatches, sandboxStatusView, sandboxToggleUpdate, type SandboxToggle } from "./sandbox-panel-state";
+import { sandboxEditableToggleUpdate, sandboxPanelState, sandboxRetryStarted, sandboxSavedChoiceMatches, sandboxStatusView, sandboxToggleUpdate, type SandboxToggle } from "./sandbox-panel-state";
 
 import type { SettingsWorkspaceState } from "../state/workspace-discovery";
 
@@ -20,7 +20,6 @@ type SandboxPanelProps = {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
   workspaceState: SettingsWorkspaceState;
-  rollout: boolean | undefined;
   onUpdated: () => void;
 };
 
@@ -59,15 +58,14 @@ function Retry({ onClick, disabled, testId }: { onClick: () => void; disabled?: 
   return <Button variant="link" size="sm" className="h-auto px-1" data-testid={testId} disabled={disabled} onClick={onClick}>{t("common.retry")}</Button>;
 }
 
-export function SandboxPanel({ client: workspaceClient, workspaceId, workspaceState, rollout, onUpdated }: SandboxPanelProps) {
+export function SandboxPanel({ client: workspaceClient, workspaceId, workspaceState, onUpdated }: SandboxPanelProps) {
   const queryClient = useQueryClient();
   const client = workspaceState === "connected" ? workspaceClient : null;
   const connection = { client, workspaceId };
   const { settings, queryKey } = useSandboxSettings(connection);
   const loading = settings.data === undefined && (workspaceState === "discovering" || (Boolean(client && workspaceId) && settings.isPending));
-  const { visible, ready: settled } = sandboxPanelVisibility(rollout, settings.isError ? "error" : loading ? "loading" : "settled", settings.data);
-  const ready = workspaceState === "connected" && settled && (!visible || Boolean(settings.data));
-  const observeStatus = visible && (settings.data?.pending === true || sandboxEffectiveMode(settings.data) !== "off");
+  const ready = workspaceState === "connected" && Boolean(settings.data);
+  const observeStatus = settings.data?.pending === true || sandboxEffectiveMode(settings.data) !== "off";
   const { status, queryKey: statusKey } = useSandboxStatus(connection, observeStatus, 2_000);
   const settingsSaved = (reconciled: boolean) => {
     void queryClient.invalidateQueries({ queryKey, refetchType: reconciled ? "none" : "active" });
@@ -134,7 +132,6 @@ export function SandboxPanel({ client: workspaceClient, workspaceId, workspaceSt
     marked.current = true;
     performance.mark("openwork:permissions:sandbox-ready");
   }, [ready]);
-  if (!visible) return <div ref={markReady} data-testid="sandbox-panel" data-ready={ready ? "true" : undefined} hidden />;
 
   const saving = (setting: SandboxToggle["setting"]) => save.isPending || (reconcile.isPending && reconcile.variables.setting === setting);
   const view = sandboxStatusView(status.data, observeStatus && Boolean(row?.use));
@@ -146,7 +143,6 @@ export function SandboxPanel({ client: workspaceClient, workspaceId, workspaceSt
       {row ? <>
         <SandboxSwitch setting="use" checked={row.use} note={row.useNote} saving={saving("use")} onChange={(checked) => saveToggle({ setting: "use", checked })} />
         <SandboxSwitch setting="force" checked={row.force} note={row.forceNote} saving={saving("force")} onChange={(checked) => saveToggle({ setting: "force", checked })} />
-        {row.unavailable ? <LayoutSectionItemFootnote>{t("sandbox.unavailable")}</LayoutSectionItemFootnote> : null}
         {row.pending ? <LayoutSectionItemFootnote><span role="status" data-testid="sandbox-pending">{t("sandbox.pending")} {row.pending === "sandbox" ? t("sandbox.pending_sandbox") : t("sandbox.pending_computer")}</span></LayoutSectionItemFootnote> : null}
         {row.verification === "checking" ? <LayoutSectionItemFootnote>{t("sandbox.checking")}</LayoutSectionItemFootnote> : null}
         {row.verification === "unavailable" ? <LayoutSectionItemFootnote>{t("sandbox.verification_unavailable")} <Retry onClick={() => void settings.refetch()} disabled={settings.isFetching} /></LayoutSectionItemFootnote> : null}

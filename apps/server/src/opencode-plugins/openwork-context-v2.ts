@@ -6,6 +6,7 @@ import { server as computerTools } from "./openwork-computer-use.js";
 import { ASK_FORM, ASK_WITHOUT_WAITING, askArgs, askDescription, askFormArgs, askFormDescription } from "./openwork-agent-questions.js";
 import { DRIVE_FILE_TOOLS } from "./drive-file-tools.js";
 import { addProviderSafeTool } from "./provider-safe-tool-schema.js";
+import { singleActionAsList } from "./browser-tool-args.js";
 
 const browserResult = z.object({
   content: z.array(z.union([z.object({ type: z.literal("text"), text: z.string() }),
@@ -174,7 +175,10 @@ export default {
       }
     });
 
+    const singleAction = await context.tool.hook?.("execute.before", event => {
+      if (event.tool === "computer_act" || event.tool === "browser_act") event.input = singleActionAsList(event.input);
+    });
     const stopSkills = await registerCloudSkillDiscovery(context);
-    return async () => { await stopSkills(); await registration.dispose(); };
+    return async () => { await stopSkills(); await singleAction?.dispose(); await registration.dispose(); };
   },
 };

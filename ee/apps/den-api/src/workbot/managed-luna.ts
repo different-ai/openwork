@@ -1,4 +1,6 @@
-import { organizationFeatureEnabled } from "../features.js"
+import { signWorkbotFreeGrant } from "@openwork/free-auto/node"
+import { WORKBOT_FREE_GRANT_HEADER, WORKBOT_FREE_GRANT_TTL_MS } from "@openwork/free-auto"
+import { assertFundedUserAllowed } from "../openai-safety/account-suspensions.js"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -35,7 +37,6 @@ export async function workbotOrganizationManagedDefaultRoutable(organizationId: 
   const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, orgId)).limit(1)
   if (!organization) return false
   if (readInferenceMetadata(organization.metadata)) return true
-  if (await organizationFeatureEnabled(orgId, "desktopOnlyFreeAuto")) return false
   return env.inferenceFree.enabled && freeInferenceOrganizationAllowed(organization.metadata)
 }
 
@@ -47,7 +48,7 @@ export async function workbotManagedLunaState(actor: CloudAgentGatewayActor) {
     .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt))).limit(1)
   if (!member) throw new CloudAgentGatewayAccessError("model_access_unavailable")
   const paid = Boolean(readInferenceMetadata(member.metadata))
-  const allowed = await organizationAllowsManagedModels(organizationId) && (paid || !await organizationFeatureEnabled(organizationId, "desktopOnlyFreeAuto"))
+  const allowed = await organizationAllowsManagedModels(organizationId)
   const [upstream] = paid ? await db.select({ id: InferenceOrgUpstreamProviderKeyTable.id }).from(InferenceOrgUpstreamProviderKeyTable)
     .where(and(eq(InferenceOrgUpstreamProviderKeyTable.organization_id, organizationId), eq(InferenceOrgUpstreamProviderKeyTable.provider, "openrouter"), eq(InferenceOrgUpstreamProviderKeyTable.status, "active"))).limit(1) : []
   const paidReady = allowed && paid && Boolean(upstream) && INFERENCE_MODEL_ALIASES[INFERENCE_FREE_MODEL_ID].enabled
@@ -57,14 +58,19 @@ export async function workbotManagedLunaState(actor: CloudAgentGatewayActor) {
 }
 
 export async function workbotManagedLunaAccess(actor: CloudAgentGatewayActor, model: string): Promise<HeadlessModelAccess> {
+  await assertFundedUserAllowed(actor.userId)
   const state = await workbotManagedLunaState(actor)
   if (model === WORKBOT_PAID_LUNA_ID) {
     if (!state.paidReady) throw new CloudAgentGatewayAccessError("managed_models_setup_required")
     const apiKey = await ensureMemberInferenceKey(state.input)
     return { baseUrl: `${env.modelsPublicBaseUrl.replace(/\/+$/, "")}/api/v1`, apiKey, protocol: "openai", model: INFERENCE_FREE_MODEL_ID }
   }
-  if (model !== WORKBOT_FREE_LUNA_ID || !state.allowed || await organizationFeatureEnabled(state.input.organizationId, "desktopOnlyFreeAuto") || !["free", "exhausted"].includes(state.free.kind)) throw new CloudAgentGatewayAccessError("model_access_unavailable")
+  if (model !== WORKBOT_FREE_LUNA_ID || !state.allowed || !["free", "exhausted"].includes(state.free.kind)) throw new CloudAgentGatewayAccessError("model_access_unavailable")
   const issued = await issueMemberFreeInferenceCredential(state.input)
   if (!("credential" in issued)) throw new CloudAgentGatewayAccessError("model_access_unavailable")
-  return { baseUrl: issued.credential.baseURL, apiKey: issued.credential.apiKey, protocol: "openai-responses", model: INFERENCE_FREE_MODEL_ID }
+  const secret = env.workbotFreeGrantSecret
+  const grant = secret ? signWorkbotFreeGrant(secret, { keyId: issued.credential.keyId, organizationId: state.input.organizationId,
+    memberId: state.input.memberId, expiresAt: Date.now() + WORKBOT_FREE_GRANT_TTL_MS }) : null
+  return { baseUrl: issued.credential.baseURL, apiKey: issued.credential.apiKey, protocol: "openai-responses", model: INFERENCE_FREE_MODEL_ID,
+    ...(grant ? { headers: { [WORKBOT_FREE_GRANT_HEADER]: grant } } : {}) }
 }

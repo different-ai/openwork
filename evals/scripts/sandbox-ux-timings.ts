@@ -15,7 +15,7 @@ import { acquirePermissionsMachine, installPermissionsFetchTrace, permissionsDes
 const exec = promisify(execFile);
 const { values } = parseArgs({ options: {
   app: { type: "string" }, ui: { type: "string", default: "legacy" }, "evidence-dir": { type: "string" },
-  flag: { type: "string", default: "on" }, scenarios: { type: "string", default: "a,b,c" },
+  scenarios: { type: "string", default: "a,b,c" },
   "signed-in": { type: "boolean" }, workspaces: { type: "string", default: "1" }, "den-latency-ms": { type: "string" },
   "scripted-model": { type: "boolean" }, "verification-trace": { type: "boolean" }, "verification-fault": { type: "boolean" },
   model: { type: "string", default: "fable" }, "den-delay-ms": { type: "string", default: "0" }, "den-offline": { type: "boolean" },
@@ -33,15 +33,12 @@ if ([...groups].some(group => !["a", "b", "c", "pending", "crash", "direct", "tu
 if (!values.app || !values["evidence-dir"] || !values.app.endsWith(".app")) throw new Error("Supply --app <bundle.app> and --evidence-dir <directory>");
 const model = values.model;
 if (model !== "fable" && model !== "sol") throw new Error("--model must be fable or sol");
-const flag = values.flag === "on";
-if (!flag && values.flag !== "off") throw new Error("--flag must be on or off");
 const offline = Boolean(values["den-offline"]);
 const signedIn = Boolean(values["signed-in"]);
 const count = Number(values.workspaces);
 if (!Number.isSafeInteger(count) || count < 1 || count > 100) throw new Error("--workspaces must be an integer from 1–100");
 const latencies = (values["den-latency-ms"] ?? values["den-delay-ms"] ?? "0").split(",").map(Number);
 const denDelay = latencies[0] ?? 0;
-const expectsSwitch = flag && !offline;
 if (latencies.length > 1 && !signedIn) throw new Error("Use one latency per run for the signed-out fixture");
 const matrix = signedIn || values["den-latency-ms"] !== undefined || count !== 1 || groups.has("direct");
 if (signedIn && offline) throw new Error("--signed-in cannot bootstrap against offline Den");
@@ -68,7 +65,7 @@ const environment = {
   date: new Date().toISOString(), appVersion: (await exec("/usr/bin/plutil", ["-extract", "CFBundleShortVersionString", "raw", plist])).stdout.trim(),
   bundleVersion: (await exec("/usr/bin/plutil", ["-extract", "CFBundleVersion", "raw", plist])).stdout.trim(),
   bundleSha256: artifact.identity.sha256, macOS: (await exec("/usr/bin/sw_vers", ["-productVersion"])).stdout.trim(), model: profile.model, scripted,
-  ui: values.ui, flag, offline, denDelay, latencies, signedIn, requestedWorkspaces: count, scenarios: [...groups],
+  ui: values.ui, offline, denDelay, latencies, signedIn, requestedWorkspaces: count, scenarios: [...groups],
 };
 const root = await realpath(await mkdtemp("/tmp/owux-"));
 const work = join(root, "work");
@@ -76,11 +73,11 @@ const shared = join(root, "shared");
 await Promise.all([mkdir(work), mkdir(shared)]);
 // A signed-in scenario owns its Den for the entire fixture lifetime, including relaunches.
 const releaseDenMachine = signedIn ? await acquirePermissionsMachine(`${values.ui} signed-in N=${count} +${latencies.join(",")} / local Den`) : undefined;
-const signed = signedIn ? await (await import("../worlds/sandbox-ux-signed-in.ts")).uxSignedInDen(flag).catch(async error => {
+const signed = signedIn ? await (await import("../worlds/sandbox-ux-signed-in.ts")).uxSignedInDen().catch(async error => {
   try { await rm(root, { recursive: true, force: true }); } finally { await releaseDenMachine?.(); }
   throw error;
 }) : null;
-const den = signed ?? await uxDenFixture(flag, denDelay, offline, matrix);
+const den = signed ?? await uxDenFixture(denDelay, offline, matrix);
 const state = { phase: "boot", hostSecret: "unused-ux-canary" };
 const inference = await (scripted ? uxScriptedInference() : timedInference(model, key ?? "no-inference-permissions-only", state)).catch(async error => {
   try { await den.close(); await rm(root, { recursive: true, force: true }); } finally { await releaseDenMachine?.(); }
@@ -245,14 +242,14 @@ async function back() {
   await waitForLocated(surface(), "composer", { timeoutMs: 25_000 });
   if (sessionId) await control(surface(), "session.open", { sessionId });
 }
-async function permissions(name: string, expectSwitch: boolean, direct = false) {
+async function permissions(name: string, direct = false) {
   const descendantsBefore = await permissionsDescendants(handle?.pid);
   const detailed = Boolean(values["verification-trace"] || values["verification-fault"]);
   const controlledFault = Boolean(ui.modes && values["verification-fault"] && signed && name.startsWith("permissions-warm"));
   if (controlledFault) signed?.setOrgFault(true);
   const trace = detailed ? await installPermissionsFetchTrace(surface()) : null;
   const denFrom = den.requests.length;
-  const poll = pollPermissions(surface(), { modes: ui.modes, expectSwitch, captureMs: matrix ? 15_250 : 8_250, limitMs: 20_000 });
+  const poll = pollPermissions(surface(), { modes: ui.modes, captureMs: matrix ? 15_250 : 8_250, limitMs: 20_000 });
   // Keep the passive fetch witness open for the full observation window separately
   // from the TTI sampler, including if the renderer throttles background timers.
   const verificationWindow = detailed ? delay(20_000) : Promise.resolve();
@@ -299,7 +296,7 @@ async function permissions(name: string, expectSwitch: boolean, direct = false) 
   if (processResult.status === "rejected") throw processResult.reason;
   if (sandboxProcesses.length) throw new Error("Opening Permissions observed a sandbox process");
   if (marks.tti === undefined) throw new Error("Permissions did not become interactive within 20 s");
-  if (expectSwitch !== (marks["switch-visible"] !== undefined)) throw new Error(`Expected switch ${expectSwitch ? "present" : "absent"}`);
+  if (marks["switch-visible"] === undefined) throw new Error("Expected switch present");
 }
 
 async function settingsApi() {
@@ -528,7 +525,7 @@ async function midChat() {
 let cleanupOk = false;
 try {
   if (!await step("app-start", () => launch("app-start"))) throw new Error("Cannot continue without owned packaged app");
-  const scenario = !flag ? "flag-off" : offline ? "permissions-den-offline" : denDelay ? "permissions-den-slow" : "permissions-cold";
+  const scenario = offline ? "permissions-den-offline" : denDelay ? "permissions-den-slow" : "permissions-cold";
   if (matrix) {
     if (!await step("arrange-workspaces", async () => {
       for (let i = 1; i < count; i++) {
@@ -545,16 +542,16 @@ try {
       const name = (value: string) => latencies.length === 1 ? value : `${value}-l${latency}`;
       if (groups.has("a")) {
         const cold = name("permissions-cold");
-        const ok = await step(cold, async () => { await stopApp(); await launch(name("app-start-cold"), true); await permissions(cold, expectsSwitch); });
+        const ok = await step(cold, async () => { await stopApp(); await launch(name("app-start-cold"), true); await permissions(cold); });
         if (!ok) permissionsFailed = true;
         if (ok) {
           const warm = name("permissions-warm");
-          if (!await step(warm, async () => { await back(); await permissions(warm, expectsSwitch); await back(); })) permissionsFailed = true;
+          if (!await step(warm, async () => { await back(); await permissions(warm); await back(); })) permissionsFailed = true;
         }
       }
       if (groups.has("direct")) {
         const direct = name("permissions-direct");
-        if (!await step(direct, async () => { await stopApp(); await launch(name("app-start-direct"), true, true); await permissions(direct, expectsSwitch, true); })) permissionsFailed = true;
+        if (!await step(direct, async () => { await stopApp(); await launch(name("app-start-direct"), true, true); await permissions(direct, true); })) permissionsFailed = true;
       }
     }
     if (groups.has("turns")) {
@@ -564,44 +561,42 @@ try {
       await step("signed-in-sandbox-turn", () => command("signed-in-sandbox-turn", "sandbox_shell", uname("sandbox_shell"), isLinux));
     }
   } else if (groups.has("a")) {
-    if (!await step(scenario, () => permissions(scenario, expectsSwitch))) permissionsFailed = true;
+    if (!await step(scenario, () => permissions(scenario))) permissionsFailed = true;
     await step("return-from-permissions", back);
-    if (flag && !offline && !denDelay) {
-      await step("permissions-warm", async () => { await permissions("permissions-warm", true); await back(); });
-      await step("permissions-after-restart", async () => { await stopApp(); await launch("app-start-restart", true); await permissions("permissions-after-restart", true); await back(); });
+    if (!offline && !denDelay) {
+      await step("permissions-warm", async () => { await permissions("permissions-warm"); await back(); });
+      await step("permissions-after-restart", async () => { await stopApp(); await launch("app-start-restart", true); await permissions("permissions-after-restart"); await back(); });
       await step("settings-api", settingsApi);
     }
   }
   if (groups.has("b") && !offline) {
-    if (flag) {
-      await step("use-first-command", () => command("use-first-command", "sandbox_shell", uname("sandbox_shell"), isLinux, true));
-      await step("use-second-command", () => command("use-second-command", "sandbox_shell", uname("sandbox_shell"), isLinux, true));
-      // Same in-chat host control required by the additive sequence.
-      await step("use-host-still-works", () => command("use-host-still-works", "shell", uname("shell"), isDarwin));
-      // Fresh chat matching the flag-off comparison; background traffic is retained in evidence.
-      await step("host-flag-on", async () => {
-        await useModel();
-        await control(surface(), ui.newChat);
-        sessionId = "";
-        await command("host-flag-on", "shell", uname("shell"), isDarwin);
-      });
-      await remount();
-      if (await step("force-switch", () => switchMode("force-switch", false))) {
-        await step("force-first-command", () => command("force-first-command", "shell", uname("shell"), isLinux));
-        await step("force-second-command", () => command("force-second-command", "shell", uname("shell"), isLinux));
-      }
-    } else await step("host-flag-off", () => command("host-flag-off", "shell", uname("shell"), isDarwin));
+    await step("use-first-command", () => command("use-first-command", "sandbox_shell", uname("sandbox_shell"), isLinux, true));
+    await step("use-second-command", () => command("use-second-command", "sandbox_shell", uname("sandbox_shell"), isLinux, true));
+    // Same in-chat host control required by the additive sequence.
+    await step("use-host-still-works", () => command("use-host-still-works", "shell", uname("shell"), isDarwin));
+    // Host command in a fresh chat; background traffic is retained in evidence.
+    await step("host-fresh-chat", async () => {
+      await useModel();
+      await control(surface(), ui.newChat);
+      sessionId = "";
+      await command("host-fresh-chat", "shell", uname("shell"), isDarwin);
+    });
+    await remount();
+    if (await step("force-switch", () => switchMode("force-switch", false))) {
+      await step("force-first-command", () => command("force-first-command", "shell", uname("shell"), isLinux));
+      await step("force-second-command", () => command("force-second-command", "shell", uname("shell"), isLinux));
+    }
   }
-  if (["c", "pending", "crash"].some(group => groups.has(group)) && flag && !offline) {
+  if (["c", "pending", "crash"].some(group => groups.has(group)) && !offline) {
     if (!await step("prepare-model", useModel)) throw new Error("Model must be configured before disabling host execution");
   }
-  if ((groups.has("c") || groups.has("pending")) && flag && !offline) {
+  if ((groups.has("c") || groups.has("pending")) && !offline) {
     if (groups.has("pending") && !groups.has("b")) {
       if (!await step("pending-warmup", () => command("pending-warmup", "sandbox_shell", uname("sandbox_shell"), isLinux))) throw new Error("Pending capture requires one successful sandbox turn");
     }
     if (await step("mid-chat-setup", () => switchMode("mid-chat-setup", false))) await step("mid-chat-toggle", midChat);
   }
-  if ((groups.has("c") || groups.has("crash")) && flag && !offline) {
+  if ((groups.has("c") || groups.has("crash")) && !offline) {
     if (groups.has("crash") && !groups.has("pending") && !groups.has("b") && !groups.has("c")) {
       if (!await step("crash-warmup", () => command("crash-warmup", "sandbox_shell", uname("sandbox_shell"), isLinux))) throw new Error("Crash capture requires one successful sandbox turn");
     }

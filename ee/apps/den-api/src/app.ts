@@ -20,7 +20,6 @@ import { getOrganizationFeatures } from "./features.js"
 import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
-import { registerConnectionServerRoutes } from "./mcp/connection-server.js"
 import { registerExternalConnectionProxyRoutes } from "./mcp/external-connection-proxy.js"
 import { registerPublicMcpAppRoutes } from "./mcp/public-app-server.js"
 import { registerMcpRoutes } from "./mcp/index.js"
@@ -295,7 +294,6 @@ registerMcpRoutes(app)
 registerAgentMcpRoutes(app)
 registerExternalConnectionProxyRoutes(app)
 registerPublicMcpAppRoutes(app)
-registerConnectionServerRoutes(app)
 registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
 
@@ -421,7 +419,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Managed deployments", description: "OpenWork installations in an organization's own cloud account: launch approval, installer milestones and health reports." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
       { name: "Devices", description: "Personal and shared computers, plus permission-gated team computer inventory for the current organization, including registered OpenWork instances. Inventory grants no control or access to private content." },
-      { name: "Documents", description: "Connected Drive documents, inline editing and file-bound temporary Office sessions." },
+      { name: "Documents", description: "Connected Drive and OneDrive documents: listings, metadata and read-only previews." },
       { name: "Workbot", description: "The signed-in member's single Workbot conversation." },
       { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },
       { name: "Workflow Runs", description: "Durable Workflow run history." },

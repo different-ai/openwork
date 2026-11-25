@@ -1,9 +1,8 @@
 # Workbot: Your agent's brief and check rhythm
 
-Feature `workbotAgentBrief` (cloud and self-hosted, off by default). Author: `benjaminshafii`.
-It works on top of [Your agent](../workbot-proactive/README.md) (`workbotProactive`): both must be on for a member.
-Off, Your agent works exactly as before (the legacy prompts are pinned by hash in
-`ee/apps/den-api/test/workbot-agent-brief.test.ts`).
+Generally available on Cloud and self-hosted (retired rollout: `workbotAgentBrief`). Owner: `benjaminshafii`.
+This is the standard behavior when [members' agents](../workbot-proactive/README.md) are enabled in Manage › Workbot.
+Before/after comparisons and replay results below describe the original rollout; there is no brief rollout switch now.
 
 Your agent stops having four fixed message types (morning brief, meeting prep with a lead time, calendar changes,
 waiting on you) and gets the shape every proactive product we looked at shares: **one rhythm, a free-text brief the
@@ -37,7 +36,8 @@ The same recorded day through today's prompts and the brief's pipeline (replay e
 | --- | --- | --- |
 | When it looks | A morning pass, about every 3 hours, and calendar wakes (a meeting with outsiders 15 minutes before, a change someone else made) | A check every 2 hours from the start of the working day (8, 10, 12, 2, 4, 6 by default), plus up to 3 extra checks a day it asks for with `request_check(at, why)` ("1:45 PM: before your 2 PM with Northwind"). No calendar wakes |
 | What it tells people about | Four switches in the template, members mute them | The organization's brief (plain text, default below) plus each member's own lines ("Also watch our Render bill.") |
-| How a check works | One turn writes the message | Step 1, the check: researches, keeps notes, reports findings with P0/P1/P2. Step 2, the message: only for P0/P1, a short tool-less turn with the member's recent Workbot DM writes one message per finding |
+| How a check works | One turn writes the message | The agent reads sources, keeps notes, and writes at most one DM with the findings that matter now. No separate writer. |
+| Sources that need connecting | One notice per connection | One notice for all newly unreadable connections, separate from the brief |
 | Daily limit | 3 | 4 (an organization that chose another limit keeps it) |
 | Members' quiet window | Only urgent messages inside it | Quiet hours: no checks and nothing sent; anything urgent goes first at the next check |
 
@@ -77,7 +77,7 @@ labeled lines ("Never tell me about: newsletters").
 
 ## Carrying the earlier settings over
 
-Nothing is written when the flag turns on. Until an admin or member saves, Den reads the brief from what they had
+Retirement does not rewrite stored agent settings. Until an admin or member saves, Den reads the brief from what they had
 (`resolveAgentBrief`, `carriedOverMemberBrief` in `@openwork/types/den/workbot-proactive`), and shows "From your
 earlier settings":
 
@@ -88,23 +88,18 @@ earlier settings":
 - The meeting lead time is dropped: the agent asks for an extra check before a meeting that matters instead.
 - A member's only-urgent window becomes quiet hours.
 
-Turning the flag off goes back to the template, mutes and words, which are untouched.
+The original template, mutes and words are kept for carry-over.
 
 ## The pipeline
 
 ```
 rhythm (every N hours in hours) ─┐
-request_check(at, why) ──────────┴▶ step 1: the check, in the agent's own read-only session
-                                     brief + sources ─▶ notes in memory/ ─▶ findings report (P0/P1) | NO_FINDINGS
-                                                  │
-                     only P0/P1 and room today ───┘
-                                                  ▼
-                                     step 2: the message, a fresh tool-less session
-                                     member's recent Workbot DM + sent today + now + next check + first check
-                                                  ─▶ {"messages":[{text, about[], update}]} | NO_REPLY
-                                                  │  (malformed: retried once, then dropped and logged)
-                                                  ▼
-                                     Den's hard limits ─▶ a Workbot DM per message, as today
+request_check(at, why) ──────────┴▶ check in the agent's own session
+                                     brief + sources + recent Workbot DM + daily count
+                                     ─▶ notes in memory/ + {"messages":[{text, about[], update}]} | NO_REPLY
+                                     ─▶ retry invalid output once in the same session
+                                     ─▶ combine any messages and apply Den's hard limits
+                                     ─▶ at most one brief DM
 ```
 
 - **Rhythm** (`checkSlotsOn`, `nextCheckSlot` in `@openwork/automations/proactive-brief`): slots anchored to the start
@@ -113,38 +108,26 @@ request_check(at, why) ──────────┴▶ step 1: the check, i
   rhythm, so a member who slows it down gets the new rhythm at once. The first check of the day is flagged
   `first_check` (records keep the `morning` kind).
 - **request_check(at, why)**: an MCP tool only the agent's own background check sees (a token Den minted with the
-  agent's read allowlist and at least one source; never chat, never the messenger). It changes only that member's agent
+  agent's read allowlist and at least one source; never chat). It changes only that member's agent
   schedule. Capped at the organization's extra checks per day, only inside hours and outside quiet hours, within the
   next 24 hours, idempotent (a second request within ten minutes is the same one), and covered by a scheduled check up
   to 15 minutes before. Audited as `agent.check_request.create`. My bot shows it: "Next check 1:45 PM: before your 2 PM
   with Northwind."
-- **Step 1, the check** (`agentCheckInstructions`, `agentCheckPrompt`): the existing session (`hs_agent_<hash>`), the
-  existing read-scoped token and allowlist, its own `memory/` (notes.md, open.md, and a checkpoint per check under
-  `memory/checks/<date>/<time>.md`, which it deletes after 14 days as the check prompt says). The brief and the source
-  list are data people in OpenWork wrote; what the sources contain is data from other people.
-- **Step 2, the message** (`agentMessagePrompt`): a fresh runner session per check (`hs_agentmsg_<hash>`), `readOnly`
-  (no file tools) with an agent token that may read no source, deleted after. Not the member's Workbot chat session:
-  it would need its tools taken away, would leave the findings in the member's chat memory, and could collide with a
-  conversation in progress; the context it needs (the member's recent Workbot DM: the newest 20 messages of the last
-  two days, including replies in the newest threads, read with the Workbot app's bot token and `im:history`, which it
-  already has) is injected instead. Den keeps none of it. Delivered text lands in the same Workbot DM as today, which is
-  where the member answers.
-- **Den's hard limits** (`decideBriefDelivery`): outside hours, in quiet hours or snoozed nothing is sent or recorded;
-  only `about` ids from sources the check read (aliases like "slack" resolved); told once per `about` id, recorded in
-  the existing ledger; `update: true` passes told-once once per day for the same items (a real change usually has a new
-  id: the new reply, the event's new version); then the daily limit, in the order step 2 wrote them. When today's limit
-  is reached step 2 doesn't run at all. Delivery is `sendWorkbotDirectMessage` with the same cleaning (no mentions,
-  links only to the member's Google workspace and the services behind the sources it read).
-
-The prompts are ported from the design spec as constants in `packages/automations/src/proactive-brief.ts`; see
-[Prompt changes](#prompt-changes) for every wording change the evals justified.
+- **The check** (`agentOneMessageInstructions`, `agentCheckPrompt`) uses the agent's read-scoped session and its own
+  `memory/` (notes, open items, and checkpoints pruned after 14 days). It receives the daily count and recent Workbot
+  conversation so it can avoid repeating what the member already knows. The agent treats source text as information,
+  not instructions. It writes short paragraphs with links in the sentences they support.
+- **Den's hard limits** (`decideBriefDelivery`): no brief is sent outside hours, during the quiet window or while
+  snoozed. Only IDs from sources the check read count toward delivery. Den keeps the existing told-once ledger,
+  update rules and daily limit. The Slack text is cleaned before delivery and capped at 3,000 characters.
+- **Disconnected sources**: Den sends one separate notice covering newly unreadable connections, with a link for
+  each and a note on whether the remaining sources are still being checked.
 
 ## Records, counters and /admin
 
-- `agent_member_check`: one record per check as today, with new reasons `no_findings` (quiet: nothing for the
-  messenger) and `findings_held` (quiet: found something that can wait), the new kind `requested`, and "Sent you 2
-  messages…" when a check sends several. `daily_limit`, `already_told`, `unreadable_reply` and the failure reasons are
-  unchanged, so /admin › Features reads them as before.
+- `agent_member_check`: one record per brief check, including requested checks. Quiet replies record `no_findings`;
+  the optional send check can record `findings_held`. The existing `daily_limit`, `already_told`, `unreadable_reply`
+  and failure reasons are unchanged.
 - `agent_check`: one counter row per check, `responsibility = "rhythm"`, instead of a row per responsibility. Its
   `checks` and `sent` sum with the rest for /admin › Features; Manage › Workbot shows it as one row.
 - `agent_delivery`: the same ledger, `responsibility = "brief"` for the brief's rows; `update:<hash>:<date>` keys for
@@ -152,30 +135,25 @@ The prompts are ported from the design spec as constants in `packages/automation
 
 ## Cost
 
-Step 1 carries no chat history (only its own session and notes); step 2 runs only for P0/P1 findings and while
-today's limit has room. Den logs `workbot_agent_step_usage` (step, input, cached input and output tokens) for each
-turn. In the replay evals (gpt-6-luna), a check averaged 5.7 model calls, about 24,900 input tokens (19,700 of them
-cached) and 2,100 output tokens for step 1, and step 2 ran in 40% of checks at about 1,050 input and 370 output tokens;
-today's single turn averaged 3.8 calls, 6,700 input (5,400 cached) and 680 output. Most of step 1's extra is the
-research it now does (sent mail, threads, the calendar) and the notes it keeps; the system prompt also carries every
-`memory/` file, so checkpoints are short and pruned after 14 days.
+Den logs `workbot_agent_step_usage` (step, input, cached input and output tokens) for the check and any retry. The
+check now receives the recent Workbot conversation and no longer hands findings to a separate writer. The original
+replay evals measured the previous two-turn pipeline, not this one.
 
 ## API
 
 - `GET /v1/org/workbot-settings/proactive`: `brief` `{checkEveryHours, dailyCap, extraChecksPerDay, text, defaultText,
-  carriedOver}` with the flag on. `PUT` takes `brief` (any subset); without the flag, 400.
-- `GET /v1/org/workbot-settings/proactive/health`: `rhythm` `{checks, quiet, sent}` with the flag on.
+  carriedOver}`. `PUT` takes `brief` (any subset).
+- `GET /v1/org/workbot-settings/proactive/health`: `rhythm` `{checks, quiet, sent}`.
 - `GET /v1/me/agent` (`getMeAgent`): `brief` `{lines, organization, carriedOver}`, `nextChecks` `[{at, kind, why}]`,
   `limits.checkEveryHours`, `limits.admin.checkEveryHours`, `limits.extraChecksPerDay`; `responsibilities` is empty.
 - `PUT /v1/me/agent` (`putMeAgent`): `checkEveryHours` (1–4, never more often than the admin's, null for theirs) and
-  `brief` `{add?, remove?, set?}`; errors `limit_wider_than_admin`, `brief_line_not_found`, `brief_too_long`, and
-  `brief_unavailable` without the flag.
-- Connect tells chat, with the flag on: "To change what Your agent tells the user ("also watch our Render bill", "never
+  `brief` `{add?, remove?, set?}`; errors `limit_wider_than_admin`, `brief_line_not_found`, and `brief_too_long`.
+- Connect tells chat: "To change what Your agent tells the user ("also watch our Render bill", "never
   tell me about newsletters": lines added to their brief) or how often it checks, use putMeAgent…".
 
 ## Any connected connector as a source
 
-Same flag. Before, Manage › Workbot › Connectors (then "What agents read") and My bot offered only Den's own
+Before retirement, Manage › Workbot › Connectors (then "What agents read") and My bot offered only Den's own
 providers for the calendar and MCP connections whose service had a hand-reviewed list of read tools (Slack, Linear,
 Notion, GitHub, Granola; #6630). Every other connector the organization or member had connected was invisible. With
 the brief on, **every connection is offered**: each MCP connection (custom ones included) and Den's own providers for
@@ -240,7 +218,7 @@ token, which is per check by construction.
   admin's `override` and `locked`; `readTools`; `status` `needs_connection` when the admin's own account isn't connected
   (per-member connectors), `unavailable` when the server didn't answer. Needs View connections.
 - `PUT /v1/org/workbot-settings/proactive`: `sources.toolOverrides` `{<connection id>: {<tool>: "allow" | "deny" | null} | null}`.
-  Off, 400. `sources.connections` takes any connection with the flag on.
+  `sources.connections` takes any connection in the organization.
 - `GET /v1/org/workbot-settings/proactive`: `sourceConnections.other` lists every connection, each with `native` and the
   `policy` it has now.
 - `GET /v1/me/agent`: every connection the member can use is a source; other sources carry `readTools` (null while
@@ -274,16 +252,14 @@ I checked the ticket updates and your sent mail and found no response. I can dra
 - The member's page waits up to 4 seconds for a connector's tools (Den's tool cache answers most at once) and shows
   nothing about them if it can't.
 
-## Turning it off
+## Turning agents off
 
-The kill switch (or the organization override) sends every member back to today's agent on the next wake: the worker
-picks the wake per member and per check. A message about to be sent re-checks the flag right before sending. The
-brief settings, members' lines and extra-check requests stay stored and come back when it's turned on again. Today's
-settings page and agent never read or drop them.
+The organization or team policy and the member's own settings still decide whether an agent runs. A message about
+to be sent rechecks access and the worker's lease. Turning agents off does not erase the brief or members' lines.
 
-## Follow-up: what retiring the old path deletes
+## Original cleanup plan (historical)
 
-Once the brief is on everywhere:
+Retirement removed the legacy wake and UI. Stored carry-over, historical check records and older API inputs remain compatible. The original list of candidates was:
 
 - `packages/types/src/den/workbot-proactive.ts`: `AGENT_RESPONSIBILITIES`, `AGENT_RESPONSIBILITY_COPY`,
   `WORKBOT_PROACTIVE_LEAD_MINUTES`, `leadMinutes`, `dailyCap` (the brief's becomes the one), the template content and
@@ -312,7 +288,7 @@ Once the brief is on everywhere:
 
 ```sh
 pnpm dev:den:mysql && pnpm dev:workbot
-# /admin › Features › Workbot: Your agent and Workbot: Your agent's brief and check rhythm › on for your organization
+# Enable members’ agents in Manage › Workbot
 ```
 
 `pnpm --filter @openwork/automations test` (prompts, rhythm across DST, requests, parsing, Den's limits),
@@ -325,7 +301,9 @@ names), `workbot-agent-any-connector.test.ts` and `workbot-agent-any-connector.a
 `workbot-agent-tools.test.tsx` in den-web, `evals/proofs/workbot-agent-any-connector.proof.test.ts`, and
 `--only custom-connector` in the replay evals.
 
-## Replay evals
+## Original brief replay evals
+
+The results below compare the pre-brief flow with the original two-turn brief. They do not measure the current one-turn check.
 
 `evals/scripts/agent-brief-replay.ts` (`pnpm --dir evals agent:brief-replay`) replays twelve recorded days
 (`evals/scripts/agent-replay/day-scenarios.ts`: fictional people on `.example` domains; calendar, Gmail, Slack,
@@ -337,7 +315,7 @@ Each item becomes visible when it happened, so each check reads only what existe
 interruptions: messages about nothing required, about something never worth it, or a repeat; quiet days; the lead's
 length, length, a link, no formatting) and by an LLM judge (`anthropic/claude-sonnet-4.5`) for the rest.
 
-Final run (the prompts in this PR):
+Final run (the original brief prompts):
 
 | | Old prompts | New pipeline |
 | --- | --- | --- |
@@ -402,9 +380,9 @@ Harness fixes along the way: both pipelines start as an established agent that l
 deadline must be told by 2 PM, not 10 AM (v1); the PR #812 scenario requires the release-blocker escalation and lets
 the review request itself be mentioned (v2); Slack search returns thread replies as messages, as Slack does (v3).
 
-## Prompt changes
+## Historical prompt changes
 
-Every wording change from the spec, with the failure it fixed (v0 → final):
+These are changes to the original two-turn prompts (v0 → v3), not the current one-turn prompt:
 
 | Where | Change | Why (what the evals showed) |
 | --- | --- | --- |

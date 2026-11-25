@@ -230,7 +230,7 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
                 <p className="text-gray-500">
                   {atLimit
                     ? `Remove an origin to approve another. Up to ${limit}.`
-                    : "Members who sign in on an approved origin share their OpenWork session with that site."}
+                    : "Members confirm before signing in on an approved origin. That site can then act for them in this organization only."}
                 </p>
               ) : (
                 <p className="flex items-center gap-2 text-gray-500">

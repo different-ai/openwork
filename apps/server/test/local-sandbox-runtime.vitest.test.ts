@@ -48,21 +48,16 @@ test("the managed v2 config registers the sandbox plugin only with the host brid
   expect(rendered.plugins).toEqual([{ package: "file:///plugins/sandbox", options: { url: "http://127.0.0.1:2/sandbox", token: "sandbox" } }]);
 });
 
-test("fresh rollout verification refuses unknown/disabled states and never bypasses existing edit restrictions", async () => {
+test("fresh verification refuses an unreachable Den and never bypasses existing edit restrictions", async () => {
   const f = await fixture();
-  let enabled = false;
   let restricted = false;
-  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: request => {
-    if (new URL(request.url).pathname === "/v1/org") return Response.json({ features: { sandboxTools: enabled } });
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: () => {
     return Response.json({ agentPermissions: { rules: restricted ? [{ action: "edit", resource: "*", effect: "deny", source: "Test policy" }] : [] } });
   } });
   const policy = managedDesktopPolicy(f.config, { sandboxFreshnessMs: 0 });
   try {
-    expect((await policy.localSandboxAccess()).enabled).toBe(false);
     await policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_test", token: "fixture-token" });
     await policy.current();
-    expect((await policy.localSandboxAccess()).enabled).toBe(false);
-    enabled = true;
     expect((await policy.localSandboxAccess()).enabled).toBe(true);
     restricted = true;
     expect((await policy.localSandboxAccess()).enabled).toBe(false);
@@ -71,7 +66,7 @@ test("fresh rollout verification refuses unknown/disabled states and never bypas
   } finally { await policy.clearSession(); await den.stop(); await f.cleanup(); }
 });
 
-test("flag off never constructs a provider; malformed and unauthorized directories never allocate", async () => {
+test("refused access never constructs a provider; malformed and unauthorized directories never allocate", async () => {
   const f = await fixture();
   let factories = 0;
   const runtime = createLocalSandboxRuntime(f.config, {
@@ -185,7 +180,7 @@ test("a retained stopped entry resumes the same local guest before reuse", async
   } finally { await runtime.close(); await f.cleanup(); }
 });
 
-test("loopback bridge requires its own credential and rechecks the rollout for execution", async () => {
+test("loopback bridge requires its own credential and rechecks access for execution", async () => {
   const f = await fixture();
   let enabled = true;
   let runs = 0;

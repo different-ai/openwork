@@ -30,3 +30,15 @@ run "adopt_managed_data" {
   command   = plan
   state_key = "managed"
 }
+# A deployment last applied from Cloud Shell: the provider impersonated the
+# runner and sizing was literal. The current root names no identity and takes
+# sizing from the profile. Planning it on that state must change nothing.
+run "cloud_shell_era_state" {
+  command   = apply
+  state_key = "cloud_shell"
+  module { source = "./tests/cloud-shell-root" }
+}
+run "cloud_build_root_changes_nothing" {
+  command   = plan
+  state_key = "cloud_shell"
+}

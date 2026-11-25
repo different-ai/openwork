@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { WorkspaceLimitReachedError, recordWorkspaceLimitReached, workspaceLimitReachedSchema } from "../../workspace-create-limit.js"
 import { deploymentCapabilitiesSchema } from "@openwork/types/den/deployment-capabilities"
 import { permissionKeySchema } from "@openwork/types/den/permissions"
 import { eq } from "@openwork-ee/den-db/drizzle"
@@ -402,7 +403,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         201: jsonResponse("Organization created successfully.", organizationResponseSchema),
         400: jsonResponse("The organization creation request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to create an organization.", unauthorizedSchema),
-        403: jsonResponse("API keys cannot create organizations.", forbiddenSchema),
+        403: jsonResponse("API keys cannot create organizations, or the person reached their workspace limit.", forbiddenSchema.or(workspaceLimitReachedSchema)),
         409: jsonResponse("Organization creation is disabled in single-org mode.", singleOrgModeSchema),
       },
     }),
@@ -419,10 +420,15 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     const user = c.get("user")
     const input = c.req.valid("json")
 
-    const organizationId = await createOrganizationForUser({
-      userId: normalizeDenTypeId("user", user.id),
-      name: input.name,
-    })
+    const userId = normalizeDenTypeId("user", user.id)
+    let organizationId: Awaited<ReturnType<typeof createOrganizationForUser>>
+    try {
+      organizationId = await createOrganizationForUser({ userId, name: input.name, enforceCreateLimit: true })
+    } catch (error) {
+      if (!(error instanceof WorkspaceLimitReachedError)) throw error
+      await recordWorkspaceLimitReached({ requestId: c.get("requestId"), method: "POST", route: "/v1/org", userId })
+      return c.json(error.body, 403)
+    }
 
     await setRequestActiveOrganization(c, organizationId)
 

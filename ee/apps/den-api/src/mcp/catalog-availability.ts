@@ -4,6 +4,12 @@ export type CatalogAvailabilityContext = {
   usageSource?: string
 }
 
+const GMAIL_THREAD_READ_PATH = "/v1/capabilities/google-workspace/gmail-thread/{threadId}"
+
+export function filterGmailThreadRead<T extends { path: string }>(catalog: readonly T[], enabled?: boolean): readonly T[] {
+  return enabled ? catalog : catalog.filter((operation) => operation.path !== GMAIL_THREAD_READ_PATH)
+}
+
 export const AGENT_CONNECTION_REMOVAL_PATH = "/v1/mcp-connections/{connectionId}/removal-request"
 
 export function catalogOperationAvailableToCapabilities(

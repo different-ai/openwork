@@ -8,6 +8,8 @@ import app from "./app.js"
 import { startSlackAssistantWorker } from "./slack-assistant/worker.js"
 import { startSlackDesktopHandoffWorker } from "./slack-assistant/desktop-handoff.js"
 import { startWorkbotProactiveWorker } from "./workbot-proactive/worker.js"
+import { startHarnessFeedbackNotifier } from "./harness-feedback/notifier.js"
+import { startHarnessFeedbackWorker } from "./harness-feedback/worker.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
@@ -22,6 +24,8 @@ import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-
 import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 import { markServerListening } from "./server-start.js"
+import { externalToolCatalogCacheUsage } from "./mcp/external-tool-catalog-cache.js"
+import { externalToolsSearchCacheUsage } from "./mcp/external-tools-search-cache.js"
 import { startMcpRegistrationProbeLoop } from "./mcp-registration/probe.js"
 import { startAdminMetricsRefreshLoop } from "./admin-metrics/worker.js"
 import { startComputerFleetSampler } from "./computer-fleet/service.js"
@@ -33,6 +37,8 @@ const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
 const stopMcpEventWorker = startMcpEventWorker()
 const stopNativeEventWorker = startNativeEventWorker()
 const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
+const stopHarnessFeedbackWorker = startHarnessFeedbackWorker()
+const stopHarnessFeedbackNotifier = startHarnessFeedbackNotifier()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
 const stopSandboxExpiryLoop = startSandboxExpiryLoop()
@@ -47,6 +53,19 @@ const stopRunnerFleetSampler = startRunnerFleetSampler()
 const stopComputerFleetSampler = startComputerFleetSampler()
 const stopConfigBlobWorker = startConfigBlobWorker()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
+const toolCacheMaintenance = setInterval(() => {
+  const memory = process.memoryUsage()
+  appLogger.info("external MCP tool cache usage", {
+    component: "mcp_tool_cache",
+    catalog: externalToolCatalogCacheUsage(),
+    search: externalToolsSearchCacheUsage(),
+    rss_bytes: memory.rss,
+    heap_used_bytes: memory.heapUsed,
+    heap_total_bytes: memory.heapTotal,
+    external_bytes: memory.external,
+  })
+}, 60_000)
+toolCacheMaintenance.unref()
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
 
@@ -61,6 +80,7 @@ if (!(server instanceof Server)) throw new Error("den-api expects an HTTP/1.1 se
 const OBSERVABILITY_SHUTDOWN_TIMEOUT_MS = 2_500
 
 async function stopBackgroundLoops() {
+  clearInterval(toolCacheMaintenance)
   stopModelsAnalyticsExportLoop()
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
@@ -70,6 +90,8 @@ async function stopBackgroundLoops() {
     stopSlackAssistantWorker(),
     stopSlackDesktopHandoffWorker(),
     stopWorkbotProactiveWorker(),
+    stopHarnessFeedbackWorker(),
+    stopHarnessFeedbackNotifier(),
     stopMcpEventWorker(),
     stopNativeEventWorker(),
     stopCloudIdleStopLoop(),

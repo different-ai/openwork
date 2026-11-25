@@ -35,6 +35,7 @@ export type AutoTarget = {
 }
 
 export type AutoRouterDependencies = {
+  fundedAccess?: () => Promise<Response | null> | undefined
   loadConfig: LoadAutoRouterConfig
   loadMemberGatewayAccess: (identity: GatewayContext) => Promise<GatewayMemberAccessRow[]>
   catalog: ProviderCatalog
@@ -216,6 +217,19 @@ async function readJson(response: Response): Promise<unknown> {
   return response.json().catch(() => null)
 }
 
+async function readErrorBodyOfAnyContentType(response: Response): Promise<unknown> {
+  const text = await response.text().catch(() => "")
+  const parse = (value: string): unknown => { try { return JSON.parse(value) } catch { return null } }
+  const whole = parse(text)
+  if (whole !== null) return whole
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("data:")) continue
+    const event = parse(line.slice(5).trim())
+    if (event !== null) return event
+  }
+  return null
+}
+
 export async function translateResponse(response: Response, translator: AutoTranslator, input: TranslateResponseInput, options: { smart: boolean } = { smart: true }): Promise<Response> {
   const contentType = response.headers.get("content-type")
   const { route } = input
@@ -229,7 +243,7 @@ export async function translateResponse(response: Response, translator: AutoTran
   const error = (body: JsonObject) => options.smart ? annotateChatError(body, route) : body
   const stream = (body: ReadableStream<Uint8Array>) => options.smart ? annotateChatStreamErrors(body, route) : body
   if (!response.ok) {
-    const body = isJsonContentType(contentType) ? await readJson(response) : (await response.body?.cancel().catch(() => {}), null)
+    const body = await readErrorBodyOfAnyContentType(response)
     return respond(JSON.stringify(error(translator.errorToChat(body, response.status))), "application/json")
   }
   if (response.body && (isEventStreamContentType(contentType) || isAwsEventStreamContentType(contentType) || (input.stream && !isJsonContentType(contentType)))) {
@@ -253,6 +267,8 @@ export async function handleAutoRequest(input: {
   dependencies: AutoRouterDependencies
 }): Promise<Response> {
   const { request, body, routerId, identity, dependencies } = input
+  const denied = await dependencies.fundedAccess?.()
+  if (denied) return denied
   if (!dependencies.routingConfigured) {
     return autoRouterError("notConfigured")
   }

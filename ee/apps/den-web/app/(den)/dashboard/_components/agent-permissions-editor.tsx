@@ -57,7 +57,6 @@ import {
   agentPermissionChoiceOptions,
   agentPermissionChoiceValue,
   agentPermissionToggleState,
-  sandboxRequirementVisibility,
   storedAgentPermissionDecision,
   visibleAgentPermissionGroups,
   visibleAgentPermissionTryKinds,
@@ -258,7 +257,6 @@ function ScopeAgents({ access, data, policy, team, area }: {
         scopeId={policy.scopeId}
         team={team}
         settings={settings}
-        saved={policy.settings}
         everyone={data.everyone.settings}
         area={area}
         editable={editable}
@@ -353,6 +351,11 @@ const ROW_COPY: Record<string, string> = {
   appScripting: "Run AppleScript and other scripts in Mac apps",
   websites: "Pages the agent fetches and the built-in browser opens",
   browserUploads: "Member decides asks unless remembered. Ask first asks every time.",
+  privateValueFills: "Passwords and codes the agent fills without seeing them. The member approves every fill.",
+  privateValueCommands: "Commands OpenWork runs to get a value, like a password manager's",
+  privateValuePaste: "The member pastes a value into OpenWork's own card",
+  privateValueTerminal: "Off keeps any program the agent fills private values from out of its own terminal",
+  privateValueRuns: "Programs the agent runs with a private value it never sees, like a deploy script's token",
   fileSends: "Drive uploads and saves, and Gmail and Outlook drafts with attachments",
   webSearch: "Look things up with a web search",
   localSkills: "Skills installed on the member's computer",
@@ -361,11 +364,10 @@ const ROW_COPY: Record<string, string> = {
 
 const PATTERN_NOUN: Record<string, string> = { website: "site" };
 
-export function AgentPermissionsEditor({ scopeId, team, settings, saved, everyone, area = "all", editable, onChange }: {
+export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area = "all", editable, onChange }: {
   scopeId: AgentPermissionScopeId;
   team: string | null;
   settings: AgentPermissionSettings;
-  saved: AgentPermissionSettings;
   everyone: AgentPermissionSettings;
   area?: AgentPermissionsArea;
   editable: boolean;
@@ -373,15 +375,10 @@ export function AgentPermissionsEditor({ scopeId, team, settings, saved, everyon
 }) {
   const scope = teamScopeOf(team === null ? null : { id: scopeId, name: team });
   const { orgContext } = useOrgDashboard();
-  const features = { sandboxTools: orgFeatureEnabled(orgContext, "sandboxTools") };
-  const inherited = team === null ? null : everyone;
-  const draftRows = sandboxRequirementVisibility(features, settings, inherited);
-  const savedRows = sandboxRequirementVisibility(features, saved, inherited);
-  const sandboxRows = { hostExecution: draftRows.hostExecution || savedRows.hostExecution, sandboxOptOut: draftRows.sandboxOptOut || savedRows.sandboxOptOut };
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       <ItemPanel className="!py-0">
-        {visibleAgentPermissionGroups(area, sandboxRows).map((group) => (
+        {visibleAgentPermissionGroups(area, { privateValues: orgFeatureEnabled(orgContext, "privateValues") }).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="pb-1 pt-3 text-[12px] font-medium text-[var(--dls-text-secondary)]">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -394,7 +391,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, saved, everyon
                   setting={settings[definition.key]}
                   everyoneSetting={team === null ? settings[definition.key] : everyone[definition.key]}
                   editable={editable}
-                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone, features)}
+                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone)}
                   onChange={(setting) => onChange(withSetting(settings, definition.key, setting))}
                 />
               );

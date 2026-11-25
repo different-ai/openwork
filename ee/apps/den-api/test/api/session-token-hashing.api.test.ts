@@ -66,13 +66,19 @@ test("a new session is stored only as its hash, and the hash does not sign anyon
 
 })
 
-test("desktop handoff hands over the person's token, not the stored hash", async () => {
+test("desktop handoff hands over a new token, stored only as its hash", async () => {
   const person = await den.signUp("Handoff User")
   const created = await den.request(person.token, "POST", "/v1/auth/desktop-handoff", { headers: { cookie: person.cookie }, body: {} })
   assert.equal(created.status, 200, summary(created))
   const exchanged = await den.request(null, "POST", "/v1/auth/desktop-handoff/exchange", { body: { grant: text(field(created.body, "grant"), "grant") } })
   assert.equal(exchanged.status, 200, summary(exchanged))
-  assert.equal(field(exchanged.body, "token"), person.token)
+  const handedOver = text(field(exchanged.body, "token"), "handed-over token")
+  assert.notEqual(handedOver, person.token)
+  const stored = await storedTokens(person.userId)
+  assert.ok(stored.includes(sha256(handedOver)))
+  assert.ok(!stored.includes(handedOver))
+  const me = await den.request(handedOver, "GET", "/v1/me")
+  assert.equal(me.status, 200, summary(me))
 })
 
 test("revoking other sessions and signing out still find hashed sessions", async () => {

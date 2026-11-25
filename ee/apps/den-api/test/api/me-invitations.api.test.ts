@@ -50,3 +50,25 @@ test("other people and signed-out callers see no invitations", async () => {
   assert.deepEqual(field(listed.body, "invitations"), [])
   assert.equal((await den.request(null, "GET", "/v1/me/invitations")).status, 401)
 })
+
+async function signUpThroughInvitation(name: string, email: string, query: string) {
+  const created = await den.request(null, "POST", `/api/auth/sign-up/email?${query}`, { body: { email, name, password: den.password } })
+  assert.equal(created.status, 200, summary(created))
+  const signedIn = await den.signIn(email)
+  assert.equal(signedIn.status, 200, summary(signedIn))
+  return text(field(signedIn.body, "token"), "session token")
+}
+
+test("the join token an inviter can read does not verify the invited address", async () => {
+  const email = `not-their-inbox+${den.stamp}@example.test`
+  const invited = await den.request(org.owner.token, "POST", "/v1/invitations", { orgId: org.orgId, body: { email, role: "member" } })
+  assert.ok(invited.status < 300, summary(invited))
+  const inviteToken = text(field(invited.body, "inviteToken"), "invite token")
+
+  const token = await signUpThroughInvitation("Not Their Inbox", email, `invite=${encodeURIComponent(inviteToken)}`)
+  const listed = await den.request(token, "GET", "/v1/me/invitations")
+  assert.equal(listed.status, 200, summary(listed))
+  assert.deepEqual(field(listed.body, "invitations"), [])
+  const [rows] = await client.query("SELECT email_verified FROM user WHERE email = ?", [email])
+  assert.equal(Number(field(list(rows)[0], "email_verified")), 0)
+})

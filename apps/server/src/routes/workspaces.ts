@@ -183,7 +183,6 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     );
 
     const persisted = await persistServerWorkspaceState(config);
-    onWorkspacesChanged();
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -214,7 +213,6 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
       ...config.workspaces.filter((entry) => entry.id !== workspace.id),
     ];
     const persisted = persist ? await persistServerWorkspaceState(config) : false;
-    if (persist) onWorkspacesChanged();
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,

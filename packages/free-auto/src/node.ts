@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { Worker } from "node:worker_threads";
-import { DESKTOP_FREE_RELEASE_TAG_PATTERN, desktopFreeReleaseTagMessage, type DesktopFreeProofClaims, type DesktopFreeProofRequest } from "./protocol.js";
+import { DESKTOP_FREE_RELEASE_TAG_PATTERN, desktopFreeReleaseTagMessage, WORKBOT_FREE_GRANT_SECRET_MIN_LENGTH, WORKBOT_FREE_GRANT_TTL_MS, type DesktopFreeProofClaims, type DesktopFreeProofRequest, type WorkbotFreeGrantClaims } from "./protocol.js";
 import { desktopFreeSessionPowMessage, leadingZeroBits, solveSessionPowWith, verifySessionPowWith, type SessionPowParams } from "./pow.js";
 
 /** SHA-256 hex, as used for proof body and authorization hashes. */
@@ -86,4 +86,41 @@ export function startSessionPow(input: { machineId: string; nonce: string } & Se
   const promise = solved.catch((error: unknown) => { if (cancelled) throw error; return solveSessionPow(input); });
   const cancel = () => { cancelled = true; promise.catch(() => undefined); void worker?.terminate(); };
   return { nonce: input.nonce, bits: input.bits, rounds: input.rounds, promise, cancel };
+}
+
+const WORKBOT_GRANT_CONTEXT = "openwork-workbot-free-grant:v1:";
+
+export function readWorkbotFreeGrantSecret(environment: Record<string, string | undefined>): string | null {
+  const secret = environment.WORKBOT_FREE_GRANT_SECRET?.trim() ?? "";
+  if (!secret) return null;
+  if (secret.length < WORKBOT_FREE_GRANT_SECRET_MIN_LENGTH) throw new Error(`WORKBOT_FREE_GRANT_SECRET must be at least ${WORKBOT_FREE_GRANT_SECRET_MIN_LENGTH} characters`);
+  return secret;
+}
+
+function workbotGrantSignature(secret: string, payload: string): string {
+  return createHmac("sha256", secret).update(WORKBOT_GRANT_CONTEXT + payload).digest("base64url");
+}
+
+export function signWorkbotFreeGrant(secret: string, claims: WorkbotFreeGrantClaims): string {
+  const payload = Buffer.from(JSON.stringify([claims.keyId, claims.organizationId, claims.memberId, claims.expiresAt])).toString("base64url");
+  return `${payload}.${workbotGrantSignature(secret, payload)}`;
+}
+
+export function verifyWorkbotFreeGrant(secret: string, grant: string | null | undefined, expected: Omit<WorkbotFreeGrantClaims, "expiresAt">, now = Date.now()): boolean {
+  if (!grant || grant.length > 1024) return false;
+  const [payload, signature, extra] = grant.split(".");
+  if (!payload || !signature || extra !== undefined) return false;
+  const supplied = Buffer.from(signature);
+  const computed = Buffer.from(workbotGrantSignature(secret, payload));
+  if (supplied.length !== computed.length || !timingSafeEqual(Uint8Array.from(supplied), Uint8Array.from(computed))) return false;
+  let claims: unknown;
+  try {
+    claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(claims) || claims.length !== 4) return false;
+  const [keyId, organizationId, memberId, expiresAt] = claims;
+  return keyId === expected.keyId && organizationId === expected.organizationId && memberId === expected.memberId
+    && typeof expiresAt === "number" && Number.isSafeInteger(expiresAt) && expiresAt > now && expiresAt <= now + WORKBOT_FREE_GRANT_TTL_MS;
 }

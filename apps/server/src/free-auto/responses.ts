@@ -2,7 +2,7 @@ import type { ManagedModelRecommendation } from "@openwork/types/den/inference";
 import {
   DESKTOP_FREE_MODEL_ID, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH, type DesktopFreeAccessStatus,
 } from "@openwork/free-auto";
-import { isRecord } from "./http.js";
+import { isRecord, RemoteFailure } from "./http.js";
 
 function isRecommendation(value: unknown): value is ManagedModelRecommendation {
   return isRecord(value) && typeof value.modelID === "string" && typeof value.displayName === "string"
@@ -57,4 +57,11 @@ export function memberCredentialFailure(status: number, body: Uint8Array): { sta
     if (isRecord(error) && typeof error.error === "string" && DEN_ERROR_CODES.includes(error.error)) code = error.error;
   } catch {}
   return { status: mapped, code };
+}
+
+export function desktopAppRequiredFailure(): RemoteFailure {
+  const body = new TextEncoder().encode(JSON.stringify({ error: {
+    code: "desktop_app_required", message: "OpenWork Free works in the OpenWork desktop app. Other models still work.",
+  } }));
+  return new RemoteFailure(403, body, new Headers({ "content-type": "application/json", "cache-control": "no-store" }));
 }

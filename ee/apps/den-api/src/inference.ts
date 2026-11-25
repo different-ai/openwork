@@ -137,10 +137,10 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
 
 export type FreeCredentialRefusal = "free_disabled" | "free_not_offered" | "not_eligible"
 
-export async function issueMemberFreeInferenceCredential(input: FreeMemberInput): Promise<{ credential: { apiKey: string; baseURL: string; statusURL: string; modelID: string } } | { refusal: FreeCredentialRefusal }> {
+export async function issueMemberFreeInferenceCredential(input: FreeMemberInput): Promise<{ credential: { apiKey: string; keyId: string; baseURL: string; statusURL: string; modelID: string } } | { refusal: FreeCredentialRefusal }> {
   if (!env.inferenceFree.enabled) return { refusal: "free_disabled" }
   if (await freeAutoBlockedByDesktopPolicy(input)) return { refusal: "free_not_offered" }
-  const result = await db.transaction(async (tx): Promise<{ apiKey: string } | { refusal: FreeCredentialRefusal }> => {
+  const result = await db.transaction(async (tx): Promise<{ apiKey: string; keyId: string } | { refusal: FreeCredentialRefusal }> => {
     const [organization] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
       .where(eq(OrganizationTable.id, input.organizationId)).limit(1).for("update")
     if (!organization) return { refusal: "not_eligible" }
@@ -150,14 +150,15 @@ export async function issueMemberFreeInferenceCredential(input: FreeMemberInput)
       eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt))).limit(1).for("update")
     if (!member) return { refusal: "not_eligible" }
     const existing = await findActiveMemberInferenceKey(input, tx)
-    if (existing?.encryptedKey && (await inferenceBearerKeyLookupDigests(inferenceBearerKey(existing.encryptedKey))).includes(existing.keyHash)) return { apiKey: existing.encryptedKey }
+    if (existing?.encryptedKey && (await inferenceBearerKeyLookupDigests(inferenceBearerKey(existing.encryptedKey))).includes(existing.keyHash)) return { apiKey: existing.encryptedKey, keyId: existing.id }
     if (existing) await tx.update(InferenceKeyTable).set({ status: "revoked", revoked_at: new Date() })
       .where(and(eq(InferenceKeyTable.org_membership_id, input.memberId), eq(InferenceKeyTable.status, "active")))
-    return { apiKey: (await createMemberInferenceKey(tx, input)).value }
+    const created = await createMemberInferenceKey(tx, input)
+    return { apiKey: created.value, keyId: created.id }
   })
   if ("refusal" in result) return result
   const base = env.modelsPublicBaseUrl.replace(/\/+$/, "")
-  return { credential: { apiKey: result.apiKey, baseURL: `${base}/api/v1`, statusURL: `${base}${MEMBER_FREE_STATUS_PATH}`, modelID: env.inferenceFree.modelID } }
+  return { credential: { apiKey: result.apiKey, keyId: result.keyId, baseURL: `${base}/api/v1`, statusURL: `${base}${MEMBER_FREE_STATUS_PATH}`, modelID: env.inferenceFree.modelID } }
 }
 
 export async function ensureMemberFreeInferenceCredential(input: FreeMemberInput) {
@@ -302,8 +303,9 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 async function createMemberInferenceKey(tx: Tx, input: { organizationId: OrgId; memberId: MemberId }) {
   const key = createInferenceBearerKey()
+  const id = createDenTypeId("inferenceKey")
   await tx.insert(InferenceKeyTable).values({
-    id: createDenTypeId("inferenceKey"),
+    id,
     organization_id: input.organizationId,
     org_membership_id: input.memberId,
     name: "OpenWork Models",
@@ -312,7 +314,7 @@ async function createMemberInferenceKey(tx: Tx, input: { organizationId: OrgId; 
     encrypted_key: key.value,
     status: "active",
   })
-  return key
+  return { ...key, id }
 }
 
 async function findActiveMemberInferenceKey(input: { organizationId: OrgId; memberId: MemberId }, database: Tx | typeof db = db) {

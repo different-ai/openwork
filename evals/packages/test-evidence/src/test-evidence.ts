@@ -227,7 +227,7 @@ function gitValue(args: string[]): string {
 }
 
 /** Trace verbs that change what the person sees; looking (`see`, probes) does not. */
-const SCREEN_ACTIONS = new Set(["click", "dblclick", "rightClick", "type", "press", "hover", "reload", "navigate", "send", "run", "browserTask", "createSession"]);
+const SCREEN_ACTIONS = new Set(["click", "dblclick", "rightClick", "type", "press", "hover", "reload", "navigate", "send", "run", "browserTask", "privateValues", "createSession"]);
 
 /**
  * Each screenshot against the one before it in this test: what the person did

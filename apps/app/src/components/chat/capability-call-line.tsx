@@ -6,7 +6,7 @@ import { ChevronRight, ExternalLink, LoaderCircle, Lock, RefreshCcw } from "luci
 
 import { useCreatedSkills } from "@/components/chat/created-skill-card"
 import { useOptionalMessageList } from "@/components/chat/message-list-provider"
-import { describeChatToolFailure } from "@/components/tools/error-attribution"
+import { describeChatToolFailure, toolErrorMessage } from "@/components/tools/error-attribution"
 import {
   useChatToolReconnect,
   type ChatToolReconnectCallbacks,
@@ -287,7 +287,7 @@ export function CapabilityCallLine({
     const reason = reconnectState === "connected"
       ? "Connection restored. Check whether the action finished before retrying."
       : reconnectAction ? failureInstruction(part, reconnectAction.connectionName)
-        : shortFailureText(part.state === "output-error" ? part.errorText : reportedFailure)
+        : shortFailureText(toolErrorMessage((part.state === "output-error" ? part.errorText : reportedFailure) ?? "").message)
     return (
       <div data-capability-call={part.toolName} className={cn(RAIL_ROW, className)}>
         <div className="flex min-h-6.5 min-w-0 items-center gap-2 text-sm">

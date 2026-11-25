@@ -40,6 +40,8 @@ export const openworkAnthropicToolSchemaPluginPath = () => openworkPluginPath("o
 export const openworkOfficeAttachmentsPluginPath = () => openworkPluginPath("openwork-office-attachments");
 export const openworkSpreadsheetsPluginPath = () => openworkPluginPath("openwork-spreadsheets");
 export const openworkPdfAttachmentsPluginPath = () => openworkPluginPath("openwork-pdf-attachments");
+export const openworkPrivateValuesPluginPath = () => openworkPluginPath("openwork-private-values");
+export const openworkPrivateValuesV2PluginPath = () => openworkPluginPath("openwork-private-values-v2");
 export const openworkTitleRecoveryPluginPath = () => openworkPluginPath("openwork-title-recovery");
 export const openworkGatewayQuotaPluginPath = () => openworkPluginPath("openwork-gateway-quota");
 export const openworkGatewayQuotaV2PluginPath = () => openworkPluginPath("openwork-gateway-quota-v2");

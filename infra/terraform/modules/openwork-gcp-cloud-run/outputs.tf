@@ -44,6 +44,11 @@ output "database_instance_name" {
   value       = one(google_sql_database_instance.this[*].name)
 }
 
+output "database_backup_location" {
+  description = "Cloud SQL location that stores new backups. Null when Google's default applies (the multi-region nearest the instance) or with an existing database."
+  value       = one(google_sql_database_instance.this[*].settings[0].backup_configuration[0].location)
+}
+
 output "database_identifier" {
   description = "Common database identifier: managed Cloud SQL instance ID; existing Cloud SQL connection name when supplied; empty for an external non-Cloud-SQL database. Existing database_instance_name/cloud_sql_connection_name outputs remain available."
   value       = var.create_database ? google_sql_database_instance.this[0].id : local.cloud_sql_connection_name
