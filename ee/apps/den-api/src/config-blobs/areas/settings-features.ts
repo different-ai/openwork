@@ -18,11 +18,11 @@ import { ConfigApplyError, applyWithSteps } from "./route-support.js"
 
 const AREA = "settings.features"
 
-export const PLATFORM_ADMIN_ONLY_MESSAGE = "Only platform admins can turn on features."
-const NEVER_OFF_MESSAGE = "Imports never turn features off."
+export const PLATFORM_ADMIN_ONLY_MESSAGE = "Only platform admins can turn on preview flags."
+const NEVER_OFF_MESSAGE = "Imports never turn preview flags off."
 
 function platformAdminOnlyReason(key: FeatureKey): string {
-  return `${featureDefinition(key).label} stays off here: only a platform admin can turn a feature on. Ask one to turn it on, then import this file again for the settings that need it.`
+  return `${featureDefinition(key).label} stays off here: only a platform admin can turn a preview flag on. Ask one to turn it on, then import this file again for the settings that need it.`
 }
 
 const featureSpecSchema = z.object({
@@ -71,13 +71,13 @@ function notApplicable(key: FeatureKey, resolved: ResolvedFeature): string | nul
 
 function unknownKeyReason(item: ResolvedConfigItem): string {
   const label = itemLabel(item)
-  return retiredKeys.has(label) ? `${label} is no longer a feature flag on this server.` : `${label} isn't a feature on this server.`
+  return retiredKeys.has(label) ? `${label} is no longer a preview flag on this server: it shipped or was removed.` : `${label} isn't a preview flag on this server.`
 }
 
 export const settingsFeaturesArea = defineConfigArea({
   key: AREA,
-  label: "Feature flags",
-  path: ["Settings", "Feature flags"],
+  label: "Preview flags",
+  path: ["Settings", "Preview flags"],
   specVersion: 1,
   specSchema: featureSpecSchema,
   dependsOn: [],
@@ -85,7 +85,7 @@ export const settingsFeaturesArea = defineConfigArea({
   viewPermission: "organization.update",
   managePermission: "organization.update",
   tables: ["organization_feature"],
-  naturalKeys: [{ label: "feature key", get: (item) => featureKeyOf(item) }],
+  naturalKeys: [{ label: "preview flag key", get: (item) => featureKeyOf(item) }],
   informationalName: true,
   secretFields: [],
   transactional: false,

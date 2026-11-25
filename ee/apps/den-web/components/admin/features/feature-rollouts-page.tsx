@@ -19,7 +19,8 @@ type AdminFeature = {
   category: string;
   categoryLabel: string;
   added: string | null;
-  author: string;
+  owner: string;
+  expiresOn: string | null;
   docsUrl: string | null;
   deployments: Array<"cloud" | "self_hosted">;
   available: boolean;
@@ -47,7 +48,8 @@ function parseFeature(value: unknown): AdminFeature | null {
     category: typeof value.category === "string" ? value.category : "",
     categoryLabel: typeof value.categoryLabel === "string" ? value.categoryLabel : "",
     added: typeof value.added === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.added) ? value.added : null,
-    author: typeof value.author === "string" ? value.author : "",
+    owner: typeof value.owner === "string" ? value.owner : typeof value.author === "string" ? value.author : "",
+    expiresOn: typeof value.expiresOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.expiresOn) ? value.expiresOn : null,
     docsUrl: typeof value.docsUrl === "string" && value.docsUrl.startsWith("https://") ? value.docsUrl : null,
     deployments,
     available: value.available === true,
@@ -60,6 +62,10 @@ function parseFeature(value: unknown): AdminFeature | null {
 
 function formatAddedDay(added: string): string {
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${added}T00:00:00Z`));
+}
+
+export function previewExpired(expiresOn: string, now = Date.now()): boolean {
+  return now >= Date.parse(`${expiresOn}T00:00:00Z`) + 24 * 60 * 60 * 1000;
 }
 
 type FeatureGroup = { key: string; label: string; description: string; features: AdminFeature[] };
@@ -123,15 +129,20 @@ function FeatureRow({ feature, onChange }: { feature: AdminFeature; onChange: (n
         </p>
         {feature.description ? <p className="mt-1 text-[13px] leading-5 text-gray-500">{feature.description}</p> : null}
         <p data-testid={`admin-feature-owner-${feature.key}`} className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-gray-500">
-          {feature.author ? (
+          {feature.owner ? (
             <span>
-              Author{" "}
-              <a href={`https://github.com/${encodeURIComponent(feature.author)}`} target="_blank" rel="noreferrer" className="font-medium text-gray-700 underline-offset-2 hover:underline">
-                @{feature.author}
+              Owner{" "}
+              <a href={`https://github.com/${encodeURIComponent(feature.owner)}`} target="_blank" rel="noreferrer" className="font-medium text-gray-700 underline-offset-2 hover:underline">
+                @{feature.owner}
               </a>
             </span>
           ) : null}
           {feature.added ? <span data-testid={`admin-feature-added-${feature.key}`}>Added {formatAddedDay(feature.added)}</span> : null}
+          {feature.expiresOn ? (
+            <span data-testid={`admin-feature-expires-${feature.key}`} className={previewExpired(feature.expiresOn) ? "text-red-700" : undefined}>
+              {previewExpired(feature.expiresOn) ? "Expired" : "Expires"} {formatAddedDay(feature.expiresOn)}
+            </span>
+          ) : null}
           {feature.docsUrl ? (
             <a data-testid={`admin-feature-docs-${feature.key}`} href={feature.docsUrl} target="_blank" rel="noreferrer" className="font-medium text-gray-700 underline-offset-2 hover:underline">
               Internal docs
@@ -210,7 +221,7 @@ export function FeatureRolloutsPage() {
   return (
     <div className="flex flex-col gap-6">
       <DenPageHeader
-        title="Features"
+        title="Preview flags"
         caption={state.status === "ready" ? (state.report.deployment === "cloud" ? "OpenWork Cloud" : "Self-hosted") : undefined}
         action={<DenButton variant="secondary" size="sm" icon={RefreshCw} onClick={() => void load()}>Refresh</DenButton>}
       />

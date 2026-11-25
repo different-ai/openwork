@@ -18,7 +18,7 @@ test("an author filter keeps only that author's features", () => {
   const { author, count } = featureAuthors(FEATURE_KEYS)[0];
   const kept = filterFeatureKeys(FEATURE_KEYS, { author, added: "any" }, now);
   assert.equal(kept.length, count);
-  assert.ok(kept.every((key) => FEATURES[key].author === author));
+  assert.ok(kept.every((key) => FEATURES[key].owner === author));
 });
 
 test("author counts add up to the features listed", () => {
@@ -36,8 +36,8 @@ test("a date window keeps features added inside it, and older is the rest of 90 
 });
 
 test("author and date apply together", () => {
-  const author = FEATURES[newest].author;
+  const author = FEATURES[newest].owner;
   const kept = filterFeatureKeys(FEATURE_KEYS, { author, added: "7" }, now);
   assert.ok(kept.includes(newest));
-  assert.ok(kept.every((key) => FEATURES[key].author === author && ageInDays(key) < 7));
+  assert.ok(kept.every((key) => FEATURES[key].owner === author && ageInDays(key) < 7));
 });

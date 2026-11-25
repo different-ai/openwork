@@ -75,7 +75,7 @@
     "apps/app/src/react-app/domains/dashboard/use-dashboard-tile-geometry.ts": 1,
     "apps/app/src/react-app/domains/devices/device-reporter.tsx": 2,
     "apps/app/src/react-app/domains/devices/use-remote-devices.ts": 1,
-    "apps/app/src/react-app/domains/models/model-picker-list.tsx": 2,
+    "apps/app/src/react-app/domains/models/model-picker-list.tsx": 1,
     "apps/app/src/react-app/domains/models/model-picker-panel.tsx": 1,
     "apps/app/src/react-app/domains/models/use-model-catalog.ts": 3,
     "apps/app/src/react-app/domains/onboarding/welcome-page.tsx": 1,

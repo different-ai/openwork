@@ -58,7 +58,6 @@ import {
 } from "./remote-sessions/access.js"
 import { withDeadlockRetry } from "./utils/deadlock-retry.js"
 import { db } from "./db.js"
-import { getOrganizationFeatures } from "./features.js"
 import { listOrganizationComputerInstances, type OrganizationInstanceFilters } from "./organization-computer-instances.js"
 import { pruneRemoteDeviceEvents, recordRemoteDeviceEvent as recordEvent, type RemoteDeviceDatabase, type RemoteDeviceEventData } from "./remote-device-events.js"
 
@@ -863,7 +862,7 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
   const [row] = await organizationComputerQuery(and(eq(RemoteDeviceTable.organizationId, organizationId), eq(RemoteDeviceTable.id, deviceId))).limit(1)
   if (!row) return null
   const device = row.device
-  const [[view], events, runnerRows, sessionRows, ownerRows] = await Promise.all([
+  const [[view], events, runnerRows, sessionRows] = await Promise.all([
     organizationComputerViews([row], now, organizationId, viewer),
     db.select().from(RemoteDeviceEventTable).where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, device.id))).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(100),
     device.kind === "desktop"
@@ -884,13 +883,8 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
           eq(HeadlessSessionIndexTable.kind, "workbot"),
         )).limit(1)
       : [],
-    device.ownerMemberId
-      ? db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.id, device.ownerMemberId))).limit(1)
-      : [],
   ])
   if (!view) return null
-  const ownerUserId = ownerRows[0]?.userId
-  const features = await getOrganizationFeatures(device.organizationId, ownerUserId ? { userId: ownerUserId } : {})
   const runner = runnerRows[0]
   const session = sessionRows[0]
   return {
@@ -912,7 +906,7 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
     features: {
       remoteDevices: true,
       computerUse: true,
-      remoteComputers: features.remoteComputers,
+      remoteComputers: true,
       browserUse: true,
       sandboxGateway: false,
     },

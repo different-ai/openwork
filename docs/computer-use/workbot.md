@@ -2,9 +2,9 @@
 
 > **Generally available:** `browserUse` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../features/ga-rollout-retirement/README.md).
 
-Workbot's **Computer** tab appears after **Documents** when `workbot` and
-`remoteComputers` are enabled for the organization in `/admin`, together with at
-least one of its two views. It opens directly, without a consent screen. The
+Workbot's **Computer** tab appears after **Documents** when `workbot` is
+enabled for the organization in `/admin`, together with at least one of its two
+views. It opens directly, without a consent screen. The
 combined testing branch also includes Documents; its `workbotDocuments` rollout
 remains independent.
 
@@ -332,8 +332,8 @@ contents. This also protects saved files opened outside the desktop's network is
 
 Scripts run as `openwork-app`, separated from the browser and command accounts.
 The private browser home is inaccessible and IPv4/IPv6 egress is denied, including
-DNS and loopback; app bridges use Unix sockets. The same `computerUse` and
-`remoteComputers` rollout applies, with no new consent prompt. They use the shared
+DNS and loopback; app bridges use Unix sockets. The same `computerUse` rollout
+applies, with no new consent prompt. They use the shared
 input rail. Stop requests cancellation and takeover waits for its acknowledgement.
 Blender checks at Python lines and between render/save phases; a native render
 may finish before cancellation is acknowledged, and no later save begins. Other

@@ -5,8 +5,8 @@ steps in chat, and save the result as a private Cloud skill. This builds on the
 shared desktop and input controls; it uses the ordinary skill library and
 `create_skill` / `get_skill` tools.
 
-Enable `browserDemonstrations`, `browserUse`, and `remoteComputers` for the
-organization in `/admin`; `computerUse` is not needed. The teaching rollout is
+Enable `browserDemonstrations` and `browserUse` for the organization in
+`/admin`; `computerUse` is not needed. The teaching rollout is
 off by default on cloud and self-hosted installations. The conversation needs a
 desktop built with the current guest bridge. An older one reports that teaching
 is unavailable until it moves to a current build (see

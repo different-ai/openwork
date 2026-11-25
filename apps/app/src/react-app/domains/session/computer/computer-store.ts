@@ -3,9 +3,9 @@ import { create } from "zustand"
 import type { ComputerRequest } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
+import { useSignedInToOrganization } from "../status/use-desktop-feature"
 import { useBrowserSecretsEnabled } from "../panel/use-browser-secrets"
 import { isActiveWorkSessionStatus } from "../sidebar/utils"
-import { useDesktopFeature } from "../status/use-desktop-feature"
 
 type ComputerStore = {
   requests: Record<string, ComputerRequest>
@@ -30,10 +30,10 @@ export const useComputerRequest = (sessionId: string | null | undefined) =>
   useComputerStore((state) => sessionId ? state.requests[sessionId] ?? null : null)
 
 export function ComputerBridge() {
-  const remote = useDesktopFeature("remoteComputers")
+  const signedInToOrganization = useSignedInToOrganization()
   useEffect(() => {
-    void desktopBridge.computerSetRemoteEnabled(remote).catch(() => {})
-  }, [remote])
+    void desktopBridge.computerSetRemoteEnabled(signedInToOrganization).catch(() => {})
+  }, [signedInToOrganization])
   useBrowserSecretsEnabled()
 
   useEffect(() => window.__OPENWORK_ELECTRON__?.computer?.onRequest?.(({ sessionId, request }) => {

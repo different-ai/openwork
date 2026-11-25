@@ -1,18 +1,20 @@
 #!/usr/bin/env node
-// Keeps everything derived from the feature registry in step with it.
+// Keeps everything derived from the preview flag registry in step with it.
 //
-// Each feature is one file, packages/features/src/flags/<key-in-kebab-case>.ts.
-// Nothing that lists every feature is edited by hand, so two branches that each
-// add a feature do not conflict.
+// Every preview flag is one export in packages/features/src/previews.ts, with
+// an owner and the day it expires. Keys that shipped or were cut are listed in
+// packages/features/src/retired.ts.
 //
-//   pnpm features:sync    rewrite packages/features/src/all-flags.ts (the sorted
-//                         list of flag files). Also the way to resolve a merge
-//                         conflict in that file.
-//   pnpm features:check   fail if that list is stale, if a flag file breaks the
-//                         registry rules, if the chart renders different
-//                         DEN_FEATURE_* names than den-api reads, if a
-//                         Dockerfile misses a workspace package its service
-//                         needs, or if code bypasses the registry (see below)
+//   pnpm features:sync    rewrite the chart files that are generated from the
+//                         registry
+//   pnpm features:check   fail if a preview breaks the registry rules (no
+//                         owner, no expiry date, expired, out of order), if the
+//                         capability catalog depends on a preview without
+//                         saying so or names a retired one, if the chart
+//                         renders different DEN_FEATURE_* names than den-api
+//                         reads, if a Dockerfile misses a workspace package its
+//                         service needs, or if code bypasses the registry (see
+//                         below)
 //   node scripts/features-sync.mjs --chart [dir]
 //                         write every feature key into a chart's values.yaml and
 //                         values.schema.json. The chart in git stays free of
@@ -24,7 +26,7 @@
 // Read .opencode/skills/add-a-feature/SKILL.md before adding a feature.
 
 import { execFileSync } from "node:child_process"
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -34,8 +36,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const chartDir = path.join(root, "packaging/helm/openwork-ee")
 const valuesPath = path.join(chartDir, "values.yaml")
 const schemaPath = path.join(chartDir, "values.schema.json")
-const flagsDir = path.join(root, "packages/features/src/flags")
-const allFlagsPath = path.join(root, "packages/features/src/all-flags.ts")
+const previewsFile = "packages/features/src/previews.ts"
+const capabilityCatalogFile = "packages/managed-deployments/src/capabilities.ts"
 const check = process.argv.includes("--check")
 const chartFlag = process.argv.indexOf("--chart")
 const chartArgument = chartFlag === -1 ? undefined : process.argv[chartFlag + 1]
@@ -43,43 +45,20 @@ const chartArgument = chartFlag === -1 ? undefined : process.argv[chartFlag + 1]
 const chartTarget = chartFlag === -1 ? null : path.resolve(chartArgument && !chartArgument.startsWith("--") ? chartArgument : chartDir)
 
 const problems = []
+const warnings = []
 
-const BEGIN = "# BEGIN GENERATED features (pnpm features:sync; source: packages/features/src/flags)"
+const BEGIN = "# BEGIN GENERATED features (pnpm features:sync; source: packages/features/src/previews.ts)"
 const END = "# END GENERATED features"
 
-// The list of flag files comes first: the registry imports it, so it has to be
-// current before the registry is loaded below.
-const flagFiles = readdirSync(flagsDir).filter((entry) => entry.endsWith(".ts")).sort()
-const flagKeys = []
-for (const file of flagFiles) {
-  const name = file.slice(0, -".ts".length)
-  if (!/^[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*$/.test(name)) {
-    problems.push(`packages/features/src/flags/${file}: name the file after the feature key in kebab-case, e.g. new-thing.ts for newThing.`)
-    continue
+// The flag files and their generated list are gone: a branch that still adds one
+// has to move it, or its key would silently not exist.
+for (const leftover of ["packages/features/src/flags", "packages/features/src/all-flags.ts"]) {
+  if (existsSync(path.join(root, leftover))) {
+    problems.push(`${leftover} is no longer read. Declare each preview in ${previewsFile} with definePreview({ ..., owner, expiresOn }) and delete ${leftover} (see .opencode/skills/add-a-feature).`)
   }
-  flagKeys.push({ key: name.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), name })
-}
-// Sorted by key, the order a module's exports are listed in, so every runtime agrees.
-flagKeys.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-const allFlags = [
-  "// Generated by `pnpm features:sync` from the files in ./flags. Do not edit.",
-  "// On a merge conflict here, keep either side and run `pnpm features:sync`.",
-  ...flagKeys.map(({ key, name }) => `export { default as ${key} } from "@openwork/features/flags/${name}"`),
-  "",
-].join("\n")
-let allFlagsCurrent = ""
-try {
-  allFlagsCurrent = readFileSync(allFlagsPath, "utf8")
-} catch {
-  allFlagsCurrent = ""
-}
-if (allFlagsCurrent !== allFlags) {
-  if (check) problems.push("packages/features/src/all-flags.ts is out of date. Run `pnpm features:sync` and commit the result.")
-  else writeFileSync(allFlagsPath, allFlags)
 }
 
 const {
-  FEATURE_CATEGORIES,
   FEATURES,
   FEATURE_KEYS,
   RETIRED_FEATURE_KEYS,
@@ -126,8 +105,8 @@ function committedValuesBlock() {
     ...valuesHeader,
     "  # The published chart lists every key here with its default and description",
     "  # (`helm show values oci://ghcr.io/different-ai/charts/openwork-ee`). In a",
-    "  # checkout the keys are the file names under packages/features/src/flags, in",
-    "  # lowerCamelCase; `node scripts/features-sync.mjs --chart` writes them here.",
+    "  # checkout the keys are the exports of packages/features/src/previews.ts;",
+    "  # `node scripts/features-sync.mjs --chart` writes them here.",
     "  features: {}",
     `  ${END}`,
   ]
@@ -154,7 +133,7 @@ function renderSchema(full) {
   const schema = {
     $schema: "http://json-schema.org/draft-07/schema#",
     $comment: full
-      ? "Generated by scripts/features-sync.mjs --chart from packages/features/src/flags. Constrains config.deployment, config.features and config.administratorRecovery."
+      ? "Generated by scripts/features-sync.mjs --chart from packages/features/src/previews.ts. Constrains config.deployment, config.features and config.administratorRecovery."
       : "Generated by pnpm features:sync. Constrains config.deployment, config.features and config.administratorRecovery. The published chart also rejects config.features keys that are not features.",
     type: "object",
     properties: {
@@ -213,7 +192,6 @@ const FEATURES_WITHOUT_DOCS = new Set([
   "administratorRecovery",
   "workbotDocuments",
   "workbotWorkspaceAssistant",
-  "remoteComputers",
 ])
 
 /** The internal doc exists under docs/ (not the published packages/docs) and its images resolve. */
@@ -221,7 +199,7 @@ function featureDocsProblems(key, docs) {
   if (docs === undefined) {
     return FEATURES_WITHOUT_DOCS.has(key)
       ? []
-      : [`Feature "${key}" needs docs: an internal doc such as docs/features/${key}/README.md that explains it, with a screenshot next to it if it is visual (see .opencode/skills/add-a-feature).`]
+      : [`Preview flag "${key}" needs docs: an internal doc such as docs/features/${key}/README.md that explains it, with a screenshot next to it if it is visual (see .opencode/skills/add-a-feature).`]
   }
   if (FEATURES_WITHOUT_DOCS.has(key)) {
     return [`Feature "${key}" has docs now: remove it from FEATURES_WITHOUT_DOCS in scripts/features-sync.mjs.`]
@@ -283,33 +261,44 @@ compareOrWrite(valuesPath, renderValues(readFileSync(valuesPath, "utf8"), commit
 compareOrWrite(schemaPath, renderSchema(false))
 
 if (check) {
-  // Registry rules.
-  const now = new Date()
+  // Registry rules: every preview has an owner and an expiry date that has not passed.
+  const { previewRuleProblems, firstUnsortedKey } = await import("../packages/features/src/preview-rules.ts")
+  const today = new Date().toISOString().slice(0, 10)
   for (const key of FEATURE_KEYS) {
-    const definition = FEATURES[key]
-    if (!/^[a-z][a-z0-9]*(?:[A-Z][a-z0-9]+)*$/.test(key)) {
-      problems.push(`Feature key "${key}" must be lowerCamelCase with no consecutive capitals (it becomes ${featureLockEnvName(key)}).`)
-    }
-    if (!definition.label.trim() || !definition.description.trim()) problems.push(`Feature "${key}" needs a label and a description.`)
-    const since = /^(\d{4})-(\d{2})$/.exec(definition.since)
-    if (!since) {
-      problems.push(`Feature "${key}" since must be "YYYY-MM".`)
-      continue
-    }
-    if (!Object.hasOwn(FEATURE_CATEGORIES, definition.category)) {
-      problems.push(`Feature "${key}" needs a category, one of: ${Object.keys(FEATURE_CATEGORIES).join(", ")}.`)
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(definition.added ?? "") || Number.isNaN(Date.parse(`${definition.added}T00:00:00Z`))) {
-      problems.push(`Feature "${key}" added must be the day the flag was added, "YYYY-MM-DD".`)
-    }
-    if (definition.deployments.length === 0) problems.push(`Feature "${key}" must exist on at least one deployment.`)
-    if (typeof definition.author !== "string" || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(definition.author)) {
-      problems.push(`Feature "${key}" needs an author: the GitHub handle of the person who owns it, e.g. author: "benjaminshafii".`)
-    }
-    problems.push(...featureDocsProblems(key, definition.docs))
-    const ageMonths = (now.getUTCFullYear() - Number(since[1])) * 12 + (now.getUTCMonth() + 1 - Number(since[2]))
-    if (!definition.permanent && ageMonths > 6) {
-      problems.push(`Feature "${key}" has been a rollout since ${definition.since}. Finish it and delete the flag and its checks, or mark it permanent: true if the switch is part of the product (see .opencode/skills/add-a-feature).`)
+    const found = previewRuleProblems(key, FEATURES[key], today)
+    problems.push(...found.problems, ...featureDocsProblems(key, FEATURES[key].docs))
+    warnings.push(...found.warnings)
+  }
+
+  // One export per preview, in alphabetical order, so two branches rarely touch the same lines.
+  const declared = [...readFileSync(path.join(root, previewsFile), "utf8").matchAll(/^export const ([A-Za-z0-9_$]+) = definePreview\(/gm)].map((match) => match[1])
+  for (const key of FEATURE_KEYS) {
+    if (!declared.includes(key)) problems.push(`${previewsFile}: declare "${key}" as \`export const ${key} = definePreview({ ... })\` at the start of a line.`)
+  }
+  const unsorted = firstUnsortedKey(declared)
+  if (unsorted) problems.push(`${previewsFile}: "${unsorted.key}" comes after "${unsorted.after}". Keep the exports in alphabetical order.`)
+
+  // A key is a preview or retired, never both, and is retired once.
+  const retiredSeen = new Set()
+  for (const key of RETIRED_FEATURE_KEYS) {
+    if (retiredSeen.has(key)) problems.push(`packages/features/src/retired.ts lists "${key}" twice.`)
+    retiredSeen.add(key)
+    if (FEATURE_KEYS.includes(key)) problems.push(`"${key}" is both a preview flag and retired. Delete it from ${previewsFile} when it ships or is cut.`)
+  }
+
+  // A capability works once its infrastructure is installed: it may not depend on a preview
+  // without a recorded gap, or keep naming one that shipped or was cut.
+  if (existsSync(path.join(root, capabilityCatalogFile))) {
+    const { capabilityPreviewProblems } = await import("../packages/features/src/capability-check.ts")
+    try {
+      const { CAPABILITIES } = await import(`../${capabilityCatalogFile}`)
+      problems.push(...capabilityPreviewProblems(CAPABILITIES, {
+        previewKeys: FEATURE_KEYS,
+        selfHostedKeys: FEATURE_KEYS.filter((key) => featureAvailableOn(key, "self_hosted")),
+        retiredKeys: RETIRED_FEATURE_KEYS,
+      }))
+    } catch (error) {
+      problems.push(`${capabilityCatalogFile} does not load in the feature check, so its preview dependencies cannot be verified: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -395,7 +384,7 @@ if (check) {
       if (relative.startsWith("ee/apps/den-api/src")) {
         for (const match of text.matchAll(/\bDEN_[A-Z0-9_]+_ENABLED\b/g)) {
           if (!allowedEnableFlags.has(match[0])) {
-            problems.push(`${relative}: new switch ${match[0]}. Declare a feature in packages/features/src/flags instead (see .opencode/skills/add-a-feature).`)
+            problems.push(`${relative}: new switch ${match[0]}. Declare a preview flag in packages/features/src/previews.ts instead (see .opencode/skills/add-a-feature).`)
           }
         }
       }
@@ -406,8 +395,9 @@ if (check) {
   }
 }
 
+for (const warning of [...new Set(warnings)]) console.warn(`[features] ${warning}`)
 if (problems.length > 0) {
   for (const problem of [...new Set(problems)]) console.error(`[features] ${problem}`)
   process.exit(1)
 }
-console.log(check ? "[features] Registry, Helm chart and guard rules are in sync." : "[features] Flag list and chart files are up to date.")
+console.log(check ? "[features] Preview flags, Helm chart and guard rules are in sync." : "[features] Chart files are up to date.")

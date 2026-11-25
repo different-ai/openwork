@@ -87,6 +87,45 @@ export function isConfigAreaKey(value: string): value is ConfigAreaKey {
   return (CONFIG_AREA_KEYS as readonly string[]).includes(value);
 }
 
+/**
+ * Other names a file may use for an area. Read on import and never written:
+ * exports, plans and stored results always use the area's own key, so files
+ * and clients from before a rename keep working. `settings.features` holds
+ * preview flags, so a file may call it `settings.preview_flags`.
+ */
+export const CONFIG_AREA_KEY_ALIASES = {
+  "settings.preview_flags": "settings.features",
+} as const satisfies Record<string, ConfigAreaKey>;
+
+const CONFIG_AREA_KEY_ALIAS_ENTRIES: ReadonlyArray<readonly [string, ConfigAreaKey]> = Object.entries(CONFIG_AREA_KEY_ALIASES);
+
+/** The area a name in a file means: its own key, or the key an alias stands for. */
+export function resolveConfigAreaKey(value: string): ConfigAreaKey | null {
+  if (isConfigAreaKey(value)) return value;
+  return CONFIG_AREA_KEY_ALIAS_ENTRIES.find(([alias]) => alias === value)?.[1] ?? null;
+}
+
+function withAreaKey(entry: unknown): unknown {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry) || !("area" in entry) || typeof entry.area !== "string") return entry;
+  return { ...entry, area: resolveConfigAreaKey(entry.area) ?? entry.area };
+}
+
+/**
+ * Rewrites alias area names in an uploaded file's `scope`, `secrets` and
+ * `omitted` to the areas' own keys, before the file is validated. The nested
+ * `areas` are resolved by `flattenConfigAreas`. Anything else is returned as is.
+ */
+export function canonicalizeConfigBlobAreaKeys(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
+  const next: Record<string, unknown> = { ...raw };
+  if (Array.isArray(next.scope)) {
+    next.scope = [...new Set(next.scope.map((entry) => typeof entry === "string" ? resolveConfigAreaKey(entry) ?? entry : entry))];
+  }
+  if (Array.isArray(next.secrets)) next.secrets = next.secrets.map(withAreaKey);
+  if (Array.isArray(next.omitted)) next.omitted = next.omitted.map(withAreaKey);
+  return next;
+}
+
 /** Same rule as the existing declarative `externalKey`. */
 export const configItemKeySchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/);
 
@@ -112,7 +151,8 @@ export function parseConfigRef(ref: string): { area: ConfigAreaKey | "people"; t
   const area = ref.slice(0, slash);
   const target = ref.slice(slash + 1);
   if (area === "people") return { area, target };
-  return isConfigAreaKey(area) ? { area, target } : null;
+  const key = resolveConfigAreaKey(area);
+  return key ? { area: key, target } : null;
 }
 
 /**
@@ -217,11 +257,13 @@ export function nestConfigAreas(flat: Partial<Record<ConfigAreaKey, ConfigBlobAr
 
 /**
  * The inverse of `nestConfigAreas`. Returns parse errors for leaves that are
- * not valid areas or paths that are not known area keys.
+ * not valid areas or paths that are not known area keys. An alias is read as
+ * the area it stands for; a file that holds both names is refused.
  */
 export function flattenConfigAreas(tree: unknown): { areas: Partial<Record<ConfigAreaKey, ConfigBlobArea>>; errors: string[] } {
   const areas: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {};
   const errors: string[] = [];
+  const readFrom = new Map<ConfigAreaKey, string>();
   let total = 0;
   const walk = (node: unknown, path: string[]) => {
     if (typeof node !== "object" || node === null || Array.isArray(node)) {
@@ -233,11 +275,18 @@ export function flattenConfigAreas(tree: unknown): { areas: Partial<Record<Confi
       return;
     }
     if ("items" in node) {
-      const key = path.join(".");
-      if (!isConfigAreaKey(key)) {
-        errors.push(`unknown area "${key}"`);
+      const written = path.join(".");
+      const key = resolveConfigAreaKey(written);
+      if (!key) {
+        errors.push(`unknown area "${written}"`);
         return;
       }
+      const earlier = readFrom.get(key);
+      if (earlier !== undefined) {
+        errors.push(`areas.${earlier} and areas.${written} are the same area: keep one`);
+        return;
+      }
+      readFrom.set(key, written);
       const rawItems = node.items;
       if (Array.isArray(rawItems)) {
         if (rawItems.length > CONFIG_BLOB_MAX_ITEMS_PER_AREA) {

@@ -286,6 +286,30 @@ test("the export holds what the import has to deal with", () => {
   assert.ok(areaItems(exportedA, "settings.auth-security").some((entry) => entry.spec.kind === "scim"), "SCIM provisioning")
 })
 
+test("a file may name the preview flags area settings.preview_flags; settings.features keeps working", async () => {
+  const items = areaItems(exportedA, "settings.features")
+  const file = (scope: string[], settings: Record<string, unknown>) => ({ format: exportedA.format, formatVersion: exportedA.formatVersion, scope, areas: { settings } })
+  const dryRun = (blob: unknown) => apiA("POST", "/v1/config-blobs/change-requests?dryRun=true", { blob, mode: "merge" })
+  const area = { specVersion: 1, items }
+
+  const before = await ok(dryRun(file(["settings.features"], { features: area })), "the key from before the rename")
+  const renamed = await ok(dryRun(file(["settings.preview_flags"], { preview_flags: area })), "the alias")
+  const planned = asPlan(field(renamed.body, "plan"))
+  assert.deepEqual(field(renamed.body, "errors"), [], summary(renamed))
+  assert.deepEqual(planned.areas.map((entry) => [entry.area, entry.label]), [["settings.features", "Preview flags"]])
+  assert.deepEqual(planItems(planned).map((entry) => [entry.area, entry.blob?.id, entry.op]), planItems(asPlan(field(before.body, "plan"))).map((entry) => [entry.area, entry.blob?.id, entry.op]))
+  assert.deepEqual(planItems(planned).map((entry) => entry.blob?.id), [FEATURE])
+
+  const both = await dryRun(file(["settings.preview_flags", "settings.features"], { features: area, preview_flags: area }))
+  assert.equal(both.status, 400, summary(both))
+  assert.match(text(field(both.body, "message"), "refusal message"), /areas\.settings\.features and areas\.settings\.preview_flags are the same area: keep one/)
+  assert.equal((await dryRun(file(["settings.previews"], { previews: area }))).status, 400, "an unknown area name is still refused")
+
+  // Exports keep writing the key published clients and saved files know.
+  assert.ok(exportedA.scope.some((entry) => entry === "settings.features"))
+  assert.deepEqual(areaItems(exportedA, "settings.preview_flags"), [])
+})
+
 test("another person imports the whole organization: applied by the first run", async () => {
   const ian = await den.signUp("Ian Importer")
   const orgB = await den.createOrg(ian, "First-pass copy")
@@ -309,7 +333,7 @@ test("another person imports the whole organization: applied by the first run", 
   const feature = planItems(first).find((entry) => entry.area === "settings.features")
   assert.ok(feature)
   assert.equal(feature.op, "skip", describe([feature]))
-  assert.match(reasons(feature), /only a platform admin can turn a feature on/)
+  assert.match(reasons(feature), /only a platform admin can turn a preview flag on/)
   const scim = item(first, "settings.auth-security", "SCIM provisioning")
   assert.equal(scim.op, "skip", describe([scim]))
   assert.match(reasons(scim), /generate a SCIM token in Settings › Auth & Security/)

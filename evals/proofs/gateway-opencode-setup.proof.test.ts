@@ -1,23 +1,12 @@
 import { spec } from "@openwork/testkit";
 import { expect } from "vitest";
-import { gatewayCursorSetupWorld, gatewayOpenCodeSetupWorld } from "../worlds/gateway-cursor-setup.ts";
+import { gatewayCursorSetupWorld } from "../worlds/gateway-cursor-setup.ts";
 
-const off = spec.world(gatewayCursorSetupWorld, { timeout: 600_000, resources: { surfaces: ["web"], services: ["den", "mock"] } });
-const on = spec.world(gatewayOpenCodeSetupWorld, { timeout: 600_000, resources: { surfaces: ["web"], services: ["den", "mock"] } });
+const test = spec.world(gatewayCursorSetupWorld, { timeout: 600_000, resources: { surfaces: ["web"], services: ["den", "mock"] } });
 const setup = { testId: "gateway-tool-setup-opencode" };
 
-off("a member keeps the existing setup options before OpenCode rolls out", async ({ user, probe, step, evidence }) => {
-  await step("before: the setup row has Cursor but no OpenCode option", async () => {
-    await user.see({ testId: "gateway-tool-setup-cursor" }, { timeoutMs: 60_000 });
-    const entries = await probe.dom('[data-testid="gateway-tool-setup-opencode"]');
-    evidence.recordAssertionEvidence("OpenCode is not offered before rollout", `OpenCode buttons: ${entries.elements.length}`, entries.elements.length === 0);
-    expect(entries.elements).toHaveLength(0);
-    await user.screenshot();
-  });
-});
-
-on("a member can set up the OpenCode plugin without creating an API key", async ({ user, probe, step, evidence }) => {
-  await step("after: OpenCode appears alongside the other setup options", async () => {
+test("a member can set up the OpenCode plugin without creating an API key", async ({ user, probe, step, evidence }) => {
+  await step("OpenCode appears alongside the other setup options", async () => {
     await user.see(setup, { timeoutMs: 60_000 });
     const entries = await probe.dom('[data-testid="gateway-tool-setup-opencode"]');
     evidence.recordAssertionEvidence("OpenCode has a setup button", `OpenCode buttons: ${entries.elements.length}`, entries.elements.length === 1);

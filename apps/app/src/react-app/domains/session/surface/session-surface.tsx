@@ -2177,7 +2177,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const inlineSuggestions = useDesktopFeature("composerInlineSuggestions");
-  const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
   const questionInThreadEnabled = useDesktopFeature("questionInThread");
   const skipThreadQuestionBeforeSendRef = useRef<(() => void) | null>(null);
   const followUpSuggestion = useFollowUpSuggestion({
@@ -4076,7 +4075,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     key={dockedQuestion.id}
                     questions={dockedQuestion.questions}
                     busy={props.questionReplyBusy ?? false}
-                    collapsible={questionMinimizeEnabled}
                     requestId={dockedQuestion.id}
                     shortcutActive={props.isControlTarget}
                     onReply={(answers) => Promise.resolve(props.respondQuestion?.(dockedQuestion.id, answers)).catch(() => {})}

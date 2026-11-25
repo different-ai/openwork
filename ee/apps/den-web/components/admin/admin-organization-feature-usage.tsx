@@ -96,7 +96,7 @@ export function splitNewFeatures(features: readonly AdminFeatureUsage[], now = D
 }
 
 const GROUPINGS = [
-  { value: "feature", label: "Feature" }, { value: "member", label: "Member" },
+  { value: "feature", label: "Preview flag" }, { value: "member", label: "Member" },
   { value: "turnedOn", label: "Turned on" }, { value: "added", label: "Date added" },
 ] as const satisfies readonly { value: FeatureUsageGrouping; label: string }[];
 const STATUSES = [
@@ -186,7 +186,7 @@ function MemberUsage({ feature }: { feature: AdminFeatureUsage }) {
 
 function MemberFeatures({ person }: { person: MemberFeatureUsage }) {
   const columns: DenTableColumn<MemberFeatureUse>[] = [
-    { key: "feature", header: "Feature", render: (use) => <span className="font-medium text-gray-900">{FEATURES[use.key].label}</span> },
+    { key: "feature", header: "Preview flag", render: (use) => <span className="font-medium text-gray-900">{FEATURES[use.key].label}</span> },
     { key: "first", header: "First used", width: "140px", render: (use) => day(use.firstUsedAt) },
     { key: "last", header: "Last used", width: "140px", render: (use) => day(use.lastUsedAt) },
     { key: "days", header: "Days used", width: "100px", align: "right", render: (use) => use.daysUsed },
@@ -236,7 +236,7 @@ export function AdminOrganizationFeatureUsageView({ organizationId, refreshKey, 
       else if (result.access === "signed-out" || result.access === "forbidden") onAccessFailure({ access: result.access, message: result.message });
       else setLoadError(result.message);
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setLoadError(error instanceof Error ? error.message : "Could not load feature usage.");
+      if (!controller.signal.aborted) setLoadError(error instanceof Error ? error.message : "Could not load preview flag usage.");
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [path, refreshKey, attempt, onAccessFailure]);
@@ -249,7 +249,7 @@ export function AdminOrganizationFeatureUsageView({ organizationId, refreshKey, 
     : grouping === "added" ? { key: "added", header: "Added", width: "130px", render: (feature) => day(addedAt(feature.key)) } : null;
 
   const columns: DenTableColumn<AdminFeatureUsage>[] = [
-    { key: "feature", header: "Feature", render: (feature) => <span className="inline-flex min-w-0 flex-wrap items-center gap-2">
+    { key: "feature", header: "Preview flag", render: (feature) => <span className="inline-flex min-w-0 flex-wrap items-center gap-2">
       {feature.members.length > 0
         ? <ExpandButton id={`admin-feature-usage-members-${feature.key}`} testId={`admin-feature-usage-toggle-${feature.key}`} open={open.has(feature.key)} onToggle={() => setOpen((current) => toggled(current, feature.key))}>{FEATURES[feature.key].label}</ExpandButton>
         : <span className="pl-5 text-xs font-medium text-gray-900">{FEATURES[feature.key].label}</span>}
@@ -268,12 +268,12 @@ export function AdminOrganizationFeatureUsageView({ organizationId, refreshKey, 
       <ExpandButton id={`admin-feature-usage-member-features-${person.memberId}`} testId={`admin-feature-usage-member-toggle-${person.memberId}`} open={openMembers.has(person.memberId)} onToggle={() => setOpenMembers((current) => toggled(current, person.memberId))}>{memberName(person)}</ExpandButton>
       {person.name && person.email ? <span className="ml-2 text-xs text-gray-500">{person.email}</span> : null}
     </div> },
-    { key: "features", header: "Features used", width: "130px", align: "right", render: (person) => person.uses.length },
+    { key: "features", header: "Preview flags used", width: "130px", align: "right", render: (person) => person.uses.length },
     { key: "last", header: "Last used", width: "130px", render: (person) => day(person.lastUsedAt) },
   ];
 
   const featureTable = (rows: readonly AdminFeatureUsage[]) => <DenTable columns={columns} rows={rows} getRowKey={(feature) => feature.key} density="compact"
-    renderRowDetail={(feature) => open.has(feature.key) ? <MemberUsage feature={feature} /> : null} emptyLabel="No features match these filters." />;
+    renderRowDetail={(feature) => open.has(feature.key) ? <MemberUsage feature={feature} /> : null} emptyLabel="No preview flags match these filters." />;
 
   const anyUse = usage?.features.some((feature) => feature.members.length > 0) ?? false;
   const filtered = usage ? sortFeatureUsage(filterFeatureUsage(usage.features, filter, usage.activeMembers)) : [];
@@ -284,29 +284,29 @@ export function AdminOrganizationFeatureUsageView({ organizationId, refreshKey, 
     : `${filtered.length} of ${usage?.features.length ?? 0} features`;
 
   return (
-    <section className="min-w-0 border-b border-gray-200 py-5" aria-label="Feature usage" aria-busy={loading} data-testid="admin-organization-feature-usage">
-      <h2 className="text-sm font-semibold text-gray-900">Feature usage</h2>
+    <section className="min-w-0 border-b border-gray-200 py-5" aria-label="Preview flag usage" aria-busy={loading} data-testid="admin-organization-feature-usage">
+      <h2 className="text-sm font-semibold text-gray-900">Preview flag usage</h2>
       {loadError ? <div className="mt-3 text-sm text-red-700" role="alert">
         <p>{loadError}</p>
-        <DenButton variant="secondary" size="sm" onClick={() => setAttempt((value) => value + 1)}>Retry feature usage</DenButton>
+        <DenButton variant="secondary" size="sm" onClick={() => setAttempt((value) => value + 1)}>Retry</DenButton>
       </div> : null}
-      {loading && !usage ? <div className="mt-3 grid gap-2" role="status" aria-label="Loading feature usage" data-testid="admin-feature-usage-loading">
+      {loading && !usage ? <div className="mt-3 grid gap-2" role="status" aria-label="Loading preview flag usage" data-testid="admin-feature-usage-loading">
         {[0, 1, 2, 3].map((row) => <div key={row} className="h-9 rounded-lg bg-gray-100" aria-hidden="true" />)}
       </div> : null}
       {usage ? <>
         {anyUse ? null : <p className="mt-3 text-sm text-gray-500" data-testid="admin-feature-usage-empty">No recorded use yet</p>}
         <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,14rem)_minmax(0,14rem)]" data-testid="admin-feature-usage-filters">
           <label className="grid min-w-0 gap-2 text-xs text-gray-600">Search
-            <DenInput icon={Search} aria-label="Search features or members" maxLength={160} value={filter.search} placeholder="Feature, member name or email"
+            <DenInput icon={Search} aria-label="Search preview flags or members" maxLength={160} value={filter.search} placeholder="Preview flag, member name or email"
               data-testid="admin-feature-usage-search" onChange={(event) => setFilter((current) => ({ ...current, search: event.target.value }))} />
           </label>
           <label className="grid min-w-0 gap-2 text-xs text-gray-600">Status
-            <DenSelect aria-label="Feature status" value={filter.status} menuWidth="trigger" onChange={(event) => setFilter((current) => ({ ...current, status: STATUSES.find((status) => status.value === event.target.value)?.value ?? "all" }))}>
+            <DenSelect aria-label="Preview flag status" value={filter.status} menuWidth="trigger" onChange={(event) => setFilter((current) => ({ ...current, status: STATUSES.find((status) => status.value === event.target.value)?.value ?? "all" }))}>
               {STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
             </DenSelect>
           </label>
           <label className="grid min-w-0 gap-2 text-xs text-gray-600">Category
-            <DenSelect aria-label="Feature category" value={filter.category} menuWidth="trigger" onChange={(event) => setFilter((current) => ({ ...current, category: FEATURE_CATEGORY_KEYS.find((category) => category === event.target.value) ?? "all" }))}>
+            <DenSelect aria-label="Preview flag category" value={filter.category} menuWidth="trigger" onChange={(event) => setFilter((current) => ({ ...current, category: FEATURE_CATEGORY_KEYS.find((category) => category === event.target.value) ?? "all" }))}>
               <option value="all">Every category</option>
               {FEATURE_CATEGORY_KEYS.map((category) => <option key={category} value={category}>{FEATURE_CATEGORIES[category].label}</option>)}
             </DenSelect>
@@ -333,14 +333,14 @@ export function AdminOrganizationFeatureUsageView({ organizationId, refreshKey, 
                 {featureTable(fresh)}
               </section>
               {rest.length > 0 ? <section className="mt-4 min-w-0" aria-labelledby="admin-feature-usage-rest-heading">
-                <h3 id="admin-feature-usage-rest-heading" className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">All other features · {rest.length}</h3>
+                <h3 id="admin-feature-usage-rest-heading" className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">All other preview flags · {rest.length}</h3>
                 {featureTable(rest)}
               </section> : null}
             </>;
           })() : null}
           {grouping === "member" ? <DenTable columns={memberColumns} rows={people} getRowKey={(person) => person.memberId} density="compact"
             renderRowDetail={(person) => openMembers.has(person.memberId) ? <MemberFeatures person={person} /> : null}
-            emptyLabel={filtering ? "No member used a feature that matches these filters." : "No member has used a feature yet."} /> : null}
+            emptyLabel={filtering ? "No member used a preview flag that matches these filters." : "No member has used a preview flag yet."} /> : null}
           {grouping === "turnedOn" || grouping === "added" ? (filtered.length === 0 ? featureTable([]) : groupFeatureUsage(filtered, grouping).map((group) =>
             <section key={group.id} className="mt-4 min-w-0 first:mt-0" aria-labelledby={`admin-feature-usage-group-${grouping}-${group.id}`} data-testid={`admin-feature-usage-group-${grouping}-${group.id}`}>
               <h3 id={`admin-feature-usage-group-${grouping}-${group.id}`} className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{group.label} · {group.features.length}</h3>

@@ -12,6 +12,7 @@ import {
   CONFIG_CHANGE_REQUEST_OPEN_STATUSES,
   CONFIG_DECISIONS_FILE_FORMAT,
   EMPTY_CONFIG_DECISIONS,
+  canonicalizeConfigBlobAreaKeys,
   configBlobSchema,
   flattenConfigAreas,
   isConfigRef,
@@ -528,7 +529,7 @@ export type SubmitInput = { blob: unknown; mode: ConfigImportMode; title?: strin
 type ParsedEnvelope = { blob: ConfigBlob; areas: Partial<Record<ConfigAreaKey, ConfigBlobArea>> }
 
 function parseEnvelope(raw: unknown): { ok: true; value: ParsedEnvelope } | { ok: false; errors: string[] } {
-  const parsed = configBlobSchema.safeParse(raw)
+  const parsed = configBlobSchema.safeParse(canonicalizeConfigBlobAreaKeys(raw))
   if (!parsed.success) return { ok: false, errors: parsed.error.issues.slice(0, 50).map((issue) => `${issue.path.join(".") || "blob"}: ${issue.message}`) }
   const flat = flattenConfigAreas(parsed.data.areas)
   if (flat.errors.length > 0) return { ok: false, errors: flat.errors.slice(0, 50) }

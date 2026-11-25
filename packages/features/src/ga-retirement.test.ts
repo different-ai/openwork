@@ -33,9 +33,12 @@ const graduated = [
   "sideChatPanel", "personalSkillPortability", "denGreySidebar",
   "litellmEntraMemberSignIn", "sandboxTools", "mcpThreadEvents",
   "nativeMcpEvents",
+  "gatewayOpenCodeSetup", "importOpencodeConnections", "lowStorageWarning",
+  "providerFilterSyncFix", "questionMinimize",
+  "remoteComputers",
 ]
 
-test("completed November rollouts are retired rather than permanently enabled flags", () => {
+test("completed rollouts are retired rather than permanently enabled flags", () => {
   const active = new Set<string>(FEATURE_KEYS)
   const retired = new Set<string>(RETIRED_FEATURE_KEYS)
   for (const key of graduated) {

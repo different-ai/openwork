@@ -1,6 +1,6 @@
 ---
 name: add-a-feature
-description: Decide whether work needs a feature flag (any change to product behavior users can see does), then declare it, roll it out (per organization, for everyone, cloud or self-hosted), revert or kill it. Use for any user-visible behavior change, and when finishing or removing a rollout.
+description: Decide whether work needs a preview flag (any change to product behavior users can see does), then declare it with an owner and an expiry date, roll it out (per organization, for everyone, cloud or self-hosted), revert or kill it, and retire it when it ships. Use for any user-visible behavior change, and when finishing or removing a rollout.
 ---
 
 # Skill: Add a feature
@@ -10,14 +10,23 @@ can see ships behind a feature, so it can be turned off without a deploy.
 Work users won't notice as a behavior change ships directly and is reverted
 with a normal revert if needed.
 
-When a flag is warranted, it is a **feature** in the registry, declared
-**before any feature code**, off.
+When a flag is warranted, it is a **preview flag** in the registry, declared
+**before any feature code**, off. The code and `/admin` API still call its key
+a feature.
 
-Registry: `packages/features/src/flags/` (package `@openwork/features`), one
-file per feature. Adding that file is the only edit that declares a feature;
-no shared list is edited by hand, so two PRs that each add a feature do not
-conflict. The rules live in
-`resolve.ts` and are tested in `resolve.test.ts`
+A preview flag gates unfinished work. It has an owner and a day it expires; by
+then it ships (the flag is retired) or is cut. It is not a permanent switch:
+
+| What it is | Where it lives |
+| --- | --- |
+| Unfinished work | A preview flag: `packages/features/src/previews.ts` |
+| What a deployment can do once its infrastructure is installed | A capability, never a preview flag |
+| What an organization chooses for itself | An organization setting (`ee/apps/den-api/src/config-blobs/areas`) |
+
+Registry: `packages/features/src/previews.ts` (package `@openwork/features`),
+one export per preview, in alphabetical order. Keys that shipped or were cut
+are listed in `retired.ts`. The rules live in `resolve.ts` and
+`preview-rules.ts` and are tested next to them
 (`pnpm --filter @openwork/features test`).
 
 ## The model: one rollout, several dimensions
@@ -32,7 +41,7 @@ this order by one function (`resolveFeature`) everywhere it is checked:
 5. **Organization override**: platform admins turn it on or off for one organization in `/admin`.
 6. **Everyone**: on or off for everyone on the deployment, changed in `/admin` without a deploy.
 
-Steps 2, 5 and 6 are set per deployment in `/admin` (Features page and each
+Steps 2, 5 and 6 are set per deployment in `/admin` (Preview flags page and each
 organization's row) or with the admin MCP tools `den_list_features`,
 `den_set_feature_rollout` and `den_set_org_capability`.
 
@@ -58,7 +67,7 @@ gateway:
 
 These ship without a flag:
 
-- **Platform `/admin`**: the pages we use to run the deployment (Features,
+- **Platform `/admin`**: the pages we use to run the deployment (Preview flags,
   organizations, grants, plans, sandboxes, recovery) and the admin MCP tools.
   Platform admin access already gates them.
 - Bug fixes that restore intended behavior.
@@ -75,43 +84,38 @@ If you are unsure, add a flag. When you ship without one, say in the PR why user
 
 ## 1. Declare it, off
 
-Create `packages/features/src/flags/new-thing.ts`. The file name is the key
-in kebab-case: `new-thing.ts` declares `newThing`.
+Add an export to `packages/features/src/previews.ts`, in alphabetical order.
+The export name is the key.
 
 ```ts
-import { defineFeature } from "@openwork/features/define"
-
-export default defineFeature({
+export const newThing = definePreview({
   label: "New thing",
   description: "What a person gets, in words they see in the product.",
   category: "workbot",
   added: "2026-10-26",
-  since: "2026-10",
-  author: "your-github-handle",
+  owner: "your-github-handle",
+  expiresOn: "2026-12-15",
   docs: "docs/features/new-thing/README.md",
-  deployments: ["cloud", "self_hosted"],
+  deployments: everywhere,
   default: false,
 })
 ```
 
 - **Key**: lowerCamelCase, no consecutive capitals. Permanent: also the Helm key, `DEN_FEATURE_NEW_THING`, the API field and stored rows.
 - **category**: the group `/admin` lists it under, one of `FEATURE_CATEGORIES` in `packages/features/src/define.ts`. Pick the one a platform admin would look under; add a group there only when none fits.
-- **added**: the day you add the flag, `YYYY-MM-DD`. It never changes (`since` moves when the entry changes). Shown in `/admin` as "Added 26 Oct 2026".
+- **added**: the day you add the flag, `YYYY-MM-DD`. It never changes. Shown in `/admin` as "Added 26 Oct 2026".
 - **Deployments**: leave one out on purpose (e.g. `["cloud"]` for a cloud-only feature).
 - **default**: false for new work. A fresh deployment, and a client that cannot reach Den, uses it, so never ship half-done work as `true`.
-- **author**: GitHub handle of the person who owns the feature: who platform admins ask what it does, whether it is safe to turn on, and when the flag can go. Shown on `/admin` › Features with a link to their profile.
-- **docs**: repo path of an internal doc, linked from `/admin` › Features as **Internal docs**. Internal docs live in the repo's `docs/` folder (e.g. `docs/features/new-thing/README.md`), never the published `packages/docs` site. Write it in the same PR:
+- **owner**: GitHub handle of the person who decides whether it ships or is cut: who platform admins ask what it does, whether it is safe to turn on, and when the flag can go. Shown on `/admin` › Preview flags with a link to their profile.
+- **expiresOn**: the day that decision is due, `YYYY-MM-DD`, at most 183 days from today. `pnpm features:check` warns in the last 14 days and fails once the day has passed, for every PR, until the preview is retired, cut, or given a new date with the reason in the PR. Pick the day you expect to be done, not the furthest one allowed.
+- **docs**: repo path of an internal doc, linked from `/admin` › Preview flags as **Internal docs**. Internal docs live in the repo's `docs/` folder (e.g. `docs/features/new-thing/README.md`), never the published `packages/docs` site. Write it in the same PR:
   - **Visual feature** (a screen, button, card, panel): show at least one screenshot of it working, stored next to the doc (`docs/features/new-thing/new-thing.png`) and referenced with a relative path. Screenshot the real app, on and off if the difference matters.
   - **Not visual** (a backend change, engine, sync, token handling): enough for someone who did not build it to decide whether to turn it on: what changes, for whom, how to try it, what turning it off does, and what to watch (logs, errors, metrics).
-  - Both: the feature key, its deployments, and the author.
-- **permanent: true** only when the switch itself is part of the product (e.g. turning Connect off for one organization). Rollouts are temporary.
+  - Both: the feature key, its deployments, and the owner.
 
-Then run `pnpm features:sync` and commit `packages/features/src/all-flags.ts`
-with the new file. That generated list is the only shared file a new feature
-touches; if it conflicts in a merge, keep either side and run
-`pnpm features:sync` again. To remove a feature, delete its file and run the
-same command. The Helm chart in git lists no feature keys: the publish
-workflow writes them into the chart it packages.
+Then run `pnpm features:check`. To cut a preview, delete its export and every
+check, and add its key to `retired.ts`. The Helm chart in git lists no feature
+keys: the publish workflow writes them into the chart it packages.
 OpenAPI and SDK outputs are ignored build artifacts: CI regenerates, lints and
 typechecks them from the source change. `pnpm sdk:build` generates them locally
 when needed; use `pnpm den:contract` for a forced generation with disposable
@@ -141,7 +145,7 @@ rather than silently removing it, when the person could act on it.
 
 ## See who uses it
 
-`/admin` › organization › Features shows, per feature, how many members have
+`/admin` › organization › Preview flags shows, per feature, how many members have
 it on, who used it in the last 7 and 30 days, and when each person last used it.
 
 - Gated routes count automatically: a request that passes `requireFeature(key)` is a use.
@@ -153,7 +157,7 @@ it on, who used it in the last 7 and 30 days, and when each person last used it.
   `markFeaturesUsed` once at the chokepoint where that work happens for a member, as automation dispatch,
   the Your agent wake and `slack_send_as_bot` do.
 
-`/admin` › Features (`/admin/feature-usage`) shows the same per feature across organizations, and whether it
+`/admin` › Preview flag usage (`/admin/feature-usage`) shows the same per feature across organizations, and whether it
 works. A background feature sets `outcomes: true` in the registry and registers one reader in
 `ee/apps/den-api/src/feature-outcomes/readers.ts` that counts outcomes from the table it already writes (runs,
 succeeded, failed, skipped by reason, delivered, per day and organization). The typecheck and
@@ -163,9 +167,9 @@ succeeded, failed, skipped by reason, delivered, per day and organization). The 
 
 1. Turn it on for our own organization (override in `/admin`).
 2. Turn it on for more organizations, one override at a time, checking errors and who uses it as you go.
-3. Turn it on for everyone in `/admin` › Features. Organizations can still be turned off one by one.
+3. Turn it on for everyone in `/admin` › Preview flags. Organizations can still be turned off one by one.
 4. Anything wrong: **Turn off everywhere** (kill switch). Fix, restore, continue.
-5. Once it is on everywhere: set `default: true`, then delete the entry and every check. `pnpm features:check` asks for a decision six months after `since` unless the entry is `permanent`.
+5. Once it is on everywhere, retire it: delete the export from `previews.ts` and every check, add the key to `RETIRED_FEATURE_KEYS` in `retired.ts` and to the list in `packages/features/src/ga-retirement.test.ts`, and, when published clients read the key, to `retired` in `ee/apps/den-api/src/feature-response.ts` so they keep getting `true`. Old operator locks and stored overrides for a retired key are ignored.
 
 Evals turn features on per organization through the admin API:
 `enableOrganizationCapabilities(seed, admin, { newThing: true })` in
@@ -178,14 +182,17 @@ Evals turn features on per organization through the admin API:
 - Hand-write an `/admin` control, a `/v1/org` field, or a Helm line for a feature.
 - Ship something on self-hosted by accident: choose `deployments` on purpose.
 - Put an `/admin`-only control behind a feature.
-- Declare a feature without an `author`, or a new one without an internal doc.
+- Declare a preview without an `owner` and `expiresOn`, or a new one without an internal doc.
+- Make a capability depend on a preview flag: a capability works once its infrastructure is installed.
+- Keep a preview as a permanent switch. Ship it, cut it, or move the choice to an organization setting.
 
 ## In the PR
 
 Name the feature and its deployments under "How is this implemented?", e.g.
 "Behind `newThing` (cloud and self-hosted, off), safe to kill: falls back to
 the old flow." Link its internal doc. Run `pnpm features:check` before
-pushing: it fails when a feature has no author, when a new feature has no
-`docs`, or when the doc or an image it shows does not exist. Features declared
+pushing: it fails when a preview has no owner or expiry date, when it has
+expired, when a new preview has no `docs`, or when the doc or an image it shows
+does not exist. Features declared
 before docs were required are listed in `FEATURES_WITHOUT_DOCS` in
 `scripts/features-sync.mjs`; when you add docs for one, remove it there.

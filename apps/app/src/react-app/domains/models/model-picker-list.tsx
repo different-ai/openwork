@@ -7,8 +7,6 @@ import { ActionContextMenu } from "@/components/ui/action-context-menu";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import { AutoPickerRecovery, useObservedAutoAccessSnapshot } from "@/react-app/domains/cloud/auto-access-ui";
 import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
-import { markFeatureUsed } from "@/app/lib/den";
-import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { MenuAction } from "@/components/ui/action-menu-model";
 import { Command, CommandCollection, CommandGroup, CommandGroupLabel, CommandHeader, CommandInput, CommandItem, CommandList, CommandPanel } from "@/components/ui/command";
@@ -93,7 +91,6 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
     return new Map(modelShortcuts.map((shortcut) => [modelRefKey({ providerID: shortcut.action.providerID, modelID: shortcut.action.modelID }), formatChord(shortcut.keys, os)]));
   }, [modelShortcuts]);
   const searching = query.trim().length > 0;
-  const providerFilterSyncFix = useDesktopFeature("providerFilterSyncFix");
   const [providerId, setProviderId] = useState("");
   const providers = useMemo(() => {
     const available = options.filter((option) => !option.disabled);
@@ -106,21 +103,16 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
       label: provider.source && listed.some((other) => other.id !== provider.id && other.name === provider.name) ? `${provider.name} · ${provider.source}` : provider.name,
     })).sort((a, b) => a.label.localeCompare(b.label));
   }, [options]);
-  const selectedProvider = providerFilterSyncFix ? providers.find((provider) => provider.id === providerId) : undefined;
+  const selectedProvider = providers.find((provider) => provider.id === providerId);
   const scopedOptions = useMemo(() => {
-    if (!providerFilterSyncFix) return options;
     const labels = new Map(providers.filter((provider) => provider.label !== provider.name).map((provider) => [provider.id, provider.label]));
     const scoped = selectedProvider ? options.filter((option) => option.providerID === selectedProvider.id) : options;
     return labels.size ? scoped.map((option) => labels.has(option.providerID) ? { ...option, description: labels.get(option.providerID) } : option) : scoped;
-  }, [options, providers, selectedProvider, providerFilterSyncFix]);
-  const search = useMemo(() => searching ? searchModels(scopedOptions, query, { providerFilterSyncFix }) : null, [searching, scopedOptions, query, providerFilterSyncFix]);
-  useEffect(() => {
-    if (searching && providerFilterSyncFix) markFeatureUsed("providerFilterSyncFix");
-  }, [searching, providerFilterSyncFix]);
+  }, [options, providers, selectedProvider]);
+  const search = useMemo(() => searching ? searchModels(scopedOptions, query) : null, [searching, scopedOptions, query]);
   const groups: ModelGroup[] = search
     ? search.matches.length ? [{ value: SEARCH_GROUP, items: search.matches.map((match) => match.option) }] : []
     : modelGroups(scopedOptions, favorites, recent, query);
-  const providerMiss = search?.provider && !search.provider.found ? search.provider : undefined;
   const pins = orderedModelPins(options, favorites);
   const pinned = new Set(pins.map(modelRefKey));
   const root = useRef<HTMLDivElement>(null);
@@ -149,7 +141,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
     onQueryChange("");
     root.current?.querySelector<HTMLInputElement>('[aria-label="Search all models"]')?.focus({ preventScroll: true });
   };
-  const providerRecovery = providerFilterSyncFix && search?.modelWords.length && (search.providerQuery || selectedProvider)
+  const providerRecovery = search?.modelWords.length && (search.providerQuery || selectedProvider)
     ? { query: search.providerQuery ?? "", label: search.provider?.label ?? selectedProvider?.label } : undefined;
   const retry = async () => {
     if (!catalogState?.onRetry || retryBusy) return;
@@ -185,7 +177,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   }}>
     <Command items={groups} filter={null} value={query} onValueChange={onQueryChange}>
       <CommandHeader className={leading ? "flex items-center gap-0" : undefined}>{leading}<CommandInput ref={searchInputRef} autoFocus={autoFocusSearch} aria-label="Search all models" placeholder="Search models…" className="h-8 text-base sm:text-base md:text-base lg:text-sm" /></CommandHeader>
-      {providerFilterSyncFix && providers.length > 1 ? <div className="border-b border-border px-2 py-1">
+      {providers.length > 1 ? <div className="border-b border-border px-2 py-1">
         <Select value={selectedProvider?.id ?? ""} onValueChange={(value) => { setProviderId(value ?? ""); onQueryChange(""); }}>
           <SelectTrigger aria-label="Filter models by provider" size="sm" className="w-full rounded-md border-0 bg-transparent px-2 font-normal shadow-none">
             <SelectValue>{selectedProvider?.label ?? "All providers"}</SelectValue>
@@ -210,12 +202,11 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
           </div>
         </div> : null}
         {loading && !hasOptions ? <ModelLoadingRows /> : null}
-        {search && groups.length > 0 && (providerMiss || searchIntentSummary(search.intent)) ? <p role="status" data-testid="model-search-provider-miss" className="px-4 pb-1 pt-3 text-xs text-muted-foreground">
-          {[providerMiss ? (search.modelWords.length ? `No “${search.modelWords.join(" ")}” on ${providerMiss.label}. Showing other providers.` : `${providerMiss.label} has no models here.`) : null,
-            searchIntentSummary(search.intent)].filter(Boolean).join(" ")}
+        {search && groups.length > 0 && searchIntentSummary(search.intent) ? <p role="status" data-testid="model-search-provider-miss" className="px-4 pb-1 pt-3 text-xs text-muted-foreground">
+          {searchIntentSummary(search.intent)}
         </p> : null}
         {!loading && groups.length === 0 && query.trim() ? <div role="status" className="flex flex-col items-center gap-1 px-4 py-7 text-center text-sm">
-          <p>No models match “{query.trim()}”</p><p className="text-muted-foreground">{providerFilterSyncFix ? "Try another model name or provider." : providerMiss ? `${providerMiss.label} isn't connected in this workspace.` : "Try a shorter name, or search by provider."}</p>
+          <p>No models match “{query.trim()}”</p><p className="text-muted-foreground">Try another model name or provider.</p>
           <Button size="sm" variant="outline" className="mt-2" onClick={providerRecovery ? () => onQueryChange(providerRecovery.query) : clearSearch}>{providerRecovery ? `Show all ${providerRecovery.label} models` : "Clear search"}</Button>
         </div> : null}
         {empty ? <div role="status" className="flex flex-col items-center gap-1 px-4 py-7 text-center text-sm" data-testid="model-catalog-empty">

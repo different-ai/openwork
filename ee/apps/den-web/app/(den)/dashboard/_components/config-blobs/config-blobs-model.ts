@@ -1,5 +1,6 @@
 import {
   CONFIG_BLOB_MAX_BYTES,
+  canonicalizeConfigBlobAreaKeys,
   configBlobSchema,
   type ConfigApplyItemStatus,
   type ConfigApplyReport,
@@ -208,7 +209,7 @@ export function checkImportFile(text: string, byteSize: number): ImportFileCheck
   if (!isPlainObject(parsed) || parsed.format !== "openwork.config-blob") {
     return { ok: false, message: "This isn't an OpenWork config file. Choose a file exported from Settings › Config." };
   }
-  const result = configBlobSchema.safeParse(parsed);
+  const result = configBlobSchema.safeParse(canonicalizeConfigBlobAreaKeys(parsed));
   if (!result.success) {
     const issue = result.error.issues[0];
     const where = issue && issue.path.length > 0 ? ` (${issue.path.join(".")})` : "";
