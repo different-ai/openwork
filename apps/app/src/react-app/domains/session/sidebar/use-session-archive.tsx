@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import { Archive, ArchiveRestore } from "lucide-react";
 
@@ -66,7 +66,8 @@ export function useSessionArchive(input: {
   draftScope: string | null;
   navigateToWorkspaceSession: (workspaceId: string, sessionId: string | null, options?: { replace: boolean }) => void;
   reloadWorkspaceSessions: (workspaceId: string) => Promise<unknown>;
-  onArchivedChange: (workspaceId: string, sessionId: string, archived: boolean) => void;
+  previewArchivedChange?: (workspaceId: string, sessionId: string, archived: boolean) => () => void;
+  onArchivedChange: (workspaceId: string, sessionId: string, archived: boolean, saved: Pick<RouteSession, "time">) => void;
 }) {
   const location = useLocation();
   const current = useRef({ input, location });
@@ -85,7 +86,7 @@ export function useSessionArchive(input: {
     workspaceId: string; sessionId: string; fromKey: string; landingKey: string | null;
   } | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const undo = undoNavigation.current;
     if (!undo || location.key === undo.fromKey || undo.landingKey === location.key) return;
     if (!undo.landingKey && location.pathname === workspaceSessionRoute(undo.workspaceId, null)) undo.landingKey = location.key;
@@ -111,28 +112,49 @@ export function useSessionArchive(input: {
     pending.current = null;
   }
 
+  function refreshSessions(workspaceId: string) {
+    if (!mounted.current) return;
+    void current.current.input.reloadWorkspaceSessions(workspaceId).catch(error => {
+      if (mounted.current) toast.error("Could not refresh sessions", { description: String(error) });
+    });
+  }
+
+  function returnToSession(undo: NonNullable<typeof undoNavigation.current>) {
+    if (!mounted.current || undoNavigation.current !== undo) return;
+    undoNavigation.current = null;
+    const now = current.current;
+    if (now.input.selectedWorkspaceId !== undo.workspaceId) return;
+    if (now.location.key !== undo.fromKey && (now.location.key !== undo.landingKey
+      || now.location.pathname !== workspaceSessionRoute(undo.workspaceId, null))) return;
+    writeLastSessionFor(undo.workspaceId, undo.sessionId);
+    now.input.navigateToWorkspaceSession(undo.workspaceId, undo.sessionId, { replace: true });
+  }
+
   async function restore(target: ArchiveTarget, announce: boolean, undo?: typeof undoNavigation.current) {
+    if (!mounted.current || busy.current || pending.current) return false;
+    busy.current = true;
     const { workspace, endpoint, sessionId } = target;
+    const clearPreview = current.current.input.previewArchivedChange?.(workspace.id, sessionId, false);
     try {
-      await setSessionArchived(archiveClient(endpoint, workspace.path), sessionId, false, workspace.path);
-      await Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, false)));
-      const now = current.current;
-      if (mounted.current) now.input.onArchivedChange(workspace.id, sessionId, false);
-      if (mounted.current && undo && undoNavigation.current === undo
-        && now.input.selectedWorkspaceId === workspace.id && !now.input.selectedSessionId
-        && now.location.pathname === workspaceSessionRoute(workspace.id, null)
-        && (now.location.key === undo.landingKey || now.location.key === undo.fromKey)) {
-        undoNavigation.current = null;
-        writeLastSessionFor(workspace.id, sessionId);
-        now.input.navigateToWorkspaceSession(workspace.id, sessionId, { replace: true });
+      const saved = await setSessionArchived(archiveClient(endpoint, workspace.path), sessionId, false, workspace.path);
+      if (mounted.current) {
+        current.current.input.onArchivedChange(workspace.id, sessionId, false, saved);
+        if (undo) returnToSession(undo);
       }
-      if (mounted.current) await now.input.reloadWorkspaceSessions(workspace.id);
-      if (announce) showUndo(target, false);
-      return true;
     } catch (error) {
-      toast.error(t("session_management.unarchive_failed"), { description: error instanceof Error ? error.message : String(error) });
+      if (mounted.current) toast.error(t("session_management.unarchive_failed"), { description: error instanceof Error ? error.message : String(error) });
+      refreshSessions(workspace.id);
       return false;
+    } finally {
+      if (mounted.current) clearPreview?.();
+      busy.current = false;
     }
+    void Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, false))).catch(error => {
+      if (mounted.current) toast.error("Could not refresh sessions", { description: String(error) });
+    });
+    refreshSessions(workspace.id);
+    if (announce && mounted.current) showUndo(target, false);
+    return true;
   }
 
   function showUndo(target: ArchiveTarget, archived: boolean, undo?: typeof undoNavigation.current) {
@@ -157,6 +179,19 @@ export function useSessionArchive(input: {
     busy.current = true;
     let markIdle = () => {};
     idle.current = new Promise<void>(resolve => { markIdle = resolve; });
+    let clearPreview: (() => void) | undefined;
+    let undo: typeof undoNavigation.current = null;
+    let previewStarted = false;
+    const startPreview = () => {
+      if (previewStarted || !mounted.current) return;
+      previewStarted = true;
+      const route = current.current;
+      clearPreview = route.input.previewArchivedChange?.(target.workspace.id, target.sessionId, true);
+      if (route.input.selectedWorkspaceId !== target.workspace.id || route.input.selectedSessionId !== target.sessionId) return;
+      undo = { workspaceId: target.workspace.id, sessionId: target.sessionId, fromKey: route.location.key, landingKey: null };
+      undoNavigation.current = undo;
+      route.input.navigateToWorkspaceSession(target.workspace.id, null, { replace: true });
+    };
     const refusal = (kind: "target_working" | "self_archive_while_working"): ArchiveSessionOutcome =>
       ({ kind, sessionId: target.sessionId, title: target.title });
     const askUser = () => {
@@ -215,9 +250,23 @@ export function useSessionArchive(input: {
       });
     };
     let archived = false;
-    let patchDispatched = false;
+    let patch: ReturnType<typeof setSessionArchived> | undefined;
     try {
       checkDeadline();
+      const records = useSessionActivityStore.getState().recordsByWorkspaceId;
+      const knownWorking = [workspace.id, endpoint.workspaceId].some(workspaceId => {
+        const seen = new Set<string>();
+        const working = (id: string): boolean => {
+          if (seen.has(id)) return false;
+          seen.add(id);
+          const record = records[workspaceId]?.[id];
+          return localWork(id) || sessionNeedsStop(baseUrl, id) || sessionHasPendingSubmission(baseUrl, id)
+            || hasPendingQueuedAdmission(getQueuedDrainState(id))
+            || Boolean(record && (record.status !== "idle" && record.status !== "error" || record.childSessionIds.some(working)));
+        };
+        return working(sessionId);
+      });
+      if (!confirmed && !request?.refuseWorking && !knownWorking) startPreview();
       const readTree = () => readSessionTree(client, sessionId, workspace.path, options);
       let rootStop: Promise<void> | undefined;
       if (confirmed) {
@@ -290,32 +339,37 @@ export function useSessionArchive(input: {
       checkDeadline();
       for (const id of ids) cancelLocal(id);
       checkDeadline();
-      patchDispatched = true;
-      await bounded(setSessionArchived(client, sessionId, true, workspace.path, options));
+      if (!request?.refuseWorking) startPreview();
+      patch = setSessionArchived(client, sessionId, true, workspace.path, options);
+      const saved = await bounded(patch);
       archived = true;
-      if (mounted.current) current.current.input.onArchivedChange(workspace.id, sessionId, true);
+      startPreview();
+      if (mounted.current) {
+        current.current.input.onArchivedChange(workspace.id, sessionId, true, saved);
+        clearPreview?.();
+        clearPreview = undefined;
+      }
       for (const id of ids) clearQueuedSendContext(id);
       if (readLastSessionFor(workspace.id) === sessionId) writeLastSessionFor(workspace.id, null);
       useWorkbenchStore.getState().archiveTab({ workspaceId: workspace.id, sessionId });
-      const route = current.current;
-      const navigated = mounted.current && route.input.selectedWorkspaceId === workspace.id && route.input.selectedSessionId === sessionId;
-      const undo = navigated ? { workspaceId: workspace.id, sessionId, fromKey: route.location.key, landingKey: null } : null;
-      if (undo) undoNavigation.current = undo;
-      if (navigated) route.input.navigateToWorkspaceSession(workspace.id, null, { replace: true });
+      refreshSessions(workspace.id);
       await bounded(Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, true))));
       closeDialog(settle("done"));
-      showUndo(target, true, undo);
-      if (mounted.current) await bounded(current.current.input.reloadWorkspaceSessions(workspace.id));
+      if (mounted.current) showUndo(target, true, undo);
     } catch (error) {
       const cause = error instanceof Error ? error.message : String(error);
-      const message = patchDispatched && !archived
+      const message = patch && !archived
         ? `Archive outcome is unknown. The request may have been applied; check the session before retrying. ${cause}`
         : cause;
       const outcome: ArchiveSessionOutcome = archived ? settle("done") : {
-        kind: patchDispatched ? "archive_outcome_unknown" : "verification_failed", message,
+        kind: patch ? "archive_outcome_unknown" : "verification_failed", message,
       };
+      if (patch && !archived) {
+        refreshSessions(workspace.id);
+        void patch.then(() => refreshSessions(workspace.id), () => {});
+      }
       if (mounted.current && confirmed && !archived) {
-        setError(patchDispatched ? message : `The session has not been archived. ${message}`);
+        setError(patch ? message : `The session has not been archived. ${message}`);
         pending.current?.(outcome);
         pending.current = null;
       } else {
@@ -323,6 +377,10 @@ export function useSessionArchive(input: {
         closeDialog(outcome);
       }
     } finally {
+      if (mounted.current && !archived) {
+        clearPreview?.();
+        if (undo) returnToSession(undo);
+      }
       clearTimeout(timer);
       signal.removeEventListener("abort", rejectAborted);
       controller.abort();

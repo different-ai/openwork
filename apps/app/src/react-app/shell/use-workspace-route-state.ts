@@ -44,6 +44,7 @@ import {
 } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { createEngineRoutingPoller } from "./engine-routing-poller";
+import { createRouteArchiveReconciler, withArchiveTime } from "./route-session-archive";
 import {
   commitRouteWorkspaceSelection,
   createRouteRefreshLifecycle,
@@ -223,7 +224,15 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   }));
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [workspaceOrderIds, setWorkspaceOrderIds] = useState<string[]>(() => readWorkspaceOrderIds());
-  const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, RouteSession[]>>({});
+  const [sessionInventory, setSessionsByWorkspaceId] = useState<Record<string, RouteSession[]>>({});
+  const [archivePreview, setArchivePreview] = useState<{ workspaceId: string; sessionId: string; archived: number } | null>(null);
+  const sessionsByWorkspaceId = useMemo(() => {
+    if (!archivePreview) return sessionInventory;
+    const { workspaceId, sessionId, archived } = archivePreview;
+    const sessions = sessionInventory[workspaceId];
+    if (!sessions?.some((session) => session.id === sessionId)) return sessionInventory;
+    return { ...sessionInventory, [workspaceId]: sessions.map((session) => session.id === sessionId ? withArchiveTime(session, archived) : session) };
+  }, [sessionInventory, archivePreview]);
   const [errorsByWorkspaceId, setErrorsByWorkspaceId] = useState<Record<string, string | null>>({});
   const sessionReferenceLoadsRef = useRef(new Map<string, SessionReferenceLoad>());
   const [sessionReferenceRevision, setSessionReferenceRevision] = useState(0);
@@ -275,6 +284,23 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const loadedWorkspaceIdsRef = useRef(new Set<string>());
   const workspaceListAuthorizedRef = useRef(false);
   const runtimeSessionChangesRef = useRef(new Map<string, Map<string, RuntimeSessionChange>>());
+  const archiveChanges = useRef(createRouteArchiveReconciler());
+  const previewSessionArchive = useCallback((workspaceId: string, sessionId: string, archived: boolean) => {
+    const preview = { workspaceId, sessionId, archived: archived ? Date.now() : 0 };
+    setArchivePreview(preview);
+    return () => setArchivePreview((current) => current === preview ? null : current);
+  }, []);
+  const confirmSessionArchive = useCallback((workspaceId: string, sessionId: string, archived: boolean, saved: Pick<RouteSession, "time">) => {
+    const current = sessionsByWorkspaceIdRef.current;
+    const list = current[workspaceId];
+    if (!list) return;
+    const archivedAt = archived ? (saved.time.archived || Date.now()) : 0;
+    archiveChanges.current.confirm(workspaceId, sessionId, archivedAt, saved.time.updated);
+    const apply = (session: RouteSession) => withArchiveTime(session, archivedAt);
+    const next = { ...current, [workspaceId]: list.map((session) => session.id === sessionId ? apply(session) : session) };
+    sessionsByWorkspaceIdRef.current = next;
+    setSessionsByWorkspaceId(next);
+  }, []);
   const sessionMetadataGenerationsRef = useRef(new Map<string, number>());
   const sessionMetadataCallbacksRef = useRef(new Map<string, { key: string; callbacks: SessionMetadataCallbacks }>());
   const invalidateSessionInventory = useCallback((workspaceId: string) => {
@@ -284,6 +310,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     sessionMetadataGenerationsRef.current.set(workspaceId, (sessionMetadataGenerationsRef.current.get(workspaceId) ?? 0) + 1);
     sessionMetadataCallbacksRef.current.delete(workspaceId);
     runtimeSessionChangesRef.current.delete(workspaceId);
+    archiveChanges.current.clear(workspaceId);
     setSessionReferenceLoad(workspaceId);
     setSessionReferenceRevision((revision) => revision + 1);
   }, [setSessionReferenceLoad]);
@@ -432,6 +459,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
             if (!isCurrent()) return;
             if (!endpoint) return;
             try {
+              const listRevision = archiveChanges.current.revision();
               const fetchedItems = engineV2ChatRouting
                 ? await listRouteSessions(endpoint, v2RouteSessionList)
                 : await listRouteSessions(endpoint);
@@ -442,6 +470,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
                     normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
                   )
                 : fetchedItems;
+              items = items.map((session) => archiveChanges.current.reconcile(workspace.id, session, { listRevision }));
               if (runtimeChanges.size > 0) {
                 const byId = new Map(items.map((session) => [session.id, session]));
                 for (const [sessionId, applyChange] of runtimeChanges) {
@@ -836,11 +865,16 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           callbacks.onSessionDeleted(update.sessionId);
           return;
         }
+        const times = runtimeSessionTimes(info.time);
+        const apply = (session: RouteSession) => {
+          const next = { ...session, ...info, time: { ...session.time, ...times }, id: update.sessionId };
+          return times.archived === undefined ? next : archiveChanges.current.reconcile(workspaceId, next, { eventUpdated: times.updated });
+        };
         const changes = runtimeSessionChangesRef.current.get(workspaceId);
         const previousChange = changes?.get(update.sessionId);
         changes?.set(update.sessionId, (session) => {
           const current = previousChange ? previousChange(session) : session;
-          return current ? { ...current, ...info, time: { ...current.time, ...runtimeSessionTimes(info.time) }, id: update.sessionId } : undefined;
+          return current ? apply(current) : undefined;
         });
         if (!isCurrent()) return;
         const loaded = sessionReferenceLoadsRef.current.get(workspaceId);
@@ -848,12 +882,13 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         const list = sessionsByWorkspaceIdRef.current[workspaceId] ?? [];
         const session = list.find((item) => item.id === update.sessionId);
         if (!session) return;
-        const nextSession = { ...session, ...info, time: { ...session.time, ...runtimeSessionTimes(info.time) }, id: update.sessionId };
+        const nextSession = apply(session);
         if (JSON.stringify(session) === JSON.stringify(nextSession)) return;
         publish(mergeWorkspaceRouteSession(list, nextSession));
       },
       onSessionDeleted: (sessionId) => {
         if (!isCurrent("journal") || !sessionId) return;
+        archiveChanges.current.remove(workspaceId, sessionId);
         runtimeSessionChangesRef.current.get(workspaceId)?.set(sessionId, () => undefined);
         if (!isCurrent()) return;
         delete pendingCreatedSessionIdsRef.current[workspaceId]?.[sessionId];
@@ -893,8 +928,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   }, [workspaces]);
 
   useEffect(() => {
-    sessionsByWorkspaceIdRef.current = sessionsByWorkspaceId;
-  }, [sessionsByWorkspaceId]);
+    sessionsByWorkspaceIdRef.current = sessionInventory;
+  }, [sessionInventory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1316,6 +1351,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     sessionReferenceInventories,
     isSessionReferenceCurrent,
     setSessionsByWorkspaceId,
+    previewSessionArchive,
+    confirmSessionArchive,
     sessionsByWorkspaceIdRef,
     errorsByWorkspaceId,
     setErrorsByWorkspaceId,

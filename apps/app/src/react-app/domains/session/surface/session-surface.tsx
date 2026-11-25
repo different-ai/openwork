@@ -156,6 +156,7 @@ import {
   workspaceSyncStreamKey,
 } from "@/react-app/domains/session/sync/session-sync";
 import { resolveForkBoundaryId } from "@/react-app/domains/session/sync/transcript-reconcile";
+import { submitAfterDismissingSessionQuestions } from "@/react-app/domains/session/sync/session-question-dismissal";
 import {
   claimComposerSessionDraftScope,
   composerDraftNeedsHydration,
@@ -2185,7 +2186,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     (followUpDeliveryEnabled ? state.booksByWorkspaceId[props.workspaceId]?.[props.sessionId] : undefined) ?? NO_WAITING_FOLLOW_UPS);
   const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
   const questionInThreadEnabled = useDesktopFeature("questionInThread");
-  const skipThreadQuestionBeforeSendRef = useRef<(() => void) | null>(null);
+  const dismissThreadQuestionBeforeSendRef = useRef(false);
   const followUpSuggestion = useFollowUpSuggestion({
     enabled: !archived && !snapshot?.session.parentID,
     client: opencodeClient,
@@ -2333,7 +2334,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     nextDraft: ComposerDraft,
     itemId: string,
     onPrepared?: (text?: string) => void,
-    options: { consumeQueuedItem?: boolean; agent?: string | null } = {},
+    options: { consumeQueuedItem?: boolean; agent?: string | null; dismissQuestions?: boolean } = {},
   ): Promise<CloudMcpSubmissionResult | AutoAccessBlock | { outcome: "unknown" }> => {
     const agent = options.agent !== undefined ? options.agent : getSessionAgentSelection(props.sessionId, props.selectedAgent);
     const messageId = nextDraft.messageId ?? createPromptMessageID();
@@ -2377,10 +2378,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
         if (getQueuedSendGeneration(props.sessionId) !== generation) return { outcome: "cancelled" as const, reason: "context_changed" as const };
         return props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared, agent);
       };
-      const result = snapshot?.session.parentID
-        ? await submitAfterInterruption(props.opencodeBaseUrl, props.sessionId, submit, messageId)
-        : await submitImmediateSessionTurn<CloudMcpSubmissionResult>(props.opencodeBaseUrl, interruptionClient, props.sessionId,
-          sendMessages, submit, { directory: props.workspaceRoot.trim() || undefined, messageID: messageId });
+      const directory = props.workspaceRoot.trim() || undefined;
+      const submitWithoutInterrupt = () => submitAfterInterruption(props.opencodeBaseUrl, props.sessionId, submit, messageId);
+      const submitNormally = () => snapshot?.session.parentID
+        ? submitWithoutInterrupt()
+        : submitImmediateSessionTurn<CloudMcpSubmissionResult>(props.opencodeBaseUrl, interruptionClient, props.sessionId,
+          sendMessages, submit, { directory, messageID: messageId });
+      const result = options.dismissQuestions
+        ? await submitAfterDismissingSessionQuestions({ client: interruptionClient, workspaceId: props.workspaceId, sessionId: props.sessionId, directory }, () => {
+          if (getQueuedSendGeneration(props.sessionId) !== generation) throw new Error("Send cancelled by Stop.");
+          if (sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) throw new Error("This conversation is being archived.");
+        }, submitWithoutInterrupt, submitNormally)
+        : await submitNormally();
       if (options.consumeQueuedItem && (result.outcome === "sent" || result.outcome === "accepted")) {
         removeQueuedDraftFromStore(props.sessionId, itemId);
       }
@@ -2479,7 +2488,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return true;
   }, [clearComposer, opencodeClient, props.sessionId, sideQuestionsEnabled]);
 
-  const handleSend = useCallback(async (sourceComposer?: ComposerSessionState) => {
+  const handleSend = useCallback(async (sourceComposer?: ComposerSessionState, steer = false) => {
     if (!sourceComposer && askSideQuestionFromComposer()) return;
     if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
@@ -2490,7 +2499,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const sourceAttachments = submittedComposer?.attachments ?? attachments;
     const text = originalDraft.trim();
     if (!text && sourceAttachments.length === 0) return;
-    skipThreadQuestionBeforeSendRef.current?.();
+    const dismissQuestions = steer || dismissThreadQuestionBeforeSendRef.current;
     const focusedComposer = document.activeElement;
     const savedComposer = snapshotComposerSessionState(submittedComposer ?? {
       draft: originalDraft, attachments: sourceAttachments, mentions, pasteParts, revertMessageId: null,
@@ -2556,7 +2565,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
     if (sentAttachments.length) setAttachmentsUploading(true);
     try {
-      const result = await sendDraft(nextDraft, nextDraft.messageId, markPrepared);
+      const result = await sendDraft(nextDraft, nextDraft.messageId, markPrepared, { dismissQuestions });
       if ((result.outcome === "sent" || result.outcome === "accepted")
         && !isDesktopRuntime() && window.matchMedia("(max-width: 1023px)").matches
         && focusedComposer instanceof HTMLElement
@@ -2641,7 +2650,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       handleQueue(true);
       return;
     }
-    await handleSend();
+    await handleSend(undefined, true);
   }, [autoSending, handleQueue, handleSend, props.sessionId, sessionOwner]);
 
   const removeQueuedDraft = useCallback((id: string) => {
@@ -2669,14 +2678,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!item || !target || (item.steer && (item.steer.owner !== sessionOwner || item.steer.generation !== generation))) return;
     const drain = getQueuedDrainState(props.sessionId);
     if (drain.phase.kind !== "ready" && drain.phase.kind !== "halted" && drain.phase.itemId === id) return;
-    useComposerStateStore.getState().requestQueuedDraftSend(props.sessionId, id, {
-      owner: sessionOwner, generation, agent: getSessionAgentSelection(props.sessionId, props.selectedAgent),
-    });
+    const steer = item.steer ?? { owner: sessionOwner, generation, agent: getSessionAgentSelection(props.sessionId, props.selectedAgent) };
+    useComposerStateStore.getState().requestQueuedDraftSend(props.sessionId, id, steer);
     if (canAdmitNextQueuedItem(drain, true) || (drain.phase.kind !== "ready" && drain.phase.kind !== "halted")) return;
     if (!claimQueuedSend(props.sessionId, item.id, true)) return;
     cloudQueueBlockedRef.current = false;
     try {
-      const result = await sendDraft(target, item.id, undefined, { consumeQueuedItem: true, agent: item.steer?.agent });
+      const result = await sendDraft(target, item.id, undefined, { consumeQueuedItem: true, agent: steer.agent, dismissQuestions: true });
       if (result.outcome === "blocked" || result.outcome === "cancelled" || result.outcome === "unknown") {
         return;
       }
@@ -2887,7 +2895,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const generation = getQueuedSendGeneration(props.sessionId);
     void (async () => {
       try {
-        const result = await sendDraft(nextDraft, nextItem.id, undefined, { consumeQueuedItem: true, agent: nextItem.steer?.agent });
+        const result = await sendDraft(nextDraft, nextItem.id, undefined, { consumeQueuedItem: true, agent: nextItem.steer?.agent, dismissQuestions: Boolean(nextItem.steer) });
         if (getQueuedSendGeneration(props.sessionId) !== generation) {
           nextDraft.attachments.forEach(revokeAttachmentPreview);
           return;
@@ -3526,9 +3534,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const composerQuestion = composerQuestionForConnectionDecision(props.activeQuestion, nativeConnectionRequest);
   const threadQuestion = questionInThreadEnabled ? composerQuestion : null;
   const dockedQuestion = questionInThreadEnabled ? null : composerQuestion;
-  skipThreadQuestionBeforeSendRef.current = threadQuestion && props.respondQuestion && !props.questionReplyBusy
-    ? () => { void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {}); }
-    : null;
+  dismissThreadQuestionBeforeSendRef.current = threadQuestion?.sessionID === props.sessionId;
   const threadQuestionCard = threadQuestion ? (
     <div data-composer-interaction="question" className="mx-auto w-full max-w-3xl px-2 md:px-10">
       {threadQuestion.form ? (

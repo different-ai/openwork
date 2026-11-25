@@ -1,16 +1,20 @@
 /** @jsxImportSource react */
 import { afterAll, afterEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { act, useEffect } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation, useNavigate } from "react-router";
+import { workspaceSessionRoute } from "../src/react-app/shell/workspace-routes";
 
 import type { ResolvedWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../src/react-app/domains/session/sidebar/use-session-archive";
 import type { RouteSession, RouteWorkspace } from "../src/react-app/shell/route-workspaces";
 import type { OpenworkControlAPI, OpenworkControlAction } from "../src/react-app/shell/control/control-provider";
 
-mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({ useCheckDesktopRestriction: () => () => false }));
+mock.module("../src/react-app/domains/cloud/desktop-config-provider", () => ({
+  useCheckDesktopRestriction: () => () => false,
+  useDesktopRestriction: () => false,
+}));
 mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({ useDenAuth: () => ({ isSignedIn: false }) }));
 
 // The archive hook talks to a real (fake) engine over HTTP; happy-dom's fetch
@@ -46,6 +50,7 @@ const { createClient } = await import("../src/app/lib/opencode");
 const { sessionWorkHeld } = await import("../src/app/lib/opencode-interruption");
 const { useSessionControlActions } = await import("../src/react-app/domains/session/control/session-control-actions");
 const { useSessionManagementStore } = await import("../src/react-app/domains/session/sidebar/session-management-store");
+const { useSessionActivityStore } = await import("../src/react-app/domains/session/status/session-activity-store");
 const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -231,6 +236,7 @@ describe("archiving a working session: the warning goes back through the request
     reloadWorkspaceSessions?: () => Promise<unknown>;
     onArchivedChange?: (workspaceId: string, sessionId: string, archived: boolean) => void;
     otherOwner?: { engine: Engine; sessions: RouteSession[] };
+    selectedSessionId?: string;
   } = {}) {
     const workspace: RouteWorkspace = {
       id: "ws", name: "Client A / Production", displayNameResolved: "Client A / Production", path: directory, preset: "starter", workspaceType: "local",
@@ -248,18 +254,34 @@ describe("archiving a working session: the warning goes back through the request
     const root = createRoot(host);
     let archiveSession: ((sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>) | null = null;
     let archiveInWorkspace: ReturnType<typeof useSessionArchive>["archiveSessionInWorkspace"] = async () => ({ kind: "cancelled" });
+    let rendered = { pathname: "", archived: false };
+    let navigateTo = (_sessionId: string) => {};
     function Harness() {
+      const { pathname } = useLocation();
+      const navigate = useNavigate();
+      const selectedSessionId = pathname.split("/")[4] ?? null;
+      const [preview, setPreview] = useState<boolean | null>(null);
+      const [confirmed, setConfirmed] = useState(false);
+      rendered = { pathname, archived: preview ?? confirmed };
+      navigateTo = id => navigate(workspaceSessionRoute("ws", id));
       const archive = useSessionArchive({
         workspaces: hooks.otherOwner ? [workspace, { ...workspace, id: "other", name: "Other workspace" }] : [workspace],
         sessionsByWorkspaceId: { ws: sessions, ...(hooks.otherOwner ? { other: hooks.otherOwner.sessions } : {}) },
         endpointForSessionWorkspace: (owner) => owner.id === "other" && hooks.otherOwner
           ? { ...endpoint, workspaceId: "other", opencodeBaseUrl: hooks.otherOwner.engine.baseUrl } : endpoint,
         selectedWorkspaceId: "ws",
-        selectedSessionId: null,
+        selectedSessionId,
         draftScope: null,
-        navigateToWorkspaceSession: () => undefined,
+        navigateToWorkspaceSession: (workspaceId, id, options) => navigate(workspaceSessionRoute(workspaceId, id), options),
         reloadWorkspaceSessions: hooks.reloadWorkspaceSessions ?? (async () => undefined),
-        onArchivedChange: hooks.onArchivedChange ?? (() => undefined),
+        previewArchivedChange: (_workspaceId, _sessionId, archived) => {
+          if (hooks.selectedSessionId) setPreview(archived);
+          return () => { if (hooks.selectedSessionId) setPreview(null); };
+        },
+        onArchivedChange: (workspaceId, sessionId, archived) => {
+          if (hooks.selectedSessionId) setConfirmed(archived);
+          hooks.onArchivedChange?.(workspaceId, sessionId, archived);
+        },
       });
       useSessionControlActions({
         workspaces: [workspace], sessionsByWorkspaceId: { ws: sessions }, selectedWorkspaceId: "ws",
@@ -272,11 +294,13 @@ describe("archiving a working session: the warning goes back through the request
       useEffect(() => { archiveSession = archive.archiveSession; archiveInWorkspace = archive.archiveSessionInWorkspace; });
       return archive.archiveDialog;
     }
-    await act(async () => root.render(<MemoryRouter><OpenworkControlProvider><Harness /></OpenworkControlProvider></MemoryRouter>));
+    await act(async () => root.render(<MemoryRouter initialEntries={[workspaceSessionRoute("ws", hooks.selectedSessionId)]}>
+      <OpenworkControlProvider><Harness /></OpenworkControlProvider>
+    </MemoryRouter>));
     const unmount = async () => { await act(async () => root.unmount()); host.remove(); };
     cleanups.push(unmount);
     if (!archiveSession) throw new Error("archive hook did not mount");
-    return Object.assign(archiveSession, { unmount, inWorkspace: archiveInWorkspace });
+    return Object.assign(archiveSession, { unmount, inWorkspace: archiveInWorkspace, rendered: () => rendered, navigateTo: (id: string) => navigateTo(id) });
   }
 
   function stubFetch(engine: Engine, intercept: (request: Request, requests: Request[]) => Response | Promise<Response> | undefined = () => undefined) {
@@ -499,6 +523,66 @@ describe("archiving a working session: the warning goes back through the request
     body?.close();
     await flush();
     expect(requests.filter(request => request.method === "PATCH")).toHaveLength(1);
+  });
+
+  test("an idle selection leaves the active list and route before verification, PATCH, or refresh", async () => {
+    const engine = startEngine();
+    const id = "ses_target";
+    const preflight = Promise.withResolvers<Response>();
+    const patch = Promise.withResolvers<Response>();
+    const refresh = Promise.withResolvers<void>();
+    const archive = await mountArchive(engine, [session(id, "Archive target", 1)], {
+      selectedSessionId: id,
+      reloadWorkspaceSessions: () => refresh.promise,
+    });
+    const requests = stubFetch(engine, request => request.method === "PATCH" ? patch.promise
+      : new URL(request.url).pathname.endsWith("/message") ? preflight.promise.then(() => NativeResponse.json([])) : undefined);
+    let outcome: ArchiveSessionOutcome | undefined;
+    await act(async () => { void archive.inWorkspace("ws", id, true).then(value => { outcome = value; }); });
+    expect(archive.rendered()).toEqual({ archived: true, pathname: workspaceSessionRoute("ws") });
+    expect(requests.some(request => request.method === "PATCH")).toBe(false);
+    preflight.resolve(NativeResponse.json([]));
+    await until(() => requests.some(request => request.method === "PATCH"), "PATCH dispatch");
+    expect(outcome).toBeUndefined();
+    expect(archive.rendered().archived).toBe(true);
+    patch.resolve(NativeResponse.json(session(id, "Archive target", 2)));
+    await until(() => outcome?.kind === "done", "success before refresh");
+    expect(archive.rendered()).toEqual({ archived: true, pathname: workspaceSessionRoute("ws") });
+    refresh.resolve();
+  });
+
+  test("a locally known working selection stays open while the stop requirement is verified", async () => {
+    const engine = startEngine();
+    const id = "ses_target";
+    engine.busy.add(id);
+    const activity = useSessionActivityStore.getState();
+    activity.setRunStatus("ws", id, { type: "busy" });
+    cleanups.push(() => activity.removeSession("ws", id));
+    const preflight = Promise.withResolvers<Response>();
+    const archive = await mountArchive(engine, [session(id, "Archive target", 1)], { selectedSessionId: id });
+    const requests = stubFetch(engine, request => new URL(request.url).pathname.endsWith("/message") ? preflight.promise : undefined);
+    await act(async () => { void archive.inWorkspace("ws", id, true); });
+    expect(archive.rendered()).toEqual({ archived: false, pathname: workspaceSessionRoute("ws", id) });
+    preflight.resolve(NativeResponse.json([]));
+    await until(() => dialog() !== null, "Stop and archive confirmation");
+    expect(archive.rendered()).toEqual({ archived: false, pathname: workspaceSessionRoute("ws", id) });
+    expect(requests.some(request => request.method === "PATCH")).toBe(false);
+  });
+
+  test.each([false, true])("PATCH failure restores the row without hijacking later navigation (%s)", async (leave) => {
+    const engine = startEngine();
+    const id = "ses_target";
+    const patch = Promise.withResolvers<Response>();
+    const archive = await mountArchive(engine, [session(id, "Archive target", 1)], { selectedSessionId: id });
+    const requests = stubFetch(engine, request => request.method === "PATCH" ? patch.promise : undefined);
+    let outcome: ArchiveSessionOutcome | undefined;
+    await act(async () => { void archive.inWorkspace("ws", id, true).then(value => { outcome = value; }); });
+    await until(() => requests.some(request => request.method === "PATCH"), "PATCH dispatch");
+    expect(archive.rendered()).toEqual({ archived: true, pathname: workspaceSessionRoute("ws") });
+    if (leave) await act(async () => archive.navigateTo("ses_elsewhere"));
+    patch.resolve(NativeResponse.json({ message: "Engine unavailable for archive" }, { status: 503 }));
+    await until(() => outcome?.kind === "archive_outcome_unknown", "archive failure");
+    expect(archive.rendered()).toEqual({ archived: false, pathname: workspaceSessionRoute("ws", leave ? "ses_elsewhere" : id) });
   });
 
   test.each(["cache", "reload"])("a known successful PATCH reconciles locally even when %s never settles", async (stage) => {

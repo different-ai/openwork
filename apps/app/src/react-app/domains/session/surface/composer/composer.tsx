@@ -2,7 +2,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { Cloud, Monitor, Check, ChevronDown, FileText, RefreshCw, Terminal, Zap } from "lucide-react";
+import { Check, ChevronDown, FileText, RefreshCw, Terminal, Zap } from "lucide-react";
 import { ComposerSendButton } from "./composer-send-button";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
@@ -27,7 +27,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LexicalPromptEditor, syncAttachmentChipStatus, type ComposerAttachmentToken, type LexicalPromptEditorHandle } from "./editor";
-import { COMPUTER_MENTIONS } from "./computer-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
 import {
   connectSkillSlashCommandOptions,
@@ -584,7 +583,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   useEffect(() => {
     if (!mentionSearchActive) return;
     let cancelled = false;
-    setMentionItems(COMPUTER_MENTIONS);
+    setMentionItems([]);
     void Promise.all([
       props.listAgents().catch(() => []),
       props.searchFiles(mentionQuery).catch(() => []),
@@ -592,14 +591,13 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       if (cancelled) return;
       const recent = props.recentFiles.slice(0, 8);
       const next: MentionItem[] = [
-        ...COMPUTER_MENTIONS,
         ...agentList.map((agent) => ({ id: `agent:${agent.name}`, kind: "agent" as const, value: agent.name, label: agent.name })),
         ...recent.map((file) => ({ id: `file:${file}`, kind: "file" as const, value: file, label: file })),
         ...files.filter((file) => !recent.includes(file)).map((file) => ({ id: `file:${file}`, kind: "file" as const, value: file, label: file })),
       ];
       setMentionItems(next);
     }).catch(() => {
-      if (!cancelled) setMentionItems(COMPUTER_MENTIONS);
+      if (!cancelled) setMentionItems([]);
     });
     return () => {
       cancelled = true;
@@ -754,10 +752,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     return fuzzysort.go(slashQuery, slashItems, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
   }, [inlineSuggestions, slashItems, legacySlashOpen, slashQuery, slashTrigger]);
   const mentionFiltered = useMemo<MentionSuggestion[]>(() => {
-    if (inlineSuggestions) return mentionTrigger
+    if (inlineSuggestions && !mentionTrigger || !inlineSuggestions && !mentionOpen) return [];
+    return inlineSuggestions && mentionTrigger
       ? inlineMentionSuggestions(mentionItems, sessionReferences?.candidates() ?? [], mentionTrigger.query, props.sessionId)
-      : [];
-    return mentionOpen ? filterMentionItems(mentionItems, mentionQuery) : [];
+      : filterMentionItems(mentionItems, mentionQuery);
   }, [inlineSuggestions, mentionTrigger, mentionItems, sessionReferences, props.sessionId, mentionOpen, mentionQuery]);
   const sessionFiltered = useMemo(() => {
     if (!sessionMenuOpen || !sessionReferences) return [];
@@ -1371,9 +1369,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               applyMentionSuggestion(item);
             }}
           >
-            {item.kind === "computer" ? (
-              item.value === "cloud" ? <Cloud size={14} className="mt-0.5 shrink-0 text-gray-9" /> : <Monitor size={14} className="mt-0.5 shrink-0 text-gray-9" />
-            ) : item.kind === "agent" ? (
+            {item.kind === "agent" ? (
               <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
             ) : (
               <FileText size={14} className="mt-0.5 shrink-0 text-gray-9" />

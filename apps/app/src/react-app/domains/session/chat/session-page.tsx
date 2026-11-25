@@ -279,6 +279,7 @@ export type SessionPageProps = {
   onOpenSettings: () => void;
   onOpenExtensions: () => void;
   sidebar: SessionPageSidebarProps;
+  runtimeSessionStatusById: Record<string, string>;
   surface?: SessionPageSurfaceProps | null;
   resolvePaneRuntime?: (session: OpenSessionTab) => SessionPagePaneRuntime;
   history?: SessionPageHistoryControls | null;
@@ -664,8 +665,8 @@ export function SessionPage(props: SessionPageProps) {
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
   const [primaryChatElement, setPrimaryChatElement] = useState<HTMLElement | null>(null);
   const computerUse = isElectronRuntime();
-  useComputerEndTurn(props.sidebar.sessionStatusById, computerUse);
-  useBrowserAgentTurns(props.sidebar.sessionStatusById);
+  useComputerEndTurn(props.runtimeSessionStatusById, computerUse);
+  useBrowserAgentTurns(props.runtimeSessionStatusById);
 
   const {
     leftSidebarResizing,

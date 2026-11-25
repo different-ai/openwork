@@ -68,7 +68,8 @@ export function selectSessionAttention(
       } else if (status !== "idle" && status !== "error") descendantActivity.busy += 1;
       queue.push(...children.get(childId) ?? []);
     }
-    const own = ownStatus(id) ?? "idle";
+    const runStatus = ownStatus(id) ?? "idle";
+    const own = runStatus !== "error" && waitingKind(id) ? "waiting" : runStatus;
     const ownWins = own === "error" || own === "waiting";
     attention.set(id, {
       status: !ownWins && descendantActivity.waiting > 0 ? "waiting" : own,
@@ -85,6 +86,7 @@ type WorkspaceAttentionInputs = {
   statuses?: Readonly<Record<string, SessionActivityStatus>>;
   waiting?: Readonly<Record<string, SessionWaitingKind>>;
   childIds?: SessionChildIds;
+  computerRequests?: Readonly<Record<string, unknown>>;
 };
 
 export function createWorkspaceSessionAttentionSelector() {
@@ -100,11 +102,12 @@ export function createWorkspaceSessionAttentionSelector() {
       && previous.locale === locale
       && previous.inputs.statuses === inputs.statuses
       && previous.inputs.waiting === inputs.waiting
-      && previous.inputs.childIds === inputs.childIds) return previous.attention;
+      && previous.inputs.childIds === inputs.childIds
+      && previous.inputs.computerRequests === inputs.computerRequests) return previous.attention;
     const attention = selectSessionAttention(
       sessions,
       (id) => inputs.statuses?.[id],
-      (id) => inputs.waiting?.[id],
+      (id) => inputs.computerRequests?.[id] ? "permission" : inputs.waiting?.[id],
       (id) => inputs.childIds?.[id] ?? [],
     );
     cache.set(sessions, { inputs, locale, attention });

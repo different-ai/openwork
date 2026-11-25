@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  inlineMentionAtCaret, inlineMentionSuggestions, type MentionItem,
+  filterMentionItems, inlineMentionAtCaret, inlineMentionSuggestions, type MentionItem,
 } from "../src/react-app/domains/session/surface/composer/mention-suggestions";
 import type { SessionReferenceCandidate } from "../src/components/chat/session-reference";
 
@@ -38,6 +38,17 @@ describe("inline mentions", () => {
     expect(inlineMentionSuggestions([notes], tasks, "weekly reference")).toEqual([]);
     expect(inlineMentionSuggestions([notes], tasks, "weekly report", "ses_report")).toEqual([]);
     expect(inlineMentionSuggestions([notes], tasks, "zzqxxzzq")).toEqual([]);
+  });
+
+  test("keeps files, agents, and task references in the mention menu", () => {
+    const agent: MentionItem = { id: "agent:review", kind: "agent", value: "review", label: "review" };
+    const available = [notes, agent];
+    expect(filterMentionItems(available, "")).toEqual([notes, agent]);
+    expect(inlineMentionSuggestions(available, [candidate("Weekly report")], "").map((item) => item.kind)).toEqual(["file", "agent", "task"]);
+    for (const query of ["cloud", "desktop"]) {
+      expect(filterMentionItems(available, query)).toEqual([]);
+      expect(inlineMentionSuggestions(available, [], query)).toEqual([]);
+    }
   });
 
   test("reserves four rows for each group", () => {
