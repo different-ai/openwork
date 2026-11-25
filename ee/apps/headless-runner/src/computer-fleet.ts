@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { Config } from "./config.js"
 
-export type ComputerFleetConfig = Pick<Config, "computer" | "computerGateway">
+export type ComputerFleetConfig = Pick<Config, "computer">
 export type ComputerFleetSandbox = {
   id: string
   key: string | null
@@ -80,84 +80,14 @@ export type ComputerFleetDeps = { fetch: typeof fetch; now?: () => Date }
 
 const KIND = "headless-computer"
 const SCOPE_LABEL = "openwork.sandbox.scope"
-const KEY_LABEL = "openwork.sandbox.key"
 const TIMEOUT_MS = 8_000
 export const COMPUTER_FLEET_LIMIT = 2_000
-const GATEWAY_PAGE = 500
 const FREESTYLE_PAGE = 100
 const FREESTYLE_URL = "https://api.freestyle.sh"
-const EVENT_PAGE = 200
-const EVENT_PAGES = 2
-export const COMPUTER_EVENT_LIMIT = 40
-const CONTENT_ACTION = /^sandbox\.(exec|file_|port_)/
-const EVENT_DETAILS = ["pool", "action", "by", "to", "after", "reason", "error", "waitedSeconds"]
 const COMPUTER_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/
-const GATEWAY_STATUSES = "queued,provisioning,running,pausing,paused,stopped,terminating,failed"
 
 const text = z.string().max(2_000).nullish()
 const count = z.number().finite().nullish()
-const gatewaySandbox = z.object({
-  id: z.string().min(1).max(200),
-  status: z.string().min(1).max(40),
-  statusReason: text,
-  pool: text,
-  adapter: text,
-  region: text,
-  resources: z.object({ cpu: count, memoryMiB: count, diskGiB: count }).loose().nullish(),
-  labels: z.record(z.string(), z.string()).nullish(),
-  createdAt: text,
-  updatedAt: text,
-  startedAt: text,
-  pausedAt: text,
-  lastActivityAt: text,
-  expiresAt: text,
-  endedAt: text,
-  attempts: count,
-  template: text,
-  fromSnapshot: text,
-  trust: text,
-  idleTimeoutSeconds: count,
-  idledAt: text,
-  resumeRequestedAt: text,
-  slotReleased: z.boolean().nullish(),
-  profile: text,
-  classification: text,
-  capabilities: z.array(z.string().max(200)).max(100).nullish(),
-  preemptible: z.boolean().nullish(),
-  ttlSeconds: count,
-  maxRunSeconds: count,
-  maxPausedSeconds: count,
-  decision: z.object({
-    pool: text,
-    strategy: text,
-    outcome: text,
-    reason: text,
-    evaluatedAt: text,
-    policies: z.array(z.string().max(200)).max(50).nullish(),
-    candidates: z.array(z.object({
-      pool: z.string().max(200),
-      trust: text,
-      eligible: z.boolean().nullish(),
-      hasCapacity: z.boolean().nullish(),
-      rank: count,
-      reasons: z.array(z.string().max(2_000)).max(20).nullish(),
-    }).loose()).max(50).nullish(),
-  }).loose().nullish(),
-}).loose()
-type GatewaySandbox = z.infer<typeof gatewaySandbox>
-const gatewayEvents = z.object({
-  items: z.array(z.object({
-    time: text,
-    action: z.string().max(200),
-    outcome: text,
-    details: z.record(z.string(), z.string()).nullish(),
-  }).loose()),
-  nextCursor: z.string().nullish(),
-}).loose()
-const gatewayPage = z.object({ items: z.array(z.unknown()), nextCursor: z.string().nullish() }).loose()
-const gatewayPools = z.object({
-  items: z.array(z.object({ pool: z.string().max(200), adapter: text, region: text, enabled: z.boolean(), health: z.string().max(40) }).loose()),
-}).loose()
 const freestyleVm = z.object({
   id: z.string().min(1).max(200),
   state: z.string().min(1).max(40),
@@ -204,50 +134,12 @@ async function readJson(deps: ComputerFleetDeps, url: string, apiKey: string): P
 }
 
 const orNull = <T>(value: T | null | undefined): T | null => (value === undefined || value === null || value === "" ? null : value)
-const reason = (value: string | null | undefined) => (value ? value.slice(0, 300) : null)
 
-type Gateway = NonNullable<ComputerFleetConfig["computerGateway"]>
 type Direct = NonNullable<ComputerFleetConfig["computer"]>
 
-const gatewaySettings = (gateway: Gateway): ComputerFleetSettings => ({ image: gateway.template, idlePauseSeconds: Math.round(gateway.idlePauseMs / 1000), keepDays: gateway.keepDays, persistent: gateway.persistent === true })
 const directSettings = (computer: Direct): ComputerFleetSettings => ({ image: orNull(computer.snapshot), idlePauseSeconds: Math.round(computer.idlePauseMs / 1000), keepDays: computer.keepDays, persistent: computer.persistent === true })
 
 const ours = (labels: Record<string, string> | null | undefined, scope: string | undefined) => labels?.kind === KIND && (!scope || labels[SCOPE_LABEL] === scope)
-
-function fromGateway(value: GatewaySandbox, gateway: Gateway): ComputerFleetSandbox {
-  const provider = gateway.kind
-  const image = orNull(value.template) ?? orNull(value.fromSnapshot)
-  return {
-    id: value.id,
-    key: orNull(value.labels?.[KEY_LABEL]),
-    source: "gateway",
-    provider,
-    status: value.status,
-    statusReason: reason(value.statusReason),
-    pool: orNull(value.pool),
-    backend: orNull(value.adapter),
-    region: orNull(value.region),
-    cpu: orNull(value.resources?.cpu),
-    memoryMb: orNull(value.resources?.memoryMiB),
-    diskGb: orNull(value.resources?.diskGiB),
-    createdAt: orNull(value.createdAt),
-    updatedAt: orNull(value.updatedAt),
-    startedAt: orNull(value.startedAt),
-    pausedAt: orNull(value.pausedAt),
-    lastActivityAt: orNull(value.lastActivityAt),
-    expiresAt: orNull(value.expiresAt),
-    endedAt: orNull(value.endedAt),
-    attempts: orNull(value.attempts),
-    image,
-    imageCurrent: image === null ? null : image === gateway.template,
-    idleTimeoutSeconds: orNull(value.idleTimeoutSeconds),
-    idledAt: orNull(value.idledAt),
-    resumeRequestedAt: orNull(value.resumeRequestedAt),
-    slotReleased: orNull(value.slotReleased),
-    trust: orNull(value.trust),
-    runSeconds: null,
-  }
-}
 
 function fromFreestyle(value: FreestyleVm, computer: Direct): ComputerFleetSandbox {
   const provider = computer.kind
@@ -282,40 +174,6 @@ function fromFreestyle(value: FreestyleVm, computer: Direct): ComputerFleetSandb
     trust: null,
     runSeconds: typeof value.totalRunSeconds === "number" && value.totalRunSeconds >= 0 ? value.totalRunSeconds : null,
   }
-}
-
-async function readGateway(gateway: Gateway, deps: ComputerFleetDeps): Promise<{ source: ComputerFleetSource; sandboxes: ComputerFleetSandbox[] }> {
-  const source: ComputerFleetSource = { source: "gateway", provider: gateway.kind, status: "ok", error: null, truncated: false, pools: [], settings: gatewaySettings(gateway) }
-  const sandboxes: ComputerFleetSandbox[] = []
-  const base = gateway.url.replace(/\/+$/, "")
-  try {
-    const pools = gatewayPools.safeParse(await readJson(deps, `${base}/v1/capabilities`, gateway.apiKey))
-    if (!pools.success) throw new FleetReadError("invalid_response")
-    source.pools = pools.data.items.map((pool) => ({ name: pool.pool, backend: orNull(pool.adapter), region: orNull(pool.region), enabled: pool.enabled, health: pool.health }))
-    let cursor: string | null = null
-    do {
-      const query = new URLSearchParams({ status: GATEWAY_STATUSES, limit: String(GATEWAY_PAGE) })
-      query.append("label", `kind=${KIND}`)
-      if (gateway.scope) query.append("label", `${SCOPE_LABEL}=${gateway.scope}`)
-      if (cursor) query.set("cursor", cursor)
-      const page = gatewayPage.safeParse(await readJson(deps, `${base}/v1/sandboxes?${query.toString()}`, gateway.apiKey))
-      if (!page.success) throw new FleetReadError("invalid_response")
-      for (const item of page.data.items) {
-        const sandbox = gatewaySandbox.safeParse(item)
-        if (!sandbox.success) continue
-        if (sandboxes.length >= COMPUTER_FLEET_LIMIT) {
-          source.truncated = true
-          break
-        }
-        sandboxes.push(fromGateway(sandbox.data, gateway))
-      }
-      cursor = source.truncated ? null : orNull(page.data.nextCursor)
-    } while (cursor)
-  } catch (error) {
-    source.status = "unreachable"
-    source.error = error instanceof FleetReadError ? error.code : "unreachable"
-  }
-  return { source, sandboxes }
 }
 
 async function readFreestyle(computer: Direct, deps: ComputerFleetDeps): Promise<{ source: ComputerFleetSource; sandboxes: ComputerFleetSandbox[] }> {
@@ -354,7 +212,6 @@ async function readFreestyle(computer: Direct, deps: ComputerFleetDeps): Promise
 
 export async function readComputerFleet(config: ComputerFleetConfig, deps: ComputerFleetDeps): Promise<ComputerFleet> {
   const reads: Array<Promise<{ source: ComputerFleetSource; sandboxes: ComputerFleetSandbox[] }>> = []
-  if (config.computerGateway) reads.push(readGateway(config.computerGateway, deps))
   if (config.computer?.kind === "freestyle") reads.push(readFreestyle(config.computer, deps))
   else if (config.computer) reads.push(Promise.resolve({ source: { source: "direct", provider: config.computer.kind, status: "unsupported", error: null, truncated: false, pools: [], settings: directSettings(config.computer) }, sandboxes: [] }))
   const results = await Promise.all(reads)
@@ -374,35 +231,6 @@ export async function computerFleetResponse(config: ComputerFleetConfig | undefi
 const NO_LIMITS: ComputerLimits = { profile: null, classification: null, capabilities: [], preemptible: null, ttlSeconds: null, maxRunSeconds: null, maxPausedSeconds: null, autoDeleteSeconds: null, totalRunSeconds: null }
 const positive = (value: number | null | undefined) => (typeof value === "number" && value > 0 ? value : null)
 
-async function gatewayEventsOf(gateway: Gateway, deps: ComputerFleetDeps, id: string): Promise<Pick<ComputerDetail, "events" | "eventsError">> {
-  const base = gateway.url.replace(/\/+$/, "")
-  const events: ComputerEvent[] = []
-  try {
-    let before: string | null = null
-    for (let page = 0; page < EVENT_PAGES && events.length < COMPUTER_EVENT_LIMIT; page += 1) {
-      const query = new URLSearchParams({ resource: id, order: "desc", limit: String(EVENT_PAGE) })
-      if (before) query.set("beforeSeq", before)
-      const read = gatewayEvents.safeParse(await readJson(deps, `${base}/v1/audit-events?${query.toString()}`, gateway.apiKey))
-      if (!read.success) throw new FleetReadError("invalid_response")
-      for (const item of read.data.items) {
-        if (!item.action.startsWith("sandbox.") || CONTENT_ACTION.test(item.action)) continue
-        const details: Record<string, string> = {}
-        for (const name of EVENT_DETAILS) {
-          const value = item.details?.[name]
-          if (value) details[name] = value.slice(0, 300)
-        }
-        events.push({ at: orNull(item.time), action: item.action.slice("sandbox.".length), outcome: orNull(item.outcome), details })
-        if (events.length >= COMPUTER_EVENT_LIMIT) break
-      }
-      before = orNull(read.data.nextCursor)
-      if (!before) break
-    }
-    return { events, eventsError: null }
-  } catch (error) {
-    return { events: null, eventsError: error instanceof FleetReadError ? error.code : "unreachable" }
-  }
-}
-
 const missing = { ok: false as const, status: 404 as const, error: "unknown_computer" }
 const failed = (error: unknown): ComputerDetailResult => {
   const code = error instanceof FleetReadError ? error.code : "unreachable"
@@ -412,56 +240,7 @@ const failed = (error: unknown): ComputerDetailResult => {
 export async function readComputer(config: ComputerFleetConfig, deps: ComputerFleetDeps, source: string, id: string): Promise<ComputerDetailResult> {
   if ((source !== "gateway" && source !== "direct") || !COMPUTER_ID.test(id)) return { ok: false, status: 400, error: "invalid_computer" }
   const generatedAt = (deps.now?.() ?? new Date()).toISOString()
-  if (source === "gateway") {
-    const gateway = config.computerGateway
-    if (!gateway) return missing
-    let value: GatewaySandbox
-    try {
-      const read = gatewaySandbox.safeParse(await readJson(deps, `${gateway.url.replace(/\/+$/, "")}/v1/sandboxes/${encodeURIComponent(id)}`, gateway.apiKey))
-      if (!read.success) throw new FleetReadError("invalid_response")
-      value = read.data
-    } catch (error) {
-      return failed(error)
-    }
-    if (!ours(value.labels, gateway.scope)) return missing
-    const decision = value.decision
-    return {
-      ok: true,
-      detail: {
-        version: 1,
-        generatedAt,
-        computer: fromGateway(value, gateway),
-        limits: {
-          ...NO_LIMITS,
-          profile: orNull(value.profile),
-          classification: orNull(value.classification),
-          capabilities: value.capabilities ?? [],
-          preemptible: orNull(value.preemptible),
-          ttlSeconds: positive(value.ttlSeconds),
-          maxRunSeconds: positive(value.maxRunSeconds),
-          maxPausedSeconds: positive(value.maxPausedSeconds),
-        },
-        settings: gatewaySettings(gateway),
-        placement: decision ? {
-          pool: orNull(decision.pool),
-          strategy: orNull(decision.strategy),
-          outcome: orNull(decision.outcome),
-          reason: reason(decision.reason),
-          evaluatedAt: orNull(decision.evaluatedAt),
-          policies: decision.policies ?? [],
-          candidates: (decision.candidates ?? []).map((candidate) => ({
-            pool: candidate.pool,
-            trust: orNull(candidate.trust),
-            eligible: orNull(candidate.eligible),
-            hasCapacity: orNull(candidate.hasCapacity),
-            rank: orNull(candidate.rank),
-            reasons: (candidate.reasons ?? []).map((line) => line.slice(0, 300)),
-          })),
-        } : null,
-        ...await gatewayEventsOf(gateway, deps, value.id),
-      },
-    }
-  }
+  if (source === "gateway") return missing
   const computer = config.computer
   if (!computer || computer.kind !== "freestyle") return missing
   let value: FreestyleVm

@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client"
-import type { ComputerPermission, ComputerStatus } from "@openwork/types/desktop-ipc"
+import type { ComputerPermission, ComputerStatus, PrivateValueSettings } from "@openwork/types/desktop-ipc"
 import { ComputerUseSettings } from "../src/react-app/domains/settings/pages/computer-use-view"
 import { SettingsContent, SettingsPanel, SettingsPanelDescription, SettingsPanelHeading, SettingsPanelTitle } from "../src/react-app/domains/settings/shell/panel"
 import { Button } from "../src/components/ui/button"
@@ -17,6 +17,26 @@ let grants = query.get("grants") === "some" ? [
   { id: "reports", origin: "https://app.example.com", folder: "/Users/sam/Documents/Quarterly reports" },
   { id: "invoices", origin: "https://billing.example.com", folder: "/Users/sam/Documents/Invoices", blocked: true },
 ] : []
+
+const values = query.get("values")
+const privateValues: PrivateValueSettings = {
+  enabled: values !== null && values !== "off",
+  switches: { commands: true, paste: true, keep: true },
+  organization: values === "org" ? { fills: "ask", commands: "limited", paste: "blocked" } : values === "blocked" ? { fills: "blocked", commands: null, paste: null } : { fills: null, commands: null, paste: null },
+  always: values === "some" || values === "org" ? [
+    { id: "bank", sessionId: "chat-1", site: "https://bank.example.com", field: "password", command: "bw get password bank.example.com", blocked: false },
+    { id: "ops", sessionId: "chat-2", site: "https://ops.example.com", field: "password", command: "security find-generic-password -s ops -w", blocked: values === "org" },
+  ] : [],
+  kept: values === "some" ? [
+    { id: "code", sessionId: "chat-1", site: "https://bank.example.com", label: "Sign-in code" },
+    { id: "key", sessionId: "chat-1", program: "bw", label: "Bitwarden session key" },
+  ] : [],
+  recent: values === "some" ? [
+    { at: Date.UTC(2026, 0, 5, 17, 4), sessionId: "chat-1", site: "https://bank.example.com", field: "password", source: "command", program: "bw", result: "filled" },
+    { at: Date.UTC(2026, 0, 5, 17, 2), sessionId: "chat-1", site: "https://bank.example.com", field: "text", source: "paste", result: "declined" },
+    { at: Date.UTC(2026, 0, 5, 16, 58), sessionId: "chat-2", site: "https://ops.example.com", field: "password", source: "command", program: "security", result: "blocked" },
+  ] : [],
+}
 
 function status(): ComputerStatus {
   const local = targetId === "local"
@@ -53,6 +73,16 @@ async function invoke(command: string, ...args: unknown[]) {
     case "computerListFileGrants":
       if (query.get("grants") === "failed") throw new Error("The account could not be read.")
       return { enabled: query.get("grants") !== "off", grants }
+    case "computerListPrivateValues":
+      if (values === "failed") throw new Error("The account could not be read.")
+      return privateValues
+    case "computerSetPrivateValueSwitch":
+      if ((args[0] === "commands" || args[0] === "paste" || args[0] === "keep") && typeof args[1] === "boolean") privateValues.switches = { ...privateValues.switches, [args[0]]: args[1] }
+      return { ok: true }
+    case "computerRemovePrivateValue":
+      if (args[0] === "always") privateValues.always = privateValues.always.filter((entry) => entry.id !== args[1])
+      else privateValues.kept = privateValues.kept.filter((entry) => entry.id !== args[1])
+      return { ok: true }
     case "computerRemoveFileGrant":
       grants = grants.filter((grant) => grant.id !== args[0])
       return { ok: true }

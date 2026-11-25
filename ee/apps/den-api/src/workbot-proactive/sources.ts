@@ -3,7 +3,6 @@ import {
   AGENT_CORE_SOURCE_COPY,
   DEFAULT_AGENT_SOURCES_POLICY,
   agentOtherConnections,
-  agentSourcePolicy,
   type AgentCoreSource,
   type AgentCoreSourceConnection,
   type AgentOtherSourceConnection,
@@ -17,8 +16,6 @@ import {
   type WorkbotProactiveView,
 } from "@openwork/types/den/workbot-proactive"
 import { agentReadableConnection, serviceLinkDomains } from "../mcp/agent-read-sources.js"
-
-export type SourceMode = "reviewed" | "any"
 
 export type MemberConnection = {
   id: string
@@ -57,26 +54,19 @@ export function connectionLinkDomains(connection: { url: string; native: string 
   return serviceLinkDomains(connection.url)
 }
 
-export function canBeSource(connection: { url: string; native: string | null }, mode: SourceMode = "reviewed"): boolean {
-  if (mode === "any") return true
+function reviewedSource(connection: { url: string; native: string | null }) {
   return connection.native === null && agentReadableConnection(connection.url)
 }
 
-export function defaultOther(connection: { url: string; native: string | null }, mode: SourceMode = "reviewed") {
-  if (mode === "any") return true
-  return connection.native === null && agentReadableConnection(connection.url)
-}
-
-export function sourceSlotsOf(connection: { url: string; native: string | null }, mode: SourceMode = "reviewed"): AgentSourceSlot[] {
-  if (connection.native !== null) return mode === "any" ? [...coreSourcesOf(connection), "other"] : coreSourcesOf(connection)
-  return canBeSource(connection, mode) ? ["other"] : []
+export function sourceSlotsOf(connection: { url: string; native: string | null }): AgentSourceSlot[] {
+  return [...coreSourcesOf(connection), "other"]
 }
 
 export function otherSourcePolicy(policy: AgentSourcesPolicy, connection: { id: string; url: string; native: string | null }): AgentSourcePolicy {
   const chosen = policy.connections[connection.id]
   if (chosen) return chosen
   const picked = agentOtherConnections(policy)
-  if (picked !== null && defaultOther(connection, "reviewed") && !picked.includes(connection.id)) return "off"
+  if (picked !== null && reviewedSource(connection) && !picked.includes(connection.id)) return "off"
   return "members"
 }
 
@@ -100,20 +90,16 @@ export function automaticDefault<T extends SourceShape>(allowed: readonly T[], c
 
 export function groupSourceConnections(
   connections: readonly (AgentSourceConnection & { native: string | null })[],
-  context: { policy?: AgentSourcesPolicy; connectedMembers?: ReadonlyMap<string, number>; mode?: SourceMode } = {},
+  context: { policy?: AgentSourcesPolicy; connectedMembers?: ReadonlyMap<string, number> } = {},
 ): NonNullable<WorkbotProactiveView["sourceConnections"]> {
-  const mode = context.mode ?? "reviewed"
   const policy = context.policy ?? DEFAULT_AGENT_SOURCES_POLICY
   const groups: Record<AgentCoreSource, AgentCoreSourceConnection[]> & { other: AgentOtherSourceConnection[]; all: AgentSourceOption[] } = { calendar: [], other: [], all: [] }
   const counted = (id: string) => context.connectedMembers?.get(id) ?? null
   for (const connection of connections) {
     const entry = { id: connection.id, name: connection.name, url: connection.url }
-    if (defaultOther(connection, mode)) {
-      groups.other.push(mode === "any" ? { ...entry, native: connection.native !== null, policy: otherSourcePolicy(policy, connection) } : entry)
-    }
+    groups.other.push({ ...entry, native: connection.native !== null, policy: otherSourcePolicy(policy, connection) })
     for (const kind of coreSourcesOf(connection)) groups[kind].push({ ...entry, connectedMembers: counted(connection.id) })
-    const slots = sourceSlotsOf(connection, mode)
-    if (slots.length) groups.all.push({ ...entry, native: connection.native !== null, slots, connectedMembers: counted(connection.id) })
+    groups.all.push({ ...entry, native: connection.native !== null, slots: sourceSlotsOf(connection), connectedMembers: counted(connection.id) })
   }
   return groups
 }
@@ -121,28 +107,13 @@ export function groupSourceConnections(
 export function checkSourcesChange(input: {
   change: AgentSourcesPolicyInput | undefined
   connections: readonly (AgentSourceConnection & { native: string | null })[]
-  mode?: SourceMode
 }): string | null {
   const { change } = input
-  const mode = input.mode ?? "reviewed"
   if (!change) return null
-  if (change.toolOverrides && mode !== "any") return "Choosing tools for agents isn't on for this organization."
-  const byId = new Map(input.connections.map((connection) => [connection.id, connection]))
-  const unknown = (id: string) => `No connection ${id} in this organization.`
-  for (const id of change.otherConnections ?? []) {
-    const connection = byId.get(id)
-    if (!connection) return unknown(id)
-    if (!sourceSlotsOf(connection, mode).includes("other")) return connection.native !== null ? `${connection.name} can't be other context.` : `Agents can't read ${connection.name} yet.`
-  }
-  for (const [id, value] of Object.entries(change.connections ?? {})) {
-    const connection = byId.get(id)
-    if (!connection) return unknown(id)
-    if (value !== null && !canBeSource(connection, mode)) return `Agents can't read ${connection.name} yet.`
-  }
-  for (const id of Object.keys(change.toolOverrides ?? {})) {
-    if (!byId.has(id)) return unknown(id)
-  }
-  return null
+  const known = new Set(input.connections.map((connection) => connection.id))
+  const named = [...(change.otherConnections ?? []), ...Object.keys(change.connections ?? {}), ...Object.keys(change.toolOverrides ?? {})]
+  const unknown = named.find((id) => !known.has(id))
+  return unknown === undefined ? null : `No connection ${unknown} in this organization.`
 }
 
 export type ResolvedSource = {
@@ -185,9 +156,7 @@ export function resolveMemberSources(input: {
   choices: Readonly<Record<string, MemberSourceChoice>>
   lastLook: Readonly<Record<string, number>>
   connectedMembers?: ReadonlyMap<string, number>
-  mode?: SourceMode
 }): ResolvedSource[] {
-  const mode = input.mode ?? "reviewed"
   const core = AGENT_CORE_SOURCES.map((kind): ResolvedSource => {
     const policy = input.policy[kind]
     const choice = input.choices[kind]
@@ -206,11 +175,9 @@ export function resolveMemberSources(input: {
       lastReadAt: input.lastLook[kind] ?? null,
     }
   })
-  const otherIds = agentOtherConnections(input.policy)
   const others = input.connections
-    .filter((connection) => mode === "any" ? defaultOther(connection, mode) : otherIds === null ? defaultOther(connection) : otherIds.includes(connection.id) && canBeSource(connection))
     .map((connection): ResolvedSource => {
-      const policy = mode === "any" ? otherSourcePolicy(input.policy, connection) : agentSourcePolicy(input.policy, connection.id)
+      const policy = otherSourcePolicy(input.policy, connection)
       const choice = input.choices[connection.id]
       return {
         id: connection.id,

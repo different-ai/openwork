@@ -5,6 +5,7 @@
 // command or credential.
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { validValueAsk, validValueCommand, validValueUnlock } from "./value-command.mjs";
 
 export const COMPUTER_TOOLS = Object.freeze({
   computer_discover: "computer_discover",
@@ -101,6 +102,95 @@ const validSecretApproval = (secret) => Boolean(secret) && typeof secret === "ob
   && typeof secret.label === "string" && secret.label.length <= 80 && secret.label.trim().length >= 1
   && typeof secret.kind === "string" && ["password", "code", "token"].includes(secret.kind)
   && typeof secret.field === "string" && secret.field.length <= 32 && secret.field.trim().length >= 1;
+/** As many commands as one approval card lists. */
+const MAX_VALUE_FILLS = 6;
+/** Whether a row of the card is a key a command reads from its environment, not a field of the page. */
+const isUnlock = (fill) => fill.unlock !== undefined;
+/** Whether command row `fill` reads the key row `key` lists. */
+const reads = (fill, key) => fill.command !== undefined && fill.needs === key.unlock && fill.command[0] === key.program;
+/**
+ * What the approval card lists when fields are filled with values the agent never sees: for each field its input
+ * type, and where its value comes from. That is either a command, a program and its arguments that prints it, or
+ * `ask`, the name under which the person pastes it into the card; `kept` says one is already kept for this chat.
+ * A command that reads a key from its environment says which variable in `needs`, and that key is listed once,
+ * after the fields: `unlock` is the variable, `program` the command it is for, `ask` the name under which the
+ * person pastes it. Anything else is refused before the person is asked.
+ * @param {unknown} fills @returns {fills is ValueFillApproval[]}
+ */
+const validValueFills = (fills) => {
+  if (!Array.isArray(fills) || !fills.every((fill) => Boolean(fill) && typeof fill === "object")) return false;
+  const fields = fills.filter((fill) => !isUnlock(fill)), keys = fills.filter(isUnlock);
+  if (fields.length < 1 || fields.length > MAX_VALUE_FILLS || fills.slice(0, fields.length).some(isUnlock)) return false;
+  return fields.every((fill) => typeof fill.field === "string" && fill.field.length <= 80 && fill.field.trim().length >= 1
+      && (fill.ask === undefined
+        ? validValueCommand(fill.command) && fill.kept === undefined && (fill.needs === undefined || keys.filter((key) => reads(fill, key)).length === 1)
+        : fill.command === undefined && fill.needs === undefined && validValueAsk(fill.ask) && (fill.kept === undefined || fill.kept === true)))
+    && keys.every((key) => key.field === undefined && key.command === undefined && typeof key.program === "string"
+      && validValueUnlock({ env: key.unlock, ask: key.ask }) && (key.kept === undefined || key.kept === true)
+      && fields.some((fill) => reads(fill, key)));
+};
+/**
+ * Whether `seal` lists, as the card shows them, up to four values a request's answer keeps for the chat: a NAME in
+ * capitals, the dotted path it is taken from, and the https origin it may later be sent to.
+ * @param {unknown} seal
+ */
+const validShownSeal = (seal) => Array.isArray(seal) && seal.length >= 1 && seal.length <= 4 && seal.every((entry) => {
+  if (!entry || typeof entry !== "object" || Object.keys(entry).length !== 3) return false;
+  if (typeof entry.name !== "string" || !/^[A-Z_][A-Z0-9_]{0,63}$/.test(entry.name)) return false;
+  if (typeof entry.from !== "string" || !/^[A-Za-z0-9_-]{1,64}(\.[A-Za-z0-9_-]{1,64}){0,5}$/.test(entry.from)) return false;
+  try { const url = new URL(entry.for); return url.protocol === "https:" && url.origin === entry.for; } catch { return false; }
+});
+/**
+ * Whether `use` is a place values go other than a page, as a card can show it whole: a program and its arguments, or
+ * an https request's method and its URL without a query, with the origin that URL has.
+ * @param {unknown} use @returns {use is ValueUse}
+ */
+const validValueUseTarget = (use) => {
+  if (!use || typeof use !== "object") return false;
+  const target = /** @type {Record<string, unknown>} */ (use);
+  if (target.kind === "run") return Object.keys(target).length === 2 && validValueCommand(target.command);
+  if (target.kind !== "request" || Object.keys(target).length !== (target.seal === undefined ? 4 : 5)) return false;
+  if (typeof target.method !== "string" || !["GET", "POST", "PUT", "PATCH", "DELETE"].includes(target.method)) return false;
+  if (typeof target.url !== "string" || target.url.length > 2000 || typeof target.origin !== "string") return false;
+  if (target.seal !== undefined && !validShownSeal(target.seal)) return false;
+  try {
+    const url = new URL(target.url);
+    return url.protocol === "https:" && url.origin === target.origin && `${url.origin}${url.pathname}` === target.url && !url.username && !url.password;
+  } catch { return false; }
+};
+/** The key a standing "Always" is kept under for a use, as the person's list shows it. @param {ValueUse} use */
+const useKey = (use) => use.kind === "run" ? `run ${use.command.join(" ")}` : `${use.method} ${use.url}`;
+/** One row of the card as the person is shown it, and nothing else that came with it. */
+const shownValueFill = (fill) => isUnlock(fill) ? { unlock: fill.unlock, program: fill.program, ask: fill.ask, ...(fill.kept ? { kept: /** @type {const} */ (true) } : {}) }
+  : fill.ask === undefined ? { field: fill.field, command: [...fill.command], ...(fill.needs === undefined ? {} : { needs: fill.needs }) }
+  : { field: fill.field, ask: fill.ask, ...(fill.kept ? { kept: /** @type {const} */ (true) } : {}) };
+/** A value the person pasted into the card: long enough to be told apart from ordinary text, and one text value. */
+const validPastedValue = (value) => typeof value === "string" && value.length >= 4 && value.length <= 4096;
+/**
+ * The values the person pasted into a card that lists `fills`, one place per fill: text, or null where the command
+ * runs or the kept value is used. A field that is only asked for needs one. `keep` marks the pasted values to
+ * keep for this chat; it means nothing for a value that was not asked for by name.
+ * A card shown with `paste: false` takes no pasted value at all, and one with `keep: false` keeps none: the
+ * person's own settings or their organization's turned that off before the card was shown.
+ * @param {ValueFillApproval[]} fills @param {unknown} values @param {unknown} keep
+ * @param {{ paste?: boolean, keep?: boolean }} [limits]
+ * @returns {{ values: Array<string | null>, keep: boolean[] }}
+ */
+function pastedValues(fills, values, keep, limits = {}) {
+  if (values !== undefined && (!Array.isArray(values) || values.length !== fills.length)) throw new Error("This request changed. Review the current one.");
+  if (keep !== undefined && (!Array.isArray(keep) || keep.length !== fills.length)) throw new Error("This request changed. Review the current one.");
+  const given = fills.map((fill, index) => {
+    const value = values?.[index] ?? null;
+    if (value !== null && limits.paste === false) throw new Error("Pasting a value is turned off.");
+    if (value !== null && !validPastedValue(value)) throw new Error("A pasted value must be 4 to 4096 characters long.");
+    if (value !== null && isUnlock(fill) && /[\r\n\u0000]/.test(value)) throw new Error("A key for a command is one line.");
+    // A key is needed only while a command that reads it still runs: not when every such field was pasted instead.
+    const needed = !isUnlock(fill) || fills.some((row, at) => reads(row, fill) && (values?.[at] ?? null) === null);
+    if (value === null && fill.ask !== undefined && fill.kept !== true && needed) throw new Error("Paste the value first.");
+    return value;
+  });
+  return { values: given, keep: fills.map((fill, index) => limits.keep !== false && keep?.[index] === true && given[index] !== null && fill.ask !== undefined) };
+}
 const uiNumber = (value, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= 0 && value <= max;
 /** The Mac and Windows helpers take at most this many drag points. */
 export const DRAG_POINTS = 32;
@@ -210,8 +300,11 @@ function deadline(ms) {
  * @typedef {{ isError?: boolean, content: Array<{ type: string, text?: string, data?: string, mimeType?: string }> }} ComputerResult
  * @typedef {{ sessionId?: string, rootSessionId?: string, agentName?: string }} ChatInput
  * @typedef {{ ok?: boolean, error?: { code: string, message: string }, mayHaveActed?: boolean, [key: string]: unknown }} ScriptResult
- * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[], save?: boolean }, credential?: { site?: string, app?: string, appId?: string, secret?: SecretApproval } }} ComputerRequest
+ * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[], save?: boolean }, credential?: { site?: string, use?: ValueUse, app?: string, appId?: string, secret?: SecretApproval, fills?: ValueFillApproval[], paste?: false, keep?: false } }} ComputerRequest
+ * @typedef {{ everyTime?: boolean, paste?: boolean, keep?: boolean }} ValueFillLimits
+ * @typedef {{ kind: "run", command: string[] } | { kind: "request", method: string, url: string, origin: string, seal?: Array<{ name: string, from: string, for: string }> }} ValueUse
  * @typedef {{ label: string, kind: "password" | "code" | "token", field: string }} SecretApproval
+ * @typedef {{ field: string, command: string[], needs?: string, ask?: undefined, kept?: undefined, unlock?: undefined } | { field: string, ask: string, kept?: true, command?: undefined, needs?: undefined, unlock?: undefined } | { unlock: string, program: string, ask: string, kept?: true, field?: undefined, command?: undefined, needs?: undefined }} ValueFillApproval
  * @typedef {{ targets?: Record<string, string>, computer?: string }} SavedChoices
  * @typedef {{ effect: "allow" } | { effect: "ask" } | { effect: "deny", message: string }} MoveDecision
  * @typedef {{ kind: "files", app: string, names: string[], save?: boolean } | { kind: "clipboard" }} ContentMove
@@ -584,23 +677,70 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     if (site && answer === "always") (grant.credentialsAlwaysFor ??= new Set()).add(site);
     return answer;
   }
+  /**
+   * Fields of `site`, an exact https origin, are about to be filled with values the agent never sees. For each
+   * field the card shows where its value comes from: a command OpenWork runs on this computer, typing what it
+   * prints, or a name under which the person pastes the value into the card itself. One card lists them all.
+   * "Always" covers exactly a card of commands alone: the same command into the same kind of field on the same
+   * site, for this chat. Nothing pasted is ever standing, and a standing "always" for typed credentials never
+   * covers a command, nor a command anything else.
+   * `values` holds what the person pasted, one place per fill and null where none was; `keep` marks the ones to
+   * keep for this chat. Both are all empty unless the answer is a yes.
+   * `limits` narrow the card, never widen it: `everyTime` asks whatever was approved before and offers no
+   * "Always", `paste: false` takes no pasted value, `keep: false` keeps none for the chat.
+   * A value used outside a page names `use` instead of `site`: the program it is given to, or the request it is sent in.
+   * @param {{ site?: string, use?: ValueUse, fills: ValueFillApproval[], limits?: ValueFillLimits }} asked
+   * @returns {Promise<{ answer: "allow" | "always" | "dismiss" | "aborted" | "timeout" | "busy" | "too_many", values: Array<string | null>, keep: boolean[] }>}
+   */
+  async function approveValues(grant, asked, signal) {
+    const { site: page, use, fills, limits = {} } = asked;
+    if (!validValueFills(fills)) return { answer: "too_many", values: [], keep: [] };
+    /** @type {{ values: Array<string | null>, keep: boolean[] }} */
+    let given = { values: fills.map(() => null), keep: fills.map(() => false) };
+    const none = given;
+    if (use !== undefined ? page !== undefined || !validValueUseTarget(use)
+      : typeof page !== "string" || page.length > 200 || !canonicalBrowserSite(page) || !page.startsWith("https://")) return { answer: "too_many", ...none };
+    const site = use === undefined ? /** @type {string} */ (page) : useKey(use);
+    const sealing = use?.kind === "request" && use.seal !== undefined;
+    const standing = limits.everyTime !== true && !sealing && fills.every((fill) => fill.ask === undefined) ? fills.map((fill) => JSON.stringify([site, fill.field, fill.command])) : null;
+    if (standing?.every((key) => grant.valuesAlwaysFor?.has(key))) return { answer: "always", ...none };
+    if (scriptRequests.has(chatKey(grant))) return { answer: "busy", ...none };
+    const target = targetFor(grant);
+    const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("credential"), computer: target.label, placement: target.placement,
+      ...(standing ? {} : { standing: false }),
+      credential: { ...(use === undefined ? { site } : { use: use.kind === "run" ? { kind: use.kind, command: [...use.command] } : { kind: use.kind, method: use.method, url: use.url, origin: use.origin, ...(use.seal ? { seal: use.seal.map((entry) => ({ name: entry.name, from: entry.from, for: entry.for })) } : {}) } }), fills: fills.map(shownValueFill), ...(limits.paste === false ? { paste: /** @type {const} */ (false) } : {}),
+        ...(limits.keep === false ? { keep: /** @type {const} */ (false) } : {}) } }, signal, (pasted) => { given = pasted; },
+      limits.everyTime === true ? "Your organization asks you to approve each fill. Choose Fill." : undefined);
+    if (answer !== "allow" && answer !== "always") return { answer, ...none };
+    if (answer === "always" && standing && given.values.every((value) => value === null)) {
+      for (const key of standing) (grant.valuesAlwaysFor ??= new Set()).add(key);
+      return { answer, ...none };
+    }
+    return { answer: "allow", ...given };
+  }
   function canonicalBrowserSite(site) {
     try {
       const url = new URL(site);
       return ["http:", "https:"].includes(url.protocol) && url.origin === site;
     } catch { return false; }
   }
-  /** One in-chat approval at a time per chat; answered through answerRequest. */
-  function approve(grant, request, signal) {
+  /**
+   * One in-chat approval at a time per chat; answered through answerRequest. `collect` receives what the person
+   * typed into the card along with a yes, before the answer resolves; a request without it takes nothing typed.
+   * @param {(given: { values: Array<string | null>, keep: boolean[] }) => void} [collect]
+   * @param {string} [alwaysRejection] Copy to show when a value-fill request refuses "Always".
+   */
+  function approve(grant, request, signal, collect, alwaysRejection) {
     const key = chatKey(grant);
     return new Promise((resolve) => {
       let timer;
       const stop = () => pending.settle("aborted");
-      const pending = { request, settle: (answer) => {
+      const pending = { request, alwaysRejection, settle: (answer, given) => {
         if (scriptRequests.get(key) !== pending) return;
         scriptRequests.delete(key);
         clearTimeout(timer); signal.removeEventListener("abort", stop); grant.controller.signal.removeEventListener("abort", stop);
         onRequest(key, null);
+        if (given) collect?.(given);
         resolve(answer);
       } };
       scriptRequests.set(key, pending);
@@ -1669,9 +1809,12 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     /**
      * The person's answer to an in-chat request: allow this chat, always
      * allow, or not now. Setup itself is answered by macOS permissions.
-     * @param {ChatInput & { answer?: "dismiss" | "allow" | "always" | "remember", id?: string }} input
+     * A card that lists fields to fill takes, with a yes, the values the person pasted into it: `values`, one
+     * place per field and null where none was pasted, and `keep` for the ones to keep for this chat. A field that
+     * is only asked for needs its value, and nothing pasted is approved as "always".
+     * @param {ChatInput & { answer?: "dismiss" | "allow" | "always" | "remember", id?: string, values?: Array<string | null>, keep?: boolean[] }} input
      */
-    async answerRequest({ sessionId, answer, id } = {}) {
+    async answerRequest({ sessionId, answer, id, values, keep } = {}) {
       const grant = await grantFor(sessionId);
       const pending = scriptRequests.get(chatKey(grant));
       if (pending) {
@@ -1684,7 +1827,14 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         if (answer === "always" && pending.request.reason === "files" && pending.request.files?.site && pending.request.files.canRemember !== true) {
           throw new Error("This browser upload needs approval each time.");
         }
-        pending.settle(answer);
+        const fills = pending.request.reason === "credential" ? pending.request.credential?.fills : undefined;
+        const yes = answer === "allow" || answer === "always";
+        if (!(fills && yes) && (values !== undefined || keep !== undefined)) throw new Error("This request takes no pasted value.");
+        const given = fills && yes ? pastedValues(fills, values, keep, pending.request.credential) : undefined;
+        if (given && answer === "always" && (pending.request.standing === false || given.values.some((value) => value !== null))) {
+          throw new Error(pending.alwaysRejection ?? "A pasted value is used once. Choose Fill.");
+        }
+        pending.settle(answer, given);
         return view(grant);
       }
       if (answer === "dismiss") requests.get(chatKey(grant))?.settle("dismissed");
@@ -1766,6 +1916,44 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       if (secret !== undefined && !validSecretApproval(secret)) return false;
       const grant = await grantFor(sessionId);
       return ["allow", "always"].includes(await approveCredential(grant, secret === undefined ? { site } : { site, secret }, signal));
+    },
+    /**
+     * Asks the person before the built-in browser fills fields of `site` (an exact https origin) with values the
+     * agent never sees. Each of `fills` is a field's input type and where its value comes from: `command`, a
+     * program and its arguments that OpenWork runs on this computer, or `ask`, the name under which the person
+     * pastes the value into the card. The card lists every one. `fills` that are not exactly that are refused
+     * without asking. With a yes come the pasted values, one place per fill and null where none was pasted, and
+     * which of them to keep for this chat; they are returned to the caller alone and stored nowhere here.
+     * @param {ChatInput & { site?: string, use?: ValueUse, fills?: ValueFillApproval[], limits?: ValueFillLimits }} input
+     * @returns {Promise<{ approved: boolean, values: Array<string | null>, keep: boolean[] }>}
+     */
+    async approveValues({ sessionId, site, use, fills, limits } = {}, { signal = new AbortController().signal } = {}) {
+      const no = { approved: false, values: [], keep: [] };
+      if (closed || resetting || (use === undefined ? typeof site !== "string" : !validValueUseTarget(use)) || !validValueFills(fills)) return no;
+      const grant = await grantFor(sessionId);
+      const { answer, values, keep } = await approveValues(grant, { ...(use === undefined ? { site } : { use }), fills, limits }, signal);
+      return answer === "allow" || answer === "always" ? { approved: true, values, keep } : no;
+    },
+    /**
+     * Every command the person chose "Always" for, in every chat: the chat it holds in, the site, the kind of
+     * field and the command. Kept in memory only, so quitting OpenWork ends them all.
+     * @returns {Array<{ id: string, sessionId: string, site: string, field: string, command: string[] }>}
+     */
+    listValueGrants() {
+      return [...grants.values()].flatMap((grant) => [...grant.valuesAlwaysFor ?? []].map((key) => {
+        const [site, field, command] = JSON.parse(key);
+        return { id: JSON.stringify([grant.sessionId, key]), sessionId: chatKey(grant), site, field, command };
+      }));
+    },
+    /** Ends one "Always", or with no id every one, so the next such fill asks again. @param {string} [id] */
+    removeValueGrant(id) {
+      if (id === undefined) {
+        for (const grant of grants.values()) delete grant.valuesAlwaysFor;
+        return true;
+      }
+      let owner, key;
+      try { [owner, key] = JSON.parse(id); } catch { return false; }
+      return typeof owner === "string" && typeof key === "string" && grants.get(owner)?.valuesAlwaysFor?.delete(key) === true;
     },
     /**
      * @param {ChatInput & { app?: string, code?: string, timeoutMs?: number }} input

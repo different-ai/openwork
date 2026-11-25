@@ -48,6 +48,24 @@ export function agentPermissionEngineMcpDenial(
   return agentPermissionDenial(rules, "mcp", [name]);
 }
 
+function commandProgram(command: string): string {
+  const first = command.trim().split(/\s+/)[0] ?? "";
+  return (first.split(/[\\/]/).pop() ?? "").replace(/\.(?:exe|cmd|bat|com)$/i, "");
+}
+
+function escapedPattern(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function fillOnlyProgramIn(commandLine: string, programs: readonly string[]): string | null {
+  if (programs.length === 0) return null;
+  const parsed = parseShellCommands(commandLine);
+  const named = parsed.commands.map(commandProgram).find((name) => programs.includes(name));
+  if (named !== undefined) return named;
+  if (!parsed.unchecked) return null;
+  return programs.find((name) => new RegExp(`(^|[^\\w.-])${escapedPattern(name)}([^\\w.-]|$)`).test(commandLine)) ?? null;
+}
+
 export type EngineV2PermissionRule = { action: string; resource: string; effect: AgentPermissionDecision };
 
 const V2_ACTIONS: readonly AgentPermissionAction[] = ["shell", "edit", "external_directory", "webfetch", "websearch", "skill"];
@@ -108,7 +126,10 @@ export function agentPermissionEngineV2Decision(
   const parsed = ourAction === "shell" ? resources.map((resource) => parseShellCommands(resource, assigned)) : [];
   const commands = ourAction === "shell" ? parsed.flatMap((entry) => entry.commands) : resources;
   const ours = decideAgentPermission(rules, ourAction, commands);
-  if (ours.effect === "deny" && ours.rule) return { effect: "deny", message: agentPermissionDenialMessage(ours.rule, ours.resource) };
+  if (ours.effect === "deny" && ours.rule) {
+    const message = agentPermissionDenialMessage(ours.rule, ours.resource);
+    return { effect: "deny", message };
+  }
   if (parsed.some((entry) => entry.unchecked) && rules.some((rule) => rule.action === "shell" && rule.effect !== "allow")) {
     const decision = commandsDecision(rules);
     if (decision?.effect === "deny") return { effect: "deny", message: agentPermissionDenialMessage(decision, "*") };

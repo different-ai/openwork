@@ -575,7 +575,6 @@ export const WorkspaceCreateLimitRuleTable = mysqlTable("workspace_create_limit_
   updated_at: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
 }, (table) => [primaryKey({ columns: [table.scope, table.value] })])
 
-/** One row per normalized email identity, locked while that person creates a workspace. */
 export const WorkspaceCreateIdentityTable = mysqlTable("workspace_create_identity", {
   identity: varchar("identity", { length: 320 }).notNull().primaryKey(),
 })

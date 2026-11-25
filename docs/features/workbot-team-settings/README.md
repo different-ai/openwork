@@ -187,8 +187,7 @@ The same feature adds a fifth group, `agent`: the policy for members' agents ("Y
 
 Everything Manage › Workbot sets for members' agents, as one unit: on or off, working days and hours, the daily
 limit, whether members start opted in, the destination, what agents may read (`sources`: the calendar and each
-connector's setting and, with `workbotAgentBrief`, the per-tool choices), the brief and its rhythm (with
-`workbotAgentBrief`), and the "Your agent" template (responsibilities and instructions). A team cannot override
+connector's setting and per-tool choices), the brief and its rhythm, and the "Your agent" template (responsibilities and instructions). A team cannot override
 one field and follow Everyone for the rest: its first save copies Everyone's policy and template as they are at
 that moment, and from then on the team no longer follows Everyone's changes. Members' own choices (on or off,
 snooze, mutes, their sources and lines) are kept and apply inside whichever policy they are under.
@@ -198,8 +197,7 @@ snooze, mutes, their sources and lines) are kept and apply inside whichever poli
   so the controls can show them. View OpenWork Models settings or Manage OpenWork Models.
 - `PUT /v1/org/workbot-settings/teams/{teamId}/agent`: the same body and the same checks as
   `PUT /v1/org/workbot-settings/proactive` (a sources change is checked against the organization's connections in
-  the same way, so a team's policy never reads a connection the organization's checks would refuse; `brief`
-  answers 400 while `workbotAgentBrief` is off). The change is merged onto the team's own policy, or onto
+  the same way, so a team's policy never reads a connection the organization's checks would refuse). The change is merged onto the team's own policy, or onto
   Everyone's for a team that had none. Manage OpenWork Models.
 - `PUT /v1/org/workbot-settings/teams/{teamId}` with `{ "agent": { "inherit": true } }` removes the team's own
   policy; it accepts nothing else for `agent`.
@@ -244,8 +242,7 @@ per organization.
 
 Under the rows of the Workbot tab, a **Members' agents** section, shown only while the list carries `agent`
 (`workbotProactive` on, on a deployment with Workbot). It is the section Manage › Workbot shows (the Proactive
-Mode switch, where messages go, hours and limits, the brief or the message types, "Connectors" and, with
-`workbotAgentBrief`, "Tools agents may use"), bound to a scope: the same components and hooks read and save
+Mode switch, where messages go, hours and limits, the brief, "Connectors" and "Tools agents may use"), bound to a scope: the same components and hooks read and save
 Everyone's policy or one team's (`workbot-agent-scope.ts` maps a scope to its routes and query keys; a team's keys
 sit under Everyone's, so a change to Everyone's policy refreshes the teams that follow it).
 

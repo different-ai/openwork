@@ -12,8 +12,24 @@ export interface BrowserTaskInput {
     observationId?: string;
     toolId?: string;
     input?: unknown;
-    action?: { type: "click" | "fill" | "fill_secret" | "select" | "set_checked" | "key" | "scroll"; ref?: string; text?: string; secretRef?: string; checked?: boolean; values?: string[]; key?: string; x?: number; y?: number; deltaY?: number };
+    action?: BrowserTaskAction;
+    actions?: BrowserTaskAction[];
   };
+}
+
+export interface PrivateValuesInput {
+  sessionId: string;
+  args: {
+    values: Array<{ name: string; command?: string[]; ask?: string; as?: "env" | "file" }>;
+    run?: { command: string[] };
+    request?: { method: string; url: string; headers?: Record<string, string>; body?: string };
+    cwd?: string;
+  };
+}
+
+export interface BrowserTaskAction {
+  type: "click" | "fill" | "fill_secret" | "fill_from" | "select" | "set_checked" | "key" | "scroll";
+  ref?: string; text?: string; secretRef?: string; command?: string[]; ask?: string; unlock?: { env: string; ask: string }; checked?: boolean; values?: string[]; key?: string; x?: number; y?: number; deltaY?: number;
 }
 
 export interface BrowserControl {
@@ -23,6 +39,7 @@ export interface BrowserControl {
   role?: string | null;
   value?: string;
   valueTruncated?: boolean;
+  filled?: boolean;
   disabled?: boolean;
   readOnly?: boolean;
   required?: boolean;

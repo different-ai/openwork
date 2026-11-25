@@ -56,7 +56,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json && node --test test/production-exports.test.mjs",
+    "build": "tsup && tsc -p tsconfig.build.json && node --test test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

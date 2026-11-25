@@ -102,16 +102,11 @@ function verifies(delivery: typeof deliveries[number], key: string) {
   return String(delivery.headers["webhook-signature"]).split(" ").includes(`v1,${signature}`)
 }
 
-test("flag off hides methods and capability; existing computer reports and reads still work", async () => {
-
+test("computer reports and reads work with native events available", async () => {
   await report("resumed")
   const devices = await den.request(token, "GET", "/v1/workbot/devices")
   deviceId = text(field(list(field(devices.body, "devices")).find(device => device.workbotChat === "0123456789abcdef"), "id"), "computer")
-  const disabled = await rpc("events/list")
-  assert.equal(field(disabled.error, "code"), -32601, summary(disabled))
-  const discovered = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fixture", version: "1" } })
-  assert.equal(field(discovered.result, "capabilities", "events"), undefined)
-  assert.equal((await den.setFeature(org.orgId, "nativeMcpEvents", true)).status, 200)
+  assert.equal((await rpc("events/list")).error, undefined)
 })
 
 test("advertises both event profiles and webhook-only catalog; validates modern routing headers", async () => {
@@ -195,7 +190,6 @@ test("failed key rotation preserves the watch; successful rotation dual-signs an
 })
 
 test("hosted chat watches enter the existing same-thread harness once and cannot watch themselves", async () => {
-  await den.setFeature(org.orgId, "mcpThreadEvents", true)
   sessions.set(destinationSession, workbotOwner(org.orgId, org.owner.memberId))
   const minted = await den.request(token, "POST", "/v1/workbot/run-token", { body: { sessionId: destinationSession, messageId: "fixture-native-initial", model: models["gpt-6-luna"] } })
   assert.equal(minted.status, 200, summary(minted))
@@ -220,7 +214,7 @@ test("hosted chat watches enter the existing same-thread harness once and cannot
   assert.ok(![...turns.values()][0].prompt.includes(secret))
 })
 
-test("unsubscribe cancels queued work; a killed publisher leaves computer reports working", async () => {
+test("unsubscribe cancels queued work without disrupting computer reports", async () => {
   await report("resumed"); await observeAll()
   const stopped = await den.callMcpTool(threadToken, "unsubscribe_mcp_event", { id: watchId })
   assert.equal(field(stopped.body, "remoteStopped"), true, stopped.raw)
@@ -230,18 +224,11 @@ test("unsubscribe cancels queued work; a killed publisher leaves computer report
   const count = deliveries.length
   await deliverAll(); await dispatchMcpEvent()
   assert.equal(turns.size, 1); assert.equal(deliveries.length, count)
-  assert.equal((await rpc("events/subscribe", input())).error, undefined)
-  await report("paused"); await observeAll()
-  await den.setFeature(org.orgId, "nativeMcpEvents", false)
-  await deliverAll()
-  assert.equal(deliveries.length, count)
-  assert.equal(field((await rpc("events/list")).error, "code"), -32601)
   await report("resumed")
   assert.equal((await den.request(token, "GET", "/v1/workbot/devices")).status, 200)
 })
 
 test("unsubscribe during callback verification wins and leaves the normal source untouched", { timeout: 15_000 }, async () => {
-  await den.setFeature(org.orgId, "nativeMcpEvents", true)
   const args = { ...input(), delivery: { ...input().delivery, url: `${callback.url}/cancel-during-verification` } }
   let release = () => {}
   waitForChallenge = new Promise<void>(resolve => { release = resolve })
@@ -319,7 +306,6 @@ test("access revocation after internal receipt acceptance suppresses the action 
 })
 
 test("current ownership is rechecked before queued delivery and organization deletion clears native state", async () => {
-  await den.setFeature(org.orgId, "nativeMcpEvents", true)
   const created = await rpc("events/subscribe", input())
   assert.equal(created.error, undefined, summary(created))
   await report("paused"); await observeAll()

@@ -69,17 +69,6 @@ function workerActivityHeartbeatUrl(workerId: string) {
   return `${base}/v1/workers/${encodeURIComponent(workerId)}/activity-heartbeat`
 }
 
-export function documentsEditorForWorkers() {
-  const config = env.documentsOffice
-  if (config.mode !== "cloud-worker" || !config.hostOrigin || !config.callbackBaseUrl) return null
-  const wopi = new URL(config.callbackBaseUrl)
-  return {
-    port: config.workerPort,
-    wopiHost: `${wopi.protocol}//${wopi.hostname}:${wopi.port || (wopi.protocol === "https:" ? "443" : "80")}`,
-    frameAncestor: new URL(config.hostOrigin).origin,
-  }
-}
-
 export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig {
   const runtime = env.daytona
   return {
@@ -113,7 +102,6 @@ export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig
     healthcheckTimeoutMs: runtime.healthcheckTimeoutMs,
     pollIntervalMs: runtime.pollIntervalMs,
     activityHeartbeatUrl: workerActivityHeartbeatUrl,
-    documentsEditor: documentsEditorForWorkers() ?? undefined,
     bootstrap: {
       ...(runtime.sandboxClass === "linux-vm" ? { cloudComputerDisplay: ":99" } : {}),
       imageDescription: "Daytona runtime image",

@@ -45,7 +45,6 @@ const DAY_MS = 24 * HOUR_MS
 
 export const AGENT_TIMING = {
   checkEveryMs: 3 * HOUR_MS,
-  calendarPollMs: 5 * MINUTE_MS,
   retryMs: 15 * MINUTE_MS,
   horizonMs: 2 * DAY_MS,
 }
@@ -172,16 +171,6 @@ function workdayStart(policy: ProactivePolicy, at: number, timeZone: string) {
 export function isMorningPass(policy: ProactivePolicy, lastPassAt: number | null, at: number, timeZone: string): boolean {
   if (!withinWorkingHours(policy, at, timeZone)) return false
   return lastPassAt === null || lastPassAt < workdayStart(policy, at, timeZone)
-}
-
-/**
- * When the next scheduled pass is due after a pass at `passAt`: about every three hours inside working hours, and
- * the next working morning once the day is over. Never outside working hours.
- */
-export function nextScheduledPass(policy: ProactivePolicy, passAt: number, timeZone: string): number {
-  const next = passAt + AGENT_TIMING.checkEveryMs
-  if (withinWorkingHours(policy, next, timeZone) && zonedClock(next, timeZone).date === zonedClock(passAt, timeZone).date) return next
-  return nextWorkingStart(policy, Math.max(next, zonedDayStart(passAt, timeZone, 1)), timeZone)
 }
 
 /**
@@ -732,91 +721,11 @@ const calendarCheckpointSchema = z.object({
 })
 export type CalendarCheckpoint = z.infer<typeof calendarCheckpointSchema>
 
-const CHECKPOINT_MAX_EVENTS = 250
-
 export type CalendarWake =
   | { kind: "meeting_soon"; ref: string; event: CalendarEventFacts }
   | { kind: "calendar_change"; ref: string; change: "added"; event: CalendarEventFacts }
   | { kind: "calendar_change"; ref: string; change: "cancelled"; event: CalendarEventFacts }
   | { kind: "calendar_change"; ref: string; change: "moved"; event: CalendarEventFacts; previousStart: number | null }
-
-/** Which responsibility a wake is for, so a muted or turned-off one never wakes the agent. */
-export function wakeResponsibility(wake: CalendarWake): AgentResponsibility {
-  return wake.kind === "meeting_soon" ? "meeting_prep" : "calendar_changes"
-}
-
-function hasOutsiders(event: CalendarEventFacts) {
-  return event.others.some((other) => other.external)
-}
-
-function attending(event: CalendarEventFacts) {
-  return event.meeting && event.status !== "cancelled" && !event.declined && event.start !== null
-}
-
-/**
- * Compares what the calendar says now with the last checkpoint and returns what is worth waking the agent for,
- * today and tomorrow only:
- * - a meeting with people from outside the company that starts within `leadMinutes`;
- * - a meeting someone else added (created since the last look), moved or cancelled.
- * The first look (no checkpoint) only records the calendar.
- */
-export function detectCalendarWakes(input: {
-  events: CalendarEventFacts[]
-  previous: CalendarCheckpoint | null
-  now: number
-  timeZone: string
-  leadMinutes: number
-}): { wakes: CalendarWake[]; checkpoint: CalendarCheckpoint } {
-  const { events, previous, now, timeZone } = input
-  const horizon = zonedDayStart(now, timeZone, 2)
-  const inWindow = (at: number | null) => at !== null && at >= now && at < horizon
-  const wakes: CalendarWake[] = []
-
-  for (const event of events) {
-    if (!event.meeting || event.declined || event.allDay) continue
-    if (attending(event) && event.start !== null && event.start > now && event.start - now <= input.leadMinutes * MINUTE_MS && hasOutsiders(event)) {
-      wakes.push({ kind: "meeting_soon", ref: `${event.id}:${event.start}`, event })
-    }
-    if (!previous || event.organizerSelf || event.others.length === 0) continue
-    const seen = previous.events[event.id]
-    const ref = `${event.id}:${event.updated}`
-    if (!seen) {
-      if (event.status !== "cancelled" && event.created !== null && event.created > previous.checkedAt && inWindow(event.start)) {
-        wakes.push({ kind: "calendar_change", ref, change: "added", event })
-      }
-      continue
-    }
-    if (seen.u === event.updated) continue
-    if (event.status === "cancelled") {
-      if (seen.st !== "cancelled" && inWindow(seen.s)) wakes.push({ kind: "calendar_change", ref, change: "cancelled", event })
-      continue
-    }
-    if ((seen.s !== event.start || seen.e !== event.end) && (inWindow(event.start) || inWindow(seen.s))) {
-      wakes.push({ kind: "calendar_change", ref, change: "moved", event, previousStart: seen.s })
-    }
-  }
-
-  const kept: CalendarCheckpoint["events"] = {}
-  for (const event of events.slice(0, CHECKPOINT_MAX_EVENTS)) kept[event.id] = { u: event.updated, s: event.start, e: event.end, st: event.status }
-  return { wakes, checkpoint: { v: 1, checkedAt: now, events: kept } }
-}
-
-/**
- * When Den looks at the calendar again: in `calendarPollMs`, or exactly when the next meeting with outsiders enters
- * its lead window, whichever is first, and never outside working hours.
- */
-export function nextCalendarPoll(input: { now: number; events: CalendarEventFacts[]; leadMinutes: number; policy: ProactivePolicy; timeZone: string }): number {
-  const { now, policy, timeZone } = input
-  if (!withinWorkingHours(policy, now, timeZone)) return nextWorkingStart(policy, now, timeZone)
-  let next = now + AGENT_TIMING.calendarPollMs
-  for (const event of input.events) {
-    if (!attending(event) || event.start === null || !hasOutsiders(event)) continue
-    const opens = event.start - input.leadMinutes * MINUTE_MS
-    if (opens > now && opens < next) next = opens
-  }
-  next = Math.max(next, now + MINUTE_MS)
-  return withinWorkingHours(policy, next, timeZone) ? next : nextWorkingStart(policy, next, timeZone)
-}
 
 const agentStateSchema = z.object({
   v: z.literal(1),
@@ -827,7 +736,7 @@ const agentStateSchema = z.object({
   woke: z.array(z.string()).max(100),
   notices: z.record(z.string(), z.number()).default({}),
   requests: z.array(z.object({ at: z.number(), why: z.string().max(200), requestedAt: z.number(), done: z.boolean().optional() })).max(40).optional(),
-  sent: z.array(z.object({ at: z.number(), about: z.array(z.string().max(400)).max(8), lead: z.string().max(240) })).max(40).optional(),
+  sent: z.array(z.object({ at: z.number(), about: z.array(z.string().max(400)).max(96), lead: z.string().max(240) })).max(40).optional(),
   lastReport: z.object({ at: z.number(), text: z.string().max(4_000) }).nullable().optional(),
   skips: z.number().int().min(0).max(100).optional(),
 })
@@ -850,10 +759,5 @@ export function parseAgentState(value: string | null | undefined): AgentState {
   } catch {
     return { ...EMPTY_AGENT_STATE }
   }
-}
-
-/** Keeps the newest wake refs only. */
-export function rememberWakes(previous: readonly string[], refs: readonly string[]): string[] {
-  return [...previous.filter((ref) => !refs.includes(ref)), ...refs].slice(-100)
 }
 

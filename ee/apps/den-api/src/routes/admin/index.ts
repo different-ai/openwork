@@ -54,6 +54,7 @@ import { registerAdminWorkspaceCreateLimit } from "./workspace-create-limit.js"
 import { registerFundedModelSuspensions } from "./funded-model-suspensions.js"
 import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { registerAdminSecurityRoutes } from "./security.js"
+import { registerAdminHarnessFeedbackRoutes } from "./harness-feedback.js"
 import { registerAdminDashboardRoute } from "./dashboard.js"
 import { registerAdminControlCenterRoutes } from "./control-center.js"
 import { registerAdminOpportunitiesRoute } from "./opportunities.js"
@@ -1400,6 +1401,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   registerAdminFreeAutoUsageRoutes(app)
   registerAdminFreeAutoConversionsRoutes(app)
   registerAdminSecurityRoutes(app)
+  registerAdminHarnessFeedbackRoutes(app)
   registerAdminMemberFeatureRoutes(app)
   registerAdminFeatureUsageRoutes(app)
   registerAdminMcpRegistrationRoutes(app)

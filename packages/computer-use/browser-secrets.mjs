@@ -37,6 +37,8 @@ const PLACEHOLDER_LENGTH = 32;
 const TAG_LENGTH = 8;
 const STATUS_RETENTION_MS = 600_000;
 const REDACTED = "[secret]";
+// A four-digit code is the shortest value a site asks for. Anything shorter would be replaced all over a page's text.
+const REMEMBERED_MIN_LENGTH = 4;
 const REDACTED_PLACEHOLDER = "[secret placeholder]";
 // A header that names where a request comes from or goes to, or that the browser owns, never carries a value.
 const UNSWAPPED_HEADERS = new Set(["referer", "origin", "host", "cookie"]);
@@ -531,6 +533,12 @@ export function createBrowserSecrets({ allowLoopbackHttp = false, placeholderTtl
   let timer = null;
   /** @type {ReturnType<typeof compileMatcher> | null} */
   let matcher = null;
+  // Values the person pasted and chose to keep for one conversation, by the site they go to and the name the
+  // agent asked for them under. Memory only: they end with the conversation, and at the latest with the process.
+  /** @type {Map<string, Map<string, string>>} */
+  const keptValues = new Map();
+  /** @param {string} site @param {string} label */
+  const keptKey = (site, label) => JSON.stringify([site, label]);
 
   /** @param {Secret} secret @returns {BrowserSecretSummary} */
   const summary = ({ secretRef, label, kind, origins }) => ({ secretRef, label, kind, origins: [...origins] });
@@ -809,6 +817,53 @@ export function createBrowserSecrets({ allowLoopbackHttp = false, placeholderTtl
       if (!redacted.has(value)) { redacted.add(value); matcher = null; }
       return summary(secret);
     },
+    /**
+     * A value this app fetched for a single fill, such as what a command the person approved printed. It is not a
+     * saved secret: it is never listed, issued or swapped, and belongs to no conversation. From here on it is replaced
+     * in everything this store redacts, for as long as the store lives. False for a value that cannot be told apart
+     * from ordinary text or sent to a website as it is; the caller then types nothing.
+     * @param {unknown} value @returns {boolean}
+     */
+    remember(value) {
+      if (typeof value !== "string" || value.length < REMEMBERED_MIN_LENGTH || value.length > 4096) return false;
+      if (Buffer.from(value, "utf8").toString("utf8") !== value) return false;
+      if (!redacted.has(value)) { redacted.add(value); matcher = null; }
+      return true;
+    },
+    /** Whether this store has any value to replace. While it has none, nothing needs to pass through it. */
+    holding: () => redacted.size > 0,
+    /**
+     * Keeps a value the person pasted, for later fills on the same site under the same name in this conversation.
+     * It is replaced in everything this store redacts, like any value given to `remember`. False when it cannot
+     * be kept: the caller then asks the person again next time.
+     * @param {{ sessionId: string, site: string, label: string, value: string }} input @returns {boolean}
+     */
+    keep({ sessionId, site, label, value }) {
+      if (typeof sessionId !== "string" || !sessionId || typeof site !== "string" || !site || typeof label !== "string" || !label) return false;
+      if (typeof value !== "string" || value.length < REMEMBERED_MIN_LENGTH || value.length > 4096 || Buffer.from(value, "utf8").toString("utf8") !== value) return false;
+      const owned = keptValues.get(sessionId) ?? new Map();
+      const key = keptKey(site, label);
+      if (!owned.has(key) && owned.size >= maxPerSession) return false;
+      owned.set(key, value);
+      keptValues.set(sessionId, owned);
+      if (!redacted.has(value)) { redacted.add(value); matcher = null; }
+      return true;
+    },
+    /** The value kept for this site and name in this conversation, for the fill alone. @param {{ sessionId: string, site: string, label: string }} input @returns {string | null} */
+    kept: ({ sessionId, site, label }) => keptValues.get(sessionId)?.get(keptKey(site, label)) ?? null,
+    /** What is kept for a conversation, never a value. @param {string} sessionId @returns {{ site: string, label: string }[]} */
+    listKept: (sessionId) => [...keptValues.get(sessionId)?.keys() ?? []].map((key) => { const [site, label] = JSON.parse(key); return { site, label }; }),
+    /** What is kept in every conversation, for the person's own settings; never a value. @returns {{ sessionId: string, site: string, label: string }[]} */
+    listAllKept: () => [...keptValues].flatMap(([sessionId, owned]) => [...owned.keys()].map((key) => { const [site, label] = JSON.parse(key); return { sessionId, site, label }; })),
+    /** Stops keeping every value in every conversation. They stay in this store's memory for redaction only. */
+    forgetAllKept() { keptValues.clear(); },
+    /** Stops keeping one value. It stays in this store's memory for redaction only. @param {{ sessionId: string, site: string, label: string }} input */
+    forget({ sessionId, site, label }) {
+      const owned = keptValues.get(sessionId);
+      if (!owned?.delete(keptKey(site, label))) return false;
+      if (!owned.size) keptValues.delete(sessionId);
+      return true;
+    },
     /** @param {string} sessionId @returns {BrowserSecretSummary[]} */
     list: (sessionId) => [...sessions.get(sessionId)?.values() ?? []].map(summary),
     /**
@@ -827,6 +882,7 @@ export function createBrowserSecrets({ allowLoopbackHttp = false, placeholderTtl
     /** @param {string} sessionId */
     clearSession(sessionId) {
       sessions.delete(sessionId);
+      keptValues.delete(sessionId);
       revoke((entry) => entry.sessionId === sessionId, "removed");
     },
     /**
@@ -835,6 +891,7 @@ export function createBrowserSecrets({ allowLoopbackHttp = false, placeholderTtl
      */
     clear() {
       sessions.clear();
+      keptValues.clear();
       for (const [tabId, record] of [...tabs]) { record.entries = []; record.nextChange = -Infinity; settle(tabId); }
       schedule();
     },

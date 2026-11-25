@@ -12,7 +12,7 @@ import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction,
 import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
-import { catalogOperationAvailableToCapabilities } from "./catalog-availability.js"
+import { catalogOperationAvailableToCapabilities, filterGmailThreadRead } from "./catalog-availability.js"
 import type { McpToolOperation } from "./catalog.js"
 import {
   executeAdminCapability,
@@ -95,9 +95,8 @@ import {
   type CapabilityMatch,
   type SearchCapabilityType,
 } from "./search.js"
-import { ENGINE_LISTED_SOURCE_KINDS, unlistedCapabilityMatches } from "./engine-tool-view.js"
 import { externalToolContent } from "./tool-content.js"
-import { capabilityCallInput, capabilityToolMatch, type CapabilityToolMatch } from "./capability-tool.js"
+import { capabilityCallInput } from "./capability-tool.js"
 
 export const CAPABILITY_SOURCE_KINDS = ["catalog", "native", "externalMcp", "marketplace", "builtinSkill", "remoteSession", "slackSendAsBot", "admin"] as const
 export type CapabilitySourceKind = (typeof CAPABILITY_SOURCE_KINDS)[number]
@@ -160,7 +159,7 @@ export type CapabilityRegistryContextInput = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead">>
   audit?: McpAuditPrincipal | null
   usageSource: CapabilityUsageSource
 }
@@ -182,7 +181,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
   return {
     app: input.app,
     env: input.env,
-    catalog: input.catalog,
+    catalog: filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
     principal: input.principal,
     organizationId: input.organizationId,
     member: input.member,
@@ -862,7 +861,6 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
         query: string
         limit: number
         type?: SearchCapabilityType
-        unlistedOnly?: boolean
       },
     ): Promise<{ matches: CapabilityMatch[]; externalCoverageHint?: string }> => {
       let externalCoverageHint: string | undefined
@@ -875,13 +873,9 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
           externalCoverageHint = hint
         },
       }
-      const kinds = input.unlistedOnly
-        ? CAPABILITY_SOURCE_KINDS.filter((kind) => !ENGINE_LISTED_SOURCE_KINDS.has(kind))
-        : CAPABILITY_SOURCE_KINDS
-      const sourceMatches = (await Promise.all(kinds.map((kind) => (
+      const matches = (await Promise.all(CAPABILITY_SOURCE_KINDS.map((kind) => (
         sources[kind].search(searchContext, input.query, input.limit)
       )))).flat()
-      const matches = (input.unlistedOnly ? unlistedCapabilityMatches(sourceMatches) : sourceMatches)
         .sort(compareCapabilityMatches)
         .slice(0, input.limit)
       return {
@@ -931,11 +925,6 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
 }
 
 const HTTP_ARGUMENT_KINDS: ReadonlySet<CapabilitySourceKind> = new Set(["catalog", "native"])
-
-export function capabilitySearchMatch(match: CapabilityMatch): CapabilityToolMatch {
-  const kind = CAPABILITY_SOURCE_KINDS.find((candidate) => CAPABILITY_SOURCES[candidate].parseName(match.name) !== null)
-  return capabilityToolMatch(match, kind !== undefined && HTTP_ARGUMENT_KINDS.has(kind))
-}
 
 export const CAPABILITY_REGISTRY = createCapabilityRegistry(CAPABILITY_SOURCES)
 export const searchCapabilityRegistry = CAPABILITY_REGISTRY.search

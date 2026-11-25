@@ -1,5 +1,7 @@
 # Sandbox-only: real-model engine check, GPT-6.1 Sol
 
+> Historical record from before the sandbox rollout switch was retired. See [modes.md](modes.md) for current behavior.
+
 ## Final frozen-source run: PASS — 52/52 checks, exit 0
 
 **2026-11-18 09:24:32.409–09:25:20.115 UTC** (01:24–01:25 Pacific), one run of

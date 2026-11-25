@@ -21,8 +21,6 @@ test("saving connector choices with a cold tool cache makes no provider requests
     assert.ok(address && typeof address !== "string")
     const { owner, orgId } = await den.createOrg(await den.signUp("Workspace Owner"), "Connector choices")
     const call = den.as(owner, orgId)
-    const feature = await den.setFeature(orgId, "workbotAgentBrief", true)
-    assert.equal(feature.status, 200, summary(feature))
     const { createExternalMcpConnection } = await import("../../src/capability-sources/external-mcp-connections.js")
     const { listMemberConnections } = await import("../../src/workbot-proactive/sources-repository.js")
     const { countDbQueries } = await import("../../src/observability/db-query-count.js")
@@ -126,8 +124,6 @@ test("the batched inventory keeps grants and connected accounts scoped to each m
   assert.equal(theirs.find((item) => item.id === row.id)?.state, "needs_connection")
   assert.ok(mine.some((item) => item.id === personal.id))
   assert.ok(!theirs.some((item) => item.id === personal.id))
-  const enabled = await den.setFeature(orgId, "workbotAgentBrief", true)
-  assert.equal(enabled.status, 200, summary(enabled))
   const call = den.as(colleague, orgId)
   const refused = await call("PATCH", "/v1/me/agent/connectors", { sources: [
     { source: row.id, on: true }, { source: personal.id, on: true },

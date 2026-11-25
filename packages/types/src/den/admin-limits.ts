@@ -2,11 +2,6 @@ import { z } from "zod";
 
 const GMAIL_DOMAINS = new Set(["gmail.com", "googlemail.com"]);
 
-/**
- * One key per person behind an email address: lowercased, `+tag` removed for every domain,
- * and for Gmail the dots removed and googlemail.com treated as gmail.com.
- * Returns null when the value is not a usable address.
- */
 export function normalizeEmailIdentity(email: string): string | null {
   const value = email.trim().toLowerCase();
   const at = value.lastIndexOf("@");
@@ -21,7 +16,6 @@ export function normalizeEmailIdentity(email: string): string | null {
   return `${local}@${domain}`;
 }
 
-/** The normalized domain an email address belongs to, or a bare domain normalized the same way. */
 export function normalizeEmailDomain(value: string): string | null {
   const trimmed = value.trim().toLowerCase().replace(/^@/, "");
   const domain = trimmed.includes("@") ? normalizeEmailIdentity(trimmed)?.split("@")[1] : trimmed;
@@ -29,7 +23,6 @@ export function normalizeEmailDomain(value: string): string | null {
   return GMAIL_DOMAINS.has(domain) ? "gmail.com" : domain;
 }
 
-/** Limit kinds shown under /admin › Limits. Add a kind here, then its page and routes. */
 export const ADMIN_LIMIT_KINDS = [
   { key: "workspace-creation", label: "Workspace creation", description: "How many workspaces one person can have at once. Deleting one frees a slot." },
 ] as const;

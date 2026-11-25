@@ -24,7 +24,6 @@ function rules(body: unknown) { return list(field(body, "agentPermissions", "rul
 // Exercise actual authenticated routes/storage, not just the shared filter helper.
 test("capable desktops receive the requirement; old clients receive known conservative rules without an unknown action", async () => {
   const org = await fixture("Compatibility")
-  assert.equal((await den.setFeature(org.orgId, "sandboxTools", true)).status, 200)
   const saved = await org.ownerCall("PUT", everyone, denied, supported)
   assert.equal(saved.status, 200, summary(saved))
   const current = await org.memberCall("GET", "/v1/me/desktop-config", undefined, supported)
@@ -42,7 +41,6 @@ test("capable desktops receive the requirement; old clients receive known conser
 
 test("an old editor cannot erase a hidden team requirement and a peer outside the team is unaffected", async () => {
   const org = await fixture("Preservation")
-  assert.equal((await den.setFeature(org.orgId, "sandboxTools", true)).status, 200)
   const team = await den.createTeam(org.owner, org.orgId, "Restricted", [org.member.memberId])
   const path = `/v1/agent-permissions/teams/${team}`
   assert.equal((await org.ownerCall("PUT", path, denied, supported)).status, 200)
@@ -63,27 +61,8 @@ test("an old editor cannot erase a hidden team requirement and a peer outside th
   assert.equal(rules(removed.body).some(rule => rule.action === "host_execution" && rule.effect === "deny"), false)
 })
 
-test("flag off cannot introduce a managed requirement, cannot erase a saved requirement, and still permits explicit removal", async () => {
-  const org = await fixture("Rollout")
-  assert.equal((await den.setFeature(org.orgId, "sandboxTools", false)).status, 200)
-  assert.equal((await org.ownerCall("PUT", everyone, denied, supported)).status, 200)
-  const notIntroduced = await org.memberCall("GET", "/v1/me/desktop-config", undefined, supported)
-  assert.equal(rules(notIntroduced.body).some(rule => rule.action === "host_execution" && rule.effect === "deny"), false)
-  assert.equal((await den.setFeature(org.orgId, "sandboxTools", true)).status, 200)
-  assert.equal((await org.ownerCall("PUT", everyone, denied, supported)).status, 200)
-  assert.equal((await den.setFeature(org.orgId, "sandboxTools", false)).status, 200)
-  const retained = await org.memberCall("GET", "/v1/me/desktop-config", undefined, supported)
-  assert.ok(rules(retained.body).some(rule => rule.action === "host_execution" && rule.effect === "deny"))
-  const visible = await org.ownerCall("GET", "/v1/agent-permissions", undefined, supported)
-  assert.equal(field(visible.body, "everyone", "settings", "hostExecution", "decision"), "deny")
-  assert.equal((await org.ownerCall("PUT", everyone, { settings: { hostExecution: { decision: "allow" } } }, supported)).status, 200)
-  const removed = await org.memberCall("GET", "/v1/me/desktop-config", undefined, supported)
-  assert.equal(rules(removed.body).some(rule => rule.action === "host_execution" && rule.effect === "deny"), false)
-})
-
 test("Use-only, Force-only, and both requirements reach only desktops that can read them", async () => {
   const org = await fixture("Sandbox modes")
-  assert.equal((await den.setFeature(org.orgId, "sandboxTools", true)).status, 200)
   const forbidden = await org.memberCall("PUT", everyone, both, currentHeaders)
   assert.equal(forbidden.status, 403, summary(forbidden))
   const compatibilityActions = ["shell", "edit", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "mcp", "webfetch"]
@@ -112,7 +91,6 @@ test("Use-only, Force-only, and both requirements reach only desktops that can r
 
 test("a Force-only editor cannot see or replace a team's Use requirement, even on reset", async () => {
   const org = await fixture("Sandbox editor")
-  assert.equal((await den.setFeature(org.orgId, "sandboxTools", true)).status, 200)
   const team = await den.createTeam(org.owner, org.orgId, "Policy team", [org.member.memberId])
   const path = `/v1/agent-permissions/teams/${team}`
   assert.equal((await org.ownerCall("PUT", path, both, currentHeaders)).status, 200)
@@ -130,24 +108,4 @@ test("a Force-only editor cannot see or replace a team's Use requirement, even o
   const removed = await org.memberCall("GET", "/v1/me/desktop-config", undefined, currentHeaders)
   assert.equal(removed.status, 200, summary(removed))
   assert.equal(rules(removed.body).some(rule => rule.action === "sandbox_opt_out"), false)
-})
-
-test("rollout off preserves each stored requirement independently and accepts removing the other", async () => {
-  const org = await fixture("Independent rollout")
-  assert.equal((await den.setFeature(org.orgId, "sandboxTools", false)).status, 200)
-  const ignored = await org.ownerCall("PUT", everyone, both, currentHeaders)
-  assert.equal(ignored.status, 200, summary(ignored))
-  assert.deepEqual(field(ignored.body, "policy", "settings"), {})
-  assert.equal((await den.setFeature(org.orgId, "sandboxTools", true)).status, 200)
-  assert.equal((await org.ownerCall("PUT", everyone, both, currentHeaders)).status, 200)
-  assert.equal((await den.setFeature(org.orgId, "sandboxTools", false)).status, 200)
-  const visible = await org.ownerCall("GET", "/v1/agent-permissions", undefined, currentHeaders)
-  assert.equal(visible.status, 200, summary(visible))
-  assert.deepEqual(field(visible.body, "everyone", "settings"), both.settings)
-  const keptUse = await org.ownerCall("PUT", everyone, useOnly, currentHeaders)
-  assert.equal(keptUse.status, 200, summary(keptUse))
-  assert.deepEqual(field(keptUse.body, "policy", "settings"), useOnly.settings)
-  const notReplaced = await org.ownerCall("PUT", everyone, denied, currentHeaders)
-  assert.equal(notReplaced.status, 200, summary(notReplaced))
-  assert.deepEqual(field(notReplaced.body, "policy", "settings"), {})
 })
