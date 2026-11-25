@@ -1,18 +1,10 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
 import { z } from "zod"
 
-/**
- * Workbot keeps no sign-in state on its own disk, so any number of instances can serve anyone. What it needs to
- * remember lives in the browser, encrypted and authenticated with WORKBOT_SESSION_SECRET (AES-256-GCM): the person's
- * Den tokens, and a sign-in in progress. The browser can neither read nor change them, and a cookie made for one
- * purpose never opens as another. Changing the secret signs everyone out.
- */
-
 export type Tokens = { accessToken: string; refreshToken: string | null; expiresAt: number }
 export const tokensSchema = z.object({ accessToken: z.string(), refreshToken: z.string().nullable(), expiresAt: z.number() })
 export const sessionSchema = z.object({ id: z.string(), userId: z.string(), organizationId: z.string(), tokens: tokensSchema, createdAt: z.number() })
 
-/** Browsers drop a cookie over 4096 bytes; stop well before that instead of signing someone in to a lost cookie. */
 export const MAX_COOKIE_VALUE = 3_800
 
 export const randomToken = () => randomBytes(32).toString("base64url")
@@ -44,7 +36,6 @@ export function createSealer(secret: string): Sealer {
         const parsed = schema.safeParse(JSON.parse(text))
         return parsed.success ? parsed.data : null
       } catch {
-        // Another secret (rotated), another purpose, or a damaged cookie: treated as absent.
         return null
       }
     },

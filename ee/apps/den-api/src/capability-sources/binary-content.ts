@@ -25,7 +25,6 @@ export function decodeFileContent(
   }
 }
 
-/** Reads at most maxBytes, so an oversized provider body never sits in memory whole. */
 export async function readBoundedBytes(response: Response, maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }> {
   if (!response.body) return { bytes: new Uint8Array(0), truncated: false }
   const reader = response.body.getReader()
@@ -59,7 +58,42 @@ export async function readBoundedBytes(response: Response, maxBytes: number): Pr
   return { bytes, truncated }
 }
 
-/** Text from a read that may stop mid-character: a trailing partial character is dropped. */
+export async function readBytesWithin(response: Response, maxBytes: number): Promise<Uint8Array | null> {
+  if (!response.body) return new Uint8Array(0)
+  const declared = Number(response.headers.get("content-length"))
+  const encoding = response.headers.get("content-encoding")
+  const hasDeclared = response.headers.has("content-length") && Number.isSafeInteger(declared) && declared >= 0
+    && (!encoding || encoding === "identity")
+  if (hasDeclared && declared > maxBytes) {
+    await response.body.cancel().catch(() => {})
+    return null
+  }
+  if (!hasDeclared) {
+    const { bytes, truncated } = await readBoundedBytes(response, maxBytes)
+    if (!truncated) return bytes
+    return null
+  }
+
+  const bytes = new Uint8Array(declared)
+  const reader = response.body.getReader()
+  let length = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (length + value.byteLength > declared) {
+        await reader.cancel().catch(() => {})
+        return null
+      }
+      bytes.set(value, length)
+      length += value.byteLength
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return length === declared ? bytes : bytes.subarray(0, length)
+}
+
 export function decodeTruncatedText(bytes: Uint8Array, fatal: boolean): string {
   return new TextDecoder("utf-8", { fatal }).decode(bytes, { stream: true })
 }

@@ -2,18 +2,18 @@
 
 import { Lock } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
+import { type AccessDraft, accessPeopleIds, reachSentence } from "./access-summary";
 import type { ConnectorRoute } from "./connector-route";
 import { ConnectorRouteStep } from "./connector-route-step";
 import { ConnectorConnectionProgress } from "./connector-connection-progress";
 import { connectorAccountReady } from "./connector-detail";
-import { type OAuthAppInput, useConnectorSetup } from "./connector-setup";
+import { useConnectorSetup } from "./connector-setup";
 import { ApiKeyFields, ApiKeySchemeAdvanced, OAuthAppFields, createOAuthAppDraft } from "./connector-setup-fields";
 import { useConnectorTarget } from "./connector-setup-screen";
 import { useDenToast } from "./den-toast";
@@ -74,14 +74,12 @@ function SignInChoice({ name, value, onChange, disabled, kind = "oauth", sharedD
   );
 }
 
-/** Draft credentials belong to one server and organization, never the next connector visited. */
 export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) {
   const { orgId } = useOrgDashboard();
   const params = useSearchParams();
   return <AdminConnectorSetupFlow key={`${orgId ?? ""}:${catalogId}:${params.get("url") ?? ""}`} catalogId={catalogId} />;
 }
 
-/** C3 and C4: the admin connects the server, then chooses account mode and access. */
 function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -91,7 +89,6 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canShareWithEveryone
     : false;
   const { target: catalogTarget, loading, missing, failed } = useConnectorTarget(catalogId);
-  // Guided Slack setup: the admin's explicit access choice becomes the new connection's scopes.
   const [slackScopeChoice, setSlackScopeChoice] = useState<SlackScopeChoice | null>(null);
   const target = useMemo(() => withSlackScopeChoice(catalogTarget, slackScopeChoice), [catalogTarget, slackScopeChoice]);
   const updateConnection = useUpdateMcpConnection();
@@ -105,23 +102,19 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [confirmSwitch, setConfirmSwitch] = useState(false);
   const [showOAuthApp, setShowOAuthApp] = useState(false);
-  // A custom connector first shows what OpenWork detected and lets the admin pick another route.
   const isCustom = catalogId === "custom";
-  const liveDiscovery = isCustom && orgFeatureEnabled(orgContext, "customConnectorSetup");
-  const revisedSetup = liveDiscovery;
   const presets = useMcpConnectionPresets();
   const callbackUrl = presets.data?.find((preset) => preset.oauthCallbackUrl)?.oauthCallbackUrl ?? undefined;
   const [oauthDraft, setOAuthDraft] = useState(createOAuthAppDraft);
   const initialConnectionId = searchParams.get("connection");
   const [route, setRoute] = useState<ConnectorRoute | null>(null);
   const [previousRoute, setPreviousRoute] = useState<ConnectorRoute | null>(null);
-  const [pendingOAuthApp, setPendingOAuthApp] = useState<OAuthAppInput | null>(null);
   const setup = useConnectorSetup({
     mode: "admin",
     target,
     route,
     routeRequired: isCustom && !initialConnectionId,
-    liveDiscovery,
+    liveDiscovery: isCustom,
     initialConnectionId,
     onConnectionCreated: (connectionId) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -135,14 +128,6 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
 
   const name = target?.name ?? "";
   const back = { href: getAddConnectorRoute(orgSlug), label: "Add a connector" };
-
-  // "Use your own OAuth app" saves the app once the route (and its headers) is in place.
-  const { saveOAuthApp, discovering, connection: setupConnection } = setup;
-  useEffect(() => {
-    if (revisedSetup || !route || !pendingOAuthApp || discovering || setupConnection) return;
-    setPendingOAuthApp(null);
-    void saveOAuthApp(pendingOAuthApp);
-  }, [discovering, pendingOAuthApp, revisedSetup, route, saveOAuthApp, setupConnection]);
 
   if (missing || failed) {
     return (
@@ -174,7 +159,6 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
   const ready = (setup.allDone || setup.skipped) && Boolean(connection);
   const stepNumber = slackSetup.slack ? slackSetup.progress.step : setup.stepNumber;
   const stepTotal = slackSetup.slack ? slackSetup.progress.total : setup.checks.length;
-  // @openwork in Slack needs each person's own Slack sign-in and this OpenWork's assistant runner.
   const assistantOffered = slackSetup.slack && slackSetup.assistant?.eligible === true && !slackSetup.assistant.installed;
   const assistantAvailable = assistantOffered && slackSetup.assistant?.runnerAvailable === true && chosenMode === "per_member";
   const assistantLock = !assistantOffered ? null
@@ -190,7 +174,7 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
           body: showOAuthApp ? (
             <div className="flex flex-col gap-2" data-testid="connector-setup-own-oauth-app">
               <p className="text-[13px] leading-[18px] text-gray-500">{`Add the client ID and secret from your ${name} OAuth app, then sign in again.`}</p>
-              <OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} />
+              <OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} callbackUrl={callbackUrl} />
             </div>
           ) : (
             <DenButton size="sm" variant="secondary" onClick={() => setShowOAuthApp(true)}>Use your own OAuth app</DenButton>
@@ -216,7 +200,7 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
               )}
             </div>
           )
-          : <OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} />,
+          : <OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} callbackUrl={callbackUrl} />,
       };
     }
     return check;
@@ -248,9 +232,6 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
     setError(null);
     try {
       await saveAccess(connection.id, access);
-      // Individual-key setup publishes the connection; each person's key is
-      // checked when they enroll it, not against an admin's nonexistent key.
-      // Added anyway: a failing check is expected, so it never blocks the add.
       const checked = usesIndividualKeys
         ? null
         : setup.skipped
@@ -261,7 +242,7 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
       const unverified = checked?.status === "could_not_verify" || (setup.skipped && checked?.status !== "ready");
       toast({
         title: usesIndividualKeys ? `${name} is set up` : unverified ? `${name} couldn't be verified` : `${name} is ready`,
-        description: `${reached > 0 ? `${peopleLabel(reached)} will find it in My Library.` : "Only you have it so far."}`,
+        description: reachSentence(access, reached, "it") ?? "Only you have it so far.",
         action: { label: "View", onClick: () => router.push(getMcpConnectionRoute(orgSlug, connectionId)) },
       });
       router.push(openAssistant
@@ -285,16 +266,14 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
         discovering={setup.discovering}
         unreachable={setup.unreachable}
         secretRequired={setup.secretRequired}
-        revisedSetup={revisedSetup}
         callbackUrl={callbackUrl}
         oauthDraft={oauthDraft}
         onOAuthDraftChange={setOAuthDraft}
-        liveChecks={liveDiscovery ? { checks: setup.discoveryChecks, failed: setup.discoveryFailed, onRetry: setup.retryDiscovery } : undefined}
+        liveChecks={{ checks: setup.discoveryChecks, failed: setup.discoveryFailed, onRetry: setup.retryDiscovery }}
         onCancel={() => router.push(getAddConnectorRoute(orgSlug))}
         onContinue={(chosen, oauthApp) => {
           setRoute(chosen);
-          if (revisedSetup && chosen.auth === "oauth") void setup.startSignIn({ route: chosen, oauthApp });
-          else setPendingOAuthApp(oauthApp);
+          if (chosen.auth === "oauth") void setup.startSignIn({ route: chosen, oauthApp });
         }}
       />
     );
@@ -304,13 +283,12 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
     if (!(await setup.restartSetup())) return;
     setPreviousRoute(route);
     setRoute(null);
-    setPendingOAuthApp(null);
     const params = new URLSearchParams(searchParams.toString());
     params.delete("connection");
     router.replace(`?${params.toString()}`, { scroll: false });
   }
 
-  if (revisedSetup && (route || initialConnectionId) && !ready) {
+  if (isCustom && (route || initialConnectionId) && !ready) {
     const needsKey = setup.method === "api_key" && setup.needsInput;
     const keyFields = needsKey ? checks.find((check) => check.id === "sign-in-method")?.body : undefined;
     const toolFailure = setup.checks.find((check) => check.id === "tools" && check.status === "failed")?.description ?? null;
@@ -370,9 +348,9 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
       <ItemHeader
         back={back}
         logo={<ConnectorLogo name={name} url={target.url} size="md" />}
-        title={revisedSetup ? name : usesIndividualKeys ? `${name} is set up` : setup.allDone ? `${name} passed all ${stepTotal} checks` : `Add ${name} anyway`}
-        actions={revisedSetup ? <DenBadge>{usesIndividualKeys ? "Set up" : "Connected"}</DenBadge> : undefined}
-        description={revisedSetup || setup.allDone ? undefined : `Some checks did not pass. Finish its settings, like its OAuth app, on its page after you add it.`}
+        title={isCustom ? name : usesIndividualKeys ? `${name} is set up` : setup.allDone ? `${name} passed all ${stepTotal} checks` : `Add ${name} anyway`}
+        actions={isCustom ? <DenBadge>{usesIndividualKeys ? "Set up" : "Connected"}</DenBadge> : undefined}
+        description={isCustom || setup.allDone ? undefined : `Some checks did not pass. Finish its settings, like its OAuth app, on its page after you add it.`}
       />
       {signsIn || usesKey ? (
         <section className="flex flex-col gap-2.5">
@@ -423,7 +401,7 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
       {error ? <p className="text-[13px] text-red-600" role="alert">{error}</p> : null}
       <StepFooter note={switchingToShared
         ? `Next, sign in with the ${name} account everyone will use.`
-        : reached > 0 ? `${peopleLabel(reached)} will find ${name} in My Library.` : `Only you will have ${name}.`}
+        : reachSentence(access, reached, name) ?? `Only you will have ${name}.`}
       >
         <DenButton variant="secondary" disabled={busy} onClick={() => void cancel()}>Cancel</DenButton>
         <DenButton loading={busy} onClick={() => (switchingToShared ? setConfirmSwitch(true) : void add())}>{switchingToShared ? "Continue" : `Add ${name}`}</DenButton>

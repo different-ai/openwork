@@ -1,7 +1,6 @@
 import { isToolUIPart, type UIMessage } from "ai";
 import { isTaskToolPart, taskChildSessionId, type TaskToolPart } from "./build-in-tools";
 
-/** Native task associations form verified edges; a visited set protects cycles. */
 export function agentInventory(parent: string, messages: UIMessage[], records: Record<string, {
   childSessionIds: string[]; runStartedAt: number;
 }> = {}): TaskToolPart[] {

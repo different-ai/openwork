@@ -60,7 +60,6 @@ test("organization access, unavailable engine and pending sync keep their priori
 const localView: AiSettingsViewProps = {
   busy: false,
   runtimeWorkspaceId: "workspace-test",
-  credentialStatusEnabled: true,
   providerAuthBusy: false,
   providerStatusLabel: "",
   providerStatusStyle: "",
@@ -80,7 +79,7 @@ const localView: AiSettingsViewProps = {
   autoSwitchedOff: true,
 };
 
-test("local rejected key recovery is scoped to this runtime workspace and flag", () => {
+test("local rejected key recovery is scoped to this runtime workspace", () => {
   const initialState = useProviderCredentialHealth.getInitialState();
   const key = credentialHealthKey("workspace-test", "provider-test");
   const previous = initialState.entries[key];
@@ -90,9 +89,6 @@ test("local rejected key recovery is scoped to this runtime workspace and flag",
     const rejected = renderToStaticMarkup(<AiSettingsView {...localView} />);
     expect(rejected).toContain("Key not accepted");
     expect(rejected).toContain("Replace key");
-    const legacy = renderToStaticMarkup(<AiSettingsView {...localView} credentialStatusEnabled={false} />);
-    expect(legacy).toContain("Ready to use");
-    expect(legacy).not.toContain("Replace key");
     const otherWorkspace = renderToStaticMarkup(<AiSettingsView {...localView} runtimeWorkspaceId="other-workspace" />);
     expect(otherWorkspace).toContain("Not checked yet");
     expect(otherWorkspace).not.toContain("Replace key");

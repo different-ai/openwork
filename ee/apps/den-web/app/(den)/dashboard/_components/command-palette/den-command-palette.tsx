@@ -1,6 +1,7 @@
 "use client";
 
 import { desktopPolicyScreenRemoved } from "../../_lib/desktop-policy-screen-rollout";
+import { workbotSettingsInTeams } from "../../_lib/workbot-settings-rollout";
 
 import { Command } from "cmdk";
 import {
@@ -55,7 +56,6 @@ type PaletteEntry = {
 type DenCommandPaletteProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Returns true when it handled the navigation itself (the Workbot entry while Workbot has no AI provider). */
   interceptNavigation?: (href: string) => boolean;
 };
 
@@ -128,7 +128,6 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
   ), [orgContext?.currentMember.role, orgContext?.currentMember.isOwner, orgContext?.currentMember.permissions]);
   const capabilities = orgContext?.capabilities ?? EMPTY_CAPABILITIES;
 
-  // Plugin results open the admin plugin page, which needs `sharing.manage_all`.
   const pluginsQuery = usePluginSummaries({ enabled: open && access.canManageAllShared });
   const automationsQuery = useAutomations({ enabled: open && capabilities.workflows });
 
@@ -155,12 +154,14 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
   const pageEntries = useMemo<PaletteEntry[]>(() => {
     const sections = buildDashboardNavSections({
       orgSlug: activeOrg?.slug ?? null,
+      organizationId: activeOrg?.id ?? null,
       access,
       capabilities,
       orgMode: runtimeConfig.orgMode,
       runtimeConfigLoaded,
 
       desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
+      workbotSettingsInTeams: workbotSettingsInTeams(orgContext),
       canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
       myBot: myAgentAvailable(orgContext),
     });
@@ -244,7 +245,6 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
     try {
       localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(nextRecentIds));
     } catch {
-      // Navigation should still work when browser storage is unavailable.
     }
     onOpenChange(false);
     if (interceptNavigation?.(entry.href)) return;

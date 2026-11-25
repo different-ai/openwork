@@ -1,7 +1,7 @@
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { Client } from "@/app/types";
 import type { DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
-import { updateManagedDisabledProviders } from "./managed-engine-config";
+import { readManagedDisabledProviders, updateManagedDisabledProviders } from "./managed-engine-config";
 import { isProviderAllowedByDesktopPolicy } from "./provider-auth/provider-policy";
 
 export const POLICY_DISABLED_PROVIDERS_STORAGE_KEY = "openwork.policy.disabledProviders";
@@ -38,6 +38,7 @@ export type ReconcilePolicyDisabledProvidersInput = {
   storage?: PolicyDisabledProvidersStorage | null;
   setDisabledProviders?: (providerIds: string[]) => void;
   markReloadRequired?: () => void;
+  readDisabledProviders?: () => Promise<string[]>;
 };
 
 export type ReconcilePolicyDisabledProvidersResult = PolicyProviderReconcilePlan & {
@@ -98,7 +99,6 @@ export function writePolicyDisabledProviderIds(
       JSON.stringify(normalizeProviderIds(providerIds)),
     );
   } catch {
-    // Storage failures should not block policy enforcement.
   }
 }
 
@@ -154,13 +154,27 @@ export async function reconcilePolicyDisabledProviders(
   let markedDisabledProviderIds = readPolicyDisabledProviderIds(storage);
   let writes = 0;
 
-  const initialPlan = computePolicyProviderReconcilePlan({
+  const plan = () => computePolicyProviderReconcilePlan({
     allProviders: input.allProviders,
     connectedProviderIds: input.connectedProviderIds,
     disabledProviderIds,
     markedDisabledProviderIds,
     checkRestriction: input.checkRestriction,
   });
+  let initialPlan = plan();
+  if (initialPlan.toDisable.length > 0 || initialPlan.toReenable.length > 0) {
+    const current = await (input.readDisabledProviders ?? (() => readManagedDisabledProviders({
+      opencodeClient: input.opencodeClient,
+      openworkClient: input.openworkClient,
+      workspaceId: input.workspaceId,
+      workspaceType: input.workspaceType,
+    })))().catch(() => null);
+    if (current) {
+      disabledProviderIds = normalizeProviderIds(current);
+      input.setDisabledProviders?.(disabledProviderIds);
+      initialPlan = plan();
+    }
+  }
 
   for (const providerId of initialPlan.toDisable) {
     if (disabledProviderIds.includes(providerId)) continue;

@@ -1,6 +1,3 @@
-// Deliberately separated colors for the first categories, before adding shades.
-// Assign slots across the chart, rather than hashing each ID independently:
-// unrelated IDs can otherwise produce almost indistinguishable colors.
 export const SERIES_PALETTE = [
   "#2563eb", "#ea580c", "#16a34a", "#9333ea", "#dc2626", "#0891b2",
   "#ca8a04", "#db2777", "#0d9488", "#64748b", "#4f46e5", "#65a30d",

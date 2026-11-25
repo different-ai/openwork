@@ -1,6 +1,7 @@
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
 import { credentialPromptSchema, type CredentialPrompt } from "@openwork/types/den/credential-prompt"
 import { isOpenworkCloudCapabilityTool } from "@/components/tools/error-attribution"
+import { connectDenOperation } from "@/lib/capability-call"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
 
 const MAX_PARSED_RESULT_LENGTH = 256 * 1_024
@@ -30,12 +31,6 @@ function records(value: unknown): Record<string, unknown>[] {
 
 type PromptTargetType = CredentialPrompt["target"]["type"]
 
-/**
- * Den's own operations that answer with a credential prompt, and the kinds of
- * key each may ask for. Results of an organization's MCP servers, plugins or
- * Workflows also pass through execute_capability, but under prefixed names
- * (mcp:..., plugin:...), so they can never match and cannot forge a key field.
- */
 const DEN_PROMPT_OPERATIONS = new Map<string, ReadonlySet<PromptTargetType>>([
   ["postMcpConnections", new Set(["mcp_connection_key"])],
   ["putMcpConnectionsByKeyByExternalKey", new Set(["mcp_connection_key"])],
@@ -45,16 +40,13 @@ const DEN_PROMPT_OPERATIONS = new Map<string, ReadonlySet<PromptTargetType>>([
 ])
 
 function denPromptTargets(part: DynamicToolUIPart): ReadonlySet<PromptTargetType> | null {
+  const operation = connectDenOperation(part.toolName)
+  if (operation) return DEN_PROMPT_OPERATIONS.get(operation) ?? null
   if (!isOpenworkCloudCapabilityTool(part.toolName) || !/(?:^|_)execute_capability$/.test(part.toolName)) return null
   const name = isRecord(part.input) ? part.input.name : undefined
   return typeof name === "string" ? DEN_PROMPT_OPERATIONS.get(name) ?? null : null
 }
 
-/**
- * The one credential prompt an OpenWork Cloud tool result carries, if any.
- * Only Den's own prompt-creating operations are read, and only the exact
- * schema is accepted, so another MCP server or a model cannot draw a key field.
- */
 export function credentialPromptFromToolPart(part: DynamicToolUIPart): CredentialPrompt | null {
   const targets = part.state === "output-available" ? denPromptTargets(part) : null
   if (!targets) return null
@@ -72,10 +64,6 @@ export function credentialPromptFromToolPart(part: DynamicToolUIPart): Credentia
   return found.size === 1 ? found.values().next().value ?? null : null
 }
 
-/**
- * The call that carries a credential prompt: the part itself, or (OpenCode v2)
- * one of the OpenWork Cloud calls its Code Mode script made.
- */
 export function credentialPromptCall(part: ToolUIPart | DynamicToolUIPart): DynamicToolUIPart | null {
   if (part.type !== "dynamic-tool") return null
   if (credentialPromptFromToolPart(part)) return part

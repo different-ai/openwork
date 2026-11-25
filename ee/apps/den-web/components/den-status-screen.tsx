@@ -6,13 +6,15 @@ type DenStatusScreenProps = {
   description: string;
   status?: string;
   error?: string | null;
+  loading?: boolean;
+  loadingLabel?: string;
+  busy?: boolean;
   children?: ReactNode;
 };
 
-/** Branded shell for the brief handoff screens between Den and identity providers. */
-export function DenStatusScreen({ title, description, status, error, children }: DenStatusScreenProps) {
+export function DenStatusScreen({ title, description, status, error, loading = false, loadingLabel = "Loading", busy, children }: DenStatusScreenProps) {
   return (
-    <main className="relative isolate flex min-h-dvh items-center justify-center bg-[var(--dls-surface)] px-6 py-16 text-[var(--dls-text-primary)]">
+    <main aria-busy={busy ?? loading} className="relative isolate flex min-h-dvh items-center justify-center bg-[var(--dls-surface)] px-6 py-16 text-[var(--dls-text-primary)]">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 -z-10 opacity-10 [background-image:radial-gradient(circle,#011627_0.7px,transparent_0.8px)] [background-size:5px_5px] [mask-image:radial-gradient(ellipse_at_center,transparent_20%,black)]"
@@ -22,10 +24,17 @@ export function DenStatusScreen({ title, description, status, error, children }:
           <img src="/openwork-mark.svg" alt="" width={26} height={26} aria-hidden="true" />
           <span className="text-[15px] font-semibold tracking-tight">OpenWork</span>
         </div>
-        <div className="mt-10 sm:mt-14">
-          <h1 className="text-[30px] font-semibold leading-[38px] tracking-[-0.03em] sm:text-[38px] sm:leading-[46px]">{title}</h1>
-          <p className="mt-2.5 text-[15px] leading-[23px] text-[var(--dls-text-secondary)]">{description}</p>
-        </div>
+        {loading ? (
+          <div role="status" aria-label={loadingLabel} className="mt-10 sm:mt-14 motion-safe:animate-pulse">
+            <div aria-hidden="true" className="h-[38px] w-3/5 rounded-lg bg-[var(--dls-hover)] sm:h-[46px]" />
+            <div aria-hidden="true" className="mt-3.5 h-4 w-4/5 rounded bg-[var(--dls-hover)]" />
+          </div>
+        ) : (
+          <div className="mt-10 sm:mt-14">
+            <h1 className="text-[30px] font-semibold leading-[38px] tracking-[-0.03em] sm:text-[38px] sm:leading-[46px]">{title}</h1>
+            <p className="mt-2.5 text-[15px] leading-[23px] text-[var(--dls-text-secondary)]">{description}</p>
+          </div>
+        )}
         {error ? (
           <div role="alert" className="mt-9 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3.5 text-[14px] leading-5 text-red-700">
             <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />

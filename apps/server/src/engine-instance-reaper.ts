@@ -1,28 +1,3 @@
-/**
- * Idle eviction for per-directory OpenCode engine instances.
- *
- * The managed engine is one long-lived process that boots a per-directory
- * instance on demand and never retires one on its own. Since the continuous
- * engine keeps that process alive across workspace switches, every workspace
- * ever visited retains a live instance — config, plugins, watchers, session
- * caches — for the lifetime of the app. This reaper reclaims those instances.
- *
- * Policy: an instance is evicted only when every hold is absent —
- * - it is not the active workspace's instance,
- * - no engine event stream from that workspace is open (no visible UI),
- * - it reports no non-idle session (a live background run always stays), and
- * - it has seen no traffic for the idle TTL.
- *
- * Sessions live in the engine's shared SQLite, so an evicted instance loses
- * only process state. The next request re-materializes it from disk config;
- * the server owns pushing back the runtime-DB MCPs a fresh instance cannot
- * read from disk, which is why eviction marks the workspace and `noteUsed`
- * reports that mark exactly once to whoever sends the next traffic.
- *
- * Only managed engines are swept: an attached engine may serve other clients,
- * so its instances are not ours to trim. The hooks own every side effect; this
- * module holds the policy and its bookkeeping.
- */
 import type { ServerConfig } from "./types.js";
 
 export type EngineInstanceReaperLogger = {
@@ -41,19 +16,14 @@ export type TrackedEngineInstance = EngineInstanceUse & {
 };
 
 export type EngineInstanceReaperHooks = {
-  /** Primary managed engine URL. Null means no managed engine: nothing is swept. */
   engineBaseUrl: () => string | null;
-  /** Directory of the active local workspace. Its instance always stays warm. */
   activeDirectory: () => string | null;
-  /** True when the instance still reports a non-idle session. A thrown error means unknown, which never evicts. */
   directoryBusy: (instance: TrackedEngineInstance) => Promise<boolean>;
-  /** Dispose the instance and invalidate whatever per-workspace evidence a fresh instance cannot honor. */
   dispose: (instance: TrackedEngineInstance) => Promise<void>;
   now?: () => number;
   logger?: EngineInstanceReaperLogger;
 };
 
-/** How long an instance may sit unused before it is eligible for eviction. 0 disables eviction. */
 export function engineInstanceIdleTtlMs(): number {
   const raw = process.env.OPENWORK_ENGINE_INSTANCE_IDLE_TTL_MS?.trim();
   if (!raw) return 15 * 60_000;
@@ -78,11 +48,6 @@ export class EngineInstanceReaper {
     this.hooks = hooks;
   }
 
-  /**
-   * Record traffic for a directory instance. Returns true exactly once after
-   * that workspace's instance was evicted, so the caller can re-attach the
-   * state a fresh instance cannot recover from disk.
-   */
   noteUsed(use: EngineInstanceUse): boolean {
     if (this.closed) return false;
     const existing = this.instances.get(use.directory);
@@ -90,19 +55,11 @@ export class EngineInstanceReaper {
       existing.workspaceId = use.workspaceId;
       existing.lastUsedAt = this.now();
     } else {
-      // A different engine URL means a new engine process; streams held on the
-      // previous generation were aborted with it.
       this.instances.set(use.directory, { ...use, lastUsedAt: this.now(), streamHolds: 0 });
     }
     return this.evictedWorkspaceIds.delete(use.workspaceId);
   }
 
-  /**
-   * Hold the instance while an engine event stream from its workspace stays
-   * open, so a workspace that is visible anywhere in the UI is never evicted.
-   * Unlike `noteUsed` this never consumes the one-shot post-eviction mark;
-   * callers report that mark through their own `noteUsed` call.
-   */
   holdStream(use: EngineInstanceUse): () => void {
     if (this.closed) return () => undefined;
     const existing = this.instances.get(use.directory);
@@ -148,7 +105,6 @@ export class EngineInstanceReaper {
     this.evictedWorkspaceIds.clear();
   }
 
-  /** Run one eviction pass. Returns how many instances were evicted. */
   async sweep(): Promise<number> {
     if (this.closed || this.sweeping) return 0;
     const ttl = engineInstanceIdleTtlMs();
@@ -162,8 +118,6 @@ export class EngineInstanceReaper {
       for (const entry of [...this.instances.values()]) {
         if (this.closed) break;
         if (entry.engineBaseUrl !== engineBaseUrl) {
-          // The engine process this instance lived in is gone; there is
-          // nothing left to dispose.
           this.instances.delete(entry.directory);
           continue;
         }
@@ -188,7 +142,6 @@ export class EngineInstanceReaper {
           entry.lastUsedAt = this.now();
           continue;
         }
-        // Traffic may have landed while the probe ran; a fresh touch wins.
         if (this.now() - entry.lastUsedAt < ttl) continue;
         try {
           await this.hooks.dispose(entry);

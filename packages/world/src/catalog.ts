@@ -1,25 +1,12 @@
-/**
- * What each maintained world accepts on each target, and ready-to-run commands
- * by intent. `pnpm world help <name> --json` publishes this so an agent can
- * choose a world, placement, seed and source in one call instead of reading the
- * recipes. `world up` composes `--source`/`--seed` from the same entries. The
- * world scripts still enforce every rule; tests keep this catalog in step with
- * them and parse every example command.
- */
-
 import type { SourceKind } from "./source.ts";
 
 /** A `--source` spec kind as typed on the command line: `ref:` resolves to a `sha` before launch. */
 export type GuideSourceKind = SourceKind | "ref";
 
 export interface WorldTargetGuide {
-  /** A `supportedTargets` entry, for example `freestyle/linux`. */
   target: string;
-  /** Seeds accepted on this target; empty when the world takes no seed. */
   seeds: readonly string[];
-  /** Source kinds accepted on this target. */
   sources: readonly GuideSourceKind[];
-  /** What an omitted `--source` means here. Absent when a source is required. */
   defaultSource?: string;
   note?: string;
 }
@@ -30,9 +17,7 @@ export interface WorldExample {
 }
 
 export interface WorldGuide {
-  /** How `world up` composes `--source`/`--seed` for this world. */
   family: "preview" | "web";
-  /** `--source` components; `*` is the unnamed default component. */
   components: readonly string[];
   targets: readonly WorldTargetGuide[];
   examples: readonly WorldExample[];
@@ -161,7 +146,7 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
     examples: [
       { intent: "Workbot, Den and the headless runner from this checkout", command: `${UP} preview-workbot --stage <stage>` },
       { intent: "Feel Workbot for real: a real model, its own computer and an MCP App (local; keys from env or Infisical)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --live` },
-      { intent: "The Calendar in Workbot and the desktop over Workbot's Acme org: seeded Automations, the calendar mock and a signed-in desktop (local)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --calendar` },
+      { intent: "Workbot's Calendar over the Acme org: seeded Automations, model choices and mock meetings (local)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --calendar` },
       { intent: "Workbot from latest dev on Daytona", command: `${UP} preview-workbot --place daytona --stage <stage> ${DETACH}` },
       { intent: "Workbot on Freestyle", command: `${UP} preview-workbot --place freestyle --stage <stage> --source ref:dev ${DETACH}` },
     ],

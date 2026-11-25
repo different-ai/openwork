@@ -9,13 +9,10 @@ import { pluginDetailQueryOptions } from "./plugin-data";
 import { SkillPreview, SkillSteps } from "./skill-preview";
 import { librarySkillsLabel } from "./skill-preview-model";
 
-/** Fetch contents only when asked, using the same authorized query as plugin details. */
 export function LibraryPluginSkills({ pluginId, name, single, knownCount }: {
   pluginId: string;
   name: string;
-  /** The plugin is one skill, listed in My Library as that skill. */
   single: boolean;
-  /** Skill count from the Library summary when every component is a skill. */
   knownCount: number | null;
 }) {
   const [opened, setOpened] = useState(false);

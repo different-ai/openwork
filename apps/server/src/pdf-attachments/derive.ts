@@ -8,50 +8,20 @@ import { encode as encodeJpeg } from "jpeg-js";
 import { looksLikePdf, withPdfDocument } from "./pdfium.js";
 import type { PdfRenderedBitmap } from "./pdfium.js";
 
-/**
- * Turns one PDF into what a model can actually consume — page-marked text and
- * rendered page images — and keeps the result in memory so later steps reuse
- * it instead of re-rendering.
- *
- * Everything that reaches the provider is produced in this process from the
- * attachment bytes. The workspace copy (materialized PDF, `text.md`, page
- * images, `manifest.json`) exists for the agent's own tools and for people; it
- * is write-only here and never read back, so a hostile workspace cannot steer
- * what the model sees. Writes refuse any path that resolves through a symlink,
- * open each file at its final name, and let content flow only through a handle
- * verified against that place. Nothing is ever deleted: Node has no
- * directory-relative delete, and a path-based one could be redirected, so the
- * derived bundles accumulate under the inbox until a person clears them.
- *
- * Limits are deliberate. They keep a single attachment from stalling the turn,
- * blowing the provider's request size, or filling the workspace, while still
- * covering the long reports people actually attach. Pages past the eager set
- * are rendered on demand through the plugin's page tool.
- */
 export const MATERIALIZED_DIR = join(".opencode", "openwork", "inbox", "chat-attachments");
 export const DERIVED_DIR = join(".opencode", "openwork", "inbox", "pdf-pages");
 export const MANIFEST_FILENAME = "manifest.json";
 export const TEXT_FILENAME = "text.md";
-/** Pages whose text is extracted. Long documents keep their text reachable on disk. */
 export const MAX_TEXT_PAGES = 300;
-/** Wall-clock budget for text extraction of one document during a turn. */
 export const TEXT_TIME_BUDGET_MS = 6_000;
-/** Pages rendered up front when the model can look at images; more render on demand. */
 export const EAGER_RENDERED_PAGES = 20;
-/** Pages one on-demand request may render. */
 export const MAX_PAGES_PER_REQUEST = 8;
-/** Wall-clock budget for rendering one document during a turn. */
 export const RENDER_TIME_BUDGET_MS = 8_000;
-/** Longest image edge. Vision models downscale anything larger, so more pixels only cost tokens. */
 export const PAGE_LONG_EDGE_PX = 1568;
-/** Fallback edges when a page still encodes too large at full size. */
 const PAGE_FALLBACK_EDGES_PX = [1100, 800];
-/** Per-page image ceiling; providers cap single images well above this. */
 export const PAGE_IMAGE_MAX_BYTES = 1.5 * 1024 * 1024;
-/** Above this PNG size a page is photographic or scanned; JPEG keeps its resolution at a fraction of the bytes. */
 const JPEG_CONSIDER_BYTES = 300 * 1024;
 const JPEG_QUALITY = 85;
-/** In-memory page images across all PDFs; least recently used documents are dropped past this. */
 export const MEMORY_IMAGE_BUDGET_BYTES = 96 * 1024 * 1024;
 const MANIFEST_VERSION = 3;
 const MEMORY_ENTRY_LIMIT = 32;
@@ -68,31 +38,20 @@ export type PdfPageImage = {
 };
 
 export type DerivedPdf = {
-  /**
-   * The workspace root this derivation belongs to ("" when there is none).
-   * Results are cached per scope: the workspace copy and the paths in the note
-   * exist only in the workspace that produced them, so another workspace
-   * attaching the same bytes derives its own.
-   */
   scope: string;
   sha256: string;
   filename: string;
   bytes: number;
   pageCount: number;
-  /** Workspace-relative path of the materialized PDF, when a workspace root is known. */
   pdfPath: string | null;
-  /** Workspace-relative directory holding text and page images, when a workspace root is known. */
   directory: string | null;
   textPath: string | null;
-  /** Page-marked text for pages 1..textPages. */
   text: string;
   textPages: number;
   textBudgetExhausted: boolean;
   pagesWithoutText: number[];
-  /** Rendered pages in ascending page order. */
   renderedPages: PdfPageImage[];
   renderBudgetExhausted: boolean;
-  /** Set when PDFium could not open the bytes; text and pages are unavailable. */
   loadError: string | null;
 };
 
@@ -114,7 +73,6 @@ type EncodedPage = {
 
 const memory = new Map<string, MemoryEntry>();
 
-/** Cache key: one entry per workspace root and content digest. */
 function scopeOf(root: string | null): string {
   return root ?? "";
 }
@@ -175,11 +133,6 @@ function errorCode(cause: unknown): string | undefined {
   return typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
 }
 
-/**
- * Creates `directory` beneath `root` one component at a time, never creating
- * or descending through a symlink, so a hostile workspace cannot make this
- * module create directories anywhere else.
- */
 async function mkdirRefusingSymlinks(root: string, directory: string): Promise<void> {
   const parts = relative(root, directory).split(sep).filter((part) => part.length > 0);
   let current = root;
@@ -201,11 +154,6 @@ async function mkdirRefusingSymlinks(root: string, directory: string): Promise<v
   }
 }
 
-/**
- * A workspace may contain hostile symlinks. Every directory this module writes
- * must resolve to exactly the path expected beneath the real workspace root;
- * anything routed through a symlink is refused.
- */
 async function confinedDirectory(root: string, directory: string): Promise<string> {
   await mkdirRefusingSymlinks(root, directory);
   const [realRoot, realDirectory] = await Promise.all([realpath(root), realpath(directory)]);
@@ -214,13 +162,6 @@ async function confinedDirectory(root: string, directory: string): Promise<strin
   return realDirectory;
 }
 
-/**
- * Opens `path` for reading without following a symlink at the final component,
- * then confirms the opened file is a regular file with a single hard link that
- * the path still names beneath `realParent`. A hardlink would give an outside
- * file an in-workspace name, and a path swapped around the open fails the
- * identity check, so content only ever flows through a verified handle.
- */
 export async function openVerifiedForRead(realParent: string, path: string): Promise<FileHandle> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -239,7 +180,6 @@ export async function openVerifiedForRead(realParent: string, path: string): Pro
   }
 }
 
-/** Hashes the regular file at `path`; a symlink or other non-file counts as "something else lives here". */
 async function existingSha(realDirectory: string, path: string): Promise<string | null> {
   let handle: FileHandle;
   try {
@@ -264,28 +204,6 @@ function sameFile(left: FileIdentity, right: FileIdentity): boolean {
 
 const WRITE_OCCUPIED = "PDF attachment storage path is occupied by something this module did not write; refusing to use it.";
 
-/**
- * Opens `name` inside the verified `realDirectory` for writing and confirms,
- * through the handle, that the opened inode is a regular single-link file that
- * the path still names at exactly that place, before any byte is written.
- *
- * Node has no directory-relative open, rename, or link, so every path-based
- * call resolves the path on its own. Rather than write somewhere else and move
- * the result into place (a move resolves two paths and can be redirected
- * between them), the file is opened at its final name and content flows only
- * through this handle: once the identity check passes, no later swap of a
- * parent directory can change where the bytes land. The final component is
- * never followed as a symlink, a hardlink is refused so a planted name cannot
- * point this write at another file, and a path swapped around the open fails
- * the identity check. `create` refuses an existing file (`EEXIST`) and leaves
- * it for the caller to judge; `replace` opens an existing regular single-link
- * file in place and lets the caller truncate it only after verification, and
- * refuses anything else planted at the name (a symlink, a hardlink, a
- * directory) rather than removing it. This module never deletes: a path-based
- * delete resolves the path again and could itself be redirected, so a file
- * this call created and then refused is left where it is, empty. Exported for
- * tests.
- */
 export async function openVerifiedForWrite(realDirectory: string, name: string, mode: "replace" | "create"): Promise<{ handle: FileHandle; created: boolean; identity: FileIdentity }> {
   const target = join(realDirectory, name);
   const create = () => open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -314,12 +232,6 @@ export async function openVerifiedForWrite(realDirectory: string, name: string, 
   }
 }
 
-/**
- * Writes `content` to `name` inside the verified `realDirectory` through a
- * verified handle: `replace` overwrites an earlier copy in place, `create`
- * fails with `EEXIST` and leaves an existing file for the caller to judge.
- * Exported for tests.
- */
 export async function writeVerifiedFile(realDirectory: string, name: string, content: Uint8Array | string, mode: "replace" | "create"): Promise<void> {
   const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : content;
   const { handle, created } = await openVerifiedForWrite(realDirectory, name, mode);
@@ -373,14 +285,12 @@ function textDocument(base: Omit<DerivedPdf, "text">, pages: Array<{ page: numbe
   return lines.join("\n").trimEnd() + "\n";
 }
 
-/** Returns the text block of one page from a page-marked document, or null when it was not extracted. */
 export function pageTextFrom(text: string, page: number): string | null {
   const pattern = new RegExp(`(?:^|\\n)--- page ${page}(?: \\(no text layer\\))? ---\\n?([\\s\\S]*?)(?=\\n--- page \\d+(?: \\(no text layer\\))? ---|$)`);
   const match = pattern.exec(text);
   return match ? match[1].trim() : null;
 }
 
-/** Written for people and tools browsing the bundle; never read back by this module. */
 async function writeManifest(directory: string, derived: DerivedPdf): Promise<void> {
   const stored = {
     version: MANIFEST_VERSION,
@@ -486,7 +396,6 @@ function imageBytesOf(entry: MemoryEntry): number {
   return total;
 }
 
-/** Keeps the entry most recently used and drops the least recently used past the entry and image-byte budgets. */
 function remember(entry: MemoryEntry): MemoryEntry {
   memory.delete(keyOf(entry.derived));
   memory.set(keyOf(entry.derived), entry);
@@ -505,14 +414,12 @@ function derivedDirectoryFor(root: string, digest: string, safeFilename: string)
   return join(root, DERIVED_DIR, `${digest.slice(0, 16)}-${stemOf(safeFilename)}`);
 }
 
-/** Best-effort copy of a page image for tools and people; the model never depends on it. */
 async function storePageImage(root: string | null, derived: DerivedPdf, page: number, image: EncodedPage): Promise<void> {
   if (!root || !derived.directory) return;
   try {
     const directory = await confinedDirectory(root, derivedDirectoryFor(root, derived.sha256, derived.filename));
     await writeVerifiedFile(directory, pageFileName(page, image.mime), image.bytes, "replace");
   } catch {
-    // The workspace copy is a convenience; the in-memory image still reaches the model.
   }
 }
 
@@ -545,7 +452,6 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
     };
     const text = extracted.loadError ? "" : textDocument(base, extracted.pages);
     if (expectedDirectory && displayDirectory && root && !extracted.loadError) {
-      // Created only now that there is something to store; a symlinked bundle fails the derivation.
       const derivedDirectory = await confinedDirectory(root, expectedDirectory);
       await writeVerifiedFile(derivedDirectory, TEXT_FILENAME, text, "replace");
       base.textPath = `${displayDirectory}/${TEXT_FILENAME}`;
@@ -556,7 +462,6 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
     }
   }
 
-  // Page images are produced here and kept in memory; the workspace copy is for tools and people.
   const needsRender = options.renderPages && !current.loadError && current.pageCount > 0 && current.renderedPages.length === 0 && !current.renderBudgetExhausted;
   if (needsRender) {
     const target = current;
@@ -570,7 +475,6 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
       try {
         await writeManifest(await confinedDirectory(root, expectedDirectory), current);
       } catch {
-        // Manifest is a convenience for people; skip it when the bundle cannot be written safely.
       }
     }
   }
@@ -583,20 +487,11 @@ function satisfies(entry: MemoryEntry, options: DeriveOptions): boolean {
   return !options.renderPages || derived.renderedPages.length > 0 || derived.renderBudgetExhausted || derived.loadError !== null || derived.pageCount === 0;
 }
 
-/**
- * Returns an already-derived result for this workspace by content hash when it
- * covers `options`, so repeat steps skip decoding the attachment altogether.
- */
 export function cachedDerivedPdf(root: string | null, digest: string, options: DeriveOptions): DerivedPdf | null {
   const cached = memory.get(cacheKey(scopeOf(root), digest));
   return cached && satisfies(cached, options) ? remember(cached).derived : null;
 }
 
-/**
- * Derives (or reuses) the model-facing representation of a PDF. Results live
- * in memory per workspace root and content hash; a workspace copy is written
- * under `.opencode/openwork/inbox/pdf-pages/` for tools and people.
- */
 export async function derivePdf(root: string | null, filename: string, bytes: Uint8Array, options: DeriveOptions): Promise<DerivedPdf> {
   const digest = sha256(bytes);
   const cached = memory.get(cacheKey(scopeOf(root), digest)) ?? null;
@@ -612,11 +507,6 @@ export async function derivePdf(root: string | null, filename: string, bytes: Ui
   return (await task).derived;
 }
 
-/**
- * Renders specific pages that were not rendered yet (on demand, bounded per
- * request) and records them. Pages outside the document are ignored; the
- * caller reports them.
- */
 export async function renderPdfPages(root: string | null, derived: DerivedPdf, bytes: Uint8Array, pages: number[]): Promise<DerivedPdf> {
   if (derived.loadError || derived.pageCount === 0) return derived;
   const entry = memory.get(keyOf(derived)) ?? { derived, pageImages: new Map<number, Uint8Array>() };
@@ -638,19 +528,16 @@ export async function renderPdfPages(root: string | null, derived: DerivedPdf, b
     try {
       await writeManifest(await confinedDirectory(root, derivedDirectoryFor(root, updated.sha256, updated.filename)), updated);
     } catch {
-      // Manifest is a convenience for people; skip it when the bundle cannot be written safely.
     }
   }
   remember({ derived: updated, pageImages: entry.pageImages });
   return updated;
 }
 
-/** Returns a rendered page image from memory; null when it was never rendered here or has been evicted. */
 export function pageImageOf(derived: DerivedPdf, page: PdfPageImage): Uint8Array | null {
   return memory.get(keyOf(derived))?.pageImages.get(page.page) ?? null;
 }
 
-/** Test hook: forgets in-memory results so cold-start behaviour can be exercised. */
 export function resetDerivedPdfMemory(): void {
   memory.clear();
   pending.clear();

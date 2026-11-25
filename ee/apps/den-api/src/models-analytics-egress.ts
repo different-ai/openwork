@@ -4,7 +4,6 @@ import { isIP } from "node:net"
 import { checkServerIdentity } from "node:tls"
 import { isPrivateAddress } from "./capability-sources/url-guard.js"
 
-/** Resolve once, connect to that public IP, and verify TLS against the original host. */
 export async function postModelsAnalytics(url: URL, headers: Record<string, string>, body: string): Promise<unknown> {
   if (url.protocol !== "https:" || url.username || url.password) throw new Error("invalid_export_address")
   const hostname = url.hostname.replace(/^\[|\]$/g, "")
@@ -24,7 +23,6 @@ export async function postModelsAnalytics(url: URL, headers: Record<string, stri
       path: `${url.pathname}${url.search}`, method: "POST", agent: false,
       headers: { ...headers, Host: url.host }, signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
     }, (res) => {
-      // No redirects, and no unbounded response bodies from user-supplied hosts.
       if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
         res.destroy(); reject(new Error("export_unavailable")); return
       }

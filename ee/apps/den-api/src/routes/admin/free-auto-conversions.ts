@@ -18,7 +18,6 @@ function time(value: Date | string | null): string | null {
   return (value instanceof Date ? value : new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(value) ? value : `${value.replace(" ", "T")}Z`)).toISOString()
 }
 
-/** Counts in SQL; only one bounded page of account identities leaves the database. */
 export async function readFreeAutoConversions(input: z.infer<typeof querySchema>, now = new Date()) {
   const start = Math.floor(now.getTime() / DAY) * DAY - (input.days - 1) * DAY
   const from = new Date(start)
@@ -31,7 +30,6 @@ export async function readFreeAutoConversions(input: z.infer<typeof querySchema>
       and ${User.createdAt} <= ${Limit.authenticated_at} then ${User.createdAt} end`.as("signed_up_at"),
     subscribedAt: Purchase.paid_at,
   }).from(Limit).leftJoin(User, eq(User.id, Limit.user_id)).leftJoin(Purchase, and(eq(Purchase.user_id, Limit.user_id),
-    // The payer is the checkout creator, not everyone in the organization. Renewals of a pre-limit subscription cannot convert.
     sql`${Purchase.started_at} > ${Limit.exhausted_at}`, sql`${Purchase.started_at} <= date_add(${Limit.exhausted_at}, interval 30 day)`,
     sql`${Purchase.paid_at} >= ${Purchase.started_at}`,
     sql`${Purchase.paid_at} <= date_add(${Limit.exhausted_at}, interval 30 day)`, lte(Purchase.paid_at, now)))
@@ -49,7 +47,6 @@ export async function readFreeAutoConversions(input: z.infer<typeof querySchema>
     : input.stage === "new-account" ? isNotNull(cohorts.signedUpAt)
       : input.stage === "subscribed" ? isNotNull(cohorts.subscribedAt)
         : input.stage === "unlinked" ? isNull(cohorts.userId) : undefined
-  // Literal substring search: % and _ in an email must not broaden the result.
   const search = input.search.toLowerCase()
   const filter = and(stage, search ? sql`(locate(${search}, lower(coalesce(${cohorts.name}, ''))) > 0
     or locate(${search}, lower(coalesce(${cohorts.email}, ''))) > 0 or ${cohorts.userId} = ${input.search})` : undefined)

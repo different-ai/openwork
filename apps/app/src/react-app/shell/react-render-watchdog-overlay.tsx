@@ -20,7 +20,6 @@ function writeStoredPreference(value: boolean) {
   try {
     window.localStorage.setItem("openwork.debug.renderOverlay", value ? "1" : "0");
   } catch {
-    // ignore
   }
 }
 

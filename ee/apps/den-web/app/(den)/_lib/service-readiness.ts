@@ -17,10 +17,9 @@ export type WorkbotDeploymentNotice = {
 };
 
 function needsAttention(service: OrganizationService): boolean {
-  return service.state !== "ready" || service.stale;
+  return service.state !== "ready" && service.reason !== "not_checked";
 }
 
-/** Advisory only: readiness never grants access or disables model settings or conversations. */
 export function workbotDeploymentNotice(capabilities: DeploymentCapabilities | undefined): WorkbotDeploymentNotice | null {
   const readiness = capabilities?.serviceReadiness;
   if (!readiness) return null;
@@ -33,18 +32,14 @@ export function workbotDeploymentNotice(capabilities: DeploymentCapabilities | u
     message = `${label} isn't set up for this deployment. Ask the deployment administrator to finish setup.`;
   } else if (service.state === "misconfigured") {
     message = `${label} needs a configuration change. Ask the deployment administrator to check its settings.`;
-  } else if (service.reason === "not_checked") {
-    message = `${label} hasn't been checked yet. Ask the deployment administrator to check service health.`;
   } else {
     message = `Couldn't verify ${service.id === "workbot" ? "Workbot" : "the headless runner"}. Ask the deployment administrator to check service health, then try again.`;
   }
-  // Say what still works only where it isn't obvious: a service that was never set up had nothing to keep.
   if (service.id === "workbot" && !service.configured) message += " Model settings for Slack and Automations are still available.";
-  else if (service.configured && service.state !== "misconfigured" && service.reason !== "not_checked") message += " Existing conversations and model settings are kept.";
+  else if (service.configured && service.state !== "misconfigured") message += " Existing conversations and model settings are kept.";
   return { message, checkedAt: service.checkedAt, lastSuccessAt: service.lastSuccessAt, stale: service.stale };
 }
 
-/** One quiet line of check history, or nothing when there is no history to report. */
 export function serviceCheckLine(notice: Pick<WorkbotDeploymentNotice, "checkedAt" | "lastSuccessAt" | "stale">): string | null {
   if (!notice.checkedAt || formatServiceTime(notice.checkedAt) === "Not yet") return null;
   const checked = `${notice.stale ? "Out of date. " : ""}Last checked ${formatServiceTime(notice.checkedAt)}.`;

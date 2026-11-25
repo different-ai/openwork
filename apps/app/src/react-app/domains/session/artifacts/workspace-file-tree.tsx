@@ -37,11 +37,6 @@ type WorkspaceFileTreeProps = {
   fileActions?: readonly WorkspaceFileAction[];
 };
 
-/**
- * Pierre slots context-menu content into the tree host's light DOM, so the
- * document stylesheet (Tailwind) applies. Built imperatively because the
- * composition API expects a plain HTMLElement.
- */
 function buildFileContextMenu(
   entry: OpenworkWorkspaceCatalogEntry,
   actions: readonly WorkspaceFileAction[],
@@ -87,7 +82,6 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
   fileActionsRef.current = fileActions;
   const paths = useMemo(() => entries.map(treePath), [entries]);
   const { model } = useFileTree({
-    // useFileTree captures options on first render, so callbacks read refs.
     composition: {
       contextMenu: {
         triggerMode: "both",
@@ -95,7 +89,6 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
         onOpen: (item, context) => {
           const show = showNativeMenuRef.current;
           if (!show) return;
-          // Pierre supplies identity and positioning; no shadow-DOM inspection.
           context.close();
           if (item.kind !== "file") return;
           const entry = entriesByPathRef.current.get(item.path.replace(/\/$/, ""));

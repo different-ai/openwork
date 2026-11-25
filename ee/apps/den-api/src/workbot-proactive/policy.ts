@@ -4,25 +4,17 @@ import {
   AGENT_RESPONSIBILITIES,
   agentResponsibilitySchema,
   type AgentResponsibility,
-  type AgentTemplateContent,
   type MemberAgentInput,
   type WorkbotProactiveSettings,
 } from "@openwork/types/den/workbot-proactive"
 import type { MemberChoiceChange } from "./repository.js"
 
-/**
- * Pure rules shared by the wake, the delivery step and the member's settings: the organization's policy, the
- * template, and a member's own choices. No database, runner or Connect.
- */
-
-/** A member's stored choices, as the agent row keeps them. */
 export type MemberChoices = { status: string | null; overrides: AgentInstanceOverrides | null; snoozedUntil: Date | null }
 
 export function proactivePolicy(settings: WorkbotProactiveSettings): ProactivePolicy {
   return { workingDays: settings.workingDays, startHour: settings.startHour, endHour: settings.endHour, dailyCap: settings.dailyCap }
 }
 
-/** The member's own choice wins; without one, the organization's starting choice. */
 export function memberAgentOn(row: Pick<MemberChoices, "status"> | null | undefined, settings: WorkbotProactiveSettings) {
   if (row?.status === "on") return true
   if (row?.status === "off") return false
@@ -38,17 +30,6 @@ export function mutedOf(row: Pick<MemberChoices, "overrides"> | null | undefined
   return muted
 }
 
-export function enabledOf(template: AgentTemplateContent): Set<AgentResponsibility> {
-  return new Set(AGENT_RESPONSIBILITIES.filter((responsibility) => template.responsibilities[responsibility]))
-}
-
-/** What the agent is responsible for this pass: on in the template and not muted by the member. */
-export function activeResponsibilities(template: AgentTemplateContent, row: Pick<MemberChoices, "overrides"> | null): AgentResponsibility[] {
-  const muted = mutedOf(row)
-  return AGENT_RESPONSIBILITIES.filter((responsibility) => template.responsibilities[responsibility] && !muted.has(responsibility))
-}
-
-/** What a member's request changes. "Snooze until tomorrow" lasts until the next working morning in their zone. */
 export function memberChoiceChange(
   input: MemberAgentInput,
   row: Pick<MemberChoices, "overrides"> | null,

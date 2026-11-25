@@ -29,8 +29,6 @@ export function registerVersionRoutes<T extends Env>(app: Hono<T>) {
     publicRoute,
     async (c) => {
       c.header("Cache-Control", "public, max-age=300, stale-if-error=86400")
-      // `webUrl` mirrors the install-config contract (`buildInstallConfig`) so a desktop
-      // client configured with only the API URL can discover where the web app lives.
       return c.json({ ...(await getDesktopReleaseMetadata()), webUrl: env.webUrl })
     },
   )

@@ -41,10 +41,8 @@ export type Definition<R = never> = {
   readonly run: (input: unknown) => Effect.Effect<unknown, unknown, R>
 }
 
-/** The value `run` receives: the decoded type for Effect Schemas, `unknown` for JSON Schemas. */
 type InputType<S> = S extends Schema.Decoder<unknown> ? S["Type"] : unknown
 
-/** The value `run` returns: the encoded type for Effect Schemas, `unknown` otherwise. */
 type ResultType<S> = S extends Schema.Decoder<unknown> ? S["Encoded"] : unknown
 
 /** Options for defining one CodeMode tool. */

@@ -6,6 +6,8 @@ description: "Assess OpenWork's control plane on Cloud Run, including Cloud SQL 
 
 Cloud Run can host containerized HTTP services, making it a candidate for OpenWork's team control plane. OpenWork ships a [Cloud Run starter](/self-host/deploy-to-your-cloud/google-cloud) and a beta [Terraform module](/self-host/deploy-to-your-cloud/google-cloud#cloud-run-with-terraform) for Den Web, Den API, and a migration job; this page covers what to assess around it. Assess Den separately from worker execution before choosing this route.
 
+For a guided installation in your own cloud account, see [Install from OpenWork Cloud](/self-host/deploy-to-your-cloud/managed-installer) for supported targets and release availability.
+
 ## Deployment approach
 
 Plan Den web and Den API as separate services with Cloud SQL for MySQL or another MySQL 8-compatible database. Use the [common requirements](/self-host/platforms/overview#common-requirements). The documented Kubernetes path is [Deploy on Google Cloud](/self-host/deploy-to-your-cloud/google-cloud).

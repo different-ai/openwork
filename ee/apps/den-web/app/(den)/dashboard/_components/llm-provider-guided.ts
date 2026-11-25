@@ -1,12 +1,3 @@
-/**
- * Guided (form-based) custom provider setup for the Den dashboard.
- *
- * Admins describe an OpenAI-compatible endpoint (Azure AI Foundry, LiteLLM,
- * vLLM, an internal gateway) with a few fields; we generate the models.dev
- * style config the API already accepts — no JSON paste required. Pasting or
- * editing raw JSON stays available as the advanced escape hatch.
- */
-
 type JsonRecord = Record<string, unknown>;
 
 export const GUIDED_PROVIDER_NPM = "@ai-sdk/openai-compatible";
@@ -78,7 +69,6 @@ export function normalizeAzureResourceNameInput(value: string): string {
             }
         }
     } catch {
-        // Not a URL: keep treating the value as the resource name itself.
     }
 
     return trimmed;
@@ -113,7 +103,6 @@ export function buildGuidedCustomProviderConfig(input: {
     baseUrl: string;
     modelIds: string[];
     envNames?: string[] | null;
-    /** AI SDK package; verification may upgrade this to the OpenAI package. */
     npm?: string | null;
 }): JsonRecord {
     const providerId = input.providerId.trim();
@@ -130,12 +119,6 @@ export function buildGuidedCustomProviderConfig(input: {
     };
 }
 
-/**
- * Try to read a provider config back into guided form fields. Returns null
- * when the config uses anything beyond the simple shape the form generates
- * (custom npm package, provider options, per-model metadata, ...) so the
- * editor falls back to JSON editing instead of silently dropping data.
- */
 export function readGuidedCustomProviderFields(
     config: unknown,
 ): GuidedCustomProviderFields | null {
@@ -208,11 +191,6 @@ export function readGuidedCustomProviderFields(
     };
 }
 
-/**
- * Leniently pull the env var names out of pasted provider JSON so the editor
- * can render one credential input per env key even for configs too rich for
- * the guided form. Returns [] when the text is unparsable or lists no env.
- */
 export function readEnvNamesFromCustomProviderText(text: string): string[] {
     let parsed: unknown;
     try {
@@ -241,11 +219,6 @@ export function readEnvNamesFromCustomProviderText(text: string): string[] {
         : [];
 }
 
-/**
- * Parse pasted JSON text into guided fields (used when switching from the
- * JSON editor back to the form). Accepts a bare provider block or an
- * opencode-style `{ "provider": { "<id>": { ... } } }` wrapper.
- */
 export function readGuidedCustomProviderFieldsFromText(
     text: string,
 ): GuidedCustomProviderFields | null {

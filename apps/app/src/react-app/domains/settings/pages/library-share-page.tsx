@@ -66,10 +66,6 @@ export function kindLabel(taxonomy: ExtensionTaxonomy) {
   return t("extensions.kind_skill");
 }
 
-/**
- * Who can use something the member made. Changes stay on the page until the
- * member confirms; picking nobody turns the button into Stop sharing.
- */
 export function LibrarySharePage(props: {
   name: string;
   description: string | null;

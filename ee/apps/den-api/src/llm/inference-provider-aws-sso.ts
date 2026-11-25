@@ -1,36 +1,16 @@
-/**
- * Member IAM Identity Center sign-in for Amazon Bedrock (device authorization).
- * Den registers a public OIDC client with the organization's Identity Center,
- * shows the person AWS's own approval page and code, and polls for the token.
- * Before storing anything it proves the sign-in works for the set's account and
- * permission set: it fetches role credentials and asks STS who they belong to.
- */
 import { randomBytes } from "node:crypto"
 import { z } from "zod"
-import {
-  AwsSsoError,
-  createAwsSsoTokenFromDevice,
-  getAwsCallerIdentity,
-  getAwsSsoRoleCredentials,
-  logoutAwsSso,
-  registerAwsSsoClient,
-  startAwsSsoDeviceAuthorization,
-  type AwsSsoClient,
-  type FetchLike,
-} from "@openwork-ee/utils/aws-identity-center"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { AwsSsoError, createAwsSsoTokenFromDevice, getAwsCallerIdentity, getAwsSsoRoleCredentials, logoutAwsSso, registerAwsSsoClient, startAwsSsoDeviceAuthorization, type AwsSsoClient, type FetchLike, createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams"
 import type { GatewayAwsSsoSettings, InferenceAwsSsoSecret } from "@openwork/types/den/inference"
 
 const CLIENT_NAME = "OpenWork AI Gateway"
 
 let egressFetch: FetchLike | null = null
-/** AWS hosts are public; the guarded transport still refuses private addresses and redirects. */
 export function awsSsoFetch(): FetchLike {
   egressFetch ??= createInferenceEgressFetch({ allowedOrigins: new Set() })
   return egressFetch
 }
 
-/** The pending device sign-in, kept in the encrypted attempt row for at most ten minutes. */
 export const awsSsoAttemptSchema = z.object({
   verifier: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   userId: z.string().min(1),
@@ -69,10 +49,6 @@ export type AwsSsoPollResult =
   | { kind: "pending"; slowDown: boolean }
   | { kind: "connected"; secret: InferenceAwsSsoSecret; expiresAt: Date }
 
-/**
- * One CreateToken attempt. On approval, checks the role and builds the secret.
- * If anything after token issue fails, ends the new AWS session before rethrowing.
- */
 export async function pollAwsSsoSignIn(input: { sso: GatewayAwsSsoSettings; aws: AwsSsoAttempt["aws"]; fetchImpl?: FetchLike; now?: () => number }): Promise<AwsSsoPollResult> {
   const fetchImpl = input.fetchImpl ?? awsSsoFetch()
   const now = input.now ?? Date.now

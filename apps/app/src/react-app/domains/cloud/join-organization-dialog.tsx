@@ -154,9 +154,6 @@ export function JoinOrganizationDialog({
     await setDenBootstrapConfig({
       baseUrl: config.webUrl,
       requireSignin: config.requireSignin,
-      // Joining an organization must not silently rewrite activation policy in
-      // either direction — dropping this re-gates an enterprise app an admin
-      // unlocked, and clears a gate an admin turned on for a public artifact.
       requireActivation: readDenBootstrapConfig().requireActivation,
       brandAppName: config.appName,
       ...(config.logoUrl ? { brandLogoUrl: config.logoUrl } : {}),
@@ -215,7 +212,6 @@ export function JoinOrganizationDialog({
     setStatus({ phase: "connecting", clientName: t("join_org.openwork_cloud"), host: hostFromUrl(baseUrl) });
     const result = await exchangeHandoffAndSignIn(parsed.grant, {
       baseUrl,
-      // Pasted one-time codes are desktop-initiated sign-ins.
       desktopInitiated: true,
       fallbackErrorMessage: t("den.error_no_token"),
     });
@@ -235,9 +231,6 @@ export function JoinOrganizationDialog({
     setBusy(true);
     reset();
     try {
-      // Install links first (most specific), then web invites, then plain
-      // server URLs, and finally pasted sign-in codes. Server URLs require an
-      // explicit http(s) scheme, so raw grants never misclassify.
       if (await submitInstallLink(trimmedInput)) return;
       if (await submitInviteLink(trimmedInput)) return;
       if (await submitServerUrl(trimmedInput)) return;

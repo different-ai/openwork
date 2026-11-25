@@ -7,9 +7,9 @@ import { getDesktopReleaseMetadata } from "../desktop-releases.js"
 import { env } from "../env.js"
 import { adminOrganizationPlanInputSchema, setOrganizationPlanByAdmin } from "../admin-organization-plan.js"
 import { readFeatureRollouts } from "@openwork-ee/den-db/organization-features"
-import { deploymentFeatureEnabled, updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
+import { updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { SANDBOX_MAX_CREDIT_USD, SANDBOX_MAX_DAYS, SANDBOX_MAX_MEMBERS, sandboxCreateInputSchema } from "@openwork/types/den/sandbox-organizations"
+import { SANDBOX_MAX_CREDIT_USD, SANDBOX_MAX_DAYS, SANDBOX_MAX_MEMBERS, SANDBOX_MAX_MODELS, sandboxCreateInputSchema } from "@openwork/types/den/sandbox-organizations"
 import { closeSandbox, createSandbox, extendSandbox, listSandboxes, sandboxDefaults, setSandboxCredit } from "../sandbox-organizations.js"
 import { FEATURE_KEYS, featureAvailableOn, featureDefinition, featureDocsUrl, featureKeySchema, featureRollout, resolveFeature } from "@openwork/features"
 import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type PlatformAdminAuditActor } from "../audit/mcp-service-audit.js"
@@ -20,27 +20,9 @@ import { buildRetentionCohorts } from "../admin-metrics/definitions.js"
 import { readTaskUserWindows } from "../admin-metrics/metrics.js"
 import { normalizeRows } from "../admin-metrics/sql.js"
 
-/**
- * den-admin MCP toolset: read-only Den analytics for allowlisted platform
- * admins, served over streamable HTTP at /mcp/admin (see ./admin.ts).
- *
- * This is the server-hosted successor of ee/packages/den-admin-mcp (the
- * stdio break-glass variant that talks straight to MySQL). Tool names and
- * payloads are kept compatible; bump DEN_ADMIN_MCP_VERSION when they change
- * so `den_admin_version` can be used to spot stale deploys.
- *
- * Hardening: every statement goes through the shared read-only guard, which
- * also refuses credential tables, raw `den_query` results are row-capped, and
- * all queries race a wall-clock timeout so one expensive SELECT cannot pin an
- * API worker indefinitely. Raw `den_query` SELECTs also carry the limit to the
- * database, which stops the statement itself (admin-query-limit.ts). Admin
- * write tools need the caller's mcp:write scope, like connection writes.
- */
-
 export const DEN_ADMIN_MCP_VERSION = "0.11.0"
 
 const QUERY_TIMEOUT_MS = 15_000
-// Slightly under Den's own timer, so the database stops the statement first.
 const DATABASE_TIME_LIMIT_MS = QUERY_TIMEOUT_MS - 1_000
 const DEFAULT_ROW_LIMIT = 200
 const MAX_ROW_LIMIT = 1000
@@ -87,7 +69,6 @@ const n = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-/** Inline a zod-validated integer into SQL (interval/limit positions reject placeholders on some drivers). */
 function intLiteral(value: number): SQL {
   if (!Number.isInteger(value)) {
     throw new Error("Expected an integer")
@@ -197,10 +178,6 @@ function isMissingTable(error: unknown): boolean {
   return isMissingTable(record.cause)
 }
 
-// --- activity (sign-in session days UNION session.active telemetry days) ---
-// Matches den-api /v1/admin/overview: a user is "active" on a day if they
-// have a sign-in session day or a session.active telemetry event that day.
-
 async function activeUserCount(days: number): Promise<number> {
   const interval = intLiteral(days)
   try {
@@ -304,7 +281,6 @@ async function describeUsers(userRows: Row[]) {
   }))
 }
 
-/** Append a LIMIT to bare SELECT/WITH statements and clamp the cap. */
 export function applyDefaultRowLimit(sqlText: string, limit?: number): { sql: string; cap: number } {
   const cap = Math.max(1, Math.min(limit ?? DEFAULT_ROW_LIMIT, MAX_ROW_LIMIT))
   if (/^(select|with)\b/i.test(sqlText) && !/\blimit\s+\d+/i.test(sqlText)) {
@@ -325,22 +301,13 @@ export async function buildAdminMcpVersionInfo() {
   }
 }
 
-// --- tool registration ---
-
-/** The verified platform admin calling the tools, with the scopes of the token they called with. */
 export type AdminToolCaller = PlatformAdminAuditActor & Readonly<{ scopes: ReadonlySet<string> }>
 
-/**
- * `admin` is the verified platform admin calling the tools; org-mutating tools
- * are audited for it (src/audit/service-actions.ts) and refuse without it or
- * without its mcp:write scope. Pass null only for catalog listing.
- */
 export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller | null) {
   const requireAdmin = () => {
     if (!admin) throw new Error("Admin write tools require an authenticated platform admin.")
     return admin
   }
-  // The same refusal connection writes give a token without the write scope.
   const writeScopeMissing = (toolName: string): ToolResult | null => {
     if (!admin || admin.scopes.has(DEN_MCP_WRITE_SCOPE)) return null
     const refusal = { error: "insufficient_mcp_scope", requiredScope: DEN_MCP_WRITE_SCOPE, message: `${toolName} requires the ${DEN_MCP_WRITE_SCOPE} scope.` }
@@ -397,7 +364,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
             status: row.status,
             count: n(row.count),
           })),
-          note: "active = sign-in session day or any telemetry event; realActive = ran at least one task in a session from the app (task.* events with a session id), excluding setup agents and removed members, as in the admin Control Center",
+          note: "active = sign-in session day or any telemetry event; realActiveUsers is disabled and always 0 for now (the query was too expensive)",
         }
       }),
   )
@@ -543,7 +510,6 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
       writeScopeMissing("den_set_feature_rollout") ?? run(async () => {
         if (enabled === undefined && killed === undefined) throw new Error("Set enabled, killed, or both.")
         if (!featureAvailableOn(feature, env.features.deployment)) throw new Error(`${feature} is not part of this deployment.`)
-        // Deployment-wide: no organization's data changes, so platform evidence only.
         const rollouts = await runPlatformAdminPlatformAction("feature.rollout.set", requireAdmin(), { type: "feature", id: feature }, () =>
           updateFeatureRollout({ key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default, updatedByUserId: requireAdmin().userId }))
         return { ok: true, feature, ...featureRollout(feature, rollouts) }
@@ -815,10 +781,8 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
       }),
   )
 
-  // Sandbox organizations: the same functions as /v1/admin/sandbox-orgs and the /admin Sandbox page. Platform
-  // evidence only, like those routes (creating one makes a new organization).
   const sandboxesOn = async () => {
-    if (!await deploymentFeatureEnabled("sandboxOrgs")) throw new Error("Sandbox organizations are turned off on this deployment. Turn on sandboxOrgs (den_set_feature_rollout) first.")
+    if (env.features.deployment !== "cloud") throw new Error("Sandbox organizations are only available on cloud deployments.")
   }
   const sandboxId = (value: string) => {
     if (!isDenTypeId("sandboxOrganization", value)) throw new Error("Invalid sandbox id (expected sbx_... from den_sandbox_list).")
@@ -837,7 +801,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
     },
     async () => run(async () => {
       await sandboxesOn()
-      return { sandboxes: await listSandboxes(), defaults: sandboxDefaults() }
+      return { sandboxes: await listSandboxes(), defaults: await sandboxDefaults() }
     }),
   )
 
@@ -851,22 +815,24 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
         memberLimit: z.number().int().min(1).max(SANDBOX_MAX_MEMBERS).describe("Seats"),
         creditUsd: z.number().int().min(1).max(SANDBOX_MAX_CREDIT_USD).optional().describe("Model spending cap in US dollars; omitted uses the deployment default"),
         allowedEmailDomains: z.array(z.string()).max(20).optional().describe("Only people with these email domains can join; omitted means anyone with the link"),
-        joinRole: z.enum(["member", "admin"]).optional().describe("What people who join become; default admin"),
+        joinRole: z.enum(["member", "admin", "super-admin"]).optional().describe("What people who join become; default super-admin"),
         withConnectors: z.boolean().optional().describe("Add the fictional workplace connectors (default true)"),
+        modelIds: z.array(z.string()).min(1).max(SANDBOX_MAX_MODELS).optional().describe("AI Gateway models this sandbox gets, as ids from the sandbox provider's catalog; omitted uses the deployment's list (defaults.gatewayModels). Needs a sandbox model key on the deployment: den_sandbox_list returns defaults.modelChoice true."),
       }),
     },
-    async ({ name, days, memberLimit, creditUsd, allowedEmailDomains, joinRole, withConnectors }) =>
+    async ({ name, days, memberLimit, creditUsd, allowedEmailDomains, joinRole, withConnectors, modelIds }) =>
       writeScopeMissing("den_sandbox_create") ?? run(async () => {
         await sandboxesOn()
         const input = sandboxCreateInputSchema.safeParse({
           name, days, memberLimit, allowedEmailDomains: allowedEmailDomains ?? [], joinRole,
-          connectorBaseUrl: withConnectors === false ? null : sandboxDefaults().workplaceUrl,
+          connectorBaseUrl: withConnectors === false ? null : (await sandboxDefaults()).workplaceUrl,
           ...(creditUsd === undefined ? {} : { creditUsd }),
+          ...(modelIds === undefined ? {} : { modelIds }),
         })
         if (!input.success) throw new Error(input.error.issues[0]?.message ?? "Invalid sandbox.")
         const admin = requireAdmin()
         const sandbox = await runPlatformAdminPlatformAction("sandbox_organization.create", admin, { type: "sandbox_organization", id: null }, () =>
-          createSandbox(normalizeDenTypeId("user", admin.userId), input.data))
+          createSandbox(normalizeDenTypeId("user", admin.userId), input.data, { callbackBaseUrl: env.apiPublicUrl ?? null }))
         return { ok: true, sandbox }
       }),
   )

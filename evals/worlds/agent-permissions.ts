@@ -358,25 +358,34 @@ async function desktopWorld(seed: Seed, place: Place, { configured }: { configur
        * does, so it boots with the Contractors rules already stored. Resolves
        * once the engine is running again, or with the reason it did not start.
        */
-      async restartEngine(): Promise<{ running: boolean; error: string | null }> {
+      async restartEngine(): Promise<{ running: boolean; error: string | null; previousPid?: number; pid?: number }> {
         if (engine === "v1") {
           const { status, body } = await localServer(app, `/workspace/${encodeURIComponent(app.workspaceId)}/engine/reload`, { method: "POST" });
           return { running: status === 200, error: status === 200 ? null : `HTTP ${status} ${JSON.stringify(body)}` };
         }
-        // Stop routing before stopping the process; start the process before routing to it.
-        const stopped = await localServer(app, "/experimental/engine-v2-preview", { method: "PUT", body: { enabled: false, chatRouting: false } });
-        if (stopped.status !== 200) return { running: false, error: `Stopping the engine failed: HTTP ${stopped.status}` };
-        const started = await localServer(app, "/experimental/engine-v2-preview", { method: "PUT", body: { enabled: true, chatRouting: true } });
-        if (started.status !== 200) return { running: false, error: `Starting the engine failed: HTTP ${started.status}` };
+        const before = await localServer(app, "/experimental/engine-v2-preview/status");
+        if (before.status !== 200 || !isRecord(before.body) || before.body.running !== true || typeof before.body.pid !== "number") {
+          return { running: false, error: `Reading the engine before restart failed: HTTP ${before.status} ${JSON.stringify(before.body)}` };
+        }
+        const previousPid = before.body.pid;
+        // Disabling v2 is a switch to v1, not a restart: adopted v2 history
+        // correctly rejects it. Use the desktop's real runtime restart instead,
+        // leaving the selected engine, history and stored policy untouched.
+        await seed.evalIn(app, browserScript(() => window.__OPENWORK_ELECTRON__.invokeDesktop("engineRestart"), []), {
+          awaitPromise: true, timeoutMs: 180_000,
+        });
         const deadline = Date.now() + 120_000;
         while (Date.now() < deadline) {
-          const { body } = await localServer(app, "/experimental/engine-v2-preview/status");
+          const { status, body } = await localServer(app, "/experimental/engine-v2-preview/status");
           const lastError = isRecord(body) && typeof body.lastError === "string" ? body.lastError : null;
-          if (isRecord(body) && body.running === true) return { running: true, error: lastError };
-          if (lastError) return { running: false, error: lastError };
+          const pid = isRecord(body) && typeof body.pid === "number" ? body.pid : undefined;
+          if (status === 200 && isRecord(body) && body.running === true && body.chatRouting === true && pid !== undefined && pid !== previousPid) {
+            return { running: true, error: lastError, previousPid, pid };
+          }
+          if (lastError) return { running: false, error: lastError, previousPid, pid };
           await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
         }
-        return { running: false, error: "The engine did not report running within 120 s" };
+        return { running: false, error: "A replacement v2 engine did not report running and routed within 120 s", previousPid };
       },
       /** The folder's local MCP server as the engine reports it: its status, or null when absent. */
       async notesServerStatus() {

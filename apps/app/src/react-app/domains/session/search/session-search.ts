@@ -1,4 +1,5 @@
-/** A session the search dialog can match by title. */
+import fuzzysort from "fuzzysort";
+
 export type SearchableSession = {
   workspaceId: string;
   sessionId: string;
@@ -19,4 +20,29 @@ export function dedupeSearchableSessions(sessions: SearchableSession[]): Searcha
     if (!existing || session.updatedAt > existing.updatedAt) unique.set(key, session);
   }
   return [...unique.values()];
+}
+
+const newestFirst = (a: SearchableSession, b: SearchableSession) => b.updatedAt - a.updatedAt;
+
+export function rankSearchableSessions(
+  sessions: SearchableSession[],
+  query: string,
+  limit: number,
+): SearchableSession[] {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [...sessions].sort(newestFirst).slice(0, limit);
+
+  const contains = sessions.filter((session) => {
+    const text = `${session.title} ${session.workspaceTitle}`.toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
+  contains.sort(newestFirst);
+  if (contains.length >= limit) return contains.slice(0, limit);
+
+  const included = new Set(contains);
+  const fuzzy = fuzzysort
+    .go(query.trim(), sessions, { keys: ["title", "workspaceTitle"] })
+    .map((hit) => hit.obj)
+    .filter((session) => !included.has(session));
+  return [...contains, ...fuzzy].slice(0, limit);
 }

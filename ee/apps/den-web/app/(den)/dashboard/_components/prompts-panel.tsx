@@ -1,43 +1,46 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { Lock, Pencil, Plus } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Pencil, Plus } from "lucide-react";
 import { ORG_PROMPT_MAX_LENGTH, type OrgPrompt } from "@openwork/types/den/prompts";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getEveryoneRoute, getOrgAccessFlags, permissionLockReason, type DenOrgContext } from "../../_lib/den-org";
+import { getEveryoneRoute, getOrgAccessFlags, type DenOrgContext } from "../../_lib/den-org";
+import { FeatureIntroGate } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
 import { ConfirmDialog } from "./item-list";
 import { usePromptSettings, useRemovePrompt, useSavePrompt } from "./prompts-data";
+import { ReadOnlyNotice } from "./scoped-setting";
 
 const PROMPT_ROWS = 15;
-/** Saved prompts and the editor share one type ramp, so Edit swaps the field in place. */
 const promptTextClass = "font-mono text-[13px] leading-5";
 const promptReadClass = `${promptTextClass} max-h-[480px] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border px-4 py-2.5`;
-/** The scope's own prompt: the focal element (P7). */
 const ownPromptClass = `${promptReadClass} border-gray-200 bg-white text-gray-900`;
-/** A prompt inherited from Everyone: same shape, quieter, no fill. */
 const inheritedPromptClass = `${promptReadClass} border-gray-100 text-gray-600`;
 
-/** The Prompts tab shows for people who can view prompts. */
 export function promptsTabVisible(orgContext: DenOrgContext | null): boolean {
   if (!orgContext) return false;
   return getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canViewPrompts;
 }
 
-/**
- * Members › Teams › a team (or Everyone) › Prompts: the scope's system prompt,
- * read-only until Edit. A team page lists the prompt for everyone first,
- * the order members' agents receive them in.
- */
 export function PromptsPanel({ team }: { team: { id: string; name: string } | null }) {
   const { orgId, orgSlug } = useOrgDashboard();
   const settings = usePromptSettings(orgId ?? "", Boolean(orgId));
+  const searchParams = useSearchParams();
+  const [writing, setWriting] = useState(false);
+  useEffect(() => {
+    if (searchParams.get("write") !== "1") return;
+    setWriting(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("write");
+    window.history.replaceState(null, "", url);
+  }, [searchParams]);
 
   if (!orgId || settings.isPending) return <PromptsSkeleton />;
   if (settings.isError) {
@@ -52,8 +55,11 @@ export function PromptsPanel({ team }: { team: { id: string; name: string } | nu
 
   const prompt = team ? settings.data.teams.find((entry) => entry.teamId === team.id)?.prompt ?? null : settings.data.everyone;
   const everyonePrompt = team ? settings.data.everyone : null;
+  const introFacts = writing ? null : { hasPrompt: Boolean(prompt ?? everyonePrompt), canEditPrompts: settings.data.canEdit };
   return (
+    <FeatureIntroGate introKey="team-detail.prompts" facts={introFacts}>
     <section className="flex flex-col gap-8" data-testid="prompts-panel">
+      {settings.data.canEdit ? null : <ReadOnlyNotice permission="prompts.manage" />}
       {everyonePrompt ? (
         <div className="flex flex-col gap-2">
           <PromptHeader
@@ -61,7 +67,7 @@ export function PromptsPanel({ team }: { team: { id: string; name: string } | nu
             state="Applies first"
             action={settings.data.canEdit ? (
               <Link href={`${getEveryoneRoute(orgSlug)}?tab=prompts`} className={buttonVariants({ variant: "ghost", size: "inline" })} data-testid="prompt-everyone-edit">
-                Edit on Everyone
+                Open Everyone
               </Link>
             ) : null}
           />
@@ -75,21 +81,26 @@ export function PromptsPanel({ team }: { team: { id: string; name: string } | nu
         team={team}
         prompt={prompt}
         canEdit={settings.data.canEdit}
+        startEditing={writing && settings.data.canEdit}
+        onEditingDone={() => setWriting(false)}
       />
     </section>
+    </FeatureIntroGate>
   );
 }
 
-function PromptEditor({ orgId, team, prompt, canEdit }: {
+function PromptEditor({ orgId, team, prompt, canEdit, startEditing = false, onEditingDone }: {
   orgId: string;
   team: { id: string; name: string } | null;
   prompt: OrgPrompt | null;
   canEdit: boolean;
+  startEditing?: boolean;
+  onEditingDone?: () => void;
 }) {
   const save = useSavePrompt(orgId);
   const remove = useRemovePrompt(orgId);
   const toast = useDenToast();
-  const [draft, setDraft] = useState<string | null>(null);
+  const [draft, setDraft] = useState<string | null>(startEditing ? prompt?.content ?? "" : null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const teamId = team?.id ?? null;
@@ -99,12 +110,17 @@ function PromptEditor({ orgId, team, prompt, canEdit }: {
   const dirty = editing && draft !== saved;
   const title = team ? `${team.name}'s prompt` : "Prompt for everyone";
 
+  useEffect(() => {
+    if (startEditing) setDraft((current) => current ?? saved);
+  }, [startEditing, saved]);
+
   async function submit() {
     if (draft === null || empty || !dirty) return;
     setError(null);
     try {
       await save.mutateAsync({ teamId, content: draft });
       setDraft(null);
+      onEditingDone?.();
       toast({ title: "Prompt saved" });
     } catch (cause) {
       setError(cause instanceof Error && cause.message ? cause.message : "Couldn't save the prompt. Try again.");
@@ -114,6 +130,7 @@ function PromptEditor({ orgId, team, prompt, canEdit }: {
   function cancel() {
     setDraft(null);
     setError(null);
+    onEditingDone?.();
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -126,12 +143,7 @@ function PromptEditor({ orgId, team, prompt, canEdit }: {
     }
   }
 
-  const headerAction = editing ? null : !canEdit ? (
-    <span className="inline-flex items-center gap-1.5 text-[12px] text-gray-500">
-      <Lock className="size-3.5 shrink-0" aria-hidden="true" />
-      {permissionLockReason("prompts.manage")}
-    </span>
-  ) : prompt ? (
+  const headerAction = !editing && canEdit && prompt ? (
     <DenButton variant="secondary" size="sm" icon={Pencil} onClick={() => setDraft(saved)} data-testid="prompt-edit">Edit</DenButton>
   ) : null;
 
@@ -201,6 +213,7 @@ function PromptEditor({ orgId, team, prompt, canEdit }: {
         onConfirm={async () => {
           await remove.mutateAsync(teamId);
           setDraft(null);
+          onEditingDone?.();
           toast({ title: "Prompt removed" });
         }}
         onClose={() => setConfirmingRemove(false)}
@@ -209,7 +222,6 @@ function PromptEditor({ orgId, team, prompt, canEdit }: {
   );
 }
 
-/** One row above each prompt: its name and state on the left, at most one action on the right (S2). */
 function PromptHeader({ title, state, action }: { title: string; state: string | null; action: ReactNode }) {
   return (
     <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-4 gap-y-1">

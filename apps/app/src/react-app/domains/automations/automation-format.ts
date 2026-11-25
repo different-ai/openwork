@@ -1,5 +1,6 @@
 import { formatAutomationSchedule } from "@openwork/types/automation-schedule";
-import type { AutomationRun } from "@openwork/types/automations";
+import type { AutomationRun, AutomationRunEvent } from "@openwork/types/automations";
+import { denYourConnectionUrl } from "@/app/lib/den-dashboard-links";
 
 type RunReceiptState = Pick<AutomationRun, "status" | "error" | "attemptCount" | "startedAt">;
 
@@ -9,10 +10,14 @@ type RunNotice = {
   message: string;
 };
 
+export function isMissedAutomationRun(run: RunReceiptState): boolean {
+  return run.status === "skipped" && run.error?.code === "runner_unavailable" && run.attemptCount === 0 && run.startedAt == null;
+}
+
 export function automationRunNotice(run: RunReceiptState): RunNotice | null {
   if (!run.error) return null;
   if (run.status === "skipped" && run.error.code === "runner_unavailable") {
-    if (run.attemptCount === 0 && run.startedAt == null) {
+    if (isMissedAutomationRun(run)) {
       return {
         variant: "default",
         title: "Run missed",
@@ -25,6 +30,9 @@ export function automationRunNotice(run: RunReceiptState): RunNotice | null {
       message: `An execution attempt or start was recorded for this run. Recorded cause: ${run.error.message}`,
     };
   }
+  if (run.error.code === "connection_action_required") {
+    return { variant: "destructive", title: "Connection needed", message: run.error.message };
+  }
   return {
     variant: "destructive",
     title: run.status === "failed" && run.error.code === "lease_lost" ? "Run interrupted" : run.error.code,
@@ -35,7 +43,8 @@ export function automationRunNotice(run: RunReceiptState): RunNotice | null {
 export function runStatusLabel(run: RunReceiptState) {
   const notice = automationRunNotice(run);
   if (notice && ((run.status === "skipped" && run.error?.code === "runner_unavailable")
-    || (run.status === "failed" && run.error?.code === "lease_lost"))) {
+    || (run.status === "failed" && run.error?.code === "lease_lost")
+    || run.error?.code === "connection_action_required")) {
     return notice.title;
   }
   if (run.status === "skipped" && (run.error?.code === "model_access_lost" || run.error?.code === "provider_unavailable")) {
@@ -44,9 +53,21 @@ export function runStatusLabel(run: RunReceiptState) {
   return run.status === "succeeded" ? "Completed" : run.status.replaceAll("_", " ");
 }
 
+export function automationRunConnectionFix(
+  run: Pick<AutomationRun, "error">,
+  events: readonly Pick<AutomationRunEvent, "type" | "payload">[],
+  denBaseUrl: string,
+): { label: string; url: string } | null {
+  if (run.error?.code !== "connection_action_required") return null;
+  const warning = [...events].reverse().find((event) => event.type === "warning" && event.payload.code === "connection_action_required");
+  const { connectionId, connectionName, state } = warning?.payload ?? {};
+  if (typeof connectionId !== "string" || typeof connectionName !== "string") return null;
+  const url = denYourConnectionUrl(denBaseUrl, connectionId);
+  return url ? { label: `${state === "needs_connection" ? "Connect" : "Reconnect"} ${connectionName}`, url } : null;
+}
+
 export function formatAutomationTime(value: number | null | undefined) {
   return typeof value === "number" ? new Date(value).toLocaleString() : "—";
 }
 
-/** One shared label for every schedule kind; Den web and the agent listing use the same one. */
 export { formatAutomationSchedule };

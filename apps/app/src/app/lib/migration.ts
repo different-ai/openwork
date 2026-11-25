@@ -1,13 +1,3 @@
-// Tauri → Electron migration snapshot ingestion (Electron side only).
-//
-// The Tauri shell used to export localStorage keys into a JSON file.
-// Electron reads that file on first launch, hydrates localStorage for
-// keys that are still empty, then marks the file as acknowledged.
-//
-// The Tauri-side write function has been removed. This module only
-// contains the Electron ingestion path for users who previously ran
-// the Tauri build.
-
 export const MIGRATION_SNAPSHOT_VERSION = 1;
 
 export const MIGRATION_KEY_PATTERNS: Array<RegExp> = [
@@ -43,12 +33,6 @@ function electronMigrationBridge(): ElectronMigrationBridge | null {
   return bridge?.migration ?? null;
 }
 
-/**
- * Electron-only. Called once during app boot. Reads the migration
- * snapshot (if any), hydrates localStorage for keys that aren't already
- * set on the Electron install, and acks the file so we don't re-ingest
- * on subsequent launches.
- */
 export async function ingestMigrationSnapshotOnElectronBoot(): Promise<number> {
   const bridge = electronMigrationBridge();
   if (!bridge) return 0;
@@ -71,7 +55,6 @@ export async function ingestMigrationSnapshotOnElectronBoot(): Promise<number> {
         window.localStorage.setItem(key, value);
         hydrated += 1;
       } catch {
-        // non-fatal
       }
     }
   }
@@ -79,8 +62,6 @@ export async function ingestMigrationSnapshotOnElectronBoot(): Promise<number> {
   try {
     await bridge.ackSnapshot();
   } catch {
-    // A failed ack means we'll re-ingest on next launch, but the
-    // "skip if already set" guard keeps that idempotent.
   }
 
   return hydrated;

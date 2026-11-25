@@ -132,7 +132,6 @@ type DiagnosticDependencies = {
   uuid?: () => string;
   inspectEffectiveEngine?: InspectAgentDiagnosticsEngine;
   signal?: AbortSignal;
-  /** Test seam for the administrator-provisioned enterprise activation read. */
   readActivatedEnterpriseOrigin?: (signal?: AbortSignal) => Promise<string | null>;
 };
 
@@ -296,9 +295,6 @@ export function pluginLabel(spec: string): string | null {
       if (/%(?![0-9a-f]{2})/iu.test(parsed.pathname)) return "[redacted-sensitive-label]";
       candidate = decodeURIComponent(parsed.pathname);
     } catch {
-      // URL-shaped plugin specs are untrusted. If the URL or its encoded path
-      // cannot be parsed, emit a fixed marker instead of falling back to a
-      // basename that could retain credentials from userinfo, query, or hash.
       return "[redacted-sensitive-label]";
     }
   }
@@ -307,11 +303,6 @@ export function pluginLabel(spec: string): string | null {
   return safeText(extension ? file.slice(0, -extension.length) : file, 160) || null;
 }
 
-/**
- * OpenCode rewrites path-like plugin declarations to file URLs while loading
- * configuration. Compare that load identity without weakening exact matching
- * for package specs or unrelated URLs that merely share a basename.
- */
 function pluginSpecIdentity(spec: string): string {
   if (spec.startsWith("file://")) {
     try {
@@ -338,7 +329,7 @@ function promptEvidence(configuredAgent: Record<string, unknown> | null) {
     markers: {
       searchCapabilities: prompt.includes("search_capabilities"),
       executeCapability: prompt.includes("execute_capability"),
-      artifacts: prompt.includes("## OpenWork Artifacts"),
+      artifacts: prompt.includes("## Artifacts are Apps"),
     },
   };
 }
@@ -475,7 +466,6 @@ function cloudEndpointEvidenceUrl(
 function cloudTerminalPathEvidence(url: URL | null): AgentContextMcpEvidence["path"] {
   if (!url) return null;
   if (!url.pathname.endsWith(CLOUD_MCP_TERMINAL_PATH) || url.pathname.endsWith(CLOUD_MCP_TERMINAL_PATH + "/")) return null;
-  // Report the actual path prefix evidence without query, hash, or origin.
   return url.pathname.length <= 240 ? url.pathname : null;
 }
 
@@ -1241,8 +1231,6 @@ export async function runAgentContextDiagnostics(input: {
   input.dependencies?.signal?.throwIfAborted();
   const now = input.dependencies?.now ?? Date.now;
   const uuid = input.dependencies?.uuid ?? randomUUID;
-  // No global-fetch fallback here: the probe resolves its transport through
-  // the named runtimeDiagnosticFetch wrapper unless a test seam is injected.
   const fetchImpl = input.dependencies?.fetchImpl;
   const startedMs = now();
   const startedAt = new Date(startedMs).toISOString();
@@ -1279,8 +1267,6 @@ export async function runAgentContextDiagnostics(input: {
     input.workspace.id,
     { signal: input.dependencies?.signal },
   );
-  // Passive plaintext read of the managed MCP credential vault: surfaces
-  // secure-storage recovery evidence without decrypting and never throws.
   const managedVaultInspection = await inspectLocalManagedMcpVault(input.config);
   const globalRuntimeInspection = await inspectRuntimeOpencodeConfigState(
     input.config,
@@ -1290,9 +1276,6 @@ export async function runAgentContextDiagnostics(input: {
   const runtime = mergeRuntimeOpencodeConfigLayers(globalRuntimeInspection.config, runtimeInspection.config);
   input.dependencies?.signal?.throwIfAborted();
   const runtimeDuration = elapsed(runtimeStarted, now);
-  // The injected engine config file is rendered from the ENGINE_GLOBAL row
-  // only; the merged per-workspace runtime row informs MCP inventory below
-  // but is not part of the injected file.
   const expectedRuntimeConfig = buildOpenworkRuntimeConfigObjectFromSnapshot(globalRuntimeInspection.config);
   const expectedAgents = isRecord(expectedRuntimeConfig.agent) ? expectedRuntimeConfig.agent : {};
   const expectedAgent = isRecord(expectedAgents.openwork) ? expectedAgents.openwork : null;
@@ -1450,8 +1433,6 @@ export async function runAgentContextDiagnostics(input: {
     return "unspecified";
   };
   const engineReachableNow = engineInspectionStatus === "observed" || engineInspectionStatus === "invalid";
-  // Local workspaces only: the activation record describes this installation,
-  // so it must never authorize egress on behalf of a remote workspace shell.
   const activatedEnterpriseOrigin = input.workspace.workspaceType === "local"
     ? await (input.dependencies?.readActivatedEnterpriseOrigin
       ?? ((signal?: AbortSignal) => readActivatedEnterpriseDenOrigin({ signal })))(
@@ -1459,9 +1440,6 @@ export async function runAgentContextDiagnostics(input: {
       ).catch(() => null)
     : null;
   input.dependencies?.signal?.throwIfAborted();
-  // Cached engine registration and agent tool policy are comparison inputs
-  // for the differential verdict, never eligibility gates: the independent
-  // runtime probe exists precisely to diagnose engine-side failures.
   const cloudProbe = await probeOpenworkCloudCatalog({
     workspaceId: input.workspace.id,
     workspaceType: input.workspace.workspaceType,

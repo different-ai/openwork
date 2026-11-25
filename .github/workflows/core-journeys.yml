@@ -1,8 +1,10 @@
 name: Core journeys
 
 # Runs every core journey in evals/core (listed in evals/journeys.ts) nightly
-# on dev and on demand. On PRs, PR change proof runs them once (pr-proof.mjs).
-# Packaged journeys run in packaged smoke instead.
+# on dev and on demand. PRs and dev pushes run no journeys: a journey
+# regression is reported here once a day. Packaged journeys run in packaged
+# smoke; core-chat needs a Freestyle world and runs nightly in "Freestyle
+# world check".
 on:
   schedule:
     - cron: "17 8 * * *"
@@ -13,7 +15,7 @@ permissions:
 
 concurrency:
   group: core-journeys-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   list:
@@ -28,7 +30,7 @@ jobs:
           persist-credentials: false
       - id: list
         # Packaged journeys need a packaged desktop binary (packaged smoke runs
-        # them); core-chat needs a Freestyle world (the PR proof Core journey runs it).
+        # them); core-chat needs a Freestyle world (Freestyle world check runs it).
         run: |
           set -euo pipefail
           specs=$(find evals/core -maxdepth 1 -name '*.e2e.test.ts' ! -name 'packaged-*' ! -name 'app-smoke.e2e.test.ts' ! -name 'core-chat.e2e.test.ts' | sort)

@@ -1,7 +1,10 @@
 # Zoom into diagrams (`mermaidZoom`)
 
-- **Feature key:** `mermaidZoom`
-- **Deployments:** cloud and self-hosted (`everywhere`), off by default
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
+
+- **Retired rollout key:** `mermaidZoom`
+- **Deployments:** cloud and self-hosted (`everywhere`), generally available (no flag)
 - **Author:** @benjaminshafii
 
 ## What people get
@@ -21,28 +24,26 @@ zoomed and panned, so wide or dense diagrams are readable.
 
 The Rendered / Source / Download SVG controls are unchanged.
 
-| Off (today) | On, zoomed and panned inline | On, full screen |
+| Historical before GA | Default, zoomed and panned inline | Default, full screen |
 | --- | --- | --- |
 | ![Off](off-inline.png) | ![Zoomed inline](on-inline-zoomed.png) | ![Full screen](on-fullscreen.png) |
 
 ## How it works
 
 `useMermaidEnhancer` (`apps/app/src/components/markdown/mermaid.ts`) still
-renders and sanitizes every diagram. With the feature on it puts the sanitized
+renders and sanitizes every diagram. It puts the sanitized
 SVG in a React-owned slot (`data-openwork-mermaid-interactive`) and
 `MermaidZoomPortals` mounts `MermaidZoomViewport` there. The zoom math lives in
 `mermaid-zoom.ts` and is covered by `apps/app/tests/mermaid-zoom.test.ts`.
-`MermaidZoomFeatureProvider` resolves the feature once for the app through
-`useDesktopFeature("mermaidZoom")`.
+Interactive rendering is always enabled; no feature provider is required.
 
-## Turning it off
+## Availability
 
-The kill switch, or the feature being unreachable, brings back the static
-diagram on the next render. Nothing is stored. Zoom state lives only in memory
-for the current view.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
 ## Try it
 
-`pnpm world up dev-app-web --detach -- --browser`, then turn the feature on for
-your organization in `/admin`. Signed out, the app reads `GET /v1/features` from
-the Den it points at. Ask for a large flowchart, or open an `.mmd` file.
+Run `pnpm world up dev-app-web --detach -- --browser`. Ask for a large
+flowchart, or open an `.mmd` file.

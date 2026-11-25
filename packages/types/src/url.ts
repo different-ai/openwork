@@ -22,7 +22,6 @@ export function hostLabel(value: string): string {
   try {
     return new URL(value).host;
   } catch {
-    // Match existing UI fallback: remove a display-only http(s) prefix and trailing slashes.
     return normalizeBaseUrl(value).replace(/^https?:\/\//, "");
   }
 }

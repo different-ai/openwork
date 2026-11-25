@@ -66,8 +66,6 @@ export async function readWorkspaceRunMode(workspaceRoot: string): Promise<Works
   return { ...state, path };
 }
 
-// Delete syntax tokens, not trivia. JSONC's generic property removal can eat
-// adjacent comments; commas inside comments must never be treated as separators.
 function removeProperty(content: string, object: Node, property: Node): string {
   const edits: Edit[] = [];
   const scanner = createScanner(content);
@@ -99,7 +97,6 @@ function insertFirst(content: string, object: Node, key: string, value: unknown)
   return applyEdits(content, [{ offset: object.offset + 1, length: 0, content: entry }]);
 }
 
-/** Edit only the workspace catch-all; narrower rules keep their bytes and order. */
 export async function setWorkspaceRunMode(workspaceRoot: string, mode: WorkspaceRunMode): Promise<boolean> {
   const { path, raw, tree, permission, state } = await readRunModeFile(workspaceRoot);
   if (!state.supported) throw new ApiError(409, "workspace_run_mode_unsupported", state.reason);

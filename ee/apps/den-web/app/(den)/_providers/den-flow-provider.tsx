@@ -45,6 +45,7 @@ import {
 import { consumeOrgSelectionRequest, requestOrgSelectionOnNextLoad } from "../_lib/org-selection";
 import { restoreRememberedOrganization } from "../_lib/org-memory";
 import { ORG_SCOPE_HEADER } from "../_lib/org-scope";
+import { workbotAuthReturnTo } from "../dashboard/_lib/workbot-team-link";
 
 type AuthNavigationResult = "dashboard" | "join-org" | null;
 
@@ -105,6 +106,9 @@ type DenFlowContextValue = {
   continueSetup: (organizationId: string | null, route: string) => void;
   completeSetup: (organizationId: string) => Promise<boolean>;
   webAuthRequested: boolean;
+  webAuthConfirmation: { host: string; organizationName: string } | null;
+  confirmWebAuthHandoff: () => void;
+  cancelWebAuthHandoff: () => void;
   desktopRedirectUrl: string | null;
   desktopRedirectBusy: boolean;
   retryDesktopAuthHandoff: () => void;
@@ -113,9 +117,8 @@ type DenFlowContextValue = {
   submitVerificationCode: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
   resendVerificationCode: () => Promise<void>;
   cancelVerification: () => void;
-  beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
+  beginSocialAuth: (provider: SocialAuthProvider, options?: { loginHint: string }) => Promise<void>;
   signOut: () => Promise<void>;
-  /** Re-checks the session with Den; clears the signed-in user when it is gone. */
   revalidateSession: () => Promise<AuthUser | null>;
   updateUserProfile: (input: { firstName: string; lastName: string }) => Promise<AuthUser>;
   resolveUserLandingRoute: () => Promise<string | null>;
@@ -184,8 +187,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const continuationRef = useRef<SetupContinuation | null>(null);
   const handoffBusyRef = useRef(false);
   const sessionEpochRef = useRef(0);
-  // The first session check starts alongside runtime config; hydration still
-  // commits only after config loads, so guards see both together.
   const earlySessionRequestRef = useRef<EarlySessionRequest | null>(null);
   const landingGenerationRef = useRef(0);
   const [authMode, setAuthModeState] = useState<AuthMode>("sign-up");
@@ -224,6 +225,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [desktopRedirectUrl, setDesktopRedirectUrl] = useState<string | null>(null);
   const desktopAuthRequested = Boolean(continuation?.desktopScheme || desktopRedirectUrl);
   const [desktopRedirectAttempted, setDesktopRedirectAttempted] = useState(false);
+  const [webAuthConfirmation, setWebAuthConfirmation] = useState<{ host: string; organizationName: string } | null>(null);
   const [webRedirectBusy, setWebRedirectBusy] = useState(false);
   const [webRedirectAttempted, setWebRedirectAttempted] = useState(false);
   const [runtimeConfig, setRuntimeConfig] = useState<DenWebRuntimeConfig>(EMPTY_RUNTIME_CONFIG);
@@ -311,11 +313,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   ): Promise<AuthNavigationResult> {
     let payload = payloadOverride;
 
-    // Verifying an email proves the mailbox but does not sign anyone in:
-    // /email-otp/verify-email answers with `token: null` and sets no cookie.
-    // Exchange the password the person just typed for a session in sign-in
-    // as well as sign-up, or an existing account that verifies from the
-    // sign-in form is shown as signed in without a session (ENG-550).
     if (payload === undefined || (!getToken(payload) && Boolean(password))) {
       const signInBody = {
         email: trimmedEmail,
@@ -346,8 +343,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     let authenticatedUser: AuthUser | null = null;
-    // A user object alone is not a session: the verify-email reply carries one
-    // with `token: null`. Trust it only next to a token; otherwise ask Den.
     const payloadUser = token ? getUser(payload) : null;
     if (payloadUser) {
       authenticatedUser = payloadUser;
@@ -358,9 +353,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       if (refreshed) {
         authenticatedUser = refreshed;
       } else if (getUser(payload)) {
-        // Verified, but there is no password to exchange for a session. Keep
-        // the person on the sign-in step instead of a signed-in screen that
-        // every request would reject.
         setAuthMode("sign-in");
         setAuthInfo(`Email verified. Sign in as ${trimmedEmail} to continue.`);
         return null;
@@ -619,7 +611,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     return typeof returnUrl === "string" && returnUrl.trim() ? returnUrl.trim() : null;
   }
 
-  async function completeWebAuthHandoff() {
+  async function completeWebAuthHandoff(confirmed = false) {
     if (!webAuthRequested || webRedirectBusy) {
       return;
     }
@@ -642,8 +634,16 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       const { response, payload } = await requestJson("/api/auth/desktop-handoff", {
         method: "POST",
         headers,
-        body: JSON.stringify({ returnUrl: webAuthReturnUrl })
+        body: JSON.stringify(confirmed ? { returnUrl: webAuthReturnUrl, confirmed: true } : { returnUrl: webAuthReturnUrl })
       });
+
+      if (response.status === 409 && isRecord(payload) && payload.error === "confirmation_required" && typeof payload.returnHost === "string") {
+        setWebAuthConfirmation({
+          host: payload.returnHost,
+          organizationName: typeof payload.organizationName === "string" ? payload.organizationName : "",
+        });
+        return;
+      }
 
       if (!response.ok) {
         setAuthError(getErrorMessage(payload, `Web handoff failed with ${response.status}.`));
@@ -668,16 +668,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }
 
   async function resolveUserLandingRoute() {
-    // Deliberately ignores desktopAuthRequested: callers that auto-redirect
-    // (auth-screen) gate on it themselves, while explicit actions — the
-    // "Go to dashboard" button on the signed-in handoff card — must resolve
-    // a destination even mid desktop handoff.
     if (!runtimeConfigLoaded || !sessionHydrated || !user) {
       return null;
     }
 
-    // A prior normal login must not carry its picker request into an explicit
-    // invitation, claim, setup, or install continuation.
     consumeOrgSelectionRequest();
     const pendingClaimToken = getPendingWorkspaceClaimToken();
     if (pendingClaimToken) {
@@ -699,6 +693,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     );
     if (returnTo) {
       return returnTo;
+    }
+    if (!desktopAuthRequested && !webAuthRequested) {
+      const workbotReturnTo = workbotAuthReturnTo(new URLSearchParams(window.location.search).get("workbotReturnTo"));
+      if (workbotReturnTo) return workbotReturnTo;
     }
     if (runtimeConfig === EMPTY_RUNTIME_CONFIG) {
       setAuthError("Could not load workspace configuration. Refresh to try again.");
@@ -804,8 +802,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) {
-        // Only better-auth's unverified-email refusal means a code was sent;
-        // any other 403 (SSO-managed, sign-up policy) is a plain error.
         if (response.status === 403 && !isSingleOrgMode && isEmailNotVerifiedError(payload)) {
           openVerificationStep(trimmedEmail, `Enter the 6-digit code we sent to ${trimmedEmail} to finish verifying your email.`);
         }
@@ -826,9 +822,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
       const token = getToken(payload);
 
-      // Signing up from an invitation link can verify the email right away
-      // (inviteLinkVerifiesEmail). Den still answers without a session, so
-      // exchange the password for one instead of asking for an emailed code.
       if (submitMode === "sign-up" && !token && signUpReturnedVerifiedUser(payload)) {
         return await finalizeEmailPasswordSignIn(submitMode, trimmedEmail, payload);
       }
@@ -858,7 +851,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function beginSocialAuth(provider: SocialAuthProvider) {
+  async function beginSocialAuth(provider: SocialAuthProvider, options?: { loginHint: string }) {
     if (authBusy || typeof window === "undefined") {
       return;
     }
@@ -893,7 +886,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({
           provider,
           callbackURL,
-          errorCallbackURL: callbackURL
+          errorCallbackURL: callbackURL,
+          ...(provider === "google" && options?.loginHint.trim() ? { loginHint: options.loginHint.trim() } : {})
         })
       });
 
@@ -953,7 +947,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({})
       });
     } catch {
-      // Ignore transport issues and clear local state anyway.
     } finally {
       setAuthBusy(false);
     }
@@ -1063,7 +1056,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Left behind by the removed cloud worker screen; clear them from browsers that still have them.
     window.localStorage.removeItem("openwork:web:last-worker");
     window.localStorage.removeItem("openwork:web:onboarding-intent");
   }, []);
@@ -1079,7 +1071,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (runtimeConfigLoaded) return;
     const request = requestSession(authToken);
-    // Consumed by the hydration effect below; never leave a rejection unhandled.
     request.catch(() => undefined);
     earlySessionRequestRef.current = { token: authToken, epoch: sessionEpochRef.current, request };
   }, [authToken, runtimeConfigLoaded]);
@@ -1121,7 +1112,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, [authToken, runtimeConfigLoaded]);
 
   useEffect(() => {
-    // Invalidate a pending preference restore on account/session changes or unmount.
     return () => { landingGenerationRef.current += 1; };
   }, [user?.id, authToken, sessionHydrated]);
 
@@ -1179,7 +1169,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!runtimeConfigLoaded || !sessionHydrated || authBusy || !desktopAuthRequested || !user || continuation?.userId !== user.id
       || setupPending || desktopRedirectUrl || desktopRedirectBusy || desktopRedirectAttempted) return;
-    // Invitation acceptance and workspace claims own their explicit handoffs.
     if (pathname === "/join-org" || pathname === "/workspace-claim") return;
     const pendingClaim = getPendingWorkspaceClaimToken();
     const pendingInvitation = getPendingOrgInvitationId();
@@ -1191,7 +1180,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       router.replace(getJoinOrgRoute(pendingInvitation));
       return;
     }
-    // Failed config fetches return the single-org fallback, not a deployment decision.
     if (runtimeConfig === EMPTY_RUNTIME_CONFIG) {
       setAuthError("Could not load workspace configuration. Refresh to try again.");
       setDesktopRedirectAttempted(true);
@@ -1259,6 +1247,15 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     continueSetup,
     completeSetup,
     webAuthRequested,
+    webAuthConfirmation,
+    confirmWebAuthHandoff: () => {
+      void completeWebAuthHandoff(true);
+    },
+    cancelWebAuthHandoff: () => {
+      setWebAuthConfirmation(null);
+      setWebAuthRequested(false);
+      setWebAuthReturnUrl(null);
+    },
     desktopRedirectUrl,
     desktopRedirectBusy,
     retryDesktopAuthHandoff: () => {

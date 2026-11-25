@@ -13,9 +13,8 @@ import { db } from "./db.js"
 type OrganizationId = DenTypeId<"organization">
 type TeamId = DenTypeId<"team">
 type MemberId = DenTypeId<"member">
-type Database = typeof db | Parameters<Parameters<typeof db["transaction"]>[0]>[0]
+type Database = typeof db.$primary | Parameters<Parameters<typeof db["transaction"]>[0]>[0]
 
-/** Where the Den web UI keeps a prompt: the Everyone page or one team's page. */
 export type PromptScope = { kind: "everyone" } | { kind: "team"; teamId: TeamId; teamName: string }
 
 type PromptRow = typeof OrgPromptTable.$inferSelect
@@ -41,9 +40,6 @@ function toStoredPrompts(rows: PromptRow[], access: AccessRow[]): StoredPrompt[]
 }
 
 async function readOrganizationPrompts(database: Database, organizationId: OrganizationId): Promise<StoredPrompt[]> {
-  // Sequential on purpose: saves and removals call this inside a transaction,
-  // and a PlanetScale transaction runs one query at a time; overlapping queries
-  // fail with "transaction ... in use" (a 500).
   const rows = await database.select().from(OrgPromptTable).where(eq(OrgPromptTable.organizationId, organizationId))
   const access = await database.select().from(OrgPromptAccessTable).where(eq(OrgPromptAccessTable.organizationId, organizationId))
   return toStoredPrompts(rows, access)
@@ -59,18 +55,16 @@ function serializePrompt(prompt: StoredPrompt): OrgPrompt {
   }
 }
 
-/** The prompt a scope's page edits: the oldest one assigned to everyone, or to the team and not to everyone. */
 function scopePrompt(prompts: StoredPrompt[], scope: { kind: "everyone" } | { kind: "team"; teamId: string }): StoredPrompt | null {
   return prompts.find((prompt) => scope.kind === "everyone"
     ? prompt.assignment.everyone
     : !prompt.assignment.everyone && prompt.assignment.teamIds.includes(scope.teamId)) ?? null
 }
 
-/** The prompt for everyone and each team's own prompt, teams by name. */
-export async function listPromptSettings(organizationId: OrganizationId): Promise<Omit<OrgPromptSettings, "canEdit">> {
+export async function listPromptSettings(organizationId: OrganizationId, database: typeof db.$primary = db): Promise<Omit<OrgPromptSettings, "canEdit">> {
   const [prompts, teams] = await Promise.all([
-    readOrganizationPrompts(db, organizationId),
-    db.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(eq(TeamTable.organizationId, organizationId)).orderBy(asc(TeamTable.name)),
+    readOrganizationPrompts(database, organizationId),
+    database.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(eq(TeamTable.organizationId, organizationId)).orderBy(asc(TeamTable.name)),
   ])
   const everyone = scopePrompt(prompts, { kind: "everyone" })
   return {
@@ -95,10 +89,6 @@ function scopeName(scope: PromptScope): string {
   return scope.kind === "everyone" ? "Everyone" : scope.teamName
 }
 
-/**
- * Sets the scope's prompt text. The first save creates the prompt and assigns
- * it to the scope (everyone, or the team); later saves update that prompt.
- */
 export async function savePromptForScope(input: {
   organizationId: OrganizationId
   scope: PromptScope
@@ -107,7 +97,6 @@ export async function savePromptForScope(input: {
 }): Promise<void> {
   const now = new Date()
   await db.transaction(async (tx) => {
-    // Lock the organization's prompts so two first saves of one scope cannot both create one.
     await tx.select({ id: OrgPromptTable.id }).from(OrgPromptTable).where(eq(OrgPromptTable.organizationId, input.organizationId)).for("update")
     const existing = scopePrompt(await readOrganizationPrompts(tx, input.organizationId), input.scope)
     if (existing) {
@@ -140,7 +129,6 @@ export async function savePromptForScope(input: {
   })
 }
 
-/** Removes the scope's prompt; false when it had none. */
 export async function removePromptForScope(input: { organizationId: OrganizationId; scope: PromptScope }): Promise<boolean> {
   return db.transaction(async (tx) => {
     await tx.select({ id: OrgPromptTable.id }).from(OrgPromptTable).where(eq(OrgPromptTable.organizationId, input.organizationId)).for("update")
@@ -153,7 +141,6 @@ export async function removePromptForScope(input: { organizationId: Organization
   })
 }
 
-/** Removes a team's assignments inside the transaction that deletes the team, and prompts left assigned to no one. */
 export async function deleteTeamPrompts(database: Database, teamId: TeamId): Promise<void> {
   const grants = await database.select({ promptId: OrgPromptAccessTable.promptId }).from(OrgPromptAccessTable).where(eq(OrgPromptAccessTable.teamId, teamId))
   if (grants.length === 0) return
@@ -168,13 +155,11 @@ export async function deleteTeamPrompts(database: Database, teamId: TeamId): Pro
   if (orphaned.length > 0) await database.delete(OrgPromptTable).where(inArray(OrgPromptTable.id, orphaned))
 }
 
-/** Removes every prompt of an organization inside the transaction that deletes it. */
 export async function deleteOrganizationPrompts(database: Database, organizationId: OrganizationId): Promise<void> {
   await database.delete(OrgPromptAccessTable).where(eq(OrgPromptAccessTable.organizationId, organizationId))
   await database.delete(OrgPromptTable).where(eq(OrgPromptTable.organizationId, organizationId))
 }
 
-/** The prompts that apply to one member, in the order their desktop appends them. */
 export async function readPromptsForMember(input: { organizationId: OrganizationId; memberId: MemberId }): Promise<MemberPrompt[]> {
   const prompts = await readOrganizationPrompts(db, input.organizationId)
   if (prompts.length === 0) return []

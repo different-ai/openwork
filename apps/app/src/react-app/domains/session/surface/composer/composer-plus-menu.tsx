@@ -49,7 +49,6 @@ type ComposerPlusMenuProps = Omit<PlusMenuInput, "view" | "query" | "recentIds">
   onConnect: (connector: PlusMenuConnector) => void;
   onManage: (section: PlusMenuSection) => void;
   onQueryChange?: (query: string) => void;
-  /** Where focus returns when the menu closes. */
   returnFocus: () => HTMLElement | null;
 };
 
@@ -382,7 +381,6 @@ export function ComposerPlusMenu(props: ComposerPlusMenuProps) {
         finalFocus={() => props.returnFocus() ?? true}
         className="flex max-h-[min(var(--available-height),28rem)] w-[380px] max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden rounded-[14px] bg-popover p-0 shadow-[var(--dls-shell-shadow)] ring-0 data-open:animate-none data-closed:animate-none dark:ring-0"
       >
-        {/* Without `items`, Base UI keeps its old highlight index when rows reorder. */}
         <Command mode="none" items={itemIds} value={query} onValueChange={(value) => setQuery(value)}>
           <div className="flex h-11 shrink-0 items-center gap-1 border-b border-gray-3 px-1.5">
             {view.kind !== "root" ? (

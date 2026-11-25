@@ -2,8 +2,6 @@ import type { OrganizationWebOriginTable } from "@openwork-ee/den-db/schema"
 import type { AuditChangeEventInput } from "../request-capture.js"
 import { auditChangeEvent, auditText, auditTime, organizationParent, targetResource, type AuditSnapshot } from "./snapshot.js"
 
-// web_origin.approved / web_origin.removed (legacy organization.web_origin.*).
-
 export type WebOriginAuditRow = Pick<typeof OrganizationWebOriginTable.$inferSelect, "id" | "origin" | "createdByOrgMemberId" | "createdAt">
 
 export function serializeWebOrigin(row: WebOriginAuditRow): AuditSnapshot {

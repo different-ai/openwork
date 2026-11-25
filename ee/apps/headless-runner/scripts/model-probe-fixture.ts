@@ -15,7 +15,6 @@ async function listen(handler: (request: IncomingMessage, response: ServerRespon
   return { url: `http://127.0.0.1:${address.port}`, async close() { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) } }
 }
 
-/** Real Node runner/runtime/adapter, synthetic localhost provider, memory-only SQLite, no external credentials. */
 export async function modelProbeFixture(options: {
   mode?: ProbeFixtureMode
   lunaAvailable?: boolean
@@ -25,16 +24,13 @@ export async function modelProbeFixture(options: {
   reportedModel?: string
   basePath?: string
   answer?: string
-  /** Serve the synthetic provider on this port, e.g. the address Den hands out as the AI Gateway. */
   providerPort?: number
-  /** Also accept keys this matches, e.g. per-member Gateway keys Den mints during the test. */
   acceptKey?: (key: string) => boolean
 } = {}) {
   let mode = options.mode ?? "answered"
   const modelKey = options.modelKey ?? "fixture-model-key"
   const reportedModel = options.reportedModel ?? "gpt-6-luna-fixture-snapshot"
   const calls: { path: string; body: unknown; authorized: boolean }[] = []
-  // Keys the synthetic provider accepts: the runner's configured key, plus any scoped per-member key a test adds.
   const acceptedKeys = new Set([modelKey])
   const provider = await listen(async (request, response) => {
     let raw = ""; for await (const chunk of request) raw += chunk
@@ -48,7 +44,6 @@ export async function modelProbeFixture(options: {
     const body: unknown = raw ? JSON.parse(raw) : null
     calls.push({ path: request.url ?? "", body, authorized })
     if (mode === "models_allowance") {
-      // The gateway's answer when the organization used its OpenWork Models allowance (ee/apps/gateway/src/models-allowance.ts).
       for (const [name, value] of Object.entries({ "X-OpenWork-Error-Code": "openwork_models_allowance_reached", "X-OpenWork-Usage-State": "blocked", "X-Should-Retry": "false", "Retry-After": "4200", "X-OpenWork-Limit-Window-Type": "five_hour", "X-OpenWork-Limit-Bucket-Id": "iob_fixture" })) response.setHeader(name, value)
       response.writeHead(429).end(JSON.stringify({ error: { message: "Your workspace used its OpenWork Models allowance.", type: "usage_limit_error", param: null, code: "openwork_models_allowance_reached", source: "openwork_models" } })); return
     }
@@ -57,7 +52,6 @@ export async function modelProbeFixture(options: {
         response.setHeader("X-OpenWork-Error-Code", mode === "free_limit" ? "free_allowance_exhausted" : "openwork_gateway_usage_limit_exceeded")
         response.setHeader("X-OpenWork-Usage-State", "blocked")
       }
-      // An untrusted body alone must never cause a purchase prompt.
       response.writeHead(429).end(JSON.stringify({ error: { code: "free_allowance_exhausted" } })); return
     }
     if (!authorized || mode === "unauthorized") { response.writeHead(401).end(JSON.stringify({ error: { message: "fixture-private-provider-detail fixture-model-key" } })); return }
@@ -99,9 +93,7 @@ export async function modelProbeFixture(options: {
     })
     return {
       url: runner.url,
-      /** The synthetic provider, e.g. as a scoped modelAccess base URL. */
       providerUrl: provider.url,
-      /** Accept one more provider key, e.g. the per-member Gateway key a scoped modelAccess presents. */
       acceptModelKey: (key: string) => { acceptedKeys.add(key) },
       app: runtime.app,
       modelAccess: { baseUrl: `${provider.url}${options.basePath ?? ""}`, apiKey: modelKey, protocol: options.protocol ?? "openai" },

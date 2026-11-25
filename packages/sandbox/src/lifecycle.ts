@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { SandboxError, isSandboxError } from "./errors.js"
 import type { SandboxBlocks } from "./blocks.js"
-import type { ProviderTimeout, SandboxHandle, SandboxProvider, SandboxSpec } from "./provider.js"
+import type { ProviderTimeout, SandboxCreateOptions, SandboxHandle, SandboxProvider, SandboxSpec } from "./provider.js"
 
 export const SCOPE_LABEL = "openwork.sandbox.scope"
 
@@ -18,12 +18,11 @@ export function withBlocks<K extends keyof SandboxBlocks>(provider: SandboxProvi
   for (const key of keys) {
     if (!blocks[key]) throw new SandboxError({ providerId: provider.id, code: "invalid_state", retryable: false, message: `${job} requires ${key}; ${provider.id} does not provide it` })
   }
-  // Runtime validation above proves all requested properties are present.
   return blocks as Required<Pick<SandboxBlocks, K>>
 }
 
 /** Adopt by stable identity; only a proven create conflict permits lookup/retry. */
-export async function ensure(provider: SandboxProvider, spec: SandboxSpec, opts: ProviderTimeout): Promise<SandboxHandle> {
+export async function ensure(provider: SandboxProvider, spec: SandboxSpec, opts: SandboxCreateOptions): Promise<SandboxHandle> {
   const existing = await provider.find({ idempotencyKey: spec.idempotencyKey, labels: spec.labels })
   if (existing && existing.state !== "missing") return existing
   try {
@@ -31,13 +30,13 @@ export async function ensure(provider: SandboxProvider, spec: SandboxSpec, opts:
   } catch (error) {
     if (!isSandboxError(error) || error.code !== "conflict") throw error
     const adopted = await provider.find({ idempotencyKey: spec.idempotencyKey, labels: spec.labels })
-    if (!adopted) throw error // caller may retry ensure after visibility settles; never repeat create blindly
+    if (!adopted) throw error
     return adopted
   }
 }
 
 /** Ensure a running instance before a command. Never retries an executed command. */
-export async function ensureRunning(provider: SandboxProvider, spec: SandboxSpec, opts: ProviderTimeout): Promise<SandboxHandle> {
+export async function ensureRunning(provider: SandboxProvider, spec: SandboxSpec, opts: SandboxCreateOptions): Promise<SandboxHandle> {
   let handle = await ensure(provider, spec, opts)
   handle = await provider.inspect(handle)
   if (handle.state === "missing") handle = await provider.create(spec, opts)
@@ -64,6 +63,5 @@ export async function destroyScope(provider: SandboxProvider, scope: string, opt
       else failed.push({ handle, error })
     }
   }
-  // This destroys compute only. Persistent volumes/snapshots have separate owners.
   return { deleted, failed }
 }

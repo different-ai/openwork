@@ -68,11 +68,5 @@ function MarkdownBlockInner(props: {
   );
 }
 
-/**
- * Memoize so a message block that has already been rendered — the usual
- * case for every assistant bubble above the currently-streaming one —
- * doesn't re-parse its markdown on every token. Only re-renders when its
- * own text / streaming / highlightQuery props change.
- */
 export const MarkdownBlock = memo(MarkdownBlockInner);
 MarkdownBlock.displayName = "MarkdownBlock";

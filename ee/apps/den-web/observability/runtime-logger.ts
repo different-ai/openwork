@@ -61,25 +61,20 @@ export function setStructuredLogSink(nextSink: StructuredLogSink): void {
 export function reportScimProxyFailure(fields: ScimProxyFailureFields): void {
   const state = getObservabilityState();
   try {
-    // Sentry replaces stdout. Keep this diagnostic there, without also creating a
-    // Sentry log that could inherit ambient attributes outside the event scrubber.
     const logSink = state.sink.captureScimProxyFailure ? jsonStdoutSink() : state.sink;
     logSink.log("error", scimProxyFailureMessage, fields);
   } catch {
-    // Diagnostics must not mask the fetch failure, even if the log sink throws.
   }
   if (state.sink.captureScimProxyFailure === undefined) return;
   const now = Date.now();
   if (!state.scimFailureWindow || now - state.scimFailureWindow.startedAt >= 60_000 || now < state.scimFailureWindow.startedAt) {
     state.scimFailureWindow = { startedAt: now, reports: 0 };
   }
-  // Fixed memory and at most five error events per minute per runtime, not per ID.
   if (state.scimFailureWindow.reports >= 5) return;
   state.scimFailureWindow.reports += 1;
   try {
     state.sink.captureScimProxyFailure(fields);
   } catch {
-    // Reporting is best effort and does not participate in proxy semantics.
   }
 }
 
@@ -128,14 +123,12 @@ async function bestEffortShutdown(sdk: RetainedTelemetrySdk, timeoutMs: number):
     try {
       await withShutdownTimeout(sdk.forceFlush(), timeoutMs);
     } catch {
-      // Best effort only; shutdown should still run after flush failures.
     }
   }
 
   try {
     await withShutdownTimeout(sdk.shutdown(), timeoutMs);
   } catch {
-    // Best effort only; callers should not crash during process shutdown.
   }
 }
 

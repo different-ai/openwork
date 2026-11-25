@@ -5,9 +5,8 @@ import type {
   InferenceProviderCredentialStatus,
   InferenceProviderStatus,
 } from "./inference.js";
+import type { GatewayCustomProviderStatus } from "./gateway-custom-providers.js";
 
-// Persisted enum values and secret formats are unchanged; Models billing stays
-// in den/inference. Gateway consumers should use these canonical exports.
 export {
   INFERENCE_PROVIDER_CREDENTIAL_KINDS as GATEWAY_PROVIDER_CREDENTIAL_KINDS,
   INFERENCE_PROVIDER_CREDENTIAL_MODES as GATEWAY_PROVIDER_CREDENTIAL_MODES,
@@ -65,13 +64,21 @@ export type GatewayAudience =
   | { type: "team"; teamId: string }
   | { type: "member"; memberId: string };
 
-export interface GatewayModelGroupWrite {
-  name: string;
-  description?: string | null;
-  /** Explicit configured catalog model IDs, not row/wire IDs. Empty means no models. */
-  modelIds: string[];
-  status?: GatewayResourceStatus;
-}
+export type GatewayModelGroupWrite =
+  | {
+      name: string;
+      description?: string | null;
+      modelIds: string[];
+      allModels?: never;
+      status?: GatewayResourceStatus;
+    }
+  | {
+      name: string;
+      description?: string | null;
+      allModels: true;
+      modelIds?: never;
+      status?: GatewayResourceStatus;
+    };
 
 export interface GatewayModelGroup {
   id: string;
@@ -84,15 +91,11 @@ export interface GatewayModelGroup {
 export interface GatewayCredentialSetWrite {
   name: string;
   credentialMode: InferenceProviderCredentialMode;
-  /** Write-only; mutually exclusive with apiKeys. Omission retains encrypted material. */
   credential?: { kind: InferenceProviderCredentialKind; secret: string };
   apiKeys?: Record<string, string>;
-  /** Omit to retain; empty string explicitly clears OAuth client configuration. */
   oauthClientId?: string;
   oauthClientSecret?: string;
-  /** Microsoft Foundry member sets: the Entra ID directory (tenant) ID. Omit to retain; empty string clears. */
   oauthTenantId?: string;
-  /** Amazon Bedrock member sets: the IAM Identity Center instance, account and permission set. Omit to retain; null clears. */
   awsSso?: GatewayAwsSsoSettings | null;
   status?: GatewayResourceStatus;
 }
@@ -104,9 +107,7 @@ export interface GatewayCredentialSet {
   createdBy?: { id: string; name: string | null; email: string | null } | null;
   credentialMode: InferenceProviderCredentialMode;
   status: GatewayResourceStatus;
-  /** Set configuration exists; not a successful upstream probe or consent. */
   configured: boolean;
-  /** Readiness for this caller only; never evidence of another member's token. */
   credentialStatus: GatewayCredentialStatus;
   oauthClientId?: string | null;
   hasOauthClientSecret?: boolean;
@@ -124,7 +125,13 @@ export interface GatewayAccessGrant extends GatewayAccessGrantWrite {
   id: string;
 }
 
-export type GatewayModelGroupPatch = Partial<GatewayModelGroupWrite>;
+export type GatewayModelGroupPatch = {
+  name?: string;
+  description?: string | null;
+  modelIds?: string[];
+  allModels?: true;
+  status?: GatewayResourceStatus;
+};
 export type GatewayCredentialSetPatch = Partial<GatewayCredentialSetWrite>;
 export type GatewayAccessGrantPatch = Partial<GatewayAccessGrantWrite>;
 
@@ -143,7 +150,6 @@ export interface GatewaySelection {
 }
 
 export const GATEWAY_GRANT_HEADER = "x-openwork-gateway-grant-id";
-// Diagnostic request metadata only; never authorizes or selects an upstream.
 export const GATEWAY_REQUEST_MODEL_HEADER = "x-openwork-gateway-request-model";
 
 export interface GatewaySelectionConflict {
@@ -159,10 +165,8 @@ export interface GatewaySelectionConflict {
 }
 
 export interface GatewayUsableModel {
-  /** gwm_<gmg suffix>_<gcs suffix>_<ipm suffix>, never a raw upstream ID. */
   id: string;
   name: string;
-  /** config.id must equal id so SDK requests carry the selected combination. */
   config: Record<string, unknown> & { id: string };
   upstreamModelId: string;
   modelGroupId: string;
@@ -189,46 +193,31 @@ export interface GatewayProviderCredentialSummary {
 }
 
 export interface GatewayProviderSummary {
-  /** Persisted ipr_ provider identity; groups do not create desktop providers. */
   id: string;
   providerId: string;
   name: string;
   source: "openwork_gateway";
-  /** Aggregate compatibility hints only; individual sets are authoritative. */
   credentialMode: InferenceProviderCredentialMode;
   credentialStatus: GatewayCredentialStatus;
   authUrl: string | null;
   status: GatewayResourceStatus;
-  /** Stored provider creation time; optional for compatibility with older servers. */
   createdAt?: string;
   updatedAt: string;
   providerConfig: Record<string, unknown>;
-  /** Universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Never grants group membership. */
   modelIds: string[];
-  /** Display when catalog refresh is unavailable or compatibility excludes catalog models. */
   catalogWarning?: string;
   models: GatewayUsableModel[];
-  /**
-   * True only when models + authorizationRequests.models represent every
-   * effective active grant's alias assignment within the provider universe.
-   * Credential/config/catalog omissions make this false even if aggregate
-   * credentialStatus is ready. Missing on older servers means unknown.
-   */
   modelAssignmentsComplete: boolean;
   pinnedModelIds: string[];
   authorizationRequests: GatewayAuthorizationRequest[];
   migration?: GatewayProviderMigration;
-  /** Legacy management hints. Never flatten these back into matrix writes. */
   access?: { allMembers: boolean; memberIds: string[]; teamIds: string[] };
   settings?: Record<string, unknown>;
   oauthClientId?: string | null;
   oauthCallbackUrl?: string;
   hasOauthClientSecret?: boolean;
-  /** Per-person credential rows; only for callers who hold Manage Gateway providers. */
   credentials?: GatewayProviderCredentialSummary[];
-  /** Credential counts by status, returned instead of `credentials` to callers who may only view providers. */
   credentialCounts?: GatewayProviderCredentialCounts;
-  /** Only the caller's ow_gw_ key, in provider-scoped env slots. */
   apiKey?: string;
   apiKeys?: Record<string, string>;
 }
@@ -236,33 +225,28 @@ export interface GatewayProviderSummary {
 /**
  * LiteLLM provider state for management views. `org` uses one organization
  * key and OpenWork spend tracking; `member` uses each person's own LiteLLM
- * key, so LiteLLM owns budgets and OpenWork does not price or limit usage.
+ * key (or, with keySource `entra`, their own Microsoft Entra sign-in), so
+ * LiteLLM owns budgets and OpenWork does not price or limit usage.
  */
 export type GatewayLiteLlmAttentionReason = "not_in_litellm" | "no_key_to_mirror" | "no_models" | "error";
 
 export interface GatewayLiteLlmStatus {
   mode: InferenceProviderCredentialMode;
-  /** member mode: each person pastes their key, or OpenWork creates it. */
-  keySource: "personal" | "issued" | null;
-  /** issued: one key per LiteLLM team, or a copy of each person's existing key. */
+  keySource: "personal" | "issued" | "entra" | null;
   issueStrategy: "per_team" | "mirror" | null;
-  /** issued + mirror: fall back to per-team keys, or report people with no key to copy. */
   mirrorFallback: "per_team" | "error" | null;
-  /** issued: people with at least one key OpenWork created. */
   issuedMemberCount: number;
-  /** issued: people OpenWork could not create keys for (first 50 in attention). */
   attentionCount: number;
   attention: Array<{ memberId: string; name: string | null; email: string | null; reason: GatewayLiteLlmAttentionReason }>;
-  /** LiteLLM proxy root, never a key. */
   baseUrl: string | null;
   spendTracking: boolean;
-  /** Organization key (org mode) or admin key (member mode) is stored. */
   hasSyncKey: boolean;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
   modelCount: number;
   teamCount: number;
   connectedMemberCount: number;
+  entraScope?: string;
 }
 
 export interface GatewayLiteLlmSyncResult {
@@ -271,8 +255,45 @@ export interface GatewayLiteLlmSyncResult {
   teamCount: number;
   members: { matched: number; rejected: number; unavailable: number; removed: number };
   warnings: string[];
-  /** issued mode: keys OpenWork created or refreshed in this sync. */
   issued?: { people: number; keys: number; notInLiteLlm: number; noKeyToMirror: number; noModels: number; errors: number; removed: number };
+}
+
+/** Why OpenWork has no working TrueFoundry token for an allowed person yet. */
+export type GatewayTrueFoundryAttentionReason = "not_in_truefoundry" | "user_inactive" | "token_limit" | "no_models" | "error";
+
+/**
+ * TrueFoundry provider state for management views. Every person uses a
+ * personal access token OpenWork created for their TrueFoundry user, so
+ * TrueFoundry owns budgets. OpenWork prices and limits usage only when
+ * trackUsageCosts is on, for models with public pricing.
+ */
+export interface GatewayTrueFoundryStatus {
+  controlPlaneUrl: string | null;
+  gatewayBaseUrl: string | null;
+  createMissingUsers: boolean;
+  trackUsageCosts: boolean;
+  hasAdminKey: boolean;
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+  modelCount: number;
+  availableModels: Array<{ id: string; name: string }>;
+  selectedModelIds: string[] | null;
+  activeMemberCount: number;
+  createdUserCount: number;
+  attentionCount: number;
+  attention: Array<{ memberId: string; name: string | null; email: string | null; reason: GatewayTrueFoundryAttentionReason; message: string | null }>;
+}
+
+export interface GatewayTrueFoundrySyncResult {
+  modelCount: number;
+  people: number;
+  tokensCreated: number;
+  usersCreated: number;
+  notInTrueFoundry: number;
+  noModels: number;
+  tokenLimit: number;
+  errors: number;
+  removed: number;
 }
 
 export interface GatewayProviderCredentialCounts {
@@ -288,6 +309,8 @@ export interface GatewayProviderDetails extends GatewayProviderSummary {
   credentialSets: GatewayCredentialSet[];
   accessGrants: GatewayAccessGrant[];
   litellm?: GatewayLiteLlmStatus;
+  truefoundry?: GatewayTrueFoundryStatus;
+  custom?: GatewayCustomProviderStatus;
 }
 
 export interface GatewayProviderListResponse {

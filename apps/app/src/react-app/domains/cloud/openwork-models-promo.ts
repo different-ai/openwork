@@ -22,8 +22,6 @@ export function areOpenWorkModelsPromosDisabled() {
   if (/^(1|true|yes|on)$/i.test(String(import.meta.env.VITE_DISABLE_OPENWORK_MODELS ?? "").trim())) {
     return true;
   }
-  // OpenWork Models are a hosted OpenWork Cloud offering; self-hosted
-  // deployments should never see the upsell surfaces.
   return isSelfHostedControlPlane();
 }
 
@@ -57,7 +55,6 @@ export function hasOpenWorkModelsProvider(providerIds: readonly string[]) {
   return providerIds.some((id) => id.trim().toLowerCase() === OPENWORK_MODELS_PROVIDER_ID);
 }
 
-/** Local engine has OpenWork Models connected with at least one selectable model. */
 export function hasOpenWorkModelsAvailable(input: {
   providerConnectedIds: readonly string[];
   providers: ReadonlyArray<{ id: string; models?: Record<string, unknown> | null }>;
@@ -84,8 +81,6 @@ export function getOpenWorkModelsActionUrl(
 ) {
   const settings = readDenSettings();
   const baseUrl = settings.baseUrl || readDenBootstrapConfig().baseUrl;
-  // Signed-in users go straight to the OpenWork Models page — the value-prop
-  // + subscribe surface — never to a bare auth or billing page.
   return isSignedIn ? getDenInferenceUrl(baseUrl) : buildDenAuthUrl(baseUrl, authMode);
 }
 

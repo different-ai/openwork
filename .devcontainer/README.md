@@ -115,8 +115,6 @@ fast checkpoints to decide whether behavior is correct before reporting success.
 
 The Daytona toolbox is exposed to opencode through focused skills:
 
-- `daytona`: CLI setup, long-lived sandboxes, logs, snapshots, and the secrets volume.
-- `record-a-demo`: supplementary screenshots, recordings, and presentation artifacts.
 - `run-tests`: runs `evals/specs` coverage; the CLI chooses and reports placement.
 
 ## Testing the customization system

@@ -19,8 +19,6 @@ const responseSchema = z.object({
 });
 export type ManagedPolicyCheck = (action: ManagedPolicyAction, input: Record<string, unknown>) => Promise<void>;
 
-// Node's IPC descriptor belongs only to the spawned engine. It is not a
-// listening socket, credential, or stdio stream inherited by shell children.
 export function serveManagedPolicyIpc(child: ChildProcess, check: ManagedPolicyCheck): void {
   const pending = new Set<string>();
   const receive = async (message: unknown) => {
@@ -37,9 +35,7 @@ export function serveManagedPolicyIpc(child: ChildProcess, check: ManagedPolicyC
       finally { pending.delete(id); }
     }
     if (child.connected) {
-      // Disconnect can race an in-flight evaluation; never raise an unhandled
-      // channel error or resume work in a replacement engine.
-      try { child.send({ channel, id, error }, () => {}); } catch { /* closed */ }
+      try { child.send({ channel, id, error }, () => {}); } catch {}
     }
   };
   child.on("message", receive);

@@ -8,8 +8,6 @@ const titles = {
   online: "Dictate message · Windows online speech recognition transcribes it",
 } as const;
 
-/** The desktop reports a speech helper only when this build ships one (and, on
- * macOS, the speech permission text); otherwise system dictation stays. */
 export function useDesktopSpeechDictation() {
   const query = useQuery({
     queryKey: ["desktop", "speech-dictation"],
@@ -18,11 +16,9 @@ export function useDesktopSpeechDictation() {
     staleTime: Infinity,
     retry: false,
   });
-  return query.data ? { recognition: DesktopSpeechRecognition, recognitionTitle: titles[query.data] } : {};
+  return query.data ? { recognition: DesktopSpeechRecognition, recognitionTitle: titles[query.data], local: query.data === "local" } : {};
 }
 
-/** Web Speech-shaped adapter over the desktop recognizer, so the composer's
- * dictation session keeps owning insertion, revisions and late-result fencing. */
 export class DesktopSpeechRecognition implements BrowserSpeechRecognition {
   lang = "en-US";
   continuous = true;
@@ -31,6 +27,8 @@ export class DesktopSpeechRecognition implements BrowserSpeechRecognition {
   onend: BrowserSpeechRecognition["onend"] = null;
   onerror: BrowserSpeechRecognition["onerror"] = null;
   onresult: BrowserSpeechRecognition["onresult"] = null;
+  onlevel: BrowserSpeechRecognition["onlevel"] = null;
+  onstatus: BrowserSpeechRecognition["onstatus"] = null;
   private readonly id = crypto.randomUUID();
   private unsubscribe: (() => void) | null = null;
 
@@ -63,6 +61,8 @@ export class DesktopSpeechRecognition implements BrowserSpeechRecognition {
   private receive(event: SpeechDictationEvent) {
     if (event.id !== this.id || !this.unsubscribe) return;
     if (event.type === "ready") this.onstart?.();
+    else if (event.type === "level") this.onlevel?.(event.level);
+    else if (event.type === "status") this.onstatus?.(event.status, event.progress);
     else if (event.type === "result") this.onresult?.({ results: event.segments.map(transcript => [{ transcript }]) });
     else if (event.type === "error") this.onerror?.({ error: event.code });
     else { this.close(); this.onend?.() }

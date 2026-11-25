@@ -12,11 +12,6 @@ function localServer() {
   return baseUrl && hostToken && isLoopbackOpenworkServerUrl(baseUrl) ? { baseUrl, hostToken } : null;
 }
 
-/**
- * Tells this device's OpenWork server whether analytics is on (Settings → Preferences). The server sends free Auto's
- * analytics journey identifier only after hearing "on", so an opted-out person is never correlated, including before
- * this first report. Reported again whenever the setting changes or the local server restarts on a new address.
- */
 export function FreeAutoAnalyticsBridge() {
   const { prefs } = useLocal();
   const enabled = prefs.analyticsEnabled;

@@ -1,0 +1,21 @@
+id: workbot_chat
+title: "Ask Workbot a read-only question"
+surface: workbot
+label: REAL
+status: draft
+requires: [workbot_ready]
+do:
+  - {type: manual, instruction: "Ask Workbot which sample pilots are marked committed."}
+  - {type: show, seconds: 5}
+say: "This is the same kind of read-only question on a different surface."
+paste:
+  workbot-question: In the fictional fixture, which Orchard and Cedar pilots are committed? Read only; do not send or change anything.
+see: "A new reply in the fixture conversation."
+checks:
+  - {"type": "workbot_reply_received", "channel": "fixture-direct"}
+reset: []
+fallback: Skip until verified on the rehearsal desktop; make no live claim.
+expect_seconds: 45
+questions:
+  - {question: Is this part of the verified live sequence?, answer: No. This is a rehearsal placeholder until its expected result is verified.}
+avoid: ["Do not set up Workbot or connect real sources live."]

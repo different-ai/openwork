@@ -1,7 +1,7 @@
-import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { motion, useReducedMotion } from "motion/react"
-import { ExternalLink, GripVertical, Maximize2, Minimize2, Minus, Monitor, PanelBottomClose, PictureInPicture2 } from "lucide-react"
+import { ExternalLink, Maximize2, Minimize2, Minus, Monitor, PanelBottomClose, PictureInPicture2 } from "lucide-react"
 import type { ComputerPresentation } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
@@ -15,10 +15,9 @@ type Observation = Omit<ComputerPresentation, "phase" | "frame"> & {
   frame?: NonNullable<ComputerPresentation["frame"]> & { key: string }
 }
 type Interaction = "takeover" | "resume"
-const inputLabels: Record<string, string> = { move: "Moving", click: "Click", double_click: "Double click", triple_click: "Triple click", drag: "Dragging", scroll: "Scrolling", key: "Key press", type: "Typing", press: "Press", set_value: "Editing" }
+const inputLabels: Record<string, string> = { move: "Moving", click: "Click", double_click: "Double click", triple_click: "Triple click", drag: "Dragging", scroll: "Scrolling", key: "Key press", type: "Typing", press: "Press", set_value: "Editing", enter_value: "Editing", focus: "Focus" }
 const pausedPhases = ["paused", "person_interacting", "ready_to_continue", "requery_required"]
 
-/** Full window, like the browser's full screen: Escape returns to the floating view. */
 function FullScreen({ children, onExit }: { children: ReactNode; onExit: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
   useLayoutEffect(() => {
@@ -45,7 +44,6 @@ function FullScreen({ children, onExit }: { children: ReactNode; onExit: () => v
   )
 }
 
-/** A watch surface. Only the explicit controls below can hand back control. */
 export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy, stopping, cleanupPending, stopError, onStop }: {
   sessionId: string
   slot: HTMLElement
@@ -71,7 +69,7 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
   const [cardSize, setCardSize] = useState({ width: 0, height: 0 })
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null)
   const [screenSize, setScreenSize] = useState({ width: 0, height: 0 })
-  const [position, setPosition] = useState({ x: 12, y: 12 })
+  const [position, setPosition] = useState({ x: Number.MAX_SAFE_INTEGER, y: 12 })
   const [dragging, setDragging] = useState(false)
   const [popout, setPopout] = useState<ComputerPopout | null>(null)
   const reducedMotion = useReducedMotion()
@@ -115,7 +113,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     monitor.current.wake()
   }
 
-  /** Moves the view into its own window. A drag past OpenWork's edge keeps it under the pointer. */
   function popOut(grab?: { x: number; y: number; screenX: number; screenY: number }) {
     if (monitor.current.popout) return
     const size = { width: 460, height: Math.max(260, Math.min(520, card.current?.offsetHeight ?? 360)) }
@@ -130,7 +127,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     setPopout(next)
     next.window.addEventListener("pagehide", () => { if (monitor.current.popout === next) popIn() })
     if (grab) {
-      // The press began in this window, so its moves keep arriving here until release.
       const follow = (event: PointerEvent) => { if (!next.window.closed) next.window.moveTo(event.screenX - grab.x, event.screenY - grab.y) }
       const end = () => { window.removeEventListener("pointermove", follow); window.removeEventListener("pointerup", end); window.removeEventListener("blur", end) }
       window.addEventListener("pointermove", follow)
@@ -142,7 +138,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     monitor.current.wake()
   }
 
-  /** Back into the chat; closing the window does the same. */
   function popIn() {
     const current = monitor.current.popout
     if (!current) return
@@ -173,7 +168,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     let again = false
     let timer = 0
     const shown = () => monitor.current.fullscreen || monitor.current.popout !== null || (slot.getClientRects().length > 0 && slot.clientWidth > 24 && slot.clientHeight > 24)
-    // A popped-out view keeps watching while OpenWork itself is hidden behind other apps.
     const viewDocument = () => monitor.current.popout?.window.document ?? document
     const visible = () => latest.current !== null && !monitor.current.minimized && viewDocument().visibilityState === "visible" && captureAllowed() && shown()
     async function poll() {
@@ -182,7 +176,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
       reading = true
       again = false
       try {
-        // Serialize visibility changes with the current read, including Strict Mode cleanup.
         await transport.current?.catch(() => null)
         if (disposed) return
         const revision = monitor.current.revision
@@ -204,8 +197,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
         const sameScope = scope.current === nextScope
         const working = watching && next.phase === "working"
         const uninterrupted = sameScope && working && monitor.current.working && latest.current?.phase === "working"
-        // Pauses, visibility gaps and target changes end the capture generation.
-        // Even a quick resume must wait for an image captured after that boundary.
         if (!sameScope || latest.current?.phase !== next.phase || monitor.current.working !== working) clearScreen()
         if (!sameScope) {
           const newSession = latest.current?.id !== next.id
@@ -253,7 +244,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
       monitor.current.wake = () => {}
       window.clearTimeout(timer)
       document.removeEventListener("visibilitychange", visibility)
-      // Never revoke on navigation. A final hidden heartbeat follows any outstanding read.
       transport.current = (transport.current ?? Promise.resolve(null)).catch(() => null)
         .then(() => desktopBridge.computerPresentation(sessionId, false)).catch(() => null)
     }
@@ -281,7 +271,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     const resize = new ResizeObserver(measure)
     resize.observe(slot)
     if (card.current) resize.observe(card.current)
-    // Elements in the popped-out window are observed from that window.
     const viewResize = popout && viewport ? new (popout.window as Window & typeof globalThis).ResizeObserver(measure) : null
     if (viewport) (viewResize ?? resize).observe(viewport)
     return () => { resize.disconnect(); viewResize?.disconnect() }
@@ -298,7 +287,6 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     if (action === "takeover" || action === "resume") clearScreen()
     try {
       await desktopBridge.computerInteract({ sessionId, id: current.id, action })
-      // A turn that ended while the person had control picks up again (see session-surface).
       if (action === "resume") useComputerStore.getState().markContinued(sessionId)
     } catch {
       if (mounted.current && scope.current === actionScope) {
@@ -377,7 +365,7 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
           </div>
         </div> : null}
       </div> : <p role="status" className="max-w-64 px-5 text-center text-xs leading-relaxed text-white/70">{stopPending ? "Stopping computer use. Waiting for release confirmation." : unavailable || failedFrame !== null ? "The computer view is unavailable. This does not confirm a stop." : paused ? "You have control. Continue when you are ready." : "Connecting to the app window..."}</p>}
-      {badge && (interrupted || (frame && loadedFrame !== null)) ? <span className={cn("pointer-events-none absolute bottom-2 left-2 rounded-md border border-white/10 bg-black/70 px-2 py-1 text-xs", interrupted ? "text-amber-9" : "text-white")} aria-label={`Latest computer input: ${badge}`}>{badge}</span> : null}
+      {badge && (interrupted || (frame && loadedFrame !== null)) ? <span className={cn("pointer-events-none absolute bottom-2.5 left-2.5 z-20 rounded-full bg-black/55 px-2 py-0.5 text-[11px] backdrop-blur-md", interrupted ? "text-amber-9" : "text-white/90")} aria-label={`Latest computer input: ${badge}`}>{badge}</span> : null}
     </div>
   )
 
@@ -443,6 +431,55 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     )
   }
 
+  const dot = <span aria-hidden className={cn("size-2 shrink-0 rounded-full", live ? "bg-green-9" : paused ? "bg-amber-9" : unavailable || stopPending ? "bg-red-9" : "bg-white/40")} />
+  const toolButton = "rounded-full text-white/85 hover:bg-white/15 hover:text-white focus-visible:ring-white/40"
+  const reveal = "opacity-0 transition-opacity duration-150 group-hover/pip:opacity-100 group-focus-within/pip:opacity-100"
+  const alert = unavailable || actionError || stopError || cleanupPending
+    ? <p role="alert" className="max-h-20 overflow-y-auto bg-black/85 px-3 py-1.5 text-[11px] leading-relaxed text-amber-9">{stopError || actionError || (cleanupPending ? "Stopping is not yet confirmed. Access stays off while release is checked." : "View unavailable. Work may still be running; Stop is available.")}</p>
+    : null
+  const moveHandlers = {
+    onPointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0 || !event.isPrimary) return
+      event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId)
+      const rect = card.current?.getBoundingClientRect()
+      drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, origin: shown, grab: { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) } }; setDragging(true)
+    },
+    onPointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const current = drag.current
+      if (!current || current.id !== event.pointerId) return
+      if (event.clientX < 0 || event.clientY < 0 || event.clientX > window.innerWidth || event.clientY > window.innerHeight) {
+        popOut({ ...current.grab, screenX: event.screenX, screenY: event.screenY })
+        return
+      }
+      setPosition({ x: Math.max(12, Math.min(maxX, current.origin.x + event.clientX - current.x)), y: Math.max(12, Math.min(maxY, current.origin.y + event.clientY - current.y)) })
+    },
+    onPointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => { drag.current = null; setDragging(false); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) },
+    onPointerCancel: () => { if (drag.current) setPosition(drag.current.origin); drag.current = null; setDragging(false) },
+    onLostPointerCapture: () => { drag.current = null; setDragging(false) },
+    onKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      if (event.key === "Escape" && drag.current) { event.preventDefault(); event.stopPropagation(); setPosition(drag.current.origin); drag.current = null; setDragging(false); return }
+      const step = event.shiftKey ? 40 : 16
+      const next = event.key === "Home" ? { x: 12, y: 12 } : event.key === "End" ? { x: maxX, y: maxY }
+        : event.key === "ArrowLeft" ? { ...shown, x: shown.x - step } : event.key === "ArrowRight" ? { ...shown, x: shown.x + step }
+        : event.key === "ArrowUp" ? { ...shown, y: shown.y - step } : event.key === "ArrowDown" ? { ...shown, y: shown.y + step } : null
+      if (next) { event.preventDefault(); setPosition({ x: Math.max(12, Math.min(maxX, next.x)), y: Math.max(12, Math.min(maxY, next.y)) }) }
+    },
+  }
+  const controls = !stopPending || canStop ? <div className="pointer-events-auto flex items-center gap-0.5 rounded-full bg-black/60 p-0.5 shadow-sm backdrop-blur-md">
+    {!stopPending ? <Button
+      size="xs"
+      variant="ghost"
+      className={cn("rounded-full px-2.5", paused ? "bg-white text-black hover:bg-white/90 hover:text-black" : toolButton)}
+      data-testid={paused ? "session-computer-resume" : "session-computer-takeover"}
+      disabled={disabled || (paused && presentation.canContinue !== true) || (!paused && presentation.phase !== "working")}
+      aria-busy={busy === "takeover" || busy === "resume"}
+      onClick={() => void interact(paused ? "resume" : "takeover")}
+    >
+      {busy === "takeover" ? "Pausing..." : busy === "resume" ? "Continuing..." : paused ? "Continue" : "Take over"}
+    </Button> : null}
+    <Button size="xs" variant="ghost" className="rounded-full px-2.5 text-red-9 hover:bg-white/15 hover:text-red-9" data-testid="session-computer-panel-stop" disabled={controlsBusy || !canStop} aria-busy={stopping} title="Stop this task. The next message can start a new task." onClick={onStop}>{stopping ? "Stopping..." : "Stop"}</Button>
+  </div> : null
+
   return createPortal(
     <aside
       ref={card}
@@ -450,64 +487,63 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
       data-testid="session-computer-floating"
       data-minimized={minimized}
       className={cn(
-        "pointer-events-auto absolute z-20 flex min-w-0 flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border bg-popover text-popover-foreground shadow-[0_12px_36px_rgba(0,0,0,0.25)] focus-within:z-30",
-        dragging ? "border-primary/60" : "border-border",
+        "group/pip pointer-events-auto absolute z-20 flex min-w-0 flex-col overflow-hidden bg-black text-white shadow-[0_14px_40px_rgba(0,0,0,0.32)] transition-shadow focus-within:z-30",
+        minimized ? "rounded-full" : "rounded-2xl",
+        dragging && "shadow-[0_20px_56px_rgba(0,0,0,0.45)]",
       )}
-      style={{ left: shown.x, top: shown.y, width: Math.min(minimized ? 300 : 460, Math.max(0, bounds.width - 24)), maxHeight: Math.max(0, bounds.height - 24) }}
+      style={{ left: shown.x, top: shown.y, width: minimized ? undefined : Math.min(320, Math.max(0, bounds.width - 24)), maxWidth: Math.max(0, bounds.width - 24), maxHeight: Math.max(0, bounds.height - 24) }}
       onKeyDown={(event) => { if (event.key === "Escape" && !drag.current && !minimized) { event.preventDefault(); event.stopPropagation(); minimize(true) } }}
     >
-      <header className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1">
+      <p id={`${id}-move`} className="sr-only">Drag anywhere within the chat, or past the edge of OpenWork to give it its own window. Arrow keys also move it. Shift moves faster. Home and End move to corners. Escape minimizes the view without stopping work.</p>
+      {minimized ? <div className="flex h-9 items-center gap-1 pl-1 pr-1">
         <button
           ref={moveButton}
           type="button"
           aria-label={`Move ${title} view`}
           aria-describedby={`${id}-move`}
           data-testid="session-computer-drag"
-          className="flex min-w-0 flex-1 touch-none select-none items-center gap-2 rounded-lg px-1.5 py-2 text-left text-xs font-medium outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40"
+          className="flex min-w-0 touch-none select-none items-center gap-2 rounded-full px-2 py-1 text-xs font-medium outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-white/40"
           style={{ cursor: dragging ? "grabbing" : "grab" }}
-          onPointerDown={(event) => {
-            if (event.button !== 0 || !event.isPrimary) return
-            event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId)
-            const rect = card.current?.getBoundingClientRect()
-            drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, origin: shown, grab: { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) } }; setDragging(true)
-          }}
-          onPointerMove={(event) => {
-            const current = drag.current
-            if (!current || current.id !== event.pointerId) return
-            // Past OpenWork's own edge, the view leaves the chat as its own window.
-            if (event.clientX < 0 || event.clientY < 0 || event.clientX > window.innerWidth || event.clientY > window.innerHeight) {
-              popOut({ ...current.grab, screenX: event.screenX, screenY: event.screenY })
-              return
-            }
-            setPosition({ x: Math.max(12, Math.min(maxX, current.origin.x + event.clientX - current.x)), y: Math.max(12, Math.min(maxY, current.origin.y + event.clientY - current.y)) })
-          }}
-          onPointerUp={(event) => { drag.current = null; setDragging(false); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}
-          onPointerCancel={() => { if (drag.current) setPosition(drag.current.origin); drag.current = null; setDragging(false) }}
-          onLostPointerCapture={() => { drag.current = null; setDragging(false) }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape" && drag.current) { event.preventDefault(); event.stopPropagation(); setPosition(drag.current.origin); drag.current = null; setDragging(false); return }
-            const step = event.shiftKey ? 40 : 16
-            const next = event.key === "Home" ? { x: 12, y: 12 } : event.key === "End" ? { x: maxX, y: maxY }
-              : event.key === "ArrowLeft" ? { ...shown, x: shown.x - step } : event.key === "ArrowRight" ? { ...shown, x: shown.x + step }
-              : event.key === "ArrowUp" ? { ...shown, y: shown.y - step } : event.key === "ArrowDown" ? { ...shown, y: shown.y + step } : null
-            if (next) { event.preventDefault(); setPosition({ x: Math.max(12, Math.min(maxX, next.x)), y: Math.max(12, Math.min(maxY, next.y)) }) }
-          }}
+          {...moveHandlers}
         >
-          <GripVertical size={12} className="shrink-0 text-muted-foreground" />
-          <Monitor size={14} className="shrink-0 text-muted-foreground" />
-          <span className="truncate">{title}</span>
+          {dot}
+          <span className="max-w-32 truncate">{presentation.appName || "Computer"}</span>
         </button>
-        {!minimized ? liveStatus : null}
-        {!minimized ? <Button variant="ghost" size="icon-xs" aria-label="Open computer view in its own window" title="Its own window, over any app" data-testid="session-computer-pop-out" onClick={() => popOut()}><ExternalLink /></Button> : null}
-        {!minimized ? <Button variant="ghost" size="icon-xs" aria-label="Expand computer view full screen" data-testid="session-computer-fullscreen-toggle" onClick={() => expand(true)}><Maximize2 /></Button> : null}
-        <Button variant="ghost" size="icon-xs" aria-label={minimized ? "Restore computer view" : "Minimize computer view"} title={minimized ? "Show the computer view" : "Hide the view without stopping work"} data-testid="session-computer-minimize" onClick={() => minimize(!minimized)}>
-          {minimized ? <PictureInPicture2 /> : <Minus />}
-        </Button>
-        {minimized ? <Button variant="ghost" size="xs" className="text-red-11 hover:text-red-11" disabled={controlsBusy || !canStop} aria-busy={stopping} onClick={onStop}>{stopping ? "Stopping..." : "Stop"}</Button> : null}
-      </header>
-      <p id={`${id}-move`} className="sr-only">Drag anywhere within the chat, or past the edge of OpenWork to give it its own window. Arrow keys also move it. Shift moves faster. Home and End move to corners. Escape minimizes the view without stopping work.</p>
-      {minimized && (stopPending || stopError) ? <p role="status" className="px-3 py-2 text-[11px] text-amber-11">Stop not yet confirmed. Restore the view for details.</p> : null}
-      {!minimized ? <>{screen}{footer}</> : null}
+        <Button variant="ghost" size="icon-xs" className={toolButton} aria-label="Restore computer view" title="Show the computer view" data-testid="session-computer-minimize" onClick={() => minimize(false)}><PictureInPicture2 /></Button>
+        <Button variant="ghost" size="xs" className="rounded-full px-2 text-red-9 hover:bg-white/15 hover:text-red-9" disabled={controlsBusy || !canStop} aria-busy={stopping} onClick={onStop}>{stopping ? "Stopping..." : "Stop"}</Button>
+      </div> : <>
+        <div className="relative">
+          {screen}
+          <button
+            ref={moveButton}
+            type="button"
+            aria-label={`Move ${title} view`}
+            aria-describedby={`${id}-move`}
+            data-testid="session-computer-drag"
+            className="absolute inset-0 z-10 touch-none select-none rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/50"
+            style={{ cursor: dragging ? "grabbing" : "grab" }}
+            {...moveHandlers}
+          />
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center gap-2 bg-gradient-to-b from-black/45 to-transparent p-2">
+            <div className="flex min-w-0 items-center rounded-full bg-black/55 px-1.5 py-1.5 text-[11px] font-medium leading-none backdrop-blur-md">
+              {dot}
+              <span className="max-w-0 truncate opacity-0 transition-all duration-150 group-hover/pip:ml-1.5 group-hover/pip:max-w-40 group-hover/pip:opacity-100 group-focus-within/pip:ml-1.5 group-focus-within/pip:max-w-40 group-focus-within/pip:opacity-100">{presentation.appName || "Computer"}</span>
+              <span className="sr-only">{liveStatus}</span>
+            </div>
+            <span className="flex-1" />
+            <div className={cn("pointer-events-auto flex items-center rounded-full bg-black/55 p-0.5 backdrop-blur-md", reveal)}>
+              <Button variant="ghost" size="icon-xs" className={toolButton} aria-label="Open computer view in its own window" title="Its own window, over any app" data-testid="session-computer-pop-out" onClick={() => popOut()}><ExternalLink /></Button>
+              <Button variant="ghost" size="icon-xs" className={toolButton} aria-label="Expand computer view full screen" title="Full screen" data-testid="session-computer-fullscreen-toggle" onClick={() => expand(true)}><Maximize2 /></Button>
+              <Button variant="ghost" size="icon-xs" className={toolButton} aria-label="Minimize computer view" title="Hide the view without stopping work" data-testid="session-computer-minimize" onClick={() => minimize(true)}><Minus /></Button>
+            </div>
+          </div>
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end justify-end bg-gradient-to-t from-black/45 to-transparent p-2">
+            {controls}
+          </div>
+        </div>
+        {alert}
+      </>}
+      {minimized && (stopPending || stopError) ? <p role="status" className="px-3 pb-2 text-[11px] text-amber-9">Stop not yet confirmed. Restore the view for details.</p> : null}
     </aside>,
     slot,
   )

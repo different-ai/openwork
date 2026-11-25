@@ -1,5 +1,10 @@
-import { ScimScreen } from "../_components/scim-screen";
+import { Suspense } from "react";
+import { AuthSecurityLegacyRoute } from "../_components/auth-security-legacy-route";
 
 export default function ScimPage() {
-  return <ScimScreen />;
+  return (
+    <Suspense fallback={null}>
+      <AuthSecurityLegacyRoute tab="scim" />
+    </Suspense>
+  );
 }

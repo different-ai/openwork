@@ -19,7 +19,6 @@ type State = (AdminResult<AdminSignupCompanies> & { query: string }) | { access:
 type Company = AdminSignupCompanies["companies"][number];
 const count = (value: number) => new Intl.NumberFormat().format(value);
 const PATH = "/admin/opportunities/companies";
-// The two saved views of the sales team's signup sheet.
 const VIEWS = [{ id: "active", label: "Active (30d)" }, { id: "all", label: "All companies" }] as const;
 
 export function AdminSignupCompaniesPage() {
@@ -52,7 +51,6 @@ export function AdminSignupCompaniesPage() {
       }, controller.signal).then(result => {
         if (controller.signal.aborted) return;
         if (result.access === "error") setError(result.message);
-        // Keep a verified snapshot only for a failed refresh of these filters.
         setState(current => result.access === "error" && current.access === "ready" && current.query === query ? current : { ...result, query });
       }).catch((reason: unknown) => {
         if (controller.signal.aborted) return;
@@ -121,7 +119,7 @@ export function AdminSignupCompaniesPage() {
         <li>Signups are accounts on the domain. Orgs are the organizations those people joined. Last sign-in is the latest session still on record.</li>
         <li>Active users are people seen using the app in any of those organizations in the last 30 days. Self-hosted use and turned-off telemetry are not counted.</li>
         <li>Plan is the highest stored plan across the organizations. Paying means a current active subscription; trials are not paying.</li>
-        <li>Contacted means a platform admin recorded outreach, a reply or a meeting for any of the organizations in This week.</li>
+        <li>Contacted means a platform admin recorded outreach, a reply or a meeting for any of the organizations on the Outreach tab.</li>
       </ul>
     </details>
     {data ? <p className="mt-2 text-xs text-[var(--dls-text-secondary)]">Snapshot {new Date(data.generatedAt).toLocaleString()}</p> : null}

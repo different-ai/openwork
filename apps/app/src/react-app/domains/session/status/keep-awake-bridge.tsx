@@ -8,8 +8,6 @@ import {
   type SessionActivityStatus,
 } from "./session-activity-store";
 
-// A session waiting on a permission or question prompt is not working, so it
-// does not keep the computer awake.
 const WORKING_STATUSES: SessionActivityStatus[] = ["thinking", "responding", "compacting"];
 
 export function hasWorkingSession(
@@ -20,11 +18,6 @@ export function hasWorkingSession(
   );
 }
 
-/**
- * Settings → Preferences → Keep awake: while any session is working, asks the
- * desktop app to stop the computer sleeping, and lets it sleep again when the
- * work finishes or the setting is turned off.
- */
 export function KeepAwakeBridge() {
   const { prefs } = useLocal();
   const working = useSessionActivityStore((state) => hasWorkingSession(state.statusesByWorkspaceId));

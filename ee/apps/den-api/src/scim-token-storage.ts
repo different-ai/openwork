@@ -31,10 +31,6 @@ function decodeScimBearerToken(bearerToken: string): { rawToken: string; provide
   return rawToken && providerId && organizationId ? { rawToken, providerId, organizationId } : null
 }
 
-/**
- * The organization id embedded in a SCIM bearer token, UNVERIFIED: only for
- * selecting which organization's audit flag to read before verifying the token.
- */
 export function scimTokenOrganizationId(bearerToken: string): string | null {
   return decodeScimBearerToken(bearerToken)?.organizationId ?? null
 }
@@ -45,8 +41,6 @@ export async function resolveStoredScimProvider<Provider extends { scimToken: st
 ): Promise<Provider | null> {
   const decoded = decodeScimBearerToken(bearerToken)
   if (!decoded) return null
-  // Decoded identifiers only select a row. No caller may use them as authority
-  // until the stored token's hash matches in constant time.
   const provider = await lookup(decoded.providerId, decoded.organizationId)
   return provider && verifyStoredScimToken({ storedToken: provider.scimToken, rawToken: decoded.rawToken }) ? provider : null
 }

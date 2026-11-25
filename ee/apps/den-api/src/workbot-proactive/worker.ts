@@ -1,10 +1,13 @@
-import { libraryConnectorLink } from "../agent-links.js"
-import { markFeaturesUsed, type MarkFeaturesUsed } from "../feature-usage.js"
-import { organizationFeatureEnabled } from "../features.js"
+import { libraryConnectorLink, myAgentLink } from "../agent-links.js"
+import { markFeaturesUsed } from "../feature-usage.js"
+import { assertFundedUserAllowed } from "../openai-safety/account-suspensions.js"
+import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
-import { readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
+import { readMemberGmailArrivals, readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
 import { organizationCloudModel } from "../workbot/model.js"
-import { activeMemberUser, listAgentCandidates, proactiveAllowed, readProactiveSettings } from "./access.js"
+import { resolveMemberTeamAgent, teamAgentPolicy } from "../workbot/team-settings.js"
+import { readWorkbotDirectMessages } from "../slack-assistant/direct-message.js"
+import { activeMemberUser, agentCheckGateAllowed, agentSendCheckAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
 import { deliverAgentMessage, destinationBlock } from "./deliver.js"
 import {
   agentSentSince,
@@ -16,39 +19,39 @@ import {
   MEMBER_CHECK_RETENTION_MS,
   pruneAgentDeliveries,
   pruneMemberChecks,
+  readAgentCheckRequests,
   recordMemberCheck,
   reserveAgentDelivery,
   settleAgent,
   toldAgentItems,
-  type AgentInstanceRow,
 } from "./repository.js"
-import { listMemberConnections } from "./sources-repository.js"
+import { countConnectedMembers, listConnectionToolsForMember, listMemberConnections } from "./sources-repository.js"
+import { createCheckGateModel } from "./check-gate.js"
+import { createEvaluationModel } from "../llm/evaluation-model.js"
+import { createAgentSendCheck } from "./send-check.js"
 import { readAgentTemplate } from "./template.js"
-import { agentMessageId, agentSessionId, defaultAgentTurnDeps, runAgentTurn } from "./turn.js"
-import { wakeAgent, type AgentWakeDeps, type AgentWakeOutcome } from "./wake.js"
-
-/**
- * The agents' loop: claims agents whose `next_wake_at` is due (a scheduled pass, or the next calendar look) and
- * wakes each one (wake.ts). Wake sources stay explicit: the schedule and calendar events. Nothing lets a model
- * schedule its own wake-up.
- */
+import { agentMessageId, agentSessionId, defaultAgentTurnDeps, runAgentSessionTurn } from "./turn.js"
+import { wakeAgentBrief, type AgentBriefWakeDeps } from "./wake-brief.js"
 
 const TICK_MS = 15_000
 const MAX_CONCURRENT_WAKES = 4
 const DISCOVERY_MS = 10 * 60_000
 const LEDGER_RETENTION_MS = 30 * 24 * 3_600_000
 
-export function defaultAgentWakeDeps(): AgentWakeDeps {
+export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
   const turnDeps = defaultAgentTurnDeps()
+  const evaluationModel = env.agentEvaluationApiKey ? createEvaluationModel({ apiKey: env.agentEvaluationApiKey }) : null
+  const checkGateModel = evaluationModel ? createCheckGateModel(evaluationModel) : null
+  const sendCheck = evaluationModel ? createAgentSendCheck(evaluationModel) : null
   return {
     now: Date.now,
     allowed: (organizationId, userId) => proactiveAllowed(organizationId, userId),
     settings: readProactiveSettings,
     template: readAgentTemplate,
+    teamPolicy: async (member) => teamAgentPolicy(await resolveMemberTeamAgent(member)),
     user: activeMemberUser,
     calendar: readMemberGoogleCalendar,
     model: (actor) => organizationCloudModel(actor),
-    turn: (input) => runAgentTurn(input, turnDeps),
     sessionId: agentSessionId,
     messageId: agentMessageId,
     told: toldAgentItems,
@@ -60,33 +63,43 @@ export function defaultAgentWakeDeps(): AgentWakeDeps {
     destinationBlock: (input) => destinationBlock(input),
     deliver: (input) => deliverAgentMessage(input),
     recordChecks: recordAgentChecks,
-    library: (organizationId, userId) => organizationFeatureEnabled(organizationId, "workbotAgentLibrary", { userId }),
     recordCheck: recordMemberCheck,
     connections: listMemberConnections,
+    connectedMembers: countConnectedMembers,
     connectLink: libraryConnectorLink,
+    agentLink: myAgentLink,
+    person: memberFirstName,
+    check: (input) => runAgentSessionTurn(input, turnDeps),
+    conversation: (input) => readWorkbotDirectMessages({ organizationId: input.organizationId, userId: input.userId, since: input.since }),
+    requestedChecks: readAgentCheckRequests,
+    checkGate: async ({ organizationId, memberId, userId }) => {
+      if (!(await agentCheckGateAllowed(organizationId, userId))) return null
+      markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentCheckGate"] })
+      return {
+        mail: (input) => readMemberGmailArrivals({ organizationId, orgMembershipId: memberId, ...input }),
+        model: checkGateModel ? async (request, skipAt) => {
+          await assertFundedUserAllowed(userId)
+          return checkGateModel(request, skipAt)
+        } : null,
+      }
+    },
+    sendCheck: async ({ organizationId, memberId, userId }) => {
+      if (!sendCheck || !(await agentSendCheckAllowed(organizationId, userId))) return null
+      markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentSendCheck"] })
+      return async (input) => {
+        await assertFundedUserAllowed(userId)
+        return sendCheck(input)
+      }
+    },
+    readTools: (input) => listConnectionToolsForMember({ organizationId: input.organizationId, memberId: input.memberId, connectionId: input.connection.id }),
   }
 }
 
-/**
- * One wake. A pass that ran (the agent looked for the member) is the member using Your agent, for /admin › Features:
- * no request marks background work. Skips (off, snoozed, outside hours, nothing due) are not uses.
- */
-export async function wakeAndMarkUse(
-  row: AgentInstanceRow,
-  wake: (row: AgentInstanceRow) => Promise<AgentWakeOutcome>,
-  markUsed: MarkFeaturesUsed = markFeaturesUsed,
-): Promise<AgentWakeOutcome> {
-  const outcome = await wake(row)
-  if (outcome.status === "ran") markUsed({ organizationId: row.organizationId, memberId: row.memberId, keys: ["workbotProactive"] })
-  return outcome
-}
-
-/** Gives every active member of an organization that turned its agent on an agent row. */
 export async function discoverAgents() {
   for (const candidate of await listAgentCandidates()) await ensureAgentInstances(candidate.organizationId, candidate.memberIds)
 }
 
-export function startWorkbotProactiveWorker(deps: AgentWakeDeps = defaultAgentWakeDeps()) {
+export function startWorkbotProactiveWorker(deps: AgentBriefWakeDeps = defaultAgentWakeDeps()) {
   let stopped = false
   let running = 0
   let claiming = false
@@ -106,7 +119,7 @@ export function startWorkbotProactiveWorker(deps: AgentWakeDeps = defaultAgentWa
       if (capacity <= 0) return
       for (const row of await claimDueAgents(capacity, new Date(now))) {
         running += 1
-        void wakeAndMarkUse(row, (claimed) => wakeAgent(claimed, deps))
+        void wakeAgentBrief(row, deps)
           .catch(async () => {
             appLogger.warn("workbot_agent_wake_failed", { member_id: row.memberId })
             await deps.settle(row, { nextWakeAt: new Date(deps.now() + 15 * 60_000), failures: row.failures + 1 }).catch(() => false)

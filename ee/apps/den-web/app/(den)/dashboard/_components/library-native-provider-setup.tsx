@@ -10,7 +10,6 @@ import { ItemHeader, ItemPage } from "./item-header";
 import { ConnectorLogo } from "./item-logo";
 import { connectorReturnToAgent, fromMyAgent } from "./my-agent-connector-navigation";
 
-/** Native providers use an organization OAuth app, not an MCP catalog preset. */
 export function LibraryNativeProviderSetup({ providerKey }: { providerKey: NativeProviderKey }) {
   const { orgContext, orgSlug, orgBusy } = useOrgDashboard();
   const params = useSearchParams();

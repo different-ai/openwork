@@ -1,49 +1,54 @@
 "use client";
 
-import { ChevronRight, Lock } from "lucide-react";
-import { useId } from "react";
+import { Lock, Plus, Search } from "lucide-react";
+import { useId, useRef, useState } from "react";
 import {
-  AGENT_CORE_SOURCES,
   AGENT_CORE_SOURCE_COPY,
   AGENT_SOURCE_POLICIES,
   AGENT_SOURCE_POLICY_COPY,
-  agentCoreConnections,
-  agentSourcePolicy,
-  type AgentCoreSource,
-  type AgentSourceConnection,
+  type AgentOtherSourceConnection,
+  type AgentSourceOption,
   type AgentSourcePolicy,
   type AgentSourcesPolicyInput,
   type WorkbotProactiveSettingsInput,
   type WorkbotProactiveView,
 } from "@openwork/types/den/workbot-proactive";
 import { permissionLockReason } from "../../_lib/den-org";
+import { DenButton } from "../../_components/ui/button";
+import { DenInput } from "../../_components/ui/input";
+import { DenDropdownPopup, DenDropdownRoot, DenDropdownTrigger } from "../../_components/ui/dropdown-popup";
+import { denDropdownListClass, denDropdownRowBaseClass, denDropdownRowIdleClass } from "../../_components/ui/dropdown-styles";
 import { DenSelect } from "../../_components/ui/select";
-import { DenSwitch } from "../../_components/ui/switch";
 import { ConnectorLogo } from "./item-logo";
-import { SourceIcon } from "./source-icon";
+import type { AgentPolicyScope } from "./workbot-agent-scope";
+import { connectorPolicyChanges } from "./my-agent-enable-connectors";
+import { AgentConnectionToolsButton } from "./workbot-agent-tools";
 
-/**
- * Manage › Workbot › What agents read: per source, on for everyone, members choose, or not allowed. Calendar, email and
- * team chat first, each with the connections it reads through when more than one could serve it, then every other
- * connection behind one disclosure. The server enforces it for members' agents.
- */
+type SourcesView = Pick<WorkbotProactiveView, "settings" | "sourceConnections">;
 
-/**
- * The change for one connection switched on or off behind a core source: the rest stay as picked, and all of them
- * picked goes back to "every connection that serves it" (null), so a connection added later joins on its own.
- */
-export function corePickChange(kind: AgentCoreSource, behind: readonly AgentSourceConnection[], picked: readonly string[] | null, connectionId: string, on: boolean): AgentSourcesPolicyInput {
-  const current = picked ?? behind.map((connection) => connection.id);
-  const next = behind.map((connection) => connection.id).filter((id) => (id === connectionId ? on : current.includes(id)));
-  const change: NonNullable<AgentSourcesPolicyInput["coreConnections"]> = {};
-  change[kind] = next.length === behind.length ? null : next;
-  return { coreConnections: change };
+export function calendarStateLine(view: SourcesView): string {
+  if (view.settings.sources.calendar === "off") return "Agents don't read it";
+  if (!view.sourceConnections) return `Uses ${AGENT_CORE_SOURCE_COPY.calendar.via}`;
+  const names = view.sourceConnections.calendar.map((connection) => connection.name);
+  if (names.length === 0) return "No calendar app connected";
+  if (names.length === 1) return `Uses ${names[0]}`;
+  return `Uses ${names.slice(0, -1).join(", ")} or ${names.at(-1)}`;
 }
 
-function corePolicy(kind: AgentCoreSource, policy: AgentSourcePolicy): AgentSourcesPolicyInput {
-  const change: AgentSourcesPolicyInput = {};
-  change[kind] = policy;
-  return change;
+export function otherPolicy(view: SourcesView, option: AgentOtherSourceConnection): AgentSourcePolicy {
+  return view.settings.sources.connections[option.id] ?? option.policy ?? "members";
+}
+
+export function otherConnectionAdded(view: SourcesView, option: AgentOtherSourceConnection): boolean {
+  return view.settings.sources.connections[option.id] !== undefined || (option.policy ?? "members") !== "members";
+}
+
+export function otherConnectionsRestLine(count: number): string {
+  return count === 1 ? "1 other connection is up to each member." : `${count} other connections are up to each member.`;
+}
+
+export function connectionCount(count: number): string {
+  return `${count} connection${count === 1 ? "" : "s"}`;
 }
 
 function policyFrom(value: string): AgentSourcePolicy | null {
@@ -64,96 +69,174 @@ function PolicySelect({ label, value, disabled, onChange }: { label: string; val
   );
 }
 
-/** "Google Calendar and Outlook calendar", or what is missing when the organization has nothing for it yet. */
-function viaLabel(kind: AgentCoreSource, connections: readonly AgentSourceConnection[]) {
-  const names = [...new Set(connections.map((connection) => connection.name))];
-  if (!names.length) return `No ${AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()} connected`;
-  return names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+const FILTER_FROM = 8;
+
+export function filterConnections<T extends { name: string }>(connections: readonly T[], typed: string): T[] {
+  const query = typed.trim().toLowerCase();
+  return query ? connections.filter((connection) => connection.name.toLowerCase().includes(query)) : [...connections];
 }
 
-function SourceRow({ name, logo, state, testId, children }: { name: string; logo: React.ReactNode; state: string; testId: string; children: React.ReactNode }) {
+function AddConnector<Option extends Pick<AgentSourceOption, "id" | "name" | "url">>({ options, disabled, onPick }: {
+  options: Option[];
+  disabled: boolean;
+  onPick: (option: Option) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const searchable = options.length > FILTER_FROM;
+  const shown = searchable ? filterConnections(options, query) : options;
   return (
-    <div className="flex min-h-[56px] flex-wrap items-center justify-between gap-3 px-6 py-2.5" data-testid={testId}>
-      <span className="flex min-w-0 items-center gap-3">
-        {logo}
-        <span className="text-[13px] font-medium text-gray-900">{name}</span>
-      </span>
-      <span className="flex min-w-0 flex-wrap items-center justify-end gap-3">
-        <span className="text-[12px] text-gray-500">{state}</span>
-        {children}
-      </span>
-    </div>
+    <DenDropdownRoot open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
+      <DenDropdownTrigger ref={triggerRef} type="button" disabled={disabled} aria-label="Add connector"
+        data-testid="workbot-source-add-other"
+        className="flex min-h-[40px] items-center gap-2 rounded-lg pl-14 pr-6 text-left text-[13px] font-medium text-gray-700 outline-hidden hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-gray-900/5 disabled:cursor-not-allowed disabled:opacity-60">
+        <Plus size={16} strokeWidth={1.5} aria-hidden="true" />
+        Add connector
+      </DenDropdownTrigger>
+      {open ? (
+        <DenDropdownPopup anchor={triggerRef} popupRef={popupRef}>
+          {searchable ? (
+            <div className="border-b border-gray-100 p-2">
+              <DenInput type="search" icon={Search} autoFocus aria-label="Find a connection" placeholder="Find a connection" value={query} onChange={(event) => setQuery(event.target.value)} />
+            </div>
+          ) : null}
+          <div className={denDropdownListClass} role="menu" aria-label="Connectors to add">
+            {options.length === 0 ? <p className="max-w-[280px] px-3 py-2.5 text-[13px] leading-5 text-gray-500">Every connector is already here.</p> : null}
+            {options.length > 0 && shown.length === 0 ? <p className="px-3 py-2.5 text-[13px] text-gray-500">No connections match</p> : null}
+            {shown.map((option) => (
+              <button key={option.id} type="button" role="menuitem" aria-label={option.name} className={`${denDropdownRowBaseClass} ${denDropdownRowIdleClass} items-center justify-start`}
+                onClick={() => {
+                  setOpen(false);
+                  onPick(option);
+                }}>
+                <ConnectorLogo name={option.name} url={option.url} size="xs" />
+                <span className="truncate text-[13px] text-gray-900">{option.name}</span>
+              </button>
+            ))}
+          </div>
+        </DenDropdownPopup>
+      ) : null}
+    </DenDropdownRoot>
   );
 }
 
-export function WorkbotProactiveSources({ view, canManage, saving, onChange }: {
+export function AgentCalendarPolicy({ view, disabled, onChange }: {
+  view: SourcesView;
+  disabled: boolean;
+  onChange: (change: WorkbotProactiveSettingsInput) => void;
+}) {
+  return (
+    <span data-testid="workbot-source-calendar" data-policy={view.settings.sources.calendar}>
+      <PolicySelect label={AGENT_CORE_SOURCE_COPY.calendar.label} value={view.settings.sources.calendar} disabled={disabled}
+        onChange={(calendar) => onChange({ sources: { calendar } })} />
+    </span>
+  );
+}
+
+export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true }: {
+  heading?: boolean;
   view: WorkbotProactiveView;
   canManage: boolean;
   saving: boolean;
   onChange: (change: WorkbotProactiveSettingsInput) => void;
+  tools?: { orgId: string; scope?: AgentPolicyScope; connectorHref: (connectionId: string) => string };
 }) {
   const headingId = useId();
+  const [filter, setFilter] = useState("");
   const locked = !canManage || saving;
-  const { sources } = view.settings;
   const connections = view.sourceConnections;
-  const others = connections?.other ?? [];
 
-  return (
-    <section aria-labelledby={headingId} className="grid gap-2" data-section="workbot-proactive-sources">
-      <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">What agents read</h2>
-      <div className="divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-testid="workbot-proactive-sources">
-        {AGENT_CORE_SOURCES.map((kind) => {
-          const behind = connections?.[kind] ?? [];
-          const picked = agentCoreConnections(sources, kind);
-          const reading = picked === null ? behind : behind.filter((connection) => picked.includes(connection.id));
-          const first = reading[0] ?? behind[0];
-          const label = AGENT_CORE_SOURCE_COPY[kind].label;
+  const save = (change: AgentSourcesPolicyInput) => onChange({ sources: change });
+  const choices = connections
+    ? connections.other.map((option) => ({ id: option.id, policy: otherPolicy(view, option) }))
+    : [];
+  const enable = connectorPolicyChanges(choices, "everyone");
+  const disable = connectorPolicyChanges(choices, "off");
+  const toolsButtonOf = (option: { id: string; name: string }) => tools ? (
+    <AgentConnectionToolsButton orgId={tools.orgId} scope={tools.scope} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
+  ) : null;
+
+  const everyConnectionRows = () => {
+    const everything = connections?.other ?? [];
+    const all = everything.filter((option) => otherConnectionAdded(view, option));
+    const rest = everything.filter((option) => !otherConnectionAdded(view, option));
+    const filtering = all.length > FILTER_FROM;
+    const every = filtering ? filterConnections(all, filter) : all;
+    return (
+      <>
+        {filtering ? (
+          <div className="px-6 py-2">
+            <DenInput type="search" icon={Search} aria-label="Find a connector" placeholder="Find a connector" value={filter} data-testid="workbot-source-other-filter"
+              onChange={(event) => setFilter(event.target.value)} />
+          </div>
+        ) : null}
+        {everything.length === 0 ? <p className="px-6 py-3 text-[13px] text-gray-500" data-testid="workbot-source-other-empty">No connectors</p> : null}
+        {everything.length > 0 && all.length === 0 ? <p className="px-6 py-3 text-[13px] text-gray-500" data-testid="workbot-source-other-none-added">No connectors added</p> : null}
+        {all.length > 0 && every.length === 0 ? <p className="px-6 py-3 text-[13px] text-gray-500" data-testid="workbot-source-other-no-match">No connectors match</p> : null}
+        {every.map((option) => {
+          const policy = otherPolicy(view, option);
           return (
-            <div key={kind} className="divide-y divide-gray-100">
-              <SourceRow name={label} testId={`workbot-source-${kind}`} state={connections ? viaLabel(kind, reading) : AGENT_CORE_SOURCE_COPY[kind].via}
-                logo={first ? <ConnectorLogo name={first.name} url={first.url} size="xs" /> : <SourceIcon kind={kind} />}>
-                <PolicySelect label={label} value={sources[kind]} disabled={locked} onChange={(policy) => onChange({ sources: corePolicy(kind, policy) })} />
-              </SourceRow>
-              {behind.length > 1 && sources[kind] !== "off" ? behind.map((connection) => {
-                const on = reading.some((entry) => entry.id === connection.id);
-                return (
-                  <div key={connection.id} className="flex min-h-[44px] items-center justify-between gap-3 py-2 pl-14 pr-6" data-testid={`workbot-source-${kind}-${connection.id}`}>
-                    <span className="flex min-w-0 items-center gap-3">
-                      <ConnectorLogo name={connection.name} url={connection.url} size="xs" />
-                      <span className="truncate text-[13px] text-gray-900">{connection.name}</span>
-                    </span>
-                    {/* The last connection stays on: to stop reading this source, set it to Not allowed. */}
-                    <DenSwitch size="sm" aria-label={`${label} through ${connection.name}`} checked={on} disabled={locked || (on && reading.length === 1)}
-                      onChange={(next) => onChange({ sources: corePickChange(kind, behind, picked, connection.id, next) })} />
-                  </div>
-                );
-              }) : null}
+            <div key={option.id} data-testid={`workbot-source-other-${option.id}`} data-policy={policy}>
+              <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-3 px-6 py-2">
+                <span className="flex min-w-0 items-center gap-3">
+                  <ConnectorLogo name={option.name} url={option.url} size="xs" />
+                  <span className={`truncate text-[13px] ${policy === "off" ? "text-gray-500" : "text-gray-900"}`}>{option.name}</span>
+                  {policy !== "off" ? toolsButtonOf(option) : null}
+                </span>
+                <span className="flex min-w-0 flex-wrap items-center justify-end gap-3">
+                  <PolicySelect label={option.name} value={policy} disabled={locked} onChange={(next) => save({ connections: { [option.id]: next } })} />
+                  {view.settings.sources.connections[option.id] !== undefined ? (
+                    <DenButton variant="ghost" size="xs" disabled={locked} aria-label={`Remove ${option.name} from Connectors`}
+                      onClick={() => save({ connections: { [option.id]: null } })}>
+                      Remove
+                    </DenButton>
+                  ) : null}
+                </span>
+              </div>
             </div>
           );
         })}
-        {connections ? null : (
+        {rest.length > 0 ? (
+          <>
+            <AddConnector options={rest} disabled={locked} onPick={(option) => save({ connections: { [option.id]: "members" } })} />
+            <p className="px-6 pb-2 text-[12px] text-gray-500" data-testid="workbot-source-other-rest">{otherConnectionsRestLine(rest.length)}</p>
+          </>
+        ) : null}
+      </>
+    );
+  };
+
+  return (
+    <section aria-labelledby={heading ? headingId : undefined} aria-label={heading ? undefined : "Connectors"} className="grid gap-2" data-section="workbot-proactive-sources">
+      {heading ? (
+        <div className="flex items-center justify-between gap-3 px-1">
+          <h2 id={headingId} className="text-[13px] font-medium text-gray-500">Connectors</h2>
+        </div>
+      ) : null}
+      <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white" data-testid="workbot-proactive-sources">
+        {connections ? (
+          <div className="divide-y divide-gray-100" data-testid="workbot-source-others">
+            {choices.length > 0 ? (
+              <div className="flex flex-wrap justify-end gap-2 px-6 py-2">
+                <DenButton size="xs" variant="secondary" disabled={locked || !Object.keys(enable).length}
+                  onClick={() => save({ connections: enable })}>Enable allowed apps for everyone</DenButton>
+                <DenButton size="xs" variant="secondary" disabled={locked || !Object.keys(disable).length}
+                  onClick={() => save({ connections: disable })}>Turn all off</DenButton>
+              </div>
+            ) : null}
+            {everyConnectionRows()}
+          </div>
+        ) : (
           <p className="flex items-center gap-2 px-6 py-3 text-[12px] text-gray-500" data-testid="workbot-source-others-locked">
             <Lock size={14} strokeWidth={1.5} aria-hidden="true" className="shrink-0" />
-            {`Other connections: ${permissionLockReason("connections.view")}`}
+            {`Connectors: ${permissionLockReason("connections.view")}`}
           </p>
         )}
-        {connections ? <details className="group" data-testid="workbot-source-others">
-          <summary className="flex min-h-[48px] cursor-pointer list-none items-center gap-1.5 px-6 text-[13px] font-medium text-gray-900 [&::-webkit-details-marker]:hidden">
-            <ChevronRight className="h-4 w-4 text-gray-500 transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none" aria-hidden />
-            {`Other connections (${others.length})`}
-          </summary>
-          <div className="divide-y divide-gray-100 border-t border-gray-100">
-            {others.length === 0 ? <p className="px-6 py-3 text-[13px] text-gray-500">No other connections yet.</p> : null}
-            {others.map((connection) => (
-              <SourceRow key={connection.id} name={connection.name} testId={`workbot-source-${connection.id}`} state=""
-                logo={<ConnectorLogo name={connection.name} url={connection.url} size="xs" />}>
-                <PolicySelect label={connection.name} value={agentSourcePolicy(sources, connection.id)} disabled={locked}
-                  onChange={(policy) => onChange({ sources: { connections: { [connection.id]: policy } } })} />
-              </SourceRow>
-            ))}
-          </div>
-        </details> : null}
-        <p className="px-6 py-3 text-[12px] text-gray-500" data-testid="workbot-source-footer">Read only. Agents never send, edit or delete through these.</p>
+        <p className="border-t border-gray-100 px-6 py-3 text-[12px] text-gray-500" data-testid="workbot-source-footer">
+          {connections ? `${connectionCount(connections.other.length)}. ` : ""}Read only. Agents never send, edit or delete through these.
+        </p>
       </div>
     </section>
   );

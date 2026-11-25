@@ -34,12 +34,10 @@ export type FreeAutoLimitRecord = "recorded" | "exists" | "capped" | "skipped"
 export async function recordFreeAutoLimit(database: Database, input: {
   audience: "guest" | "member"; subjectHash: string; userId?: typeof Limit.$inferInsert.user_id;
   organizationId?: typeof Limit.$inferInsert.organization_id; windowStart: Date; now: Date;
-  /** Server-derived keyed network hash; never supplied by the client. Required for guest observations. */
   observationRateHash?: string;
 }): Promise<FreeAutoLimitRecord> {
   const id = freeAutoLimitId(input)
   if (input.audience === "guest" && !input.observationRateHash) return "skipped"
-  // A primary-key read before any write: repeated checks of an exhausted allowance cost one indexed read and no locks.
   const [known] = await database.select({ id: Limit.id }).from(Limit).where(eq(Limit.id, id)).limit(1)
   if (known) return "exists"
   const row = { id, audience: input.audience, subject_hash: input.subjectHash,
@@ -50,10 +48,8 @@ export async function recordFreeAutoLimit(database: Database, input: {
   }
   const day = Math.floor(input.now.getTime() / 86_400_000)
   const rateId = freeAutoObservationRateId(input.observationRateHash, input.now)
-  // This existing expiry-indexed table is independent of allowance accounting.
   await database.delete(Rate).where(lte(Rate.expires_at, input.now)).limit(100)
   return database.transaction(async (tx): Promise<FreeAutoLimitRecord> => {
-    // Insert before locking, avoiding a gap lock on an absent counter. The row lock bounds all Gateway instances together.
     await tx.insert(Rate).values({ id: rateId, used_amount: 0, expires_at: new Date((day + 1) * 86_400_000) })
       .onDuplicateKeyUpdate({ set: { id: sql`${Rate.id}` } })
     const [rate] = await tx.select({ used: Rate.used_amount }).from(Rate).where(eq(Rate.id, rateId)).limit(1).for("update")

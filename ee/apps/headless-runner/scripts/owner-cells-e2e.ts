@@ -1,4 +1,3 @@
-/** Boots the real Worker host with a streamed mock model; all database state is isolated in a temporary project. */
 import assert from "node:assert/strict"
 import { execFileSync, spawn, type ChildProcess } from "node:child_process"
 import { randomBytes } from "node:crypto"
@@ -22,7 +21,6 @@ const temporary = realpathSync(mkdtempSync(join(tmpdir(), "owner-cells-e2e-")))
 const token = `test_${crypto.randomUUID().replaceAll("-", "")}`
 const ownerA = "test-org/member-a"
 const ownerB = "test-org/member-b"
-/** A person whose chats live in session cells (hs_c_), and whose legacy chats are split out of their owner cell. */
 const ownerC = "test-org/member-c"
 let worker: ChildProcess | null = null
 let output = ""
@@ -30,7 +28,6 @@ let base = ""
 let slowCalls = 0
 let durableCalls = 0
 const hanging: ServerResponse[] = []
-/** A `[steps]` turn: this many tool steps, each model call taking STEP_MS, then its answer; calls per step index. */
 const STEP_COUNT = 5
 const STEP_MS = 800
 const stepCalls = new Map<number, number>()
@@ -52,7 +49,6 @@ const model = createServer(async (request, response) => {
     const prompt = typeof content === "string" ? content : ""
     const result = body.messages.slice(index + 1).find((message) => message.role === "tool")
     if (prompt.includes("[steps]")) {
-      // A slow step-mode turn: each call streams a little, waits, then asks for the next note (or answers).
       const step = body.messages.slice(index + 1).filter((message) => message.role === "tool").length
       stepCalls.set(step, (stepCalls.get(step) ?? 0) + 1)
       response.writeHead(200, { "content-type": "text/event-stream" })
@@ -72,7 +68,6 @@ const model = createServer(async (request, response) => {
       hanging.push(response)
       return
     }
-    // Session storage: `[big]` writes a large file and reads it back (a large body); `[seal]` answers at once, at length.
     if (prompt.includes("[big]") || prompt.includes("[seal]")) {
       const results = body.messages.slice(index + 1).filter((message) => message.role === "tool")
       if (prompt.includes("[big]") && results.length === 2) bigReadResults.push(String(results[1]?.content ?? ""))
@@ -83,12 +78,10 @@ const model = createServer(async (request, response) => {
       response.end(`data: ${JSON.stringify({ choices: [{ delta: call ? { tool_calls: [call] } : { content: `Sealed answer. ${"Lorem ipsum dolor sit amet. ".repeat(20)}` }, finish_reason: call ? "tool_calls" : "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5 } })}\n\ndata: [DONE]\n\n`)
       return
     }
-    // A turn that waits until it is stopped (Stop in a session cell).
     if (prompt.includes("[hang]") && !result) {
       hanging.push(response)
       return
     }
-    // `[owner-write]` / `[owner-read]`: a note of its own, to follow the owner's memory across session cells.
     const ownerNote = prompt.includes("[owner-write]") || prompt.includes("[owner-read]")
     const read = prompt.includes("[read]") || prompt.includes("[owner-read]")
     if (result && read) seenReadResults.push(String(result.content))
@@ -103,7 +96,6 @@ const model = createServer(async (request, response) => {
   }
 })
 
-// Den's resume-token exchange (self-resume): answers every grant with a fresh token and records who asked.
 const callbackToken = `test_callback_${crypto.randomUUID().replaceAll("-", "")}`
 const grantKey = `test_grant_key_${crypto.randomUUID().replaceAll("-", "")}`
 const grant = `hrg_${randomBytes(32).toString("base64url")}`
@@ -118,7 +110,6 @@ const den = createServer(async (request, response) => {
 })
 let denPort = 0
 
-// The files bucket (HEADLESS_FILES=s3), path-style, in memory: sealed segments and large bodies (storage/) live here.
 const BIG_FILE = Array.from({ length: 40 }, (_, line) => `row ${line}: figures for the region, quarter by quarter`).join("\n")
 const bigReadResults: string[] = []
 const bucket = new Map<string, { bytes: Buffer; at: number }>()
@@ -166,15 +157,11 @@ async function start(modelPort: number) {
     HEADLESS_MODEL_PROTOCOL: "openai",
     HEADLESS_MODEL_BASE_URL: `http://127.0.0.1:${modelPort}`,
     HEADLESS_MODEL: "test-model",
-    // Slack and Automations send no model key of their own; the runner's default key answers them.
     HEADLESS_MODEL_API_KEY: "test-default-key",
-    // Self-resume: turns sent with a resume grant keep going after a restart with nobody re-sending them.
     HEADLESS_DEN_API_URL: `http://127.0.0.1:${denPort}`,
     HEADLESS_DEN_CALLBACK_TOKEN: callbackToken,
     HEADLESS_GRANT_KEY: grantKey,
-    // Slows an owner split's copy so the check can kill the runtime in the middle of one.
     HEADLESS_TEST_SPLIT_PAUSE_MS: "250",
-    // Session storage: files in a bucket, sealing on with small thresholds so a 34-turn chat seals its oldest turns.
     HEADLESS_FILES: "s3",
     HEADLESS_S3_ENDPOINT: `http://127.0.0.1:${s3Port}`,
     HEADLESS_S3_BUCKET: "e2e-bucket",
@@ -187,13 +174,11 @@ async function start(modelPort: number) {
     HEADLESS_CONTEXT_CHAR_BUDGET: "10000",
   }
   writeFileSync(join(temporary, ".dev.vars"), Object.entries(vars).map(([key, value]) => `${key}=${value}`).join("\n"))
-  // celld requires main to be inside the project. Bundle into our isolated project instead of clobbering .dev.vars.
   execFileSync(join(project, "node_modules/.bin/esbuild"), [join(project, "src/worker/index.ts"), "--bundle", "--platform=neutral", "--conditions=workerd,browser", "--main-fields=browser,module,main", "--format=esm", "--external:node:*", "--external:cloudflare:*", ...builtinModules.filter((name) => !name.startsWith("node:")).map((name) => `--alias:${name}=node:${name}`), `--outfile=${join(temporary, "index.js")}`], { cwd: project, stdio: "pipe" })
   const config = readFileSync(join(project, "wrangler.jsonc"), "utf8").replace('"src/worker/index.ts"', '"index.js"')
   writeFileSync(join(temporary, "wrangler.jsonc"), config)
   const binary = runtime === "celld" ? process.env.CELLD_BIN ?? "celld" : join(project, "node_modules/.bin/wrangler")
   const args = runtime === "celld"
-    // --logs prints the internal (operator) listener, which the version-switch check calls.
     ? ["dev", ".", "--host", "127.0.0.1", "--port", String(port), "--no-watch", "--logs"]
     : ["dev", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", join(temporary, "state"), "--show-interactive-dev-session=false"]
   const child = spawn(binary, args, { cwd: temporary, detached: true, stdio: ["ignore", "pipe", "pipe"], env: {
@@ -228,7 +213,6 @@ function call(path: string, owner: string = ownerA, init: RequestInit = {}) {
     authorization: `Bearer ${token}`, "content-type": "application/json", ...(owner ? { "x-openwork-headless-owner": owner } : {}), ...init.headers,
   } })
 }
-/** celld's internal listener (POST /reload, GET /state), from the newest node's log. */
 function celldInternal() {
   const address = [...output.matchAll(/celld internal listening on (\S+)/g)].at(-1)?.[1]
   assert.ok(address, "celld printed its internal listener")
@@ -238,7 +222,6 @@ const celldStateSchema = z.object({ deployment: z.object({ generation: z.number(
 async function celldDeployment() {
   return celldStateSchema.parse(await (await fetch(`${celldInternal()}/state`, { signal: AbortSignal.timeout(5_000) })).json()).deployment
 }
-/** A session's SSE `data:` events, parsed, until `signal` aborts. */
 async function readSse(id: string, owner: string, signal: AbortSignal, into: unknown[]) {
   const response = await fetch(`${base}/v1/sessions/${id}/events`, { signal, headers: { authorization: `Bearer ${token}`, "x-openwork-headless-owner": owner } })
   assert.equal(response.status, 200)
@@ -259,7 +242,6 @@ async function readSse(id: string, owner: string, signal: AbortSignal, into: unk
         }
       }
     } catch {
-      // Aborted.
     }
   })()
 }
@@ -327,7 +309,6 @@ try {
   assert.equal(filesStatus.status, 200, await filesStatus.clone().text())
   console.log("PASS authenticated owner routing, body consistency, and cross-owner isolation")
 
-  // Slack and Automations: no owner header, one cell per conversation, same API as the Node runner.
   const slack = await create("", { title: "Slack thread" })
   assert.match(slack, /^hs_[0-9a-f]{32}$/)
   assert.equal((await call(`/v1/sessions/${slack}`, ownerA)).status, 404)
@@ -357,7 +338,6 @@ try {
   assert.ok(modelKeys.length > 0 && modelKeys.every((key) => key === "Bearer test-turn-key"))
   console.log("PASS streamed model turns, file tools, shared side-chat memory, owner listing, per-turn credentials, and idempotency")
 
-  // Den's own Slack adapter (the code Slack runs use), unchanged, against this runtime.
   const { createSlackRunner } = await import("../../den-api/src/slack-assistant/headless.ts")
   const slackDeps = { config: { url: base, token }, fetch, mintToken: async () => ({ token: "test-mcp-token" }), maxTokenTtlMs: 60 * 60_000 }
   const slackRunner = createSlackRunner({ userId: "test-user", organizationId: "test-org" }, slackDeps)
@@ -386,7 +366,6 @@ try {
   assert.ok(!unknown.ok && unknown.error === "unknown_session", JSON.stringify(unknown))
   console.log("PASS Den's Slack adapter (create, send, read to the answer, stop, unknown session) unchanged on this runtime")
 
-  // Live updates over a WebSocket (headless-protocol's openEventsSocket): the same events as the SSE stream.
   const live = await create(ownerA, { title: "Live" })
   const liveClient = createHeadlessRunnerClient({ config: { url: base, token, owner: ownerA }, fetch, mintToken: async () => ({ token: "unused" }), maxTokenTtlMs: 60_000 })
   const socketStop = new AbortController()
@@ -410,15 +389,11 @@ try {
   assert.deepEqual(socketEvents[0], { type: "ready" })
   assert.deepEqual(socketEvents.slice(1), sseEvents, "each socket message is one SSE event, in the same order")
   assert.ok(sseEvents.length >= 4, JSON.stringify(sseEvents))
-  // An open SSE stream is a request the cell is serving: it would hold up a version switch, so it ends here.
   sseStop.abort()
   console.log(`PASS live events over a WebSocket on ${runtime} match the SSE stream for the same turn`)
 
   if (runtime === "celld") {
-    // A runner deploy: celld switches resident cells to new code once they are idle. The open hibernatable socket
-    // neither holds that up (a forced switch waits 60 s) nor is closed by it, and events after the switch reach it.
     const before = await celldDeployment()
-    // The socket's cell just answered a turn, so it is resident, on the code before the switch.
     assert.ok(Object.keys(before.cells).length > 0 && Object.values(before.cells).every((generation) => generation === before.generation), JSON.stringify(before))
     const reload = z.object({ ok: z.literal(true), outcome: z.literal("adopted"), generation: z.number() }).loose().parse(await (await fetch(`${celldInternal()}/reload`, { method: "POST", signal: AbortSignal.timeout(60_000) })).json())
     assert.notEqual(reload.generation, before.generation)
@@ -442,7 +417,6 @@ try {
   await socketDone
 
   assert.equal((await send(main, "msg_slow", "[slow] [write] Resume after restart")).status, 202)
-  // Another person's turn, sent with a resume grant (as current Den sends them).
   const durable = await call(`/v1/sessions/${other}/turns`, ownerB, { method: "POST", body: JSON.stringify({
     messageId: "msg_durable", prompt: "[durable] [write] Keep going on your own", credentials: { modelApiKey: "test-turn-key", resumeGrant: grant },
   }) })
@@ -469,8 +443,6 @@ try {
   assert.equal((await call(`/v1/sessions/${main}/files/content?path=memory/note.md`)).status, 200)
   console.log("PASS runtime-kill recovery, resume, persisted memory, and deleting a side chat without deleting its owner's state")
 
-  // Nobody re-sends msg_durable, or even reads that cell: its alarm wakes it on the restarted runtime, recovery
-  // marks the turn interrupted, and the runner exchanges the grant with Den and resumes the turn itself.
   const resumedBy = Date.now() + 90_000
   while (!exchanges.some((entry) => entry.messageId === "msg_durable") && Date.now() < resumedBy) await sleep(250)
   assert.deepEqual(exchanges, [{ authorization: `Bearer ${callbackToken}`, grant, sessionId: other, messageId: "msg_durable" }])
@@ -486,9 +458,6 @@ try {
   assert.ok(!output.includes(grant) && !output.includes("test-fresh-token"), "no grant or token in the runtime's logs")
   console.log(`PASS a turn with a resume grant completes after a ${runtime} restart with no caller re-send (alarm → Den exchange → resume)`)
 
-  // Step mode (`execution: "steps"`): the turn runs one step at a time from its cell's alarm, so a runner deploy
-  // switches the cell between two steps instead of cancelling one, and the turn goes on to its answer on the new
-  // code (with the runner's model key: the caller's own is held in memory only).
   const stepped = await create("", { title: "Step mode" })
   const sentSteps = await call(`/v1/sessions/${stepped}/turns`, "", { method: "POST", body: JSON.stringify({
     messageId: "msg_steps", prompt: "[steps] Work through the list", execution: "steps", credentials: { modelApiKey: "test-turn-key" },
@@ -498,9 +467,6 @@ try {
   await until(() => stepCalls.has(1), 20_000, "the first step to commit")
   let switchNote: string
   if (runtime === "celld") {
-    // POST /reload on the internal listener rebuilds the deployment and adopts it as a new generation in place, the
-    // same switch a `celld deploy` makes: each resident cell moves at a safe point (no request, alarm or output
-    // pending), or is forced after CELLD_DEPLOY_MAX_AGE_S (60 s), cancelling its work.
     const reload = z.object({ ok: z.literal(true), outcome: z.literal("adopted"), generation: z.number() }).loose().parse(await (await fetch(`${celldInternal()}/reload`, { method: "POST", signal: AbortSignal.timeout(60_000) })).json())
     const switchStarted = Date.now()
     let after = await celldDeployment()
@@ -510,14 +476,11 @@ try {
     }
     const switchMs = Date.now() - switchStarted
     assert.ok(Object.values(after.cells).every((generation) => generation === reload.generation) && after.swapping === 0, `every resident cell switched: ${JSON.stringify(after)}`)
-    // Well inside the 60 s a forced switch waits: the cell was idle between two steps.
     assert.ok(switchMs < 30_000, `the switch took ${switchMs} ms`)
     const stepsAtSwitch = stepCalls.size
     assert.ok(stepsAtSwitch <= STEP_COUNT, `the cell switched before the turn's last step (${stepsAtSwitch} of ${STEP_COUNT + 1} model calls made)`)
     switchNote = `switched to generation ${reload.generation} in ${switchMs} ms after ${stepsAtSwitch} of ${STEP_COUNT + 1} model calls`
   } else {
-    // wrangler dev reloads on a changed bundle: workerd restarts with the new code and cancels what was running, as a
-    // Cloudflare deploy does. The step it cut off (if any) runs again from the alarm.
     const reloadsBefore = output.match(/Local server updated and ready/g)?.length ?? 0
     writeFileSync(join(temporary, "index.js"), `${readFileSync(join(temporary, "index.js"), "utf8")}\n// version switch ${Date.now()}\n`)
     await until(() => (output.match(/Local server updated and ready/g)?.length ?? 0) > reloadsBefore, 30_000, "wrangler to reload the changed bundle")
@@ -532,14 +495,12 @@ try {
     assert.equal(await (await call(`/v1/sessions/${stepped}/files/content?path=steps/${step}.md`, "")).text(), `step ${step}`)
   }
   if (runtime === "celld") {
-    // A forced switch cancels the step in flight, which then runs its model call again.
     assert.ok([...stepCalls.values()].every((calls) => calls === 1), `no step was cut off and run again: ${JSON.stringify([...stepCalls])}`)
   } else {
     assert.ok([...stepCalls.values()].reduce((sum, calls) => sum + calls, 0) <= STEP_COUNT + 2, `at most the step cut off ran again: ${JSON.stringify([...stepCalls])}`)
   }
   console.log(`PASS a step-mode turn keeps going through a ${runtime} version switch and completes (${switchNote}; model calls per step ${JSON.stringify(Object.fromEntries(stepCalls))})`)
 
-  // The way off this host: a conversation's export imports into a Node runner and re-exports byte for byte.
   const exported = await call(`/v1/sessions/${main}/export`)
   assert.equal(exported.status, 200, await exported.clone().text())
   const conversation = await exported.text()
@@ -556,8 +517,6 @@ try {
   nodeStore.close()
   console.log("PASS a conversation moves off this host into a Node runner with nothing lost; this host refuses imports")
 
-  // ---- Session storage: a long chat seals its oldest turns into segments in the bucket, a large tool output goes there
-  // too, and after a version switch the new code pages back through all of it (storage/, HEADLESS_SEGMENTS=on) ----
   const sealedChat = await create("", { title: "Long chat" })
   const sealedTurns = ["seal_big", ...Array.from({ length: 33 }, (_, turn) => `seal_${String(turn).padStart(2, "0")}`)]
   for (const messageId of sealedTurns) {
@@ -567,7 +526,6 @@ try {
   assert.deepEqual(bigReadResults, [BIG_FILE], "the model got the large output whole")
   assert.ok(bucketLog.some((entry) => entry.method === "PUT" && entry.key.startsWith(`sessions/${sealedChat}/bodies/`)), "the large output went to the bucket")
   await until(() => bucket.has(`sessions/${sealedChat}/segments/000001.jsonl.gz`), 60_000, "the cell's alarm to seal the oldest turns")
-  // Sealing goes on until only what must stay hot is left (the newest 30 turns and the model's context).
   let sealedSegments = 0
   for (let settled = 0; settled < 10; await sleep(500)) {
     const count = [...bucket.keys()].filter((key) => key.startsWith(`sessions/${sealedChat}/segments/`)).length
@@ -591,7 +549,6 @@ try {
     await until(() => (output.match(/Local server updated and ready/g)?.length ?? 0) > reloadsBefore, 30_000, "wrangler to reload the changed bundle")
     storageSwitch = "a wrangler reload"
   }
-  // Paging back from the newest turn, 7 at a time: every turn once, in order, the sealed ones from the bucket.
   const pageSchema = z.object({ turns: z.array(z.object({ messageId: z.string() }).loose()), hasEarlier: z.boolean().optional() }).loose()
   const pagedBack: string[] = []
   let cursor: string | undefined
@@ -610,8 +567,6 @@ try {
   assert.equal(exportedSealed.turns.length, sealedTurns.length, "the export has every turn, sealed ones included")
   console.log(`PASS a long chat sealed ${sealedSegments} segment(s) into the bucket on ${runtime}, and pages back through all ${sealedTurns.length} turns (and its large output) after ${storageSwitch}`)
 
-  // ---- Session cells: each new chat in its own cell under its owner (hs_c_), and the owner-cell split ----
-  // Legacy chats first, as Workbot made them before session cells: a main chat with memory and a side chat sharing it.
   const cMain = `hs_wb_e2e_${randomBytes(12).toString("hex")}`
   const putC = (id: string, body: Record<string, unknown>) => call(`/v1/sessions/${id}`, ownerC, { method: "PUT", body: JSON.stringify(body) })
   assert.equal((await putC(cMain, { title: "C main", ref: "main", tasks: true })).status, 201)
@@ -621,7 +576,6 @@ try {
   assert.equal((await send(cSide, "c_s1", "[read] Read the note", ownerC)).status, 202)
   assert.equal((await untilIdle(cSide, ownerC)).turns[0]?.status, "completed")
 
-  // A chat in its own cell: placed by its id, created and then reached only by its owner.
   const c1 = `hs_c_${randomBytes(16).toString("hex")}`
   const c2 = `hs_c_${randomBytes(16).toString("hex")}`
   assert.equal((await call(`/v1/sessions/${c1}`, ownerC, { method: "PUT", body: JSON.stringify({ owner: ownerB, memoryScope: "owner" }) })).status, 400, "a body can't name another owner")
@@ -635,7 +589,6 @@ try {
   assert.equal(z.object({ error: z.string() }).parse(await ownerless.json()).error, "owner_required")
   assert.equal((await call(`/v1/sessions/${c1}/turns`, "", { method: "POST", body: JSON.stringify({ messageId: "x", prompt: "hi" }) })).status, 400)
   assert.equal((await call("/v1/owner/split", "", { method: "POST", body: "{}" })).status, 400)
-  // Cell-to-cell routes are never reachable from outside, whatever the request carries.
   for (const path of ["/internal/memory", "/internal/owner-directory", "/internal/import/begin"]) {
     const probe = await fetch(`${base}${path}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "x-openwork-headless-owner": ownerC, "x-openwork-headless-cell": `owner:${ownerC}`, "x-openwork-headless-from": `session:${c1}` }, body: JSON.stringify({ op: "list" }) })
     assert.equal(probe.status, 404, `${path} is not public`)
@@ -643,7 +596,6 @@ try {
   assert.equal((await call(`/v1/sessions/${c1}/import`, ownerC, { method: "POST", body: "{}" })).status, 405)
   console.log("PASS hs_c_ chats: placed in their own cell, owner stored at creation, other owner 404, no owner 400, /internal/* not public")
 
-  // The owner's memory, shared through the owner cell: the legacy chats' memory became the owner's.
   const readsBefore = seenReadResults.length
   assert.equal((await send(c1, "c1_m1", "[read] Read the shared note", ownerC)).status, 202)
   assert.equal((await untilIdle(c1, ownerC)).turns[0]?.status, "completed")
@@ -658,7 +610,6 @@ try {
   assert.equal((await untilIdle(cSide, ownerC)).turns.find((turn) => turn.messageId === "c_s2")?.status, "completed")
   assert.equal(seenReadResults.slice(ownerReads).filter((result) => result.includes("owner-memory-witness")).length, 2, "another session cell and a legacy chat both see it")
   const listC = async () => z.object({ sessions: z.array(z.object({ id: z.string(), title: z.string() })) }).parse(await (await call(`/v1/sessions?owner=${encodeURIComponent(ownerC)}`, ownerC)).json()).sessions
-  // A session cell tells its owner cell after the turn ends (the directory outbox), so the list follows shortly.
   const listedAs = async (ids: string[]) => {
     let listed: string[] = []
     for (const deadline = Date.now() + 15_000; Date.now() < deadline; await sleep(200)) {
@@ -670,7 +621,6 @@ try {
   await listedAs([cMain, cSide, c1, c2])
   console.log("PASS memory shared across a person's session-cell and legacy chats through the owner cell; listing merges both")
 
-  // Step mode inside a session cell: each step runs from the session cell's own alarm.
   const stepCallsBefore = [...stepCalls.values()].reduce((sum, calls) => sum + calls, 0)
   const cSteps = await call(`/v1/sessions/${c1}/turns`, ownerC, { method: "POST", body: JSON.stringify({
     messageId: "c1_steps", prompt: "[steps] Work through the list", execution: "steps", credentials: { modelApiKey: "test-turn-key" },
@@ -683,7 +633,6 @@ try {
   assert.equal([...stepCalls.values()].reduce((sum, calls) => sum + calls, 0) - stepCallsBefore, STEP_COUNT + 1, "each step's model call made once")
   console.log("PASS a step-mode turn runs step by step from a session cell's alarm")
 
-  // Live events and Stop inside a session cell.
   const cClient = createHeadlessRunnerClient({ config: { url: base, token, owner: ownerC }, fetch, mintToken: async () => ({ token: "unused" }), maxTokenTtlMs: 60_000 })
   const cStop = new AbortController()
   const cSocket = await cClient.openEventsSocket(c2, cStop.signal)
@@ -708,14 +657,12 @@ try {
   await cDone
   console.log("PASS live events (SSE and WebSocket) and Stop inside a session cell")
 
-  // Delete: the session cell's data goes, and so does its line in the owner's list.
   assert.equal((await call(`/v1/sessions/${c2}`, ownerC, { method: "DELETE" })).status, 204)
   assert.equal((await call(`/v1/sessions/${c2}`, ownerC)).status, 404)
   assert.deepEqual((await listC()).map((session) => session.id).sort(), [cMain, cSide, c1].sort(), "removed from the list right away")
   assert.equal((await call(`/v1/sessions/${c2}`, ownerB, { method: "PUT", body: JSON.stringify({ title: "Reuse" }) })).status, 404, "a deleted chat's id stays its owner's")
   console.log("PASS deleting a session-cell chat removes its data and its directory row")
 
-  // A long legacy chat, sealed in the owner cell before the split: segments and a large output in the bucket.
   const cLong = await create(ownerC, { title: "C long", ref: "long" })
   const longTurns = ["long_big", ...Array.from({ length: 33 }, (_, turn) => `long_${String(turn).padStart(2, "0")}`)]
   const bigReadsBefore = bigReadResults.length
@@ -734,7 +681,6 @@ try {
   const longObjects = [...bucket.keys()].filter((key) => key.startsWith(`sessions/${cLong}/`)).sort()
   assert.ok(bucketLog.some((entry) => entry.method === "PUT" && entry.key.startsWith(`sessions/${cLong}/bodies/`)), "the long chat's large output went to the bucket")
 
-  // The owner split: legacy chats move to their own cells and keep their ids. Killed in the middle, it resumes.
   const exportsBefore = new Map<string, string>()
   for (const id of [cMain, cSide, cLong]) exportsBefore.set(id, await (await call(`/v1/sessions/${id}/export`, ownerC)).text())
   const splitOf = async () => {
@@ -746,7 +692,6 @@ try {
   }
   assert.equal(await splitOf(), "started")
   assert.equal(await splitOf(), "running")
-  // Into the first chat's copy (each import call waits HEADLESS_TEST_SPLIT_PAUSE_MS), then the runtime dies.
   await sleep(700)
   assert.equal(await splitOf(), "running", "killed mid-split")
   const movedBeforeKill = [cMain, cSide, cLong].filter((id) => output.includes(`chat moved to its own cell {"sessionId":"${id}"}`)).length
@@ -754,7 +699,6 @@ try {
   await stop()
   for (const response of hanging.splice(0)) response.destroy()
   await start(address.port)
-  // Nobody asks again: the owner cell's alarm resumes the split after the restart.
   let split = "running"
   for (const deadline = Date.now() + 90_000; Date.now() < deadline; await sleep(500)) {
     split = await splitOf()
@@ -767,8 +711,6 @@ try {
     assert.equal((await call(`/v1/sessions/${id}`, "")).status, 404, "a moved chat's own cell answers only its owner")
   }
   assert.deepEqual((await listC()).map((session) => session.id).sort(), [cMain, cSide, c1, cLong].sort(), "listed once each")
-  // The sealed chat, through its legacy id and the forward: every turn pages back (sealed ones from the bucket, read
-  // by its new cell under the same keys), and its large output reads back whole.
   const longPage = z.object({ turns: z.array(z.object({ messageId: z.string() }).loose()), hasEarlier: z.boolean().optional() }).loose()
   const longPaged: string[] = []
   let longCursor: string | undefined
@@ -786,9 +728,7 @@ try {
   assert.ok(longObjects.every((key) => bucket.has(key)), "the moved chat's objects kept their keys; nothing was deleted")
   assert.equal((await send(cLong, "long_after", "[seal] After the move", ownerC)).status, 202)
   assert.equal((await untilIdle(cLong, ownerC)).turns.at(-1)?.status, "completed")
-  // The legacy ids keep working through the owner cell's forward: a turn, its memory, and live events on a WebSocket.
   const movedStop = new AbortController()
-  // The runtime restarted on a new port: a new client.
   const movedClient = createHeadlessRunnerClient({ config: { url: base, token, owner: ownerC }, fetch, mintToken: async () => ({ token: "unused" }), maxTokenTtlMs: 60_000 })
   const movedSocket = await movedClient.openEventsSocket(cSide, movedStop.signal)
   assert.ok(movedSocket, "a WebSocket upgrade for a moved chat is forwarded to its cell")
@@ -806,7 +746,6 @@ try {
   await until(() => movedEvents.some(completedEvent("c_s3")), 10_000, "the forwarded socket to see the turn")
   let forwardedSwitch = ""
   if (runtime === "celld") {
-    // A runner deploy while the forwarded socket is open: its cells switch to new code; the socket goes on.
     const reload = z.object({ ok: z.literal(true), outcome: z.literal("adopted"), generation: z.number() }).loose().parse(await (await fetch(`${celldInternal()}/reload`, { method: "POST", signal: AbortSignal.timeout(60_000) })).json())
     const switchStarted = Date.now()
     let after = await celldDeployment()
@@ -826,11 +765,9 @@ try {
   await movedDone
   assert.equal((await send(cMain, "c_m2", "[write] After the move", ownerC)).status, 202)
   assert.equal((await untilIdle(cMain, ownerC)).turns.find((turn) => turn.messageId === "c_m2")?.status, "completed")
-  // Workbot keeps refreshing its chats with the same settings (memoryOf the main chat, which has moved).
   assert.equal((await putC(cMain, { title: "C main", ref: "main", tasks: true })).status, 200)
   assert.equal((await putC(cSide, { ref: "side", memoryOf: cMain })).status, 200)
   assert.ok(!output.includes(grant), "no grant in the runtime's logs")
-  // Off this host with nothing lost: a moved chat on its owner's memory carries that memory into a Node runner.
   const movedExport = await call(`/v1/sessions/${cSide}/export`, ownerC)
   assert.equal(movedExport.status, 200, await movedExport.clone().text())
   const movedConversation = await movedExport.text()
@@ -847,7 +784,6 @@ try {
 } catch (error) {
   console.error(error)
   console.error(output.slice(-8_000))
-  // The whole runtime log, for a failure the tail doesn't explain.
   if (process.env.OWNER_CELLS_E2E_LOG) writeFileSync(process.env.OWNER_CELLS_E2E_LOG, output)
   process.exitCode = 1
 } finally {

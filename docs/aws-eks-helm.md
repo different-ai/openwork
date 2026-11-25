@@ -496,7 +496,8 @@ Configure the IdP application with these callback URLs:
 https://openwork.example.com/api/auth/sso/callback/openwork-sso-<org-id>
 ```
 
-In OpenWork, sign in as the owner, open the organization SSO settings, and enter
+In OpenWork, sign in as the owner, open **Settings → Auth & Security → Single sign-on (SSO)**
+(older versions: **Settings → SSO**), and enter
 the IdP issuer/client details. After saving, the organization sign-in path is:
 
 ```text

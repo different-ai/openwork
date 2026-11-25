@@ -7,10 +7,6 @@ import { DownloadLink } from "./download-link";
 import { DemoMenu, focusRing } from "./lp-demo-ui";
 import { GoogleDriveMark, LinearMark, SkillMark, SlackMark } from "./lp-service-marks";
 
-/* ------------------------------------------------------------------ */
-/* Data                                                                */
-/* ------------------------------------------------------------------ */
-
 export type SessionId = string;
 
 type Step = { mark: ReactNode; text: string; duration?: string };
@@ -29,7 +25,6 @@ export type DemoSession = {
   reply: string;
   artifact?: Artifact;
   approval?: Approval;
-  /** Sessions started in the preview get the preview reply instead of a scripted run. */
   custom?: boolean;
 };
 
@@ -147,10 +142,6 @@ export const SUGGESTIONS: { label: string; sessionId: SessionId }[] = [
   { label: "Prep a board slide", sessionId: "q3" }
 ];
 
-/* ------------------------------------------------------------------ */
-/* Composer                                                            */
-/* ------------------------------------------------------------------ */
-
 const MODELS = ["Claude Sonnet 5", "GPT-5", "Gemini 3 Pro", "DeepSeek V4 Pro"];
 const RUN_MODES = ["Ask before actions", "Workspace defaults", "Keep going"];
 const PLUS_ITEMS = [
@@ -245,10 +236,6 @@ export function Composer({ onSend, onStop, busy, placeholder = "Describe your ta
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/* Chat pane                                                           */
-/* ------------------------------------------------------------------ */
 
 export type ExtraMessage = { role: "user" | "assistant"; text: string };
 export type ApprovalState = "pending" | "done" | "denied";
@@ -414,10 +401,6 @@ function ArtifactIcon({ kind, small = false }: { kind: Artifact["icon"]; small?:
   if (small) return <span aria-hidden="true">{icon}</span>;
   return <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--lp-tonal)]" aria-hidden="true">{icon}</span>;
 }
-
-/* ------------------------------------------------------------------ */
-/* New session                                                         */
-/* ------------------------------------------------------------------ */
 
 type NewSessionPaneProps = {
   onPick: (sessionId: SessionId) => void;

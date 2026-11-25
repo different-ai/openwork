@@ -21,7 +21,6 @@ import { GatewayLimitRow } from "./gateway-usage-limits-section";
 import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { getProviderIconSlug } from "./llm-provider-data";
 
-/** What the Models tab can show this viewer. Every part keeps its own AI Gateway or Models permission. */
 export function teamModelsAccess(orgContext: DenOrgContext | null) {
   if (!orgContext) return null;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
@@ -37,17 +36,11 @@ export function teamModelsAccess(orgContext: DenOrgContext | null) {
   };
 }
 
-/** a Models tab when the viewer can see any of the AI Gateway or the default model. */
 export function modelsTabVisible(orgContext: DenOrgContext | null): boolean {
   const access = teamModelsAccess(orgContext);
   return Boolean(orgContext && access && (access.gateway || access.defaultModel));
 }
 
-/**
- * A team's Models tab, or Everyone's (team null): the model new desktop chats
- * start on, the AI providers they can use, and the spend limits that apply.
- * Everything is read and changed through the AI Gateway's own data and screens.
- */
 export function ModelsPanel({ team }: { team: { id: string; name: string } | null }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   const access = teamModelsAccess(orgContext);
@@ -57,9 +50,11 @@ export function ModelsPanel({ team }: { team: { id: string; name: string } | nul
   return (
     <div className="flex flex-col gap-8" data-testid="team-models">
       {access.defaultModel ? (
-        team ? (
-          <ItemSection title="Default model"><TeamDefaultModelSection teamId={team.id} canManage={access.manageDefaultModel} embedded /></ItemSection>
-        ) : <OrgDefaultModelSection canManage={access.manageDefaultModel} embedded />
+        <ItemSection title="Default model">
+          {team
+            ? <TeamDefaultModelSection team={team} canManage={access.manageDefaultModel} embedded />
+            : <OrgDefaultModelSection canManage={access.manageDefaultModel} embedded />}
+        </ItemSection>
       ) : null}
       {access.gateway ? (
         <>
@@ -107,7 +102,7 @@ function ProvidersSection({ orgId, orgSlug, subject, name, orgContext }: {
         : providers.isError ? (
           <DenNotice tone="error" message={providers.error.message} action={<DenButton variant="secondary" size="sm" onClick={() => void providers.refetch()}>Try again</DenButton>} />
         ) : granted.length === 0 && withheld.length === 0 ? (
-          <ItemPanel><div className="px-5 py-6 text-[13px] text-gray-500">No AI providers yet. Add one in AI Providers.</div></ItemPanel>
+          <ItemPanel><div className="py-3 text-[13px] text-[var(--dls-text-secondary)]">No AI providers yet. Add one in AI Providers.</div></ItemPanel>
         ) : (
           <ItemPanel>
             {granted.map(({ provider, sources }) => (
@@ -163,7 +158,7 @@ function LimitsSection({ orgId, orgSlug, team, subject, name, orgContext, canMan
           <DenNotice tone="error" message={policies.error.message} action={<DenButton variant="secondary" size="sm" onClick={() => void policies.refetch()}>Try again</DenButton>} />
         ) : own.length === 0 ? (
           <ItemPanel>
-            <div className="px-5 py-4 text-[13px] text-gray-500" data-testid="team-models-no-limit">
+            <div className="py-3 text-[13px] text-[var(--dls-text-secondary)]" data-testid="team-models-no-limit">
               {effective && effective.windows.length > 0
                 ? `No limit of its own. ${limitSourceLabel(effective, subject, orgContext.teams)}: ${limitSummary(effective, true)}.`
                 : `Nothing pauses ${name}'s models.`}

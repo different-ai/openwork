@@ -1,9 +1,3 @@
-/**
- * One-step "Run task" from the empty-state hero: the route seeds the created
- * session's continuation draft and marks the submitted draft here; the
- * session surface consumes the mark and fires its normal send path once the
- * composer is ready.
- */
 import { snapshotComposerSessionState, type ComposerSessionState } from "./composer-state-store";
 
 export type ComposerAutoSendPayload = {

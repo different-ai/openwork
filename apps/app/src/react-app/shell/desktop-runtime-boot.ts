@@ -26,9 +26,6 @@ import { useEnterpriseActivationRequired } from "../domains/cloud/enterprise-act
 import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
 
-// Module-scoped latch so React Strict-Mode's "mount-unmount-remount" cycle in
-// dev only triggers the boot sequence once per app launch, and the async work
-// keeps running across the transient unmount.
 let BOOT_STARTED = false;
 
 type BootOpenworkServerInfo = {
@@ -52,25 +49,12 @@ function isOpenworkServerReady(info?: BootOpenworkServerInfo) {
   );
 }
 
-/**
- * On desktop (Tauri) startup:
- *   1) bootstrap the workspace list
- *   2) if a local workspace is selected, restart the embedded OpenWork server
- *   3) start the OpenCode engine pointed at the workspace
- *   4) activate the workspace on the running OpenWork server
- *   5) notify React routes that fresh desktop runtime info is available. Electron
- *      routes read live runtime info directly instead of persisting ephemeral
- *      localhost ports/tokens into OpenWork settings.
- *
- * Safe to call multiple times — gated by a `didBoot` ref so it runs once per mount.
- */
 export function useDesktopRuntimeBoot() {
   const { setPhase, setError, markReady } = useBootState();
   const { setActive } = useServer();
 
   useEffect(() => {
     if (!isDesktopRuntime()) {
-      // Web/headless: nothing to spawn, we're instantly "ready".
       markReady();
       return;
     }
@@ -81,11 +65,6 @@ export function useDesktopRuntimeBoot() {
       try {
         const evalFatalFailure = window.__OPENWORK_ELECTRON__?.meta?.evalFatalBootstrapFailure;
         if (evalFatalFailure) throw new Error(evalFatalFailure);
-        // On Electron specifically: if the previous Tauri install dropped
-        // a migration snapshot, fold it into localStorage before any of
-        // the boot code reads workspace preferences. Idempotent across
-        // launches (the helper only writes keys that are still empty
-        // and acks the file after ingestion).
         if (isElectronRuntime()) {
           const hydrated = await ingestMigrationSnapshotOnElectronBoot();
           if (hydrated > 0) {
@@ -109,15 +88,10 @@ export function useDesktopRuntimeBoot() {
           try {
             window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
           } catch {
-            /* ignore */
           }
         };
 
         const startServerWithoutDesktopWorkspace = async () => {
-          // A renderer reload lands here whenever the selected workspace only
-          // exists in the server registry (workspaces created from the app are
-          // server-owned). The server is already serving it: restarting would
-          // kill the engine and every in-flight run for nothing.
           const running = await openworkServerInfo().catch(() => null);
           if (isOpenworkServerInfoLike(running) && isOpenworkServerReady(running)) {
             publishOpenworkServerInfo(running);
@@ -193,11 +167,6 @@ export function useDesktopRuntimeBoot() {
           return;
         }
 
-        // FAST PATH ─────────────────────────────────────────────────────
-        // Cheap status probe: if engine is already running just publish the
-        // current openwork-server base URL + token and finish in <1s.
-        // This mirrors Solid's bootstrap at context/workspace.ts:3883-3907
-        // ("localAttachExisting"), which never restarts a running stack.
         try {
           const engine = await engineInfo() as EngineInfo | null;
           if (engine?.running && engine.baseUrl) {
@@ -218,19 +187,14 @@ export function useDesktopRuntimeBoot() {
                   new CustomEvent("openwork-server-settings-changed"),
                 );
               } catch {
-                /* ignore */
               }
             }
             markReady();
             return;
           }
         } catch {
-          // engineInfo is best-effort; fall through to the slow path.
         }
 
-        // SLOW PATH ─────────────────────────────────────────────────────
-        // No running engine. Tauri now mirrors Electron: engine_start boots
-        // openwork-server and lets that server manage OpenCode.
         const localPaths = list.workspaces.flatMap((entry: WorkspaceInfo) => {
           const path = entry.path?.trim() ?? "";
           return path ? [path] : [];
@@ -303,7 +267,6 @@ export function useDesktopRuntimeBoot() {
               try {
                 window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
               } catch {
-                /* ignore */
               }
             }
           } catch (error) {
@@ -325,12 +288,6 @@ function ActivatedDesktopRuntimeBoot(): null {
   return null;
 }
 
-/**
- * Component wrapper that must be rendered inside <BootStateProvider>. It runs
- * the boot hook exactly once per app mount so callers don't have to think
- * about React Strict-Mode double-invocation. Enterprise builds stay unbooted
- * until Den activation completes.
- */
 export function DesktopRuntimeBoot() {
   if (useEnterpriseActivationRequired()) return null;
   return createElement(ActivatedDesktopRuntimeBoot);

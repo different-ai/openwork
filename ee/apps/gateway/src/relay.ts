@@ -1,5 +1,3 @@
-// Shared helpers for relaying upstream responses (OpenRouter route + org
-// provider gateway).
 import { createHash } from "node:crypto"
 
 export type StreamHooks = {
@@ -21,6 +19,62 @@ export function upstreamLifetime(signal: AbortSignal, timeoutMs = 30 * 60_000) {
     get timedOut() { return timedOut },
     abort,
     dispose() { clearTimeout(timer); signal.removeEventListener("abort", abort) },
+  }
+}
+
+export type UpstreamFetchFailure = {
+  outcome: "client_aborted" | "upstream_unreachable"
+  status: 502 | 504
+  code: "request_cancelled" | "upstream_timeout" | "upstream_unreachable"
+  message: string
+  cause: string | undefined
+}
+
+const NETWORK_CAUSES: Record<string, string> = {
+  ENOTFOUND: "its address could not be found",
+  EAI_AGAIN: "its address could not be looked up",
+  ECONNREFUSED: "it refused the connection",
+  ECONNRESET: "the connection was dropped",
+  EPIPE: "the connection was dropped",
+  UND_ERR_SOCKET: "the connection was dropped",
+  UND_ERR_CLOSED: "the connection was dropped",
+  ETIMEDOUT: "the connection timed out",
+  UND_ERR_CONNECT_TIMEOUT: "the connection timed out",
+  UND_ERR_HEADERS_TIMEOUT: "it took too long to answer",
+  EHOSTUNREACH: "the network path to it is down",
+  ENETUNREACH: "the network path to it is down",
+  CERT_HAS_EXPIRED: "its security certificate has expired",
+  DEPTH_ZERO_SELF_SIGNED_CERT: "its security certificate could not be verified",
+  SELF_SIGNED_CERT_IN_CHAIN: "its security certificate could not be verified",
+  UNABLE_TO_VERIFY_LEAF_SIGNATURE: "its security certificate could not be verified",
+  ERR_TLS_CERT_ALTNAME_INVALID: "its security certificate does not match its address",
+}
+
+function networkErrorCode(error: unknown): string | undefined {
+  for (let current = error, depth = 0; current && depth < 4; depth++) {
+    if (typeof current !== "object") break
+    const code = "code" in current ? current.code : undefined
+    if (typeof code === "string" && /^[\w.-]{1,64}$/.test(code)) return code
+    current = "cause" in current ? current.cause : undefined
+  }
+  return undefined
+}
+
+export function describeUpstreamFetchFailure(error: unknown, input: { clientAborted: boolean; timedOut: boolean; target: string }): UpstreamFetchFailure {
+  const cause = networkErrorCode(error) ?? (error instanceof Error && error.name !== "Error" ? error.name : undefined)
+  if (input.clientAborted && !input.timedOut) {
+    return { outcome: "client_aborted", status: 502, code: "request_cancelled", message: "Request cancelled.", cause }
+  }
+  if (input.timedOut) {
+    return { outcome: "upstream_unreachable", status: 504, code: "upstream_timeout", message: `${input.target} took too long to respond. Your work is preserved; try again.`, cause }
+  }
+  const reason = cause === "InferenceEgressError" ? "its address is not allowed" : cause ? NETWORK_CAUSES[cause] : undefined
+  return {
+    outcome: "upstream_unreachable",
+    status: 502,
+    code: "upstream_unreachable",
+    message: `Couldn't reach ${input.target}${reason ? `: ${reason}` : ""}. Your work is preserved; try again in a moment.`,
+    cause,
   }
 }
 
@@ -81,7 +135,7 @@ export function isEventStreamContentType(contentType: string | null) {
 export function trackStream(body: ReadableStream<Uint8Array>, hooks: StreamHooks, lifetime?: ReturnType<typeof upstreamLifetime>) {
   const reader = body.getReader()
   let ended = false
-  const observe = (run: () => void) => { try { run() } catch { /* Accounting must never interrupt bytes. */ } }
+  const observe = (run: () => void) => { try { run() } catch {} }
   const finish = (failed: boolean) => {
     if (ended) return
     ended = true
@@ -92,7 +146,8 @@ export function trackStream(body: ReadableStream<Uint8Array>, hooks: StreamHooks
   let streamController: ReadableStreamDefaultController<Uint8Array>
   const abort = () => {
     finish(true)
-    streamController.error(new Error("Inference upstream cancelled"))
+    if (lifetime?.timedOut) streamController.error(new Error("Inference upstream timed out"))
+    else streamController.close()
     void reader.cancel().catch(() => {})
   }
   return new ReadableStream<Uint8Array>({
@@ -120,7 +175,6 @@ export function trackStream(body: ReadableStream<Uint8Array>, hooks: StreamHooks
       }
     },
     async cancel(reason) {
-      // Mark cancellation before observers classify the completed request.
       lifetime?.signal.removeEventListener("abort", abort)
       lifetime?.abort()
       finish(true)

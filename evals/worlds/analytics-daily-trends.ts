@@ -20,25 +20,13 @@ const ACTIVITY: { daysAgo: number; member: "admin" | "peer"; sessions: number; t
   { daysAgo: 22, member: "admin", sessions: 1, tasks: 1, failed: 0 },
 ];
 
-/** A private Den whose organization has usage on known days, with daily trends off. */
+/** A private Den whose organization has usage on known days, with daily trends available by default. */
 export async function analyticsDailyTrends(seed: Seed) {
   const den = await seed.den({
     org: { name: "Usage studio", admin: { name: "Analytics Owner" }, members: { peer: { name: "Analytics Teammate" } } },
   });
   const organizationId = await seededOrganizationId(seed, den.admin);
   if (!organizationId) throw new Error("The analytics fixture has no organization.");
-  const featurePath = `/v1/admin/organizations/${organizationId}/capabilities`;
-
-  async function setDaily(enabled: boolean) {
-    // Same authenticated platform-admin operation as /admin; a rollout action, not fixture mutation.
-    const result = await denFetch(den.admin, featurePath, {
-      method: "PUT", headers: { authorization: `Bearer ${den.admin.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ capabilities: { analyticsDailyTrends: enabled } }),
-    });
-    if (!result.response.ok) throw new Error(`Changing daily trends failed: ${result.text}`);
-  }
-  await setDaily(false);
-
   // Midday UTC on each day keeps every event inside its own UTC calendar day.
   const todayNoon = new Date();
   todayNoon.setUTCHours(12, 0, 0, 0);
@@ -65,7 +53,7 @@ export async function analyticsDailyTrends(seed: Seed) {
   });
 
   return {
-    den, web, setDaily,
+    den, web,
     /** Sessions the fixture sent for today (UTC). */
     expectedTodaySessions: ACTIVITY.filter((row) => row.daysAgo === 0).reduce((sum, row) => sum + row.sessions, 0),
     async analytics() {

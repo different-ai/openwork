@@ -37,12 +37,6 @@ function rejectedOwnerParts(key: string) {
 export type SessionDraftSnapshot = {
   text: string;
   mode: PromptMode;
-  /**
-   * Text of the follow-ups queued behind a running task ("Send when agent
-   * finishes"), in send order. Present only while at least one is waiting.
-   * Kept beside the composer text so a restart can hand them back as an
-   * unsent draft instead of dropping them or sending them unattended.
-   */
   queued?: string[];
 };
 
@@ -92,11 +86,6 @@ export const SESSION_DRAFT_STORAGE_KEY = "openwork.session-drafts.v2";
 export const LEGACY_SESSION_DRAFT_STORAGE_KEY = "openwork.session-drafts.v1";
 export const LOCAL_SESSION_DRAFT_SCOPE = "local";
 export const MAX_SESSION_DRAFT_COUNT = 100;
-/**
- * Reserved session slot for the prompt typed in a workspace's new-task
- * composer before its session exists. Engine session ids are `ses_…`, so this
- * can never collide with a real conversation.
- */
 export const NEW_TASK_DRAFT_SESSION_ID = "__new-task__";
 
 const EMPTY_DOCUMENT: DraftDocument = {
@@ -210,12 +199,6 @@ function documentFingerprint(document: DraftDocument) {
   return JSON.stringify(document);
 }
 
-/**
- * A context-local draft store. Each browser window owns one instance while
- * sharing localStorage with its peers. Mutations always merge against a fresh
- * read and use the last observed per-draft revision as a compare-and-swap
- * guard, so an old tab cannot replace a newer draft or resurrect a clear.
- */
 export function createSessionDraftStore(options: DraftStoreOptions) {
   let cache: DraftDocument | null = null;
   let cacheFingerprint = "";
@@ -240,13 +223,9 @@ export function createSessionDraftStore(options: DraftStoreOptions) {
     legacyHandled = true;
     try {
       if (options.storage.getItem(LEGACY_SESSION_DRAFT_STORAGE_KEY) !== null) {
-        // v1 has no identity or organization boundary. It cannot be safely
-        // attributed even to the unsigned local scope, so migration is
-        // deliberately fail-closed rather than exposing ambiguous text.
         options.storage.removeItem(LEGACY_SESSION_DRAFT_STORAGE_KEY);
       }
     } catch {
-      // Storage may be unavailable in privacy modes; drafts remain in-memory.
     }
   };
 
@@ -297,10 +276,6 @@ export function createSessionDraftStore(options: DraftStoreOptions) {
     return snapshot;
   };
 
-  /**
-   * Replace one stored entry under the same compare-and-swap guard as `save`.
-   * `next` returning null deletes the entry.
-   */
   const replaceEntry = (
     key: string,
     next: (latest: StoredDraft | undefined, revision: number) => StoredDraft | null,
@@ -345,10 +320,6 @@ export function createSessionDraftStore(options: DraftStoreOptions) {
     return key ? currentSnapshot(key) : null;
   };
 
-  /**
-   * Forget the composer text. Follow-ups still waiting to be sent are not
-   * composer text and stay stored until their own queue mutation removes them.
-   */
   const clear = (
     scopeId: string | null | undefined,
     workspaceId: string,
@@ -376,8 +347,6 @@ export function createSessionDraftStore(options: DraftStoreOptions) {
     });
   };
 
-  /** Mirror the follow-ups waiting behind a running task under an already
-   * composed draft key, leaving the composer text untouched. */
   const saveQueued = (key: string, queued: readonly string[]): SessionDraftWriteResult => {
     if (!key) return { status: "unavailable", snapshot: null };
     return replaceEntry(key, (latest, revision) => {
@@ -504,7 +473,6 @@ export const clearSessionDraft = (
 ) => getBrowserStore()?.clear(scopeId, workspaceId, sessionId)
   ?? { status: "unavailable", snapshot: null };
 
-/** `scopeKey` is a composed `sessionDraftScopeKey`, the form the composer store records per session. */
 export const saveSessionQueuedDrafts = (scopeKey: string, queued: readonly string[]) =>
   getBrowserStore()?.saveQueued(scopeKey, queued) ?? { status: "unavailable", snapshot: null };
 
@@ -560,12 +528,6 @@ export function useSessionDraftState(
   );
 }
 
-/**
- * The persisted prompt of a workspace's not-yet-created session. Navigating
- * to another conversation unmounts the new-task composer, so its text has to
- * outlive the component to be recoverable; the sidebar reads the same slot to
- * offer a way back.
- */
 export function useNewTaskDraftState(scopeId: string | null | undefined, workspaceId: string | null | undefined, draftSessionId = NEW_TASK_DRAFT_SESSION_ID) {
   return useSessionDraftState(scopeId, workspaceId ?? "", draftSessionId);
 }

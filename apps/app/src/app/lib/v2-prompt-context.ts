@@ -1,14 +1,3 @@
-/**
- * An OpenCode v2 prompt is one string, while a user turn is several parts: the
- * person's words, pasted text, and hidden context OpenWork adds for the model
- * (attachment paths, pill instructions). This module owns that encoding in
- * both directions so the sent message renders the way v1 renders its parts.
- *
- * - Pasted text is wrapped in `<pasted-text>` where it was pasted.
- * - An attached file is named in `<attachment>` where it was attached.
- * - Hidden context follows the words in one `<openwork-context>` block.
- */
-
 export type PromptAttachment = {
   filename: string;
   mime: string;
@@ -23,14 +12,14 @@ const PASTED_CLOSE = "</pasted-text>";
 
 const NOTE_HEADER = "Attached files were copied into this worker workspace for tool access:";
 const NOTE_FOOTER = "Use these paths with Read/Bash/MCP/Docling when a tool needs the file bytes.";
-const NOTE_RE = /Attached files were copied into this worker workspace for tool access:\n((?:- [^\n]*\n)*)Use these paths with Read\/Bash\/MCP\/Docling when a tool needs the file bytes\./;
+const NOTE_MEDIA_HINT = "You cannot view video, audio or other binary files directly; inspect or edit them through Bash with command-line tools such as ffmpeg.";
+const NOTE_RE = /Attached files were copied into this worker workspace for tool access:\n((?:- [^\n]*\n)*)Use these paths with Read\/Bash\/MCP\/Docling when a tool needs the file bytes\.(?:\nYou cannot view video, audio or other binary files directly; inspect or edit them through Bash with command-line tools such as ffmpeg\.)?/;
 const NOTE_LINE_RE = /^- ([^:\n]+?)(?: \((\d+(?:\.\d+)? (?:B|KB|MB|GB))\))?: .+ \((file:\/\/[^\n]*)\)$/;
 const CONTEXT_RE = /(?:^|\n\n)<openwork-context>\n([\s\S]*)\n<\/openwork-context>$/;
 const INLINE_RE = /<pasted-text>\n([\s\S]*?)\n<\/pasted-text>|<attachment>([^<>\n]+)<\/attachment>/g;
 
 const BYTE_UNITS = ["B", "KB", "MB", "GB"] as const;
 
-/** "18.4 MB": one decimal, trailing ".0" dropped. */
 export function formatAttachmentBytes(bytes: number): string {
   let value = Math.max(0, bytes);
   let unit = 0;
@@ -48,16 +37,18 @@ function parseAttachmentBytes(value: string | undefined): number | undefined {
   return Math.round(Number(match[1]) * 1024 ** unit);
 }
 
-/** The model-facing list of copied attachment paths. */
-export function attachmentNoteText(items: ReadonlyArray<{ filename: string; workspacePath: string; url: string; bytes?: number }>): string {
+export function attachmentNoteText(
+  items: ReadonlyArray<{ filename: string; workspacePath: string; url: string; bytes?: number }>,
+  options: { hasBinaryFiles?: boolean } = {},
+): string {
   return [
     NOTE_HEADER,
     ...items.map((item) => `- ${item.filename}${item.bytes === undefined ? "" : ` (${formatAttachmentBytes(item.bytes)})`}: ${item.workspacePath} (${item.url})`),
     NOTE_FOOTER,
+    ...(options.hasBinaryFiles ? [NOTE_MEDIA_HINT] : []),
   ].join("\n");
 }
 
-/** Attachments listed in a note. The note carries no mime; callers infer it from the name. */
 function parseAttachmentNote(note: string): PromptAttachment[] {
   return note.split("\n").flatMap((line) => {
     const match = line.match(NOTE_LINE_RE);
@@ -71,18 +62,15 @@ export function wrapPastedText(text: string): string {
   return `${PASTED_OPEN}\n${text}\n${PASTED_CLOSE}`;
 }
 
-/** Marks where an attached file sat among the words; the note in the context block has its path. */
 export function attachmentMarker(filename: string): string {
   return `<attachment>${filename}</attachment>`;
 }
 
-/** File names listed in an attachment note, so only real attachments get a marker. */
 export function attachmentNoteFilenames(text: string): string[] {
   const note = text.match(NOTE_RE);
   return note ? parseAttachmentNote(note[0]).map((item) => item.filename) : [];
 }
 
-/** One prompt string: the person's words, then hidden context in one block. */
 export function composeV2Prompt(words: string, context: readonly string[]): string {
   const blocks = context.filter((block) => block.trim());
   if (blocks.length === 0) return words;
@@ -96,19 +84,11 @@ export type V2PromptSegment =
   | { kind: "attachment"; filename: string };
 
 export type SplitV2Prompt = {
-  /** What the person typed and pasted, in order. */
   segments: V2PromptSegment[];
-  /** Hidden context for the model, or null when the turn had none. */
   context: string | null;
-  /** Attachments named by the context's path note. */
   attachments: PromptAttachment[];
 };
 
-/**
- * Split a stored v2 prompt back into what the person sent and what OpenWork
- * added. Turns sent before the context block existed kept the attachment note
- * inline, glued to the words; that note is recognized and removed too.
- */
 export function splitV2Prompt(text: string): SplitV2Prompt {
   let words = text;
   let context: string | null = null;

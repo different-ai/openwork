@@ -11,6 +11,10 @@ import {
   automationDetailSchema,
   automationExecutionTargetListSchema,
   automationListSchema,
+  automationSharingSchema,
+  updateAutomationSharingSchema,
+  sharedAutomationListSchema,
+  copySharedAutomationSchema,
   AUTOMATION_RUN_RANGE_MAX_DAYS,
   automationRunRangeQuerySchema,
   automationRunRangeSchema,
@@ -35,6 +39,10 @@ import {
 } from "../../middleware/index.js"
 import type { AuthContextVariables } from "../../session.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { requireFeature } from "../../features.js"
+import { hasPermission } from "../org/shared.js"
+import { getAutomationSharing, replaceAutomationSharing, listSharedAutomations, SHARED_AUTOMATION_PAGE_MAX } from "../../automations/sharing.js"
+import { keysetCursorQuerySchema } from "../../list-pagination.js"
 import { automationService, type AutomationService } from "../../automations/service.js"
 import { addAuditRequestResource } from "../../audit/request-capture.js"
 import { registerSessionRunnerRoutes } from "../session-runners/index.js"
@@ -58,8 +66,6 @@ const openWorkWebAccessRequiredSchema = z.object({
 }).meta({ ref: "AutomationOpenWorkWebAccessRequiredError" })
 type McpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": true }
 const describeMcpRoute = (options: McpDescribeRouteOptions) => describeRoute(options)
-// Runner-credential routes must never surface as MCP tools; an MCP caller with
-// write scope could otherwise mint a desktop-runner bearer credential.
 type NonMcpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": false }
 const describeNonMcpRoute = (options: NonMcpDescribeRouteOptions) => describeRoute(options)
 
@@ -76,25 +82,17 @@ function scope(c: {
     organizationId: context.organization.id,
     ownerMemberId: context.currentMember.id,
     modelAttentionCapable,
-    // Only first-party desktops send the model-attention header, so only they are narrowed.
     readableScheduleKinds: readableAutomationScheduleKinds({
       scheduleKindsHeader: c.req.header(AUTOMATION_SCHEDULE_KINDS_HEADER),
       firstPartyDesktop: modelAttentionCapable,
     }),
-    intervalSchedules: context.features.automationIntervalSchedules,
-    calendarTriggers: context.features.automationCalendarTriggers,
   }
 }
 
-/** MCP tool calls reach these routes with the internal agent session. */
 function placementOptions(c: { get(name: "session"): { id: string } | null | undefined }) {
   return { agentCaller: c.get("session")?.id === "mcp_internal" }
 }
 
-/**
- * The run body is optional: released clients send `{}` and agents may send
- * nothing, so it is read here instead of through a required-body validator.
- */
 async function runNowBody(c: { req: { text(): Promise<string> } }) {
   const text = await c.req.text()
   if (!text.trim()) return runAutomationNowSchema.safeParse({})
@@ -115,7 +113,13 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
   if (error.message === "automation_runner_identity_conflict") {
     return { status: 409, body: { error: error.message, message: "This desktop runner identity is already registered to a different organization member." } }
   }
+  if (error.message === "automation_share_target_invalid") {
+    return { status: 400, body: { error: error.message, message: "Choose active members and teams in this organization." } }
+  }
   if (error.message === "automation_not_found") return { status: 404, body: { error: "automation_not_found" } }
+  if (error.message === "automation_once_time_in_past") {
+    return { status: 400, body: { error: error.message, message: "That time has already passed. Choose a future time for this Automation." } }
+  }
   if (error.message === "automation_action_target_mismatch") {
     return { status: 400, body: { error: "automation_action_target_mismatch", message: "This Automation runs only in OpenWork Cloud." } }
   }
@@ -140,12 +144,6 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
   if (error.message === "automation_cloud_disabled") {
     return { status: 403, body: { error: error.message, message: "Cloud Automations are not available for this organization. An admin can turn them on in Settings once OpenWork's headless runner is set up." } }
   }
-  if (error.message === "automation_interval_schedule_disabled") {
-    return { status: 400, body: { error: error.message, message: "Every-few-hours schedules are not turned on for this organization. Choose a once, daily or weekly schedule." } }
-  }
-  if (error.message === "automation_calendar_trigger_disabled") {
-    return { status: 400, body: { error: error.message, message: "Before- and after-meeting Automations are not turned on for this organization. Choose a clock schedule instead." } }
-  }
   if (error.message === "automation_calendar_trigger_cloud_only") {
     return { status: 400, body: { error: error.message, message: "Automations that run around meetings run in OpenWork Cloud. Create it as a Cloud Automation, or choose a clock schedule to run it on a desktop." } }
   }
@@ -166,6 +164,11 @@ const routeDescription = [
   "Deactivation stops future runs but does not cancel a run already in progress.",
 ].join(" ")
 
+const listSharedAutomationsQuerySchema = z.object({
+  cursor: keysetCursorQuerySchema.optional(),
+  limit: z.coerce.number().int().min(1).max(SHARED_AUTOMATION_PAGE_MAX).default(SHARED_AUTOMATION_PAGE_MAX),
+})
+
 export function registerAutomationRoutes<T extends { Variables: RouteVariables }>(
   app: Hono<T>,
   options: {
@@ -173,7 +176,6 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     commandStore?: RemoteSessionCommandStore
     requestStore?: RemoteSessionRequestStore
     enabled?: boolean
-    /** The app registers the independent runner owner explicitly. */
     sessionRunners?: boolean
   } = {},
 ) {
@@ -185,6 +187,94 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     requestStore: options.requestStore,
   })
   if (options.enabled === false) return
+
+  app.get(
+    "/v1/automations/:id/sharing",
+    describeMcpRoute({
+      tags: ["Automations"], operationId: "getAutomationSharing", "x-mcp": true,
+      summary: "See who can copy your Automation",
+      description: "Only the owner can see or change sharing. Sharing exposes the definition, never runs or results, and never lets someone run or edit your Automation.",
+      responses: { 200: jsonResponse("Sharing audience.", automationSharingSchema), 404: jsonResponse("Not found or sharing disabled.", notFoundSchema) },
+    }),
+    orgMemberRoute(), requireFeature("automationSharing"), paramValidator(idParamsSchema),
+    async (c) => {
+      try { return c.json(await getAutomationSharing(scope(c), c.req.valid("param").id)) }
+      catch (error) {
+        const mapped = failure(error)
+        if (mapped) return c.json(mapped.body, mapped.status)
+        throw error
+      }
+    },
+  )
+  app.put(
+    "/v1/automations/:id/sharing",
+    describeMcpRoute({
+      tags: ["Automations"], operationId: "updateAutomationSharing", "x-mcp": true,
+      summary: "Share your Automation's definition",
+      description: "Replace the entire audience with specific organization members, teams, or everyone. Only owners and admins may share organization-wide. Recipients can make their own paused copy using their own connections and models; they cannot run or edit yours or see its results. Empty arrays revoke sharing.",
+      responses: {
+        200: jsonResponse("Sharing audience replaced.", automationSharingSchema),
+        400: jsonResponse("Invalid sharing target.", invalidRequestSchema),
+        403: jsonResponse("Organization-wide sharing forbidden.", invalidRequestSchema),
+        404: jsonResponse("Not found or sharing disabled.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(), requireFeature("automationSharing"), paramValidator(idParamsSchema), jsonValidator(updateAutomationSharingSchema),
+    async (c) => {
+      try {
+        const id = c.req.valid("param").id
+        await getAutomationSharing(scope(c), id, { requireUnarchived: true })
+        const requested = c.req.valid("json")
+        if (requested.orgWide && !await hasPermission(c, "sharing.share_org_wide")) {
+          return c.json({ error: "automation_share_org_wide_forbidden", message: "Only organization owners and admins can share an Automation with everyone." }, 403)
+        }
+        return c.json(await replaceAutomationSharing(scope(c), id, requested))
+      } catch (error) {
+        const mapped = failure(error)
+        if (mapped) return c.json(mapped.body, mapped.status)
+        throw error
+      }
+    },
+  )
+  app.get(
+    "/v1/shared-automations",
+    describeMcpRoute({
+      tags: ["Automations"], operationId: "listSharedAutomations", "x-mcp": true,
+      summary: "List Automation definitions shared with you",
+      description: "Returns shared definitions, newest share first. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page. No runs or results are exposed. To use one, add your own paused copy and review it before activating; copies use your own connections and models.",
+      responses: {
+        200: jsonResponse("Shared definitions.", sharedAutomationListSchema),
+        400: jsonResponse("Invalid cursor or limit.", invalidRequestSchema),
+        404: jsonResponse("Sharing disabled.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(), requireFeature("automationSharing"), queryValidator(listSharedAutomationsQuerySchema),
+    async (c) => c.json(await listSharedAutomations(scope(c), c.req.valid("query"))),
+  )
+  app.post(
+    "/v1/shared-automations/:id/copy",
+    describeMcpRoute({
+      tags: ["Automations"], operationId: "copySharedAutomation", "x-mcp": true,
+      summary: "Add your own paused copy of a shared Automation",
+      description: "Copies the current shared definition into a new Automation you own, paused for review. Optionally choose a name and agent model. Uses your own connections and validates your model and Workflow access. Never copies the source workspace, runs, or results. Review and activate your copy when ready.",
+      responses: {
+        201: jsonResponse("Paused copy created.", automationDetailSchema),
+        400: jsonResponse("Invalid definition.", invalidRequestSchema),
+        403: jsonResponse("Placement or Workflow access unavailable.", invalidRequestSchema),
+        404: jsonResponse("Not shared with you or sharing disabled.", notFoundSchema),
+        409: jsonResponse("Runtime or model access unavailable.", invalidRequestSchema),
+      },
+    }),
+    orgMemberRoute(), requireFeature("automationSharing"), paramValidator(idParamsSchema), jsonValidator(copySharedAutomationSchema),
+    async (c) => {
+      try { return c.json(await service.copyShared(scope(c), c.req.valid("param").id, c.req.valid("json")), 201) }
+      catch (error) {
+        const mapped = failure(error)
+        if (mapped) return c.json(mapped.body, mapped.status)
+        throw error
+      }
+    },
+  )
 
   app.get(
     "/v1/automation-runners/presence",
@@ -291,7 +381,6 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         if (reason === "automation_runner_event_sequence_gap") {
           return c.json({ error: "automation_runner_event_sequence_gap" }, 409)
         }
-        // Anything else is an internal failure; never echo raw error text to runners.
         return c.json({ error: "runner_event_rejected" }, 500)
       }
     },
@@ -327,8 +416,6 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         if (reason === "automation_run_complete_lease_lost" || reason === "automation_run_lease_lost") {
           return c.json({ error: "runner_lease_lost" }, 409)
         }
-        // A transient fault must not read as a lost lease, or runners abandon
-        // result reporting; 500 lets the desktop retry completion.
         return c.json({ error: "runner_completion_failed" }, 500)
       }
     },
@@ -479,7 +566,6 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       summary: "Run an Automation now",
       description: `${routeDescription} Send executionTarget "cloud" to run a Desktop Automation once in OpenWork Cloud without changing it. `
         + "Agents cannot run a Cloud Automation on a desktop.",
-      // Optional: released clients send `{}` and agents may send no body at all.
       requestBody: {
         required: false,
         content: {
@@ -512,9 +598,6 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         return c.json({ error: "invalid_request", message: validationIssuesMessage(body.error.issues), details: body.error.issues }, 400)
       }
       try {
-        // Runner presence is advisory and must not require a database
-        // heartbeat. The durable claim deadline records an unclaimed desktop
-        // run as missed through the same path used by scheduled occurrences.
         const run = await service.runNow(scope(c), c.req.valid("param").id, {
           ...placementOptions(c),
           executionTarget: body.data.executionTarget,

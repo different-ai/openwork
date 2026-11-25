@@ -13,7 +13,6 @@ export const CHECK_MAX_POLLS = 15;
 export const SERVICES_VERIFY_ERROR = "Couldn't verify services. The last known results are kept. Try Check now again shortly.";
 export const SERVICE_STALE_LABEL = "Out of date";
 
-/** Reasons that come from a live check that succeeded; configuration alone never counts. */
 const VERIFIED_REASONS: ReadonlySet<ServiceReadinessReason> = new Set([
   "health_verified", "database_verified", "email_verified", "email_key_verified",
 ]);
@@ -24,7 +23,6 @@ export function parseServicesSnapshot(payload: unknown): DeploymentServiceReadin
   return parsed.data;
 }
 
-/** Missing rows are explicitly unknown, including the first snapshot from a new server. */
 export function serviceRows(snapshot: DeploymentServiceReadiness | null): DeploymentServiceStatus[] {
   return serviceIdSchema.options.map((id) => snapshot?.services.find((service) => service.id === id) ?? {
     id, required: id === "database", configured: false, state: "unknown", reason: "not_checked",
@@ -32,7 +30,6 @@ export function serviceRows(snapshot: DeploymentServiceReadiness | null): Deploy
   });
 }
 
-/** Ready only when a live check succeeded; a stale or configuration-only result never reads as Ready. */
 export function serviceDisplayState(service: DeploymentServiceStatus): DeploymentServiceStatus["state"] | "stale" {
   if (service.stale) return "stale";
   if (service.state === "ready" && (!service.checkedAt || !service.lastSuccessAt || !VERIFIED_REASONS.has(service.reason))) return "unknown";
@@ -77,7 +74,6 @@ export type ServicesTransport = {
   startCheck: (signal: AbortSignal) => Promise<ServicesSnapshotResult>;
 };
 
-/** Poll cached server facts only, with an abort boundary before every request. */
 export async function runServicesReadiness(options: {
   signal: AbortSignal;
   check: boolean;

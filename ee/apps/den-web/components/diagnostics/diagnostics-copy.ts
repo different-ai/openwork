@@ -17,12 +17,6 @@ import {
 } from "@openwork/types/den/permissions";
 import type { ServiceReadinessState } from "@openwork/types/den/service-readiness";
 
-/**
- * Every user-facing string on Settings › Diagnostics. Records are exhaustive
- * over the contract enums, so a new server code fails typecheck until it has
- * copy. Codes and enum values never reach the screen.
- */
-
 export type DiagnosticsTone = "neutral" | "success" | "warning" | "danger";
 
 export const DIAGNOSTICS_COPY = {
@@ -51,14 +45,11 @@ export function checkedAgoLabel(ago: string | null): string {
   return ago ? `Checked ${ago}` : DIAGNOSTICS_COPY.notCheckedYet;
 }
 
-// ── Sections ───────────────────────────────────────────────────────────────
-
 export const SECTION_TITLES: Record<DiagnosticsSectionId, string> = {
   desktop: "Desktop app",
   providers: "AI providers",
   connectors: "Connectors",
   installation: "Installation",
-  network: "Advanced",
 };
 
 export const SECTION_SCOPES: Record<DiagnosticsSectionId, string | null> = {
@@ -66,7 +57,6 @@ export const SECTION_SCOPES: Record<DiagnosticsSectionId, string | null> = {
   providers: "Checked against each endpoint. No prompt sent.",
   connectors: null,
   installation: null,
-  network: null,
 };
 
 export const INSTALLATION_COPY = {
@@ -77,12 +67,6 @@ export const INSTALLATION_COPY = {
   lockedSub: "Ask whoever set up OpenWork for your organization",
 } as const;
 
-export const NETWORK_COPY = {
-  name: "Network check",
-  sub: "From the OpenWork server",
-} as const;
-
-/** "Requires permission to view desktop policies", from the catalog label, never the raw key. */
 export function lockedSectionCopy(permission: string): { name: string; sub: string } {
   if (!isPermissionKey(permission)) return { name: "Requires an organization permission", sub: "Ask an organization owner or admin" };
   const label = getPermissionDefinition(permission).label;
@@ -92,8 +76,6 @@ export function lockedSectionCopy(permission: string): { name: string; sub: stri
   };
 }
 
-// ── Desktop app ────────────────────────────────────────────────────────────
-
 export const DESKTOP_STEP_LABELS: Record<DesktopStartupStep, string> = {
   window: "Window open",
   engine: "Engine ready",
@@ -101,7 +83,6 @@ export const DESKTOP_STEP_LABELS: Record<DesktopStartupStep, string> = {
   org_tools: "Org tools loaded",
 };
 
-/** Short phrase after "couldn't reach OpenWork:". */
 export const DESKTOP_REASON_SHORT: Record<DesktopStartupFailureReason, string> = {
   certificate: "certificate not trusted",
   dns: "server name not found",
@@ -144,7 +125,6 @@ export const DESKTOP_REASON_DETAILS: Record<DesktopStartupFailureReason, string>
   unknown: "The app couldn't tell what went wrong",
 };
 
-/** What to do next (DESIGN.md C6). */
 export const DESKTOP_REASON_NEXT_STEPS: Record<DesktopStartupFailureReason, string> = {
   certificate: "Add your company's root certificate to these devices' system trust store",
   dns: "Check that these devices can resolve the server's address, including on VPN",
@@ -190,8 +170,6 @@ export function desktopReason(value: string | null): DesktopStartupFailureReason
   return parsed.success ? parsed.data : "unknown";
 }
 
-// ── AI providers ───────────────────────────────────────────────────────────
-
 export const PROVIDER_STATE_LABELS: Record<ProviderCheckState, string> = {
   ready: "Ready",
   key_rejected: "Key rejected",
@@ -232,7 +210,6 @@ export const PROVIDER_REASON_COPY: Record<ProviderCheckReason, string> = {
   unexpected_response: "The endpoint answered with an error. It may be rate limited or down.",
 };
 
-/** Next step for problem states (DESIGN.md C6); null when nothing needs doing. */
 export const PROVIDER_NEXT_STEPS: Record<ProviderCheckState, string | null> = {
   ready: null,
   key_rejected: "Replace the API key in AI Gateway",
@@ -244,7 +221,6 @@ export const PROVIDER_NEXT_STEPS: Record<ProviderCheckState, string | null> = {
   not_checked: null,
 };
 
-/** The row's one action (DESIGN.md S2); null when the row needs none. */
 export const PROVIDER_ACTIONS: Record<ProviderCheckState, string | null> = {
   ready: null,
   key_rejected: "Update key",
@@ -280,8 +256,6 @@ export function memberConnectionsLabel(connected: number, needsAttention: number
   const people = `${connected} connected`;
   return needsAttention > 0 ? `${people}, ${needsAttention} ${needsAttention === 1 ? "needs" : "need"} to sign in again` : people;
 }
-
-// ── Connectors ─────────────────────────────────────────────────────────────
 
 export const CONNECTOR_STATE_LABELS: Record<ConnectorCheckState, string> = {
   ready: "Connected",
@@ -337,8 +311,6 @@ export function lastEventLabel(ago: string): string {
   return `Last event ${ago}`;
 }
 
-// ── Installation services ──────────────────────────────────────────────────
-
 export const SERVICE_STATE_TONES: Record<ServiceReadinessState, DiagnosticsTone> = {
   ready: "success",
   not_configured: "neutral",
@@ -365,8 +337,6 @@ export const SERVICE_DETAIL_COPY = {
   readyIn: "Ready in",
   version: "Version",
 } as const;
-
-// ── Attention summary ──────────────────────────────────────────────────────
 
 export type AttentionCopy = { text: string; action: string };
 

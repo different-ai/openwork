@@ -1,25 +1,3 @@
-/**
- * OpenWork Anthropic Tool Schema Plugin
- *
- * The Anthropic Messages API rejects tool input schemas that use `anyOf`,
- * `oneOf`, or `allOf` at the top level:
- *
- *   tools.N.custom.input_schema: input_schema does not support oneOf, allOf,
- *   or anyOf at the top level
- *
- * Some MCP servers expose such schemas (e.g. PostHog's
- * `file-download-batch-exports-create` uses a top-level `anyOf`), and the
- * bundled OpenCode engine forwards them unchanged, so a single bad tool breaks
- * every chat turn for the whole session.
- *
- * No OpenCode plugin hook can rewrite MCP tool schemas before dispatch, so
- * this plugin patches the engine's global fetch and rewrites Anthropic
- * requests just before they are sent. Requests are detected via the
- * `anthropic-version` header, which @ai-sdk/anthropic always sets. Top-level
- * combinators are merged into a flat object schema; nested combinators are
- * untouched (Anthropic only rejects them at the top level).
- */
-
 const COMBINATOR_KEYS = ["anyOf", "oneOf", "allOf"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -73,7 +51,6 @@ function flattenTopLevelCombinators(schema: Record<string, unknown>): Record<str
   return result;
 }
 
-/** Returns the sanitized JSON body, or null when nothing needed rewriting. */
 function sanitizeAnthropicBody(body: string): string | null {
   if (!body.includes("input_schema")) return null;
   let parsed: unknown;
@@ -119,8 +96,6 @@ function installAnthropicFetchPatch(): void {
   globalThis.fetch = Object.assign(patched, base);
 }
 
-// Single export: the OpenCode plugin loader treats every export of a plugin
-// module as a plugin factory, so helpers must stay module-private.
 export const OpenWorkAnthropicToolSchema = async () => {
   installAnthropicFetchPatch();
   return {};

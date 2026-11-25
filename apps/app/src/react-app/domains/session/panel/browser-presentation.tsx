@@ -7,25 +7,17 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-import { BrowserFloatingCardPortal } from "./browser-floating-card";
-import { useSessionFloatingSlot } from "./floating-slot";
-import { useFitFloatingWindow, useFloatingWindow, useScreenFullscreen } from "./floating-window";
+import { BrowserWindow } from "./browser-window";
+import { useFloatingWindow, useScreenFullscreen } from "./floating-window";
 import { BrowserPanelContent } from "./side-panel";
 import type { BrowserPresentationController } from "./use-browser-presentation";
+import { getElectronBrowser } from "./utils";
 
 type BrowserFullscreenDialogProps = {
   sessionId: string;
   controller: BrowserPresentationController;
 };
 
-/**
- * The browser over the whole screen: the app window goes into macOS full
- * screen and this dialog fills it. A Base UI dialog rather than a native
- * `<dialog>`: the top layer would hide the toolbar's portaled tooltips,
- * popovers and menus behind it. For the same reason the whole page, not the
- * dialog, is the full-screen element. Escape, Exit and the close button all
- * leave to the person's last floating or side choice.
- */
 function BrowserFullscreenDialog({ sessionId, controller }: BrowserFullscreenDialogProps) {
   const exitRef = React.useRef<HTMLButtonElement>(null);
   const { tab, status, needsYou, present, exitFullscreen, fullscreenReturnFocus } = controller;
@@ -101,29 +93,32 @@ function BrowserFullscreenDialog({ sessionId, controller }: BrowserFullscreenDia
   );
 }
 
-/** The floating card and the full-screen view, for the conversation on screen. */
 export function BrowserPresentationSurfaces({ sessionId, controller }: BrowserFullscreenDialogProps) {
-  const inChat = useSessionFloatingSlot();
-  const { mode, tab, presentation, present, setSnap } = controller;
-  const floating = controller.enabled && mode === "floating" && tab !== null;
-  // Closing the window, by its X or the system's close, puts the page back beside the chat.
-  const detached = useFloatingWindow("browser", floating, { title: "Browser", width: 280, height: 260, onClosed: () => present("side") });
-  useFitFloatingWindow(detached);
-  const slot = detached ?? inChat;
+  const { mode, tab, browserTabs, present, focusWindowOnOpen } = controller;
+  const poppedOut = controller.enabled && mode === "floating" && tab !== null;
+  const slot = useFloatingWindow("browser", poppedOut, {
+    title: `${tab?.label ?? "New tab"} · Browser`,
+    width: 1280,
+    height: 900,
+    onClosed: () => present("side"),
+  });
+
+  React.useEffect(() => {
+    if (!slot || !focusWindowOnOpen.current) return;
+    focusWindowOnOpen.current = false;
+    void getElectronBrowser()?.focusWindow?.().catch(() => undefined);
+  }, [focusWindowOnOpen, slot]);
+
   if (!controller.enabled) return null;
   return (
     <>
-      {floating && tab && slot ? (
-        <BrowserFloatingCardPortal
+      {poppedOut && tab && slot ? (
+        <BrowserWindow
           slot={slot}
-          detached={slot === detached}
+          sessionId={sessionId}
           tab={tab}
-          snap={presentation.snap}
-          onSnap={setSnap}
-          // From its own window, bring the app forward to show the page.
-          onOpenSide={() => { if (slot === detached) window.focus(); present("side"); }}
-          onFullscreen={() => present("fullscreen")}
-          onHide={() => present("hidden")}
+          tabs={browserTabs}
+          onPresent={(next) => { window.focus(); present(next); }}
         />
       ) : null}
       <BrowserFullscreenDialog sessionId={sessionId} controller={controller} />
@@ -131,10 +126,6 @@ export function BrowserPresentationSurfaces({ sessionId, controller }: BrowserFu
   );
 }
 
-/**
- * The side rail's Browser button while the floating browser is on: it opens
- * and closes the browser beside the chat, like the rail's other panels.
- */
 export function BrowserRailButton({ controller }: { controller: BrowserPresentationController }) {
   const shown = controller.mode === "side";
   const label = `Browser · ${controller.status}`;

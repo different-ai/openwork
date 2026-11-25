@@ -14,13 +14,18 @@ A single-organization Den control plane, without Kubernetes:
 | Secrets | Container Apps managed secrets and optional existing Key Vault references |
 | Network / logs | New or existing Container Apps environment and Log Analytics workspace |
 | Deletion protection | Default `CanNotDelete` ARM lock on the managed database |
+| AI Gateway (optional, off by default) | Separate `openwork-inference` Container App on 8791, HTTPS ingress and custom-domain SNI binding |
 
+The **AI Gateway** handles inference, **den-gateway** handles OpenWork Web/sandboxes,
+and Den API's **MCP gateway** handles tools. This module does not deploy den-gateway.
+See [AI Gateway setup, shared secrets and networking limits](../../AI_GATEWAY.md).
 Workbot, runners, Slack and OpenWork Web are not deployed. Existing product flag inputs remain accepted.
 
 ## Tested scenarios
 
 | Date | Tools / providers | Release / scenario | Result |
 | --- | --- | --- | --- |
+| 2026-11-13 | Offline-only implementation | AI Gateway live DNS/TLS, admin/provider/Desktop, unchanged apply, disable/data retention and teardown | **NotRun**; no infrastructure provisioned |
 | 2026-10-13 | Terraform 1.16, OpenTofu 1.11; AzureRM 5.0 / 5.9 | Legacy init-container module, 0.18.58, private MySQL, setup/browser/isolated desktop, destroy | Passed; not proof of the new Job topology |
 | 2026-10-14 | Terraform 1.16.5 / OpenTofu 1.11.14; AzureRM 5.9 | Legacy module, 0.18.58 to dev, one API replica, retained administrator/org, browser/desktop, destroy | Passed; not a two-replica result |
 | 2026-10-16 | Terraform 1.16.5 / OpenTofu 1.11.14; AzureRM 5.10, AzAPI 2.13, external 2.4, random 3.9 | Contract mocked tests, 33 runs on each tool; registry-specific example locks and fail-closed restricted-ingress guard | Passed |
@@ -154,6 +159,7 @@ The reusable module has no lock file; the executable `examples/complete` root **
 | `database_network` members | subnet required; VNet `""`; create DNS `true`; DNS ID `""` | Existing subnet/VNet, or an existing linked private DNS zone |
 | `deletion_protection` | `true` | Out-of-band database deletion lock; Terraform destroy caveat above |
 | `den_api`, `den_web` | 1 vCPU / 2 GiB / 1 replica; 0.5 vCPU / 1 GiB / 1 replica | App reservations and fixed min/max replicas |
+| `ai_gateway_enabled`, `ai_gateway_domain_name`, `ai_gateway_image` | `false`, `""`, `""` | Dedicated inference service; enabled requires hostname, image@digest, preconfigured DNS and covering `custom_domain_certificate` |
 | `migration_timeout_seconds`, `migration_deployment_id` | `1800`, `""` | Bounded Job deadline (120–3600); deliberate release identity |
 | `existing_database_identifier` | `external` | Non-secret stable ID; change with existing database to rerun migration |
 
@@ -162,6 +168,7 @@ The reusable module has no lock file; the executable `examples/complete` root **
 | Output | Meaning |
 | --- | --- |
 | `web_url`, `api_url` | Public HTTPS origins |
+| `ai_gateway_url`, `ai_gateway_dns_records` | AI Gateway HTTPS origin / prerequisite DNS records, null when disabled |
 | `database_identifier`, `migration_step_identifier`, `migration_job_id`, `migration_execution_id` | Shared contract database and exact migration identities |
 | `setup_url`, `bootstrap_secret_name`, `bootstrap_code` | Setup page, cloud secret name and deprecated null code output (no secret value in state) |
 | `default_hostnames`, `custom_domain_dns_records` | App CNAME targets and Azure DNS verification records |
@@ -185,6 +192,9 @@ tofu init -backend=false && tofu test
 Mocks never contact Azure. `python3 scripts/test-wait-for-migration.py` runs five credential-free success/failure/timeout controls for the read-only observer, without requiring Azure CLI or an account. Run the HCL suite with both tools as above. Native testkit driver evidence is retained with the conformance report; local-only legacy/live drivers are not added to the retired CI spec path or made to require a live deployment in application CI.
 
 ## Cost notes
+
+Enabling the AI Gateway adds one 1 vCPU / 2 GiB Container App replica and traffic,
+not a new database. Incremental live Gateway costs and capacity are not measured.
 
 Regional capacity may reject new environments with `ManagedEnvironmentCapacityHeavyUsageError`. The conformance run's first eastus attempt failed this way; after full failed-stack cleanup, one fresh eastus retry succeeded. No existing environment was reused and no region switch was needed. An alternate authorized region may be necessary for another deployment; clean up the failed attempt before switching.
 

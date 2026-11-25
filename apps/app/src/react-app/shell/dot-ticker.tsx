@@ -1,17 +1,6 @@
 /** @jsxImportSource react */
-/**
- * A dot-matrix style indicator that animates in a 3x3 grid pattern.
- * Used for: awaiting first response token, preparing workspace, any "alive
- * but idle" state. Dots pulse with staggered timing for a rhythmic,
- * dotmatrix-inspired beat.
- */
 export type OwDotTickerProps = {
-  /**
-   * Compact for inline hints ("sm"), default for the composer wait
-   * state ("md"), and larger for the boot overlay ("lg").
-   */
   size?: "sm" | "md" | "lg";
-  /** Ignored (kept for API compat). Grid is always 3x3 = 9 dots. */
   count?: number;
   className?: string;
 };
@@ -29,7 +18,6 @@ const SIZE_CONFIG: Record<NonNullable<OwDotTickerProps["size"]>, {
 const GRID = 3;
 const DOT_COUNT = GRID * GRID;
 
-/** Spiral traversal order for a 3x3 grid -- outside in. */
 const SPIRAL_ORDER = [0, 1, 2, 5, 8, 7, 6, 3, 4];
 
 export function OwDotTicker(props: OwDotTickerProps) {

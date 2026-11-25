@@ -39,6 +39,7 @@ test("unavailable input fingerprints also fail open for building", async () => {
 
 for (const event of [
   { eventName: "pull_request", ref: "refs/pull/123/merge" },
+  { eventName: "schedule", ref: "refs/heads/dev" },
   { eventName: "push", ref: "refs/tags/v1.2.3" },
   { eventName: "workflow_dispatch", ref: "refs/heads/dev" },
   { eventName: "workflow_dispatch", ref: "refs/heads/release" },
@@ -228,22 +229,18 @@ test("target publishing locks replace whole-dev-run cancellation and :dev build 
   for (const assertion of ["Assert Den DB migration assets", "Smoke health endpoint", "SENTRY_RELEASE", "sentry_dist=", "mysqladmin ping"]) assert.ok(workflow.includes(assertion), assertion);
 });
 
-test("recipe/selection PRs exercise six real builds and smoke checks without publishing or production access", () => {
+test("nightly and manual build-only runs exercise six real builds and smoke checks without publishing", () => {
   const workflow = read(".github/workflows/publish-ee-images.yml");
-  const pullRequest = workflow.match(/^  pull_request:\n([\s\S]*?)(?=^  push:)/m)?.[1];
-  assert.ok(pullRequest);
-  assert.match(pullRequest, /branches:\n\s+- "dev"/);
-  for (const path of [".github/workflows/publish-ee-images.yml", ".github/scripts/build-inputs.mjs", ".github/scripts/ee-image*.mjs", ".dockerignore", "packaging/docker/Dockerfile*"]) {
-    assert.ok(pullRequest.includes(`- "${path}"`), path);
-  }
-  assert.doesNotMatch(pullRequest, /ee\/apps\/\*\*|apps\/\*\*/);
+  const triggers = workflow.split("\npermissions:\n")[0];
+  assert.doesNotMatch(triggers, /^  pull_request:/m, "PRs run only the quick check");
+  assert.match(triggers, /^  schedule:\n    - cron: /m);
   assert.match(workflow, /publish="false"\n\s+if \[ "\$\{GITHUB_EVENT_NAME\}" = "push" \]; then/);
   assert.match(workflow, /- name: Log in to GHCR\n\s+if:.*needs\.artifact-version\.outputs\.publish == 'true'/);
-  assert.match(workflow, /- name: Resolve Sentry source-map upload\n\s+id: sentry_sourcemaps\n\s+if:.*needs\.artifact-version\.outputs\.publish == 'true'.*github\.event_name != 'pull_request'/);
-  assert.match(workflow, /load: \$\{\{ github\.event_name == 'pull_request' \}\}/);
+  assert.match(workflow, /- name: Resolve Sentry source-map upload\n\s+id: sentry_sourcemaps\n\s+if:.*needs\.artifact-version\.outputs\.publish == 'true'/);
+  assert.match(workflow, /load: \$\{\{ needs\.artifact-version\.outputs\.publish != 'true' \}\}/);
   assert.match(workflow, /push: \$\{\{ needs\.artifact-version\.outputs\.publish == 'true' \}\}/);
-  assert.match(workflow, /- name: Assert Den DB migration assets\n\s+if:.*github\.event_name == 'pull_request'/);
-  assert.match(workflow, /- name: Smoke health endpoint\n\s+if:.*github\.event_name == 'pull_request'/);
+  assert.match(workflow, /- name: Assert Den DB migration assets\n\s+if:.*needs\.artifact-version\.outputs\.publish != 'true'/);
+  assert.match(workflow, /- name: Smoke health endpoint\n\s+if:.*needs\.artifact-version\.outputs\.publish != 'true'/);
   assert.match(workflow, /redeploy-den-gateway:\n\s+needs: den-gateway-image\n\s+if:.*github\.event_name == 'push'.*needs\.den-gateway-image\.outputs\.published == 'true'/);
 });
 
@@ -678,6 +675,7 @@ test("different publisher implementations have distinct queues; an old job never
 
 for (const event of [
   { eventName: "pull_request", ref: "refs/pull/123/merge", publish: "false" },
+  { eventName: "schedule", ref: "refs/heads/dev", publish: "false" },
   { eventName: "push", ref: "refs/tags/v1.2.3", publish: "true" },
   { eventName: "workflow_dispatch", ref: "refs/heads/dev", publish: "false" },
   { eventName: "workflow_dispatch", ref: "refs/heads/release", publish: "false" },
@@ -705,6 +703,7 @@ test("source decision rejects missing/invalid desired source and publisher versi
   assert.throws(() => sourceDecision({ ...options, sha: "unknown" }));
   for (const publish of [undefined, null, "true", "false", 0, 1]) assert.throws(() => sourceDecision({ ...options, publish }));
   assert.throws(() => sourceDecision({ ...options, eventName: "pull_request", publish: true }));
+  assert.throws(() => sourceDecision({ ...options, eventName: "schedule", publish: true }), /invalid/);
 });
 
 test("source CLI requires a literal version-job publication flag and refuses publishing PRs", (t) => {

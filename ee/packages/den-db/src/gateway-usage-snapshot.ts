@@ -17,7 +17,6 @@ export type UsageBucketSnapshot = Pick<
 > & {
   startAt: string
   resetAt: string
-  /** Present only for provider-limit buckets; absent means the default scope. */
   providerScope?: string
 }
 export type GatewayUsageSnapshot =

@@ -173,7 +173,6 @@ export function WebMcpProvider() {
         ;(result as Promise<unknown>).catch(() => {})
       }
     } catch {
-      // Silently ignore: WebMCP is best-effort.
     }
   }, [])
 

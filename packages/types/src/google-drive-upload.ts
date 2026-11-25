@@ -48,7 +48,6 @@ export function isGoogleDriveUploadSessionUrl(value: string, apiBase = "https://
     return url.origin === base.origin
       && (url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
       && !url.username && !url.password && !url.hash
-      // New files use the collection; replacing an existing file's content uses its own path.
       && /^\/upload\/drive\/v3\/files(?:\/[A-Za-z0-9_-]{1,512})?$/.test(url.pathname)
       && url.searchParams.get("uploadType") === "resumable"
       && Boolean(url.searchParams.get("upload_id"))

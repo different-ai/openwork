@@ -94,8 +94,6 @@ function classifyRuntimeError(error: unknown): CloudStartupFailureCode | null {
 export function classifyCloudStartupFailure(error: unknown): CloudStartupFailureCode {
   if (error instanceof OpenWorkWebAccessRequiredError) return "web_access_required"
   const message = errorMessage(error)
-  // Storage waits surface as provider timeouts; keep them distinct from a
-  // slow instance start.
   if (message.includes("volume") && (message.includes("timed out") || message.includes("unavailable"))) {
     return "storage_unavailable"
   }

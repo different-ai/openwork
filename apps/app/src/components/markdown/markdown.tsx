@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   Dialog,
@@ -7,14 +7,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { desktopBridge } from "@/app/lib/desktop";
+import { isElectronRuntime } from "@/app/lib/runtime-env";
 import { useOpenTargets } from "@/lib/target-provider";
 import { useSessionReferencesMaybe } from "@/components/chat/session-reference-context";
-import { useOpenArtifactPath } from "@/lib/artifacts";
+import { useUntrustedMarkdown } from "./untrusted-markdown";
+import { contextualizeFileTarget, precedingDirectory } from "@/react-app/domains/session/artifacts/path-reference-context";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
-import { openTargetForHref } from "@/react-app/domains/session/artifacts/resolve-open-target";
+import { openTargetForHref, openTargetFromLocalPath, planFileOpen, resolveCollectibleOpenTarget } from "@/react-app/domains/session/artifacts/resolve-open-target";
 
 import { applyTextHighlights } from "./text-highlights";
 import {
+  CODE_RUN_BUTTON_HTML,
   createStreamingMarkdownRenderer,
   hasFencedCodeBlock,
   renderHighlightedMarkdownHtml,
@@ -25,6 +29,7 @@ import {
   type MarkdownBlockHtml,
 } from "./markdown-primitive";
 import { LinkActionMenu } from "./link-action-menu";
+import { decorateGitHubReferences } from "./github-references";
 import { useMermaidEnhancer } from "./mermaid";
 import { MermaidZoomPortals } from "./mermaid-zoom-viewport";
 import { useSelectionStableValue } from "./selection-stability";
@@ -33,51 +38,35 @@ import { enhanceNearViewport } from "./near-viewport";
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
 
 const CODE_COPY_RESET_DELAY_MS = 2000;
+const CODE_RUN_RESET_DELAY_MS = 2000;
 
-function localPathFromHref(href: string) {
-  const trimmed = href.trim();
-
-  if (!trimmed || trimmed.startsWith("#") || /^(?:https?|mailto):/i.test(trimmed)) {
-    return "";
+function syncCodeRunButtons(root: HTMLElement, runnable: boolean) {
+  for (const block of root.querySelectorAll("[data-openwork-code-run]")) {
+    const existing = block.querySelector(":scope > [data-openwork-code-run-button]");
+    if (!runnable) existing?.remove();
+    else if (!existing) block.insertAdjacentHTML("afterbegin", CODE_RUN_BUTTON_HTML);
   }
+}
 
-  if (/^file:/i.test(trimmed)) {
-    try {
-      const parsed = new URL(trimmed);
-      const host = decodeURIComponent(parsed.hostname);
-      const pathname = decodeURIComponent(parsed.pathname);
-      const localPath = /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
+const MarkdownTableExpandContext = createContext(false);
 
-      if (host && host !== "localhost") {
-        return `//${host}${localPath.startsWith("/") ? localPath : `/${localPath}`}`;
-      }
-
-      return localPath;
-    } catch {
-      return "";
-    }
-  }
-
-  return trimmed.split(/[?#]/)[0] ?? trimmed;
+export function MarkdownTableExpand({ children }: { children: ReactNode }) {
+  return <MarkdownTableExpandContext.Provider value={true}>{children}</MarkdownTableExpandContext.Provider>;
 }
 
 type MarkdownBlockInnerProps = {
   className?: string;
   text: string;
   streaming?: boolean;
-  /** Opt in only for conversation prose, never tool output or artifact previews. */
   sessionReferences?: boolean;
   highlightQuery?: string;
+  githubReferences?: boolean;
+  onRunCommand?: (command: string) => void;
 } & Omit<
   React.ComponentProps<"div">,
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
 >;
 
-/**
- * A streaming answer renders one payload per top-level block so a new token
- * only re-parses and repaints the block it lands in; a settled answer renders
- * the whole document at once, exactly as history does.
- */
 type RenderedMarkdown =
   | { kind: "document"; html: string }
   | { kind: "blocks"; blocks: MarkdownBlockHtml[] };
@@ -88,24 +77,40 @@ function MarkdownBlockInner({
   streaming,
   sessionReferences = false,
   highlightQuery,
+  githubReferences = false,
+  onRunCommand,
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const videoCleanups = useRef(new Map<HTMLVideoElement, () => void>());
+  const localImageUrls = useRef(new Map<string, Promise<string | null>>());
   const codeCopyResetTimers = useRef(new Map<HTMLButtonElement, number>());
   const codeWrapStates = useRef(new Map<number, boolean>());
-  const { openTargets, onOpenTarget, client, workspaceId, workspaceRoot, sessionId } = useOpenTargets();
-  const openArtifactPath = useOpenArtifactPath();
+  const { openTargets, sessionFileEvidence, onOpenTarget, client, workspaceId, workspaceRoot, sessionId } = useOpenTargets();
+  const targetAt = useCallback((value: string, node: Element, decode = true) => {
+    const literal = openTargetFromLocalPath(value, { decode });
+    const root = rootRef.current;
+    const contextual = literal && root ? contextualizeFileTarget(literal, precedingDirectory(root, node)) : literal;
+    if (contextual?.pathHints?.length || !decode) return contextual;
+    return openTargetForHref(value, openTargets, workspaceRoot);
+  }, [openTargets, workspaceRoot]);
   useEffect(() => () => {
     videoCleanups.current.forEach((cleanup) => cleanup());
     videoCleanups.current.clear();
+    for (const pending of localImageUrls.current.values()) void pending.then((url) => { if (url) URL.revokeObjectURL(url); });
+    localImageUrls.current.clear();
   }, [client, workspaceId, workspaceRoot, sessionId]);
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; anchor: HTMLElement } | null>(null);
   useEffect(() => setLinkMenu(null), [client, workspaceId, workspaceRoot]);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
+  const tableExpand = useContext(MarkdownTableExpandContext);
+  const [expandedTableMarkdown, setExpandedTableMarkdown] = useState<string | null>(null);
   const references = useSessionReferencesMaybe();
-  const resolveReference = sessionReferences ? references?.resolve : undefined;
-  const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer("chat", resolveReference), [resolveReference]);
+  const untrusted = useUntrustedMarkdown();
+  const presentation = untrusted ? "remote" : "chat";
+  const runCommand = onRunCommand && !untrusted && !streaming ? onRunCommand : null;
+  const resolveReference = sessionReferences && !untrusted ? references?.resolve : undefined;
+  const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer(presentation, resolveReference), [presentation, resolveReference]);
   const streamedBlocks = useMemo(
     () => (streaming ? streamingRenderer.render(text) : null),
     [streaming, streamingRenderer, text],
@@ -114,8 +119,8 @@ function MarkdownBlockInner({
     if (!streaming) streamingRenderer.reset();
   }, [streaming, streamingRenderer]);
   const syncHtml = useMemo(
-    () => (streamedBlocks ? "" : renderMarkdownHtml(text, "chat", resolveReference)),
-    [streamedBlocks, text, resolveReference],
+    () => (streamedBlocks ? "" : renderMarkdownHtml(text, presentation, resolveReference)),
+    [streamedBlocks, text, presentation, resolveReference],
   );
   const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string; resolveReference: typeof resolveReference } | null>(null);
 
@@ -173,9 +178,6 @@ function MarkdownBlockInner({
     return { kind: "document", html: syncHtml };
   }, [highlightedHtml, streamedBlocks, streaming, syncHtml, text, resolveReference]);
   const rendered = useSelectionStableValue(rootRef, candidate);
-  // Keep the innerHTML prop referentially stable too: a fresh wrapper object
-  // can make an unrelated React render replace selected text nodes even when
-  // the HTML string itself is unchanged.
   const stableInnerHtml = useMemo(
     () => ({ __html: rendered.kind === "document" ? rendered.html : "" }),
     [rendered],
@@ -189,13 +191,11 @@ function MarkdownBlockInner({
       setHighlightedHtml(null);
       return;
     }
-    // Selection stability commits the settled document on a later render. Wait
-    // for that keyed root, not the streaming root that is about to be removed.
     const root = rootRef.current;
     if (!root || isEmpty || rendered.kind !== "document") return;
     let cancelled = false;
     const stopObserving = enhanceNearViewport([root], () => {
-      void renderHighlightedMarkdownHtml(text, "chat", resolveReference).then((html) => {
+      void renderHighlightedMarkdownHtml(text, presentation, resolveReference).then((html) => {
         if (!cancelled && html.trim()) setHighlightedHtml({ text, html, resolveReference });
       }).catch(() => {
         if (!cancelled) setHighlightedHtml(null);
@@ -205,7 +205,7 @@ function MarkdownBlockInner({
       cancelled = true;
       stopObserving();
     };
-  }, [isEmpty, rendered.kind, streaming, text, resolveReference]);
+  }, [isEmpty, rendered.kind, streaming, text, presentation, resolveReference]);
 
   const mermaidDiagrams = useMermaidEnhancer(rootRef, rendered, !streaming);
 
@@ -223,8 +223,16 @@ function MarkdownBlockInner({
 
       applyTextHighlights(root, highlightQuery ?? "");
       syncCodeWrapStates();
+      syncCodeRunButtons(root, runCommand !== null);
     });
-  }, [highlightQuery, rendered]);
+  }, [highlightQuery, rendered, runCommand]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !githubReferences) return;
+    decorateGitHubReferences(root);
+  }, [githubReferences, rendered]);
+
 
   useEffect(() => {
     const root = rootRef.current;
@@ -241,8 +249,6 @@ function MarkdownBlockInner({
       let cancelled = false;
       let objectUrl: string | null = null;
       const href = video.dataset.openworkVideoPath ?? "";
-      // A video that cannot load reads as its plain inline reference instead
-      // of an empty player in the middle of the sentence.
       const showError = () => {
         const box = video.closest("[data-openwork-video]");
         const fallback = box?.querySelector(":scope > [data-openwork-video-fallback]");
@@ -256,17 +262,20 @@ function MarkdownBlockInner({
         if (objectUrl) URL.revokeObjectURL(objectUrl);
       });
       if (/^https?:/i.test(href)) continue;
-      let path = localPathFromHref(href);
-      try { if (!/^file:/i.test(href)) path = decodeURIComponent(path); } catch { /* Keep literal percent signs in filenames. */ }
-      const rootPath = workspaceRoot?.replace(/\\/g, "/").replace(/\/+$/, "");
-      path = path.replace(/\\/g, "/");
-      if (rootPath && path.startsWith(`${rootPath}/`)) path = path.slice(rootPath.length + 1);
-      if (!client || !workspaceId || !path) {
+      const target = targetAt(href, video, video.dataset.openworkPathDecode === "true");
+      if (!client || !workspaceId || !target) {
         showError();
         continue;
       }
-      const target = openTargetForHref(href, openTargets, workspaceRoot);
-      void client.downloadWorkspaceFile(workspaceId, target?.exists === true ? target.value : path, { sessionId }).then((result) => {
+      void (async () => {
+        const plan = await planFileOpen(target, {
+          origin: "remote", workspaceRoot, canOpenLocally: false, sessionTargets: sessionFileEvidence,
+          findInWorkspace: (lookup, options) => resolveCollectibleOpenTarget(client, workspaceId, lookup, sessionId, options),
+        });
+        if (cancelled) return;
+        if (plan.kind !== "workspace") { showError(); return; }
+        const path = plan.target.value;
+        const result = await client.downloadWorkspaceFile(workspaceId, path, { sessionId, fileScope: plan.target.fileScope });
         if (cancelled) return;
         const extension = path.split(".").pop()?.toLowerCase();
         const fallbackType = extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : extension === "mov" ? "video/quicktime" : "video/mp4";
@@ -274,9 +283,55 @@ function MarkdownBlockInner({
         const url = URL.createObjectURL(new Blob([result.data], { type: contentType }));
         objectUrl = url;
         video.src = url;
-      }).catch(() => { if (!cancelled) showError(); });
+      })().catch(() => { if (!cancelled) showError(); });
     }
-  }, [client, workspaceId, workspaceRoot, sessionId, openTargets, rendered]);
+  }, [client, workspaceId, workspaceRoot, sessionId, sessionFileEvidence, targetAt, rendered]);
+
+  const loadLocalImage = useCallback(async (href: string, node: Element, decode: boolean) => {
+    const literal = openTargetFromLocalPath(href, { decode })?.value;
+    if (literal && sessionId && isElectronRuntime()) {
+      const saved = await desktopBridge.computerChatImage({ sessionId, path: literal }).catch(() => null);
+      if (saved) return URL.createObjectURL(new Blob([saved.data], { type: saved.contentType }));
+    }
+    const target = targetAt(href, node, decode);
+    if (!client || !workspaceId || !target) return null;
+    const plan = await planFileOpen(target, {
+      origin: "remote", workspaceRoot, canOpenLocally: false, sessionTargets: sessionFileEvidence,
+      findInWorkspace: (lookup, options) => resolveCollectibleOpenTarget(client, workspaceId, lookup, sessionId, options),
+    });
+    if (plan.kind !== "workspace") return null;
+    const result = await client.downloadWorkspaceFile(workspaceId, plan.target.value, { sessionId, fileScope: plan.target.fileScope });
+    const type = result.contentType && result.contentType !== "application/octet-stream" ? result.contentType : "";
+    return URL.createObjectURL(new Blob([result.data], { type }));
+  }, [client, workspaceId, workspaceRoot, sessionId, sessionFileEvidence, targetAt]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    for (const image of root.querySelectorAll("img[data-openwork-image-path]")) {
+      if (!(image instanceof HTMLImageElement) || image.dataset.openworkImageState) continue;
+      image.dataset.openworkImageState = "loading";
+      const href = image.dataset.openworkImagePath ?? "";
+      const decode = image.dataset.openworkPathDecode === "true";
+      const key = `${decode}:${href}`;
+      let pending = localImageUrls.current.get(key);
+      if (!pending) {
+        pending = loadLocalImage(href, image, decode).catch(() => null);
+        localImageUrls.current.set(key, pending);
+      }
+      const cache = localImageUrls.current;
+      void pending.then((url) => {
+        if (!url) { if (cache.get(key) === pending) cache.delete(key); return; }
+        if (!image.isConnected) return;
+        image.addEventListener("load", () => {
+          const box = image.closest("[data-openwork-image]");
+          const preview = image.closest("[data-openwork-image-preview]");
+          if (box && preview) box.replaceWith(preview);
+        }, { once: true });
+        image.src = url;
+      });
+    }
+  }, [loadLocalImage, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -290,12 +345,19 @@ function MarkdownBlockInner({
       if (event.target instanceof HTMLImageElement) sync();
     };
 
+    const handleImageError = (event: Event) => {
+      const image = event.target;
+      if (!(image instanceof HTMLImageElement) || !image.parentElement?.hasAttribute("data-openwork-image-preview")) return;
+      const box = image.closest("[data-openwork-image]");
+      const fallback = box?.querySelector(":scope > [data-openwork-image-fallback]");
+      if (!box || !root.contains(box) || !(fallback instanceof HTMLElement)) return;
+      box.replaceWith(...Array.from(fallback.childNodes));
+    };
+
     const handleSessionReference = (event: MouseEvent) => {
       if (!sessionReferences || !(event.target instanceof Element)) return false;
       const link = event.target.closest("a[data-openwork-session-reference]");
       if (!(link instanceof HTMLAnchorElement) || !root.contains(link)) return false;
-      // Even a stale/selected reference must never reach a browser or a file
-      // target. Resolve and authorize again at activation, using its stable pair.
       event.preventDefault();
       event.stopPropagation();
       if (event.type !== "mousedown" && (event.button === 0 || event.button === 1)) {
@@ -310,6 +372,15 @@ function MarkdownBlockInner({
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element) || handleSessionReference(event)) return;
 
+      const tableExpandButton = event.target.closest("[data-openwork-table-expand]");
+      if (tableExpandButton instanceof HTMLButtonElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!tableExpand) return;
+        setExpandedTableMarkdown(tableExpandButton.dataset.openworkTableExpand || null);
+        return;
+      }
+
       const copyButton = event.target.closest("[data-openwork-code-copy]");
       if (copyButton instanceof HTMLButtonElement) {
         event.preventDefault();
@@ -318,6 +389,23 @@ function MarkdownBlockInner({
         const codeBlock = copyButton.closest("[data-openwork-code-block]");
         const code = codeBlock?.querySelector("code");
         void handleCopy(copyButton, code?.textContent ?? "");
+        return;
+      }
+
+      const runButton = event.target.closest("[data-openwork-code-run-button]");
+      if (runButton instanceof HTMLButtonElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        const command = runButton.closest("[data-openwork-code-block]")?.getAttribute("data-openwork-code-run");
+        if (!command || !runCommand || runButton.disabled) return;
+        runCommand(command);
+        runButton.disabled = true;
+        const label = runButton.querySelector("[data-openwork-code-run-label]");
+        if (label) label.textContent = "Sent";
+        window.setTimeout(() => {
+          runButton.disabled = false;
+          if (label) label.textContent = "Run";
+        }, CODE_RUN_RESET_DELAY_MS);
         return;
       }
 
@@ -333,7 +421,8 @@ function MarkdownBlockInner({
       if (inlineCodePath instanceof HTMLElement) {
         event.preventDefault();
         event.stopPropagation();
-        openArtifactPath(inlineCodePath.dataset.openworkInlineCodePath ?? "");
+        const target = targetAt(inlineCodePath.dataset.openworkInlineCodePath ?? "", inlineCodePath, inlineCodePath.dataset.openworkPathDecode === "true");
+        if (target) onOpenTarget?.(target);
         return;
       }
 
@@ -358,7 +447,7 @@ function MarkdownBlockInner({
         event.preventDefault();
         event.stopPropagation();
         const href = chevron.dataset.openworkLinkChevron ?? "";
-        const target = openTargetForHref(href, openTargets, workspaceRoot);
+        const target = targetAt(href, chevron);
         if (target) {
           setLinkMenu({ target, anchor: chevron });
         }
@@ -368,7 +457,7 @@ function MarkdownBlockInner({
       const link = event.target.closest("a[data-openwork-link-href]");
       if (link instanceof HTMLAnchorElement) {
         const href = link.dataset.openworkLinkHref ?? link.getAttribute("href") ?? "";
-        const target = openTargetForHref(href, openTargets, workspaceRoot);
+        const target = targetAt(href, link);
 
         if (target && onOpenTarget) {
           event.preventDefault();
@@ -389,10 +478,11 @@ function MarkdownBlockInner({
 
     const handleContextMenu = (event: MouseEvent) => {
       if (!(event.target instanceof Element) || !onOpenTarget) return;
-      const link = event.target.closest("[data-openwork-link-href], [data-openwork-link-chevron]");
+      const link = event.target.closest("[data-openwork-link-href], [data-openwork-link-chevron], [data-openwork-inline-code-path]");
       if (!(link instanceof HTMLElement)) return;
-      const href = link.dataset.openworkLinkHref ?? link.dataset.openworkLinkChevron ?? "";
-      const target = openTargetForHref(href, openTargets, workspaceRoot);
+      const codePath = link.dataset.openworkInlineCodePath;
+      const href = codePath ?? link.dataset.openworkLinkHref ?? link.dataset.openworkLinkChevron ?? "";
+      const target = targetAt(href, link, codePath === undefined || link.dataset.openworkPathDecode === "true");
       if (target?.kind !== "file") return;
       event.preventDefault();
       event.stopPropagation();
@@ -405,10 +495,12 @@ function MarkdownBlockInner({
 
       event.preventDefault();
       event.stopPropagation();
-      openArtifactPath(event.target.dataset.openworkInlineCodePath ?? "");
+      const target = targetAt(event.target.dataset.openworkInlineCodePath ?? "", event.target, event.target.dataset.openworkPathDecode === "true");
+      if (target) onOpenTarget?.(target);
     };
 
     root.addEventListener("load", handleLoad, true);
+    root.addEventListener("error", handleImageError, true);
     root.addEventListener("click", handleClick);
     root.addEventListener("auxclick", handleAuxClick);
     root.addEventListener("mousedown", handleMouseDown);
@@ -418,6 +510,7 @@ function MarkdownBlockInner({
     if (globalThis.ResizeObserver === undefined) {
       return () => {
         root.removeEventListener("load", handleLoad, true);
+        root.removeEventListener("error", handleImageError, true);
         root.removeEventListener("click", handleClick);
         root.removeEventListener("auxclick", handleAuxClick);
         root.removeEventListener("mousedown", handleMouseDown);
@@ -432,25 +525,28 @@ function MarkdownBlockInner({
     return () => {
       observer.disconnect();
       root.removeEventListener("load", handleLoad, true);
+      root.removeEventListener("error", handleImageError, true);
       root.removeEventListener("click", handleClick);
       root.removeEventListener("auxclick", handleAuxClick);
       root.removeEventListener("mousedown", handleMouseDown);
       root.removeEventListener("contextmenu", handleContextMenu);
       root.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleCopy, onOpenTarget, openArtifactPath, openTargets, workspaceRoot, rendered, references, resolveReference, sessionReferences]);
+  }, [handleCopy, onOpenTarget, targetAt, rendered, references, resolveReference, sessionReferences, runCommand, tableExpand]);
 
   if (isEmpty) {
     return null;
   }
 
-  const rootClassName = cn("markdown-content max-w-none select-text text-foreground", className);
+  const rootClassName = cn(
+    "markdown-content max-w-none select-text text-foreground",
+    !tableExpand && "[&_[data-openwork-table-expand]]:hidden",
+    className,
+  );
 
   return (
     <>
       {rendered.kind === "blocks" ? (
-        // Keyed by kind so the switch to the settled document remounts the root
-        // instead of mixing children with dangerouslySetInnerHTML.
         <div key="blocks" ref={rootRef} className={rootClassName} {...props}>
           {rendered.blocks.map((block, index) => (
             block.__html ? <div key={index} dangerouslySetInnerHTML={block} /> : null
@@ -476,6 +572,24 @@ function MarkdownBlockInner({
       ) : null}
       <MermaidZoomPortals diagrams={mermaidDiagrams} />
       <Dialog
+        open={expandedTableMarkdown !== null}
+        onOpenChange={(open) => {
+          if (!open) setExpandedTableMarkdown(null);
+        }}
+      >
+        <DialogContent className="block max-h-[90vh] overflow-auto pt-14 lg:w-[min(96vw,1400px)] lg:max-w-[min(96vw,1400px)] lg:rounded-3xl">
+          <DialogTitle className="sr-only">Table</DialogTitle>
+          {expandedTableMarkdown ? (
+            <MarkdownBlock
+              text={expandedTableMarkdown}
+              sessionReferences={sessionReferences}
+              githubReferences={githubReferences}
+              className="text-sm [&_[data-openwork-table-expand]]:hidden [&_[data-openwork-table]]:my-0"
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+      <Dialog
         open={imagePreview !== null}
         onOpenChange={(open) => {
           if (!open) setImagePreview(null);
@@ -496,11 +610,5 @@ function MarkdownBlockInner({
   );
 }
 
-/**
- * Memoize so a message block that has already been rendered — the usual
- * case for every assistant bubble above the currently-streaming one —
- * doesn't re-parse its markdown on every token. Only re-renders when its
- * own text / streaming / highlightQuery props change.
- */
 export const MarkdownBlock = memo(MarkdownBlockInner);
 MarkdownBlock.displayName = "MarkdownBlock";

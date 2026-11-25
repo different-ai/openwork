@@ -16,3 +16,9 @@ test('completed native edits use the actual filediff target',()=>{
  const source:ToolPart={id:'part-edit',sessionID:'session-report',messageID:'message-report',callID:'call-edit',type:'tool',tool:'edit',state:{status:'completed',input:{filePath:'/report.html',oldString:'old',newString:'new'},output:'Edit applied successfully.',title:'report.html',metadata:{filediff:{file:resolved,patch:'',additions:1,deletions:1}},time:{start:1,end:2}}};
  const part=parseDynamicToolUIPart(source);if(!part)throw Error('No edit row');assert.equal(getAggregateRowFile(part)?.path,resolved);
 });
+
+test('answered questions forward what the person picked so the row can say it',()=>{
+ const source:ToolPart={id:'part-question',sessionID:'session-q',messageID:'message-q',callID:'call-question',type:'tool',tool:'question',state:{status:'completed',input:{questions:[{question:'Ship it today?',header:'Ship',options:[{label:'Yes',description:''}]}]},output:'User has answered your questions: "Ship it today?"="Yes". You can now continue with the user\'s answers in mind.',title:'Asked 1 question',metadata:{answers:[['Yes']]},time:{start:1,end:2}}};
+ const part=parseDynamicToolUIPart(source);if(!part)throw Error('No question row');
+ assert.deepEqual(part.callProviderMetadata?.openwork?.questionAnswers,[['Yes']]);
+});

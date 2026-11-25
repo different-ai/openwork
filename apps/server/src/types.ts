@@ -50,10 +50,6 @@ export interface WorkspaceInfo {
   };
 }
 
-// Compile-time contract tripwires against the shared wire shape consumed by
-// apps/app (packages/types/src/workspace.ts). The first check rejects fields
-// whose values no longer fit the wire contract; the second rejects fields the
-// contract does not know about. Both are erased at build time.
 type Extends<A extends B, B> = A;
 type _WorkspaceInfoFitsWire = Extends<WorkspaceInfo, WorkspaceWire>;
 type _WorkspaceInfoKeysKnown = Extends<keyof WorkspaceInfo, keyof WorkspaceWire>;
@@ -72,7 +68,6 @@ export interface ApprovalConfig {
 export type LocalManagedMcpVaultKeyProvider = () => Promise<Uint8Array>;
 
 export type DriveFileApprovalRequest = {
-  /** Where the file lives, so the confirmation names the right service. */
   provider: "google-workspace" | "microsoft-365";
   action: "push" | "overwrite" | "pull";
   path: string;
@@ -82,10 +77,13 @@ export type DriveFileApprovalRequest = {
   mode?: "replace" | "copy";
 };
 
-/** What OpenWork Desktop tells the free Auto relay about this installation. */
-export type DesktopFreeHost = {
+export type DesktopFreeSigner = {
+  identity(): Promise<{ machineId: string }>;
+  sign(input: { method: string; path: string; body: Uint8Array; authorization: string; nonce?: string }): Promise<string>;
+};
+
+export type DesktopFreeHost = Partial<DesktopFreeSigner> & {
   currentVersion: string;
-  /** Whether this build and its bootstrap may offer signed-out Auto (the public app on hosted OpenWork Cloud). */
   eligible: () => boolean;
 };
 
@@ -96,20 +94,12 @@ export interface ServerConfig {
   hostToken: string;
   configPath?: string;
   opencodeBaseUrl?: string;
-  /**
-   * Bootstrap snapshot of supplied global/workspace engine URLs, before managed URL hydration.
-   * External engines do not share this host's history database; never auto-select local v2 for them.
-   */
   externalOpencode?: boolean;
   opencodeDirectory?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
   approval: ApprovalConfig;
   corsOrigins: string[];
-  /**
-   * Host names the server answers to besides loopback names, IP addresses and
-   * its bind host ("*" for any). Unset skips the check; `web` always sets it.
-   */
   allowedHosts?: string[];
   workspaces: WorkspaceInfo[];
   authorizedRoots: string[];
@@ -119,22 +109,14 @@ export interface ServerConfig {
   hostTokenSource: "cli" | "env" | "file" | "generated";
   logFormat: LogFormat;
   logRequests: boolean;
-  /** In-memory secure key custody supplied by an embedding host such as OpenWork Desktop. */
   localManagedMcpVaultKey?: LocalManagedMcpVaultKeyProvider;
-  /** In-process Desktop confirmation; never configured through HTTP, files or the engine environment. */
   driveFileApproval?: (request: DriveFileApprovalRequest) => Promise<boolean>;
-  /** Desktop-owned managed engines only; never enabled by remote clients. */
   resumeInterruptedTasks?: boolean;
   anonymousInference?: { desktop: DesktopFreeHost };
-  /**
-   * Set by OpenWork Desktop or a hosted web bootstrap for a brand-new install (no earlier
-   * OpenWork state on disk). The server then starts on this engine unless an
-   * engine choice is already saved or OpenCode v1 history exists.
-   */
+  trustedDenOrigin?: string;
+  engineSystemProxyEnv?: () => Promise<Record<string, string>>;
   freshInstallEngine?: "v2";
-  /** Automatic v1-to-v2 migration is on by default; false is an explicit local opt-out. */
   engineAutoUpgrade?: boolean;
-  /** @deprecated Legacy rollout marker, ignored. Never reverts a migrated instance. */
   engineForcePolicy?: boolean;
 }
 

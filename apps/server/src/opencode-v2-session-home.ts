@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { opencodeV1DatabasePath, v1ChatDirectory } from "./opencode-v2-migration.js";
+import { opencodeV1DatabasePath, v1ChatDirectory } from "./opencode-history.js";
 import { openRuntimeSqliteDatabase, runtimeDbPath, type RuntimeSqliteDatabase } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
@@ -22,8 +22,6 @@ async function database(config: ServerConfig) {
   return pending;
 }
 
-/** Where a chat copied from OpenCode v1 started. v1 chats never change folder,
- * so v1's own record is the origin even if the chat moved after the copy. */
 export type V2SessionOrigin = (sessionId: string) => Promise<string | null>;
 
 async function v1Origin(sessionId: string): Promise<string | null> {
@@ -32,8 +30,6 @@ async function v1Origin(sessionId: string): Promise<string | null> {
   return v1ChatDirectory(database, sessionId);
 }
 
-/** Reading a whole history is the slow path. A large migrated set must not run
- * hundreds of them against the engine at once, across all workspace lists. */
 const HISTORY_SCAN_CONCURRENCY = 4;
 let historyScans = 0;
 const historyScanQueue: Array<() => void> = [];
@@ -63,10 +59,6 @@ export function nativeSessionDirectory(value: unknown): string | null {
     ? session.location.directory : null;
 }
 
-/** OpenWork owns the conversation's home; native location remains the execution
- * directory. Only engine history, or v1's record of a copied chat, can establish
- * an older session's original home.
- * Never adopt a caller-supplied workspace or a mutable metadata label as proof. */
 export function createV2SessionHomes(
   config: ServerConfig,
   read: (path: string) => Promise<unknown>,
@@ -95,7 +87,6 @@ export function createV2SessionHomes(
   const created = async (id: string, directory: string) => {
     const home = await canonical(directory);
     const db = await database(config);
-    // Only a successful native creation may replace an old ID's binding.
     db.sqlite.prepare(`INSERT INTO opencode_v2_session_homes (session_id, home_directory) VALUES (?, ?)
       ON CONFLICT(session_id) DO UPDATE SET home_directory = excluded.home_directory`).run(id, home);
     return home;
@@ -108,20 +99,14 @@ export function createV2SessionHomes(
     if (existing) return existing;
     if (ancestors.has(session.id) || ancestors.size >= 256) throw new Error("Invalid conversation ancestry");
     const nextAncestors = new Set([...ancestors, session.id]);
-    // Delegated sessions belong to the same conversation home even if they were
-    // created after the parent moved into a worktree.
     if (typeof session.parentID === "string") {
       const parent = await resolve(await read(`/api/session/${encodeURIComponent(session.parentID)}`), nextAncestors);
       if (!parent) throw new Error("Could not verify the parent conversation");
       return remember(session.id, parent);
     }
-    // Chats copied from v1 (often hundreds after a migration) are answered from
-    // v1's own record without reading their history.
     const id = session.id;
     const copied = await origin(id).catch(() => null);
     if (copied) return remember(id, copied);
-    // Backfill sessions created before this index existed, including moves made
-    // while OpenWork was closed. Read oldest first; the first move records origin.
     const recorded = await withHistoryScanSlot(() => historyOrigin(id));
     return remember(id, recorded ?? directory);
   };

@@ -48,6 +48,15 @@ export function resolveDesktopDistribution({
   return PUBLIC_DESKTOP_DISTRIBUTION;
 }
 
+/**
+ * Whether this install may send error reports to a service OpenWork operates.
+ * OpenWork Enterprise never does: it runs against an organization's own
+ * deployment, and what happens there stays there.
+ */
+export function desktopErrorReportingAllowed(distribution) {
+  return distribution.flavor !== "enterprise";
+}
+
 export function enterpriseActivationComplete(config) {
   if (!config || typeof config !== "object") return false;
   const activation = config.enterpriseActivation;

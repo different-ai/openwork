@@ -20,6 +20,7 @@ const home = `# OpenWork
 ## Primary calls-to-action
 
 - **Download for free** — [Desktop](https://openworklabs.com/download)
+- **Products** — [Desktop App](https://openworklabs.com/desktop), [MCP Gateway](https://openworklabs.com/connect), [AI Gateway](https://openworklabs.com/ai-gateway), [Cloud App](https://openworklabs.com/cloud)
 - **Open in your browser** — [OpenWork Web](https://app.openworklabs.com)
 - **Team plans** — [Pricing](https://openworklabs.com/pricing) (Free plan up to 5 users; Team \\$10 per user/mo; self-hosting free up to 5 users)
 - **Sign in to the hosted workspace** — [Cloud](https://app.openworklabs.com)
@@ -225,21 +226,154 @@ MCP server URL: \`https://api.openworklabs.com/mcp/agent\` (Streamable HTTP, OAu
 - [MCP server card](https://openworklabs.com/.well-known/mcp/server-card.json)
 `
 
+const aiGateway = `# OpenWork AI Gateway
+
+> Add a model provider once, and everyone gets the right models. Admins connect providers in OpenWork Cloud, choose who can use each model, and set spend limits. Members pick a model and never handle a key.
+
+## What it does
+
+- Provider keys are stored encrypted on the server; each member gets one AI Gateway key that only reaches the models they are allowed
+- Grant models to everyone, a team, or one person; access is checked on every request
+- Spend limits in US dollars per day, week, and month; pause models or only warn; members can ask for 25% more
+- Tokens and estimated cost for the last 31 days, by model, team, and person
+- Works on OpenWork Cloud and self-hosted
+
+## Providers
+
+OpenAI, Anthropic, Google Gemini, Google Vertex AI (including Claude on Vertex), Azure OpenAI, Microsoft Foundry (Claude), Amazon Bedrock, Mistral, OpenRouter, LiteLLM, and compatible catalog providers. See [provider support](https://openworklabs.com/docs/ai-gateway/provider-support).
+
+## Set it up
+
+1. In the OpenWork Cloud dashboard, open \`AI Gateway\` > \`AI Providers\` > \`Add provider\`.
+2. Choose who can use it: everyone, teams, or people, and all models or only some.
+3. Optional: under \`Who can use models\`, choose \`Only models you provide\`.
+4. On \`Limits\`, give a team or person a daily, weekly, or monthly amount.
+5. A member picks the model in the desktop app or OpenWork Web.
+
+## Rolling out
+
+- Smart Model Router (OpenWork Cloud): members pick Smart and each prompt goes to the model tagged for that kind of work. [Docs](https://openworklabs.com/docs/ai-gateway/auto-model-routing)
+- AI Gateway API keys for Claude Code, Codex, Cursor, and other tools. [Docs](https://openworklabs.com/docs/ai-gateway/third-party-tools)
+
+## Pricing
+
+- Shared provider keys: Team plan, \\$10 per user/month
+- Spend observability and audit log: Enterprise
+- OpenWork Models (optional managed models, no keys): \\$10 per user/month
+- Providers bill model usage
+
+## Links
+
+- [Set up AI Gateway](https://app.openworklabs.com)
+- [AI Gateway docs](https://openworklabs.com/docs/ai-gateway/overview)
+- [How a prompt reaches a model](https://openworklabs.com/docs/ai-gateway/how-requests-flow)
+- [AI Gateway vs LiteLLM vs Bifrost](https://openworklabs.com/docs/ai-gateway/compare-litellm-bifrost)
+- The [MCP Gateway](https://openworklabs.com/connect) is separate: it shares skills and connections, not models
+`
+
+const desktop = `# OpenWork Desktop
+
+> A free, open-source AI agent app for your own files, on macOS, Windows, and Linux. Any model. Your files stay on your computer. No account needed.
+
+Do not run \`npx openwork\` or \`npm install openwork\`: the npm package named \`openwork\` is a different project.
+
+## What it does
+
+- Chat on your files: the agent reads and writes in the folders you allow
+- Skills and Anthropic-compatible plugins
+- Automations that run on a schedule (needs an OpenWork Cloud sign-in)
+- A built-in browser the agent can drive
+- Any model: Claude, GPT, Gemini, Mistral, or a local model through Ollama or LM Studio; 50+ providers
+- MCP servers for the services you use
+
+## Local first
+
+- Files stay on your computer; prompts go directly to the model provider you choose
+- Works signed out: chat on files, your own models, workspace skills, your own MCP servers
+- With an OpenWork Cloud sign-in: automations, team-shared skills, plugins, and connections, dashboards
+- The desktop app is MIT licensed: https://github.com/different-ai/openwork
+
+## Install
+
+- macOS (Homebrew): \`brew install --cask openwork\`
+- macOS Apple Silicon: https://openworklabs.com/download/mac-arm64
+- macOS Intel: https://openworklabs.com/download/mac-x64
+- Windows x64: https://openworklabs.com/download/win-x64
+- Windows ARM64: https://openworklabs.com/download/win-arm64
+- Linux x64 (AppImage): https://openworklabs.com/download/linux-x64
+- Linux ARM64 (AppImage): https://openworklabs.com/download/linux-arm64
+- All downloads: https://openworklabs.com/download
+
+## First run
+
+1. Open OpenWork and pick a folder it may work in.
+2. Choose a model: sign in with ChatGPT, add an API key, or use a local model.
+3. Run a task, for example "Summarize this folder."
+
+## For teams
+
+- Share skills and connections: [MCP Gateway](https://openworklabs.com/connect)
+- Provide models without handing out keys: [AI Gateway](https://openworklabs.com/ai-gateway)
+- Manage members and policies: [Cloud App](https://openworklabs.com/cloud)
+- Deploy with MDM: [Enterprise](https://openworklabs.com/enterprise)
+
+## For agents
+
+- [install-openwork skill](https://openworklabs.com/.well-known/agent-skills/install-openwork/SKILL.md)
+- [llms.txt](https://openworklabs.com/llms.txt)
+`
+
 const cloud = `# OpenWork Cloud
 
-> The dashboard for running OpenWork across your organization.
+> Run OpenWork for your whole team from one dashboard. Share skills, connections, and models, manage members, and set policies. OpenWork Web opens the full app in a browser tab.
 
-- Provision model providers centrally
-- Deploy skills and MCP servers to every seat
-- Manage members, policies, usage, and audit
-- OpenWork Web and the Connect MCP gateway are built in
-- [Get started free](https://app.openworklabs.com?mode=sign-up)
-- [Explore Connect](https://openworklabs.com/connect)
+## What admins manage
+
+- Members, teams, and roles
+- Library: skills, plugins, and connections shared with everyone, a team, or one person
+- [MCP Gateway](https://openworklabs.com/connect): everything in the Library reaches any MCP client through one URL
+- [AI Gateway](https://openworklabs.com/ai-gateway): connect model providers once and choose who can use each model
+- Policies: limit members to the models you provide; choose allowed desktop versions
+- Analytics: usage and adoption (basic on Team, full on Enterprise)
+
+## Where it shows up
+
+- The desktop app on macOS, Windows, and Linux, after sign-in
+- OpenWork Web, in a browser tab
+- Any MCP client, such as Claude Code, Cursor, or Codex
+
+## OpenWork Web
+
+- The full OpenWork app in a browser, on a cloud computer for each member
+- Add-on on Team and Enterprise: \\$50 per member/month
+- Sleeps when idle; workspace files are kept
+- Cloud Automations run even when the member's own computer is off
+
+## Sign-in and security
+
+- Single sign-on with any SAML or OIDC identity provider (Team)
+- SCIM provisioning and audit log (Enterprise)
+- Self-host the full platform; free for organizations up to 5 users
+- SOC 2 Type II: [Trust Center](https://trust.openworklabs.com/)
+
+## Pricing
+
+- Free: up to 5 users
+- Team: \\$10 per user/month
+- Enterprise: custom
+- [Pricing](https://openworklabs.com/pricing)
+
+## Get started
+
+- [Sign up](https://app.openworklabs.com?mode=sign-up)
+- [Team quickstart](https://openworklabs.com/docs/cloud/team-quickstart)
 `
 
 export const agentMarkdown: Record<string, string> = {
   "/": home,
   "/connect": connect,
+  "/ai-gateway": aiGateway,
+  "/desktop": desktop,
   "/cloud": cloud,
   "/pricing": pricing,
   "/enterprise": enterprise,

@@ -8,7 +8,6 @@ export type LocalProviderInstallInput = {
   modelName: string;
   setDefault: boolean;
   supportsVision: boolean;
-  /** Thinking levels the model server reports, in its own order. Empty when it reports none. */
   thinkingLevels?: string[];
 };
 
@@ -28,8 +27,6 @@ export type OllamaModelCapabilities = {
 
 const NO_OLLAMA_CAPABILITIES: OllamaModelCapabilities = { supportsVision: false, thinkingLevels: [] };
 
-// Level names become variant keys and are sent back verbatim as
-// `reasoning_effort`, so accept only short plain identifiers.
 const THINKING_LEVEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 
 function readProperty(value: unknown, key: string) {
@@ -43,12 +40,6 @@ export function parseOllamaVisionCapability(payload: unknown) {
   return capabilities.some((capability) => typeof capability === "string" && capability.toLowerCase() === "vision");
 }
 
-/**
- * Reads `thinking.values` from Ollama's `/api/show`. Named levels are kept
- * exactly; boolean on/off controls map to the efforts Ollama accepts for them
- * on its OpenAI-compatible API (`false` -> "none", `true` -> "high").
- * A model that can only turn thinking off has nothing to choose, so it gets no levels.
- */
 export function parseOllamaThinkingLevels(payload: unknown): string[] {
   const values = readProperty(readProperty(payload, "thinking"), "values");
   if (!Array.isArray(values)) return [];
@@ -85,7 +76,6 @@ export async function fetchOllamaModelCapabilities(modelId: string, baseURL: str
 
 export type LocalProviderModelInput = Pick<LocalProviderInstallInput, "modelId" | "modelName" | "supportsVision" | "thinkingLevels">;
 
-/** Every model a local server has, to replace the saved list with. */
 export type LocalProviderSyncInput = Pick<LocalProviderInstallInput, "providerId" | "name" | "baseURL"> & {
   models: LocalProviderModelInput[];
 };
@@ -99,7 +89,6 @@ export function buildLocalProviderModelConfig(input: LocalProviderModelInput): P
       input: input.supportsVision ? ["text", "image"] : ["text"],
       output: ["text"],
     },
-    // Each level is a Thinking choice in the model picker; the engine sends it as `reasoning_effort`.
     ...(thinkingLevels.length > 0
       ? { variants: Object.fromEntries(thinkingLevels.map((level) => [level, { reasoningEffort: level }])) }
       : {}),
@@ -122,11 +111,6 @@ export function buildLocalProviderConfig(input: LocalProviderInstallInput): Prov
   return buildLocalProviderConfigWithModels({ ...input, models: [input] });
 }
 
-/**
- * Workspace config patch that adds one local model. Models added earlier stay:
- * the server merges this provider's models instead of replacing the provider.
- * Adding the same model again refreshes its capabilities.
- */
 export function buildLocalProviderInstallPatch(input: LocalProviderInstallInput) {
   return {
     opencode: { provider: { [input.providerId]: buildLocalProviderConfig(input) } },
@@ -134,22 +118,12 @@ export function buildLocalProviderInstallPatch(input: LocalProviderInstallInput)
   };
 }
 
-/**
- * Workspace config patch that makes the saved models match the local server:
- * new models are added, removed ones are dropped, and every model's
- * capabilities are refreshed. The provider is replaced, not merged.
- */
 export function buildLocalProviderSyncPatch(input: LocalProviderSyncInput) {
   return {
     opencode: { provider: { [input.providerId]: buildLocalProviderConfigWithModels(input) } },
   };
 }
 
-/**
- * Lists the models Ollama has now (`/api/tags`) and reads each one's
- * capabilities, ready for `buildLocalProviderSyncPatch`. Returns null when
- * Ollama cannot be reached, so a failed read never empties the saved list.
- */
 export async function fetchOllamaSyncInput(baseURL: string = OLLAMA_PROVIDER_CONFIG.baseURL): Promise<LocalProviderSyncInput | null> {
   let names: string[];
   try {

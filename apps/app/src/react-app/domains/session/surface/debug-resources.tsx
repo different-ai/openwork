@@ -35,8 +35,6 @@ function resourceLabel(query: Query) {
   const name = query.queryKey[0];
   if (typeof name !== "string") return "App data";
   if (resourceLabels[name]) return resourceLabels[name];
-  // Only static, slug-shaped names: never expose keys containing tokens, URLs,
-  // user text, paths or account/session identifiers in the UI or copied report.
   if (!/^[a-z][a-z-]{0,60}$/.test(name)) return "App data";
   const label = name.replace(/^(react|opencode)-/, "").replaceAll("-", " ");
   return label.charAt(0).toUpperCase() + label.slice(1);
@@ -95,8 +93,6 @@ export function useDebugResources(scope: { workspaceId: string; sessionId: strin
     const unsubscribe = cache.subscribe(event => {
       if (event.type === "updated") {
         if (!relevant(event.query)) return;
-        // Streamed transcript projections update on each token; the timer below
-        // samples those without making the debug panel render at token cadence.
         if (event.action.type === "success" && event.action.manual) return;
       } else if (!["added", "removed", "observerAdded", "observerRemoved"].includes(event.type)) return;
       refresh();

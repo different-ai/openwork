@@ -12,22 +12,10 @@ const OUTCOME: Record<RunStatus, FeatureOutcomeStatus> = {
   running: "running",
   succeeded: "succeeded",
   failed: "failed",
-  // The owner stopped it: it did not run, and nothing is wrong.
   cancelled: "skipped",
   skipped: "skipped",
 }
 
-/**
- * Why a run did not succeed, from the receipt automation_run already holds:
- * the error code (`AutomationError["code"]`) for failed and skipped runs.
- * A skip without one is the overlap receipt repository.claim writes when the
- * previous occurrence is still running.
- *
- * TODO(calendar skip reasons): the calendar-trigger change in flight writes
- * `skipped` receipts with typed reasons the owner can fix (calendar-trigger.ts,
- * calendar-trigger-source.ts). Once it lands, read its reason field here and
- * keep error.code as the fallback.
- */
 function reasonOf(status: RunStatus, code: string | null): string | null {
   if (status === "cancelled") return "cancelled"
   if (status === "failed") return code ?? "unknown"
@@ -35,16 +23,8 @@ function reasonOf(status: RunStatus, code: string | null): string | null {
   return null
 }
 
-/**
- * Runs of Automations whose run used this kind of schedule, per organization,
- * UTC day, status and reason. Indexed: per Automation, a range on
- * automation_run_history (automation_id, created_at), forced so a large run
- * table is never scanned; the run's revision is a primary-key lookup. Reads
- * no instructions, results or meeting context (trigger_context).
- */
 export function automationRunOutcomes(kind: Extract<AutomationScheduleKind, "interval" | "calendar">, unit: FeatureOutcomeUnit): FeatureOutcomeReader {
   return async (range) => {
-    // Drizzle writes timestamps as UTC wall-clock time, so formatting in the session's zone gives the UTC day.
     const day = sql<string>`date_format(${AutomationRunTable.created_at}, '%Y-%m-%d')`
     const code = sql<string | null>`json_unquote(json_extract(${AutomationRunTable.error}, '$.code'))`
     const rows = await db

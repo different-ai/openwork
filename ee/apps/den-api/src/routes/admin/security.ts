@@ -1,10 +1,11 @@
-import { and, count, eq, gte, inArray, isNotNull, lt, ne, sql } from "@openwork-ee/den-db/drizzle"
+import { and, count, eq, gt, gte, inArray, isNotNull, lt, lte, ne, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AdminAllowlistTable,
   AuthApiKeyTable,
   AutomationTable,
   AuthSessionTable,
   AuthUserTable,
+  FreeAutoOrgFounderTable,
   InferenceFreeUsageTable,
   InferenceUsageLedgerEntryTable,
   InvitationTable,
@@ -43,7 +44,6 @@ import {
   NETWORK_SPREAD_TIERS,
   networkOf,
   networkSpreadFinding,
-  ORGANIZATION_CREATION_TIERS,
   organizationCreationFinding,
   rateLimitedFinding,
   ROUND_THE_CLOCK_HOURS,
@@ -63,7 +63,6 @@ import {
 const DAY_MS = 86_400_000
 const HOUR_MS = 3_600_000
 const REQUEST_HOURS = 24
-/** Endpoints listed in the request table; the rest still count in the hourly totals. */
 const REQUEST_ENDPOINT_LIMIT = 25
 
 const querySchema = z.object({ days: z.coerce.number().int().min(1).max(30).default(7) })
@@ -132,7 +131,6 @@ function number(value: unknown): number {
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error("security_report_invalid_totals")
   return parsed
 }
-/** Inference amounts are stored at INFERENCE_USAGE_CONVERSION_FACTOR units per USD; reports use micro-USD. */
 function microUsd(amount: number): number {
   return Math.round(amount * 1_000_000 / INFERENCE_USAGE_CONVERSION_FACTOR)
 }
@@ -140,17 +138,13 @@ type UserId = typeof AuthUserTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
 
-/**
- * Account, credential and usage signals for the last `days` days, each compared with a
- * threshold and, where it helps, the previous range of the same length.
- */
 export async function readSecurityReport(input: { days: number; now?: Date }): Promise<SecurityReport> {
   const now = input.now ?? new Date()
   const from = new Date(now.getTime() - input.days * DAY_MS)
   const previousFrom = new Date(from.getTime() - input.days * DAY_MS)
 
   const [
-    accounts, firstSignIns, previousAccounts, sessions, owners, adminGrants, adminTotal,
+    accounts, firstSignIns, previousAccounts, sessions, founderSpend, adminGrants, adminTotal,
     keyOwners, keyPosture, clientTotals, clientUsers, inviters, paidSpend, freeSpend, paidHours, freeHours, firstDayAllowance,
   ] = await Promise.all([
     db.select({ userId: AuthUserTable.id, email: AuthUserTable.email, emailVerified: AuthUserTable.emailVerified, createdAt: AuthUserTable.createdAt })
@@ -163,9 +157,18 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
     db.select({ userId: AuthSessionTable.userId, ipAddress: AuthSessionTable.ipAddress, userAgent: AuthSessionTable.userAgent, signIns: count() })
       .from(AuthSessionTable).where(gte(AuthSessionTable.createdAt, from))
       .groupBy(AuthSessionTable.userId, AuthSessionTable.ipAddress, AuthSessionTable.userAgent),
-    db.select({ userId: MemberTable.userId, organizations: count() }).from(MemberTable)
-      .where(and(gte(MemberTable.createdAt, from), sql`${MemberTable.role} like ${"%owner%"}`, eq(MemberTable.isSetupAgent, false), isNotNull(MemberTable.userId)))
-      .groupBy(MemberTable.userId).having(sql`count(*) >= ${ORGANIZATION_CREATION_TIERS.medium}`),
+    db.select({
+      userId: FreeAutoOrgFounderTable.founder_user_id,
+      organizations: sql<number>`count(distinct ${InferenceFreeUsageTable.organization_id})`,
+      amount: sql<number>`sum(${InferenceFreeUsageTable.amount})`,
+    }).from(InferenceFreeUsageTable)
+      .innerJoin(FreeAutoOrgFounderTable, eq(FreeAutoOrgFounderTable.organization_id, InferenceFreeUsageTable.organization_id))
+      .innerJoin(OrganizationTable, eq(OrganizationTable.id, InferenceFreeUsageTable.organization_id))
+      .where(and(gte(OrganizationTable.createdAt, from), lte(OrganizationTable.createdAt, now),
+        gte(InferenceFreeUsageTable.created_at, from), lte(InferenceFreeUsageTable.created_at, now),
+        eq(InferenceFreeUsageTable.estimated, false), gt(InferenceFreeUsageTable.amount, 0)))
+      .groupBy(FreeAutoOrgFounderTable.founder_user_id)
+      .having(sql`count(distinct ${InferenceFreeUsageTable.organization_id}) >= 2`),
     db.select({ id: AdminAllowlistTable.id, email: AdminAllowlistTable.email, note: AdminAllowlistTable.note, createdAt: AdminAllowlistTable.created_at })
       .from(AdminAllowlistTable).where(gte(AdminAllowlistTable.created_at, from)),
     db.select({ admins: count() }).from(AdminAllowlistTable),
@@ -198,12 +201,10 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
       previous: sql<number>`coalesce(sum(case when ${InferenceFreeUsageTable.created_at} < ${from} then ${InferenceFreeUsageTable.amount} else 0 end), 0)`,
     }).from(InferenceFreeUsageTable).where(gte(InferenceFreeUsageTable.created_at, previousFrom))
       .groupBy(InferenceFreeUsageTable.organization_id),
-    // Hours with any OpenWork-billed model request, per member, for the round-the-clock check.
     db.selectDistinct({ memberId: InferenceUsageLedgerEntryTable.org_membership_id, hour: sql<number>`floor(unix_timestamp(${InferenceUsageLedgerEntryTable.occurred_at}) / 3600)` })
       .from(InferenceUsageLedgerEntryTable).where(gte(InferenceUsageLedgerEntryTable.occurred_at, from)),
     db.selectDistinct({ memberId: InferenceFreeUsageTable.org_membership_id, hour: sql<number>`floor(unix_timestamp(${InferenceFreeUsageTable.created_at}) / 3600)` })
       .from(InferenceFreeUsageTable).where(gte(InferenceFreeUsageTable.created_at, from)),
-    // New accounts whose free Auto spend in their first day reached 90% of the weekly allowance.
     env.inferenceFree.weeklyLimitAmount > 0
       ? db.select({ userId: AuthUserTable.id, email: AuthUserTable.email, createdAt: AuthUserTable.createdAt, amount: sql<number>`coalesce(sum(${InferenceFreeUsageTable.amount}), 0)` })
         .from(InferenceFreeUsageTable)
@@ -216,7 +217,6 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
       : [],
   ])
 
-  // The earliest sign-in still on record stands for where each new account came from.
   const firstNetwork = new Map<string, { at: number; network: string | null }>()
   for (const row of firstSignIns) {
     const at = row.createdAt.getTime()
@@ -252,7 +252,6 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
     return client ? [{ userId: row.userId as string, client, signIns: number(row.signIns), newAccount: newAccountIds.has(row.userId) }] : []
   })
 
-  // Distinct active UTC hours of each UTC day, per member, across paid and free model use.
   const hoursByMember = new Map<string, Set<number>>()
   for (const row of [...paidHours, ...freeHours]) {
     const hours = hoursByMember.get(row.memberId) ?? new Set<number>()
@@ -287,7 +286,7 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
 
   const userIds = [...new Set([
     ...spreadUsers.map(([userId]) => userId),
-    ...owners.flatMap((row) => row.userId ? [row.userId] : []),
+    ...founderSpend.map((row) => row.userId),
     ...keyOwners.map((row) => row.ownerId),
     ...clientUsers.flatMap((row) => row.userId ? [row.userId] : []),
     ...inviters.map((row) => row.userId),
@@ -313,7 +312,8 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
     disposableSignupFinding(newAccounts),
     unverifiedDomainFinding([...unverifiedByDomain].map(([domain, entry]) => ({ domain, ...entry })), new Set([...PERSONAL_EMAIL_DOMAINS, ...DISPOSABLE_EMAIL_DOMAINS])),
     networkSpreadFinding(spreadUsers.map(([userId, entry]) => ({ userId, email: emailOf(userId), networks: entry.networks.size, signIns: entry.signIns, clients: entry.clients.size }))),
-    organizationCreationFinding(owners.flatMap((row) => row.userId ? [{ userId: row.userId, email: emailOf(row.userId), organizations: number(row.organizations) }] : [])),
+    organizationCreationFinding(founderSpend.map((row) => ({ userId: row.userId, email: emailOf(row.userId),
+      organizations: number(row.organizations), spendMicroUsd: microUsd(number(row.amount)) }))),
     adminGrantFinding(adminGrants, number(adminTotal[0]?.admins)),
     apiKeyFinding(keyOwners.map((row) => ({ ownerId: row.ownerId, label: emailOf(row.ownerId), keys: number(row.keys), isUser: emailById.has(row.ownerId) })),
       { enabled: number(keyPosture[0]?.enabled), withoutExpiry: number(keyPosture[0]?.withoutExpiry) }),
@@ -342,18 +342,12 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
   }
 }
 
-/**
- * Refused, rate-limited and failed requests without a trusted tenant (sign-in, token,
- * registration and stale-credential calls) per hour for the last 24 hours. The log keeps
- * no addresses, so this shows volume and shape, not sources.
- */
 export async function readSecurityRequests(input: { now?: Date } = {}): Promise<SecurityRequests> {
   const now = input.now ?? new Date()
   const currentHour = Math.floor(now.getTime() / HOUR_MS)
   const firstHour = currentHour - REQUEST_HOURS + 1
   const from = new Date(firstHour * HOUR_MS)
   const table = PlatformAuditEventTable
-  // UNIX_TIMESTAMP on a TIMESTAMP column is UTC whatever the session time zone is.
   const hour = sql<number>`floor(unix_timestamp(${table.occurred_at}) / 3600)`
   const rows = await db.select({ hour, action: table.action, outcome: table.outcome, status: table.status, requests: count() })
     .from(table).where(and(gte(table.occurred_at, from), ne(table.outcome, "succeeded")))
@@ -406,7 +400,6 @@ export async function readSecurityRequests(input: { now?: Date } = {}): Promise<
   }
 }
 
-/** The 24-hour rollup reads about a million log rows in production; admins share one result for a short while per instance. */
 export const SECURITY_REQUESTS_CACHE_MS = 120_000
 let requestsCache: { at: number; value: Promise<SecurityRequests> } | null = null
 
@@ -415,7 +408,6 @@ function cachedSecurityRequests(): Promise<SecurityRequests> {
   if (requestsCache && now - requestsCache.at < SECURITY_REQUESTS_CACHE_MS) return requestsCache.value
   const value = readSecurityRequests({ now: new Date(now) })
   requestsCache = { at: now, value }
-  // A failed read is never served again from the cache.
   value.catch(() => { if (requestsCache?.value === value) requestsCache = null })
   return value
 }

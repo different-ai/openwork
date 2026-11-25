@@ -1,0 +1,68 @@
+---
+title: "My bot"
+description: "A background agent that keeps an eye on your email, calendar and team chat, and messages you in Slack only when something needs you."
+keywords: ["My bot", "Your agent", "Workbot", "proactive agent", "morning brief", "meeting prep", "calendar changes", "waiting on you", "Slack DM", "Members' agents"]
+---
+
+My bot is a background agent that checks your calendar, email and team chat during your working hours, and sends you a short Slack message from Workbot when something needs you. Otherwise it stays quiet. It only reads: it never sends email, accepts invitations or changes anything for you.
+
+<Note>
+My bot is being rolled out and isn't available to every organization yet. It also needs [Workbot](/workbot/overview) and the Workbot Slack app. If you don't see **My bot** in the sidebar, it isn't on for your organization.
+</Note>
+
+## What it tells you about
+
+An admin chooses what agents watch for. These are:
+
+- **Morning brief**: what today needs from you, at most three points, in a morning check.
+- **Meeting prep**: before a meeting with people from outside your company, what they asked for or are waiting on.
+- **Calendar changes**: a meeting today or tomorrow that someone else added, moved or cancelled.
+- **Waiting on you**: someone from outside your company asked you something by email or chat a few hours ago and is still waiting.
+
+It can also tell you about anything else worth catching, such as a direct ask in chat or a decision due tomorrow.
+
+It checks in the morning and then about every three hours in your working hours, and sooner when your calendar changes. It sends at most a few messages a day, one per item.
+
+## Get its messages
+
+My bot sends you a direct message from the Workbot Slack app. To get it, link your Slack account to Workbot. Until you do, My bot says **Link your Slack account to Workbot to get its messages.**
+
+See [Connect your Slack account](/slack/connect-your-account).
+
+## Set it up
+
+1. Open [app.openworklabs.com](https://app.openworklabs.com/) and choose your organization.
+2. Click **My bot** in the sidebar, under **Work**.
+3. Use the switch at the top of the page to turn it on or off. Depending on your organization, it starts on or you turn it on yourself.
+
+On the page you can:
+
+- See its last check, its next check and today's checks, including why it stayed quiet.
+- Under **What it tells you about**, choose what you want to hear about, and say in your own words what counts.
+- Under **What it reads**, turn each source on or off, and add an instruction for it, such as "Use my meeting notes for context and action items." Calendar, email and team chat come from Google Workspace, Microsoft 365 or Slack, whichever you connected. Some other connections, such as Linear or Notion, can be added if your admin allows them. Sources your admin decided are shown locked.
+- Under **Hours** and **Limits**, narrow its working hours and how many messages a day it can send, within what your admin allows.
+- Undo a change: each change shows where it was saved, with **Undo**.
+
+If a source can't be read, for example because your account needs signing in again, My bot shows **Reconnect** for it.
+
+You can also change these in a Workbot chat, for example "stop telling me about calendar changes" or "snooze until tomorrow". While it's snoozed, the page shows **Snoozed until** and a **Resume** button.
+
+## For admins
+
+Admins set up members' agents in **Manage › Workbot**, under **Members' agents**:
+
+- **Agents for everyone** turns them on for the organization.
+- **Send messages to**: **A DM from Workbot**, or **Nowhere yet**.
+- Which of the four kinds of message agents send, and **How early before meetings**.
+- **Instructions for every agent**.
+- **Working days**, **Working hours** and **Daily limit**.
+- **Members start**: **Opted in** or **Must opt in**.
+- What agents read: for each source, on for everyone, members choose, or not allowed.
+
+The page previews each kind of message, and shows how agents did over the last 7 days as counts only, without member names or message content. The switch stays locked, with the reason, until there is somewhere to send messages: it needs the Workbot Slack app, and on a self-hosted deployment the headless runner.
+
+## Related
+
+- [Workbot](/workbot/overview)
+- [Connect your Slack account](/slack/connect-your-account)
+- [Connect your services](/start-here/connect-your-stack/connect-services)

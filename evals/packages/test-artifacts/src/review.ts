@@ -72,6 +72,7 @@ export async function assembleReview(options: {
   testRunDirs: string[];
   docShots?: string[];
   title?: string;
+  notice?: string;
   gaps?: string[];
 }): Promise<{ report: ReviewReport; assets: ReviewAsset[] }> {
   const sources: ReviewReport["sources"] = [];
@@ -213,6 +214,7 @@ export async function assembleReview(options: {
   const report = reviewSchema.parse({
     schemaVersion: 1,
     title: options.title ?? "Selected evidence",
+    notice: options.notice,
     gitSha: first.gitSha,
     createdAt: new Date().toISOString(),
     gaps: options.gaps ?? [],
@@ -235,6 +237,7 @@ export function renderReviewComment(
     `Commit \`${report.gitSha}\` · selected evidence`,
     "Required verification is reported separately by the current-head Required verification check.",
   ];
+  if (report.notice) lines.push("", report.notice);
   if (url) lines.push("", `[Open review report](${url})`);
   if (report.gaps.length > 0)
     lines.push("", `Coverage gaps: ${report.gaps.join("; ")}`);

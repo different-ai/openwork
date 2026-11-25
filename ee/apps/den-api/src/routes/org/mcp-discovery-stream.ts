@@ -1,7 +1,6 @@
-import type { EnterpriseMcpDiscoveryCheck } from "@openwork/enterprise-mcp-client"
+import type { EnterpriseMcpDiscoveryCheck } from "@openwork/mcp-enterprise-client"
 import type { SSEStreamingApi } from "hono/streaming"
 
-/** Ordered, backpressure-aware progress; disconnects cancel the same discovery. */
 export async function streamMcpDiscovery<Result>(input: {
   stream: SSEStreamingApi
   signal: AbortSignal

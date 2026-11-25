@@ -4,12 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
-/**
- * One presentation for task failures, interruptions and engine-owned retries:
- * a single line (what happened, the current state, the next action). The raw
- * error stays one quiet click away behind a code icon that appears on hover
- * or focus, so people who know what to look for can always copy it.
- */
 export function TaskRecovery(props: {
   title: string;
   state?: "failed" | "paused" | "retrying";

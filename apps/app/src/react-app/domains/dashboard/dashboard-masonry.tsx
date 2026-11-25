@@ -1,11 +1,9 @@
 /** @jsxImportSource react */
 import { Children, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
-// Coarse tracks stay below browser implicit-grid limits even for 50 tall Apps.
 const ROW_HEIGHT = 8;
 const GAP = 8;
 
-/** Keep DOM/keyboard order and mounted Apps stable while CSS packs variable-height tiles. */
 export function DashboardMasonry({ children }: { children: ReactNode }) {
   return (
     <div

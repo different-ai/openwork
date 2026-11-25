@@ -144,8 +144,7 @@ export function createNativeContextMenus({ Menu, getWindow, clipboard }) {
     });
   }
 
-  function show(request) {
-    const window = getWindow();
+  function show(request, window = getWindow()) {
     if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return Promise.resolve(null);
     if (!request || !Number.isFinite(request.point?.x) || !Number.isFinite(request.point?.y)
       || Math.abs(request.point.x) > 100_000 || Math.abs(request.point.y) > 100_000

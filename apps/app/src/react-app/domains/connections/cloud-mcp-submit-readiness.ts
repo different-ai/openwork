@@ -209,11 +209,6 @@ export async function resolveCloudMcpSubmissionAuth(
   }
 }
 
-/**
- * Direct tools/list proves the Cloud tools are registered and reachable. The
- * selected model must then either expose those exact tools through OpenCode's
- * experimental listing or be verified as tool-capable by its provider.
- */
 export function assessCloudMcpSubmissionReadiness(input: {
   health: OpenworkCloudMcpHealth | null;
   providerModel: OpenworkCloudMcpProviderModelContext;
@@ -265,7 +260,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
         code: "provider_tool_projection_unverified",
         stage: "provider_projection",
         message: "OpenWork could not read tool capability information for the selected provider and model.",
-        recommendedAction: "Retry, or check Settings → Advanced → Agent access diagnostics if the problem continues.",
+        recommendedAction: "Retry, or check Settings → Advanced → Diagnostics if the problem continues.",
       }),
     };
   }
@@ -286,8 +281,8 @@ export function assessCloudMcpSubmissionReadiness(input: {
             ? "The selected model does not support tool calling."
             : "OpenWork could not confirm that the selected model supports tool calling.",
         recommendedAction: modelMissing
-          ? "Choose a model available from this provider, or check Settings → Advanced → Agent access diagnostics."
-          : "Choose a model with tool calling, or check Settings → Advanced → Agent access diagnostics.",
+          ? "Choose a model available from this provider, or check Settings → Advanced → Diagnostics."
+          : "Choose a model with tool calling, or check Settings → Advanced → Diagnostics.",
       }),
     };
   }
@@ -300,7 +295,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
         stage: "provider_projection",
         retryable: false,
         message: "OpenWork received an unsupported tool capability result for the selected provider and model.",
-        recommendedAction: "Choose a model with tool calling, or check Settings → Advanced → Agent access diagnostics.",
+        recommendedAction: "Choose a model with tool calling, or check Settings → Advanced → Diagnostics.",
       }),
     };
   }
@@ -452,9 +447,6 @@ export function createCloudMcpSubmissionCoordinator(): CloudMcpSubmissionCoordin
   };
 
   const submit = (input: SubmissionCoordinatorInput): Promise<CloudMcpSubmissionResult> => {
-    // Ungated messages have no shared preparation to coordinate. Two split
-    // panes can submit in the same workspace while the first request is pending.
-    // Sharing that promise would report both drafts sent but drop the second.
     if (!input.prepare) {
       return (async () => {
         await input.send();

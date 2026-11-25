@@ -103,6 +103,22 @@ Optional connector keys:
 
 The chart writes `GITHUB_CONNECTOR_APP_ID` and `GITHUB_CONNECTOR_APP_CLIENT_ID` through the shared ConfigMap, and writes `GITHUB_CONNECTOR_APP_PRIVATE_KEY`, `GITHUB_CONNECTOR_APP_WEBHOOK_SECRET`, and `GITHUB_CONNECTOR_APP_CLIENT_SECRET` through the shared Secret.
 
+## Approve installations for Den organizations
+
+Set `GITHUB_CONNECTOR_INSTALLATION_BINDINGS` in the **Den API server** environment. For Helm, use `denApi.env`:
+
+```yaml
+denApi:
+  env:
+    GITHUB_CONNECTOR_INSTALLATION_BINDINGS: '[{"installationId":12345,"organizationId":"org_00000000000000000000000001"}]'
+```
+
+Use the numeric GitHub App installation ID and the exact Den organization ID, not either organization's name or slug. The deployment operator must verify each pairing with the GitHub account owner or organization administrator before approving it. Each installation belongs to exactly one Den organization; multiple installations may be approved for the same organization. Never generate the list from existing connector records or trust the setup redirect alone as proof.
+
+Den API loads this list at startup. Roll out the same configuration to all replicas. An absent or empty list denies all installations; malformed entries or any duplicate installation ID invalidate the entire list. Removing an entry and restarting all replicas blocks future token use and sync for that installation. To revoke access immediately on GitHub's side as well, suspend or uninstall the GitHub App installation from GitHub.
+
+Existing GitHub sources without a matching approval cannot browse repositories, discover plugins, or sync (including queued work and webhook updates). Den does not delete previously imported plugins on this basis; they stop receiving updates. Configure approved existing installations before upgrading to keep them working. For a new installation, an admin can install the App in GitHub, get its installation ID from GitHub's installation settings, and ask the deployment operator to approve it before completing the Den connection. Self-service proof of ownership is not yet available.
+
 ## What OpenWork does with it
 
 When an admin clicks **Connect GitHub** in OpenWork:
@@ -112,9 +128,9 @@ When an admin clicks **Connect GitHub** in OpenWork:
 3. Den API sends the admin to the GitHub App installation URL with a signed `state`.
 4. GitHub redirects to `/dashboard/integrations/github?installation_id=...&state=...`.
 5. Den web calls `/v1/connectors/github/install/complete`.
-6. Den API stores the GitHub installation as a connector account and lists repositories visible to that installation.
+6. Den API checks the operator-approved binding before storing the connector account or listing its repositories. If approval takes longer than the setup link lasts, restart the connection from Den after approval.
 
-When GitHub sends a webhook to `/v1/webhooks/connectors/github`, Den API verifies the `x-hub-signature-256` header with `GITHUB_CONNECTOR_APP_WEBHOOK_SECRET` before enqueueing connector sync work.
+When GitHub sends a webhook to `/v1/webhooks/connectors/github`, Den API verifies the `x-hub-signature-256` header with `GITHUB_CONNECTOR_APP_WEBHOOK_SECRET`. It only accepts sync work for the approved Den organization.
 
 ## Validate the setup
 

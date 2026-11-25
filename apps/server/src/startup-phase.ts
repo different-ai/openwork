@@ -1,7 +1,5 @@
 import { channel } from "node:diagnostics_channel";
 
-// The desktop subscribes before importing the embedded bundle. Standalone
-// servers have no subscriber, sink, timer, or output. Never publish input data.
 const events = channel("openwork.desktop.startup-phase");
 type StartupPhase = "engine.v2.version-probe" | "engine.version-probe" | "plugin-deps.seed" | "plugin-deps.extract" | "engine.v1.serve" | "engine.v2.resolve" | "engine.v2.serve";
 

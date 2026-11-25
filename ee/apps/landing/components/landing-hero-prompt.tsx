@@ -1,9 +1,5 @@
 "use client";
 
-/**
- * Hero agent-install prompt with copied feedback states.
- */
-
 import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -18,14 +14,11 @@ type CopyMethod = "clipboard" | "execCommand" | "none";
 type Props = {
   className?: string;
   compact?: boolean;
-  /** Another prompt for another page; defaults to the setup prompt. */
   prompt?: string;
   heading?: string;
   description?: string;
-  /** Analytics variant and placement for this card. */
   variant?: string;
   placement?: string;
-  /** Show the prompt text in the card, so people see what they paste. */
   showPrompt?: boolean;
 };
 

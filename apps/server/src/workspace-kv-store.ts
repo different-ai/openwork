@@ -54,6 +54,29 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export const SAFE_UPDATED_AT_SQL =
+  "CASE WHEN typeof(updated_at) = 'integer' AND updated_at BETWEEN 0 AND 9007199254740991 THEN updated_at ELSE 0 END";
+
+export const UNSAFE_UPDATED_AT_RAW_SQL =
+  "CASE WHEN typeof(updated_at) = 'integer' AND updated_at BETWEEN 0 AND 9007199254740991 THEN NULL ELSE CAST(updated_at AS TEXT) END";
+
+export function warnUnsafeUpdatedAt(tableName: string, workspaceId: string | undefined, raw: unknown): void {
+  if (raw === null || raw === undefined) return;
+  console.warn(
+    `[workspace-kv-store] ${tableName}: out-of-range updated_at ${String(raw)}`
+      + `${workspaceId ? ` for workspace ${workspaceId}` : ""}; treating it as 0 until the next write`,
+  );
+}
+
+function safeUpdatedAtForWrite(tableName: string, workspaceId: string, updatedAt: number): number {
+  if (Number.isSafeInteger(updatedAt) && updatedAt >= 0) return updatedAt;
+  console.warn(
+    `[workspace-kv-store] ${tableName}: refusing to persist unsafe updated_at ${String(updatedAt)}`
+      + ` for workspace ${workspaceId}; using Date.now()`,
+  );
+  return Date.now();
+}
+
 function validIdentifier(value: string, label: string): string {
   if (!IDENTIFIER_RE.test(value)) throw new Error(`Invalid ${label}: ${value}`);
   return value;
@@ -99,14 +122,19 @@ function tableConfig<T>(options: WorkspaceKvStoreOptions<T>): WorkspaceKvTableCo
     tableName,
     valueColumn,
     createTableSql: createTableSql({ tableName, valueColumn, schemaVersion }),
-    selectSql: `SELECT ${valueColumn} AS valueJson, updated_at AS updatedAt FROM ${tableName} WHERE workspace_id = ?`,
+    selectSql: `SELECT ${valueColumn} AS valueJson, ${SAFE_UPDATED_AT_SQL} AS updatedAt, ${UNSAFE_UPDATED_AT_RAW_SQL} AS unsafeUpdatedAt FROM ${tableName} WHERE workspace_id = ?`,
     upsertSql: upsertSql({ tableName, valueColumn, schemaVersion }),
     ...(schemaVersion ? { schemaVersion } : {}),
   };
 }
 
-function rowFromUnknown(row: unknown): WorkspaceKvStoredRow | undefined {
+function rowFromUnknown(
+  row: unknown,
+  tableName?: string,
+  workspaceId?: string,
+): WorkspaceKvStoredRow | undefined {
   if (!isRecord(row) || typeof row.valueJson !== "string") return undefined;
+  if (tableName) warnUnsafeUpdatedAt(tableName, workspaceId, row.unsafeUpdatedAt);
   return {
     valueJson: row.valueJson,
     updatedAt: typeof row.updatedAt === "number" ? row.updatedAt : null,
@@ -181,7 +209,7 @@ async function openTableDb(path: string, config: WorkspaceKvTableConfig): Promis
   const get = sqlite.prepare(config.selectSql);
   const upsert = sqlite.prepare(config.upsertSql);
   return {
-    get: (workspaceId) => rowFromUnknown(get.get(workspaceId)),
+    get: (workspaceId) => rowFromUnknown(get.get(workspaceId), config.tableName, workspaceId),
     upsert: ({ workspaceId, valueJson, updatedAt }) => {
       upsert.run(workspaceId, valueJson, updatedAt);
     },
@@ -201,14 +229,6 @@ async function workspaceKvDb(path: string, config: WorkspaceKvTableConfig): Prom
   return db;
 }
 
-/**
- * Reads must never materialize the runtime DB. A fresh install reads stores
- * before anything is written (startup provider-auth sync is one), and opening
- * with create:true would grow the state directory and an empty SQLite file
- * just to learn there is nothing stored. A missing file reads like an empty
- * one. An already-open connection still wins: a write in flight has the file
- * on the way even when it is not on disk yet.
- */
 async function readableWorkspaceKvDb(
   path: string,
   config: WorkspaceKvTableConfig,
@@ -235,7 +255,7 @@ export function createWorkspaceKvStore<T>(options: WorkspaceKvStoreOptions<T>) {
     updatedAt: number,
   ): Promise<void> {
     const db = await workspaceKvDb(runtimeDbPath(serverConfig), config);
-    db.upsert({ workspaceId, valueJson, updatedAt });
+    db.upsert({ workspaceId, valueJson, updatedAt: safeUpdatedAtForWrite(config.tableName, workspaceId, updatedAt) });
   }
 
   return {
@@ -244,7 +264,6 @@ export function createWorkspaceKvStore<T>(options: WorkspaceKvStoreOptions<T>) {
     get: async (serverConfig: ServerConfig, workspaceId: string): Promise<T | undefined> => {
       return (await getRow(serverConfig, workspaceId))?.value;
     },
-    /** Reads existing state without initializing the DB, table, or shared write cache. */
     getExisting: async (serverConfig: ServerConfig, workspaceId: string): Promise<T | undefined> => {
       const path = runtimeDbPath(serverConfig);
       try {
@@ -259,7 +278,7 @@ export function createWorkspaceKvStore<T>(options: WorkspaceKvStoreOptions<T>) {
       try {
         const table = sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE").get(config.tableName);
         if (!table) return undefined;
-        const row = rowFromUnknown(sqlite.prepare(config.selectSql).get(workspaceId));
+        const row = rowFromUnknown(sqlite.prepare(config.selectSql).get(workspaceId), config.tableName, workspaceId);
         return row ? options.parse(row.valueJson) : undefined;
       } finally {
         sqlite.close();

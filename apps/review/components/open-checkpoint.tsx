@@ -19,13 +19,11 @@ interface Launches {
 const Context = createContext<Launches | null>(null);
 const empty: LaunchState = { busy: false };
 
-/** Viewer hosts each provider issues: Freestyle's routed names, Daytona's signed per-port proxy hosts. */
 const VIEWER_HOSTS: Record<string, RegExp> = {
   freestyle: /^evidence-[a-f0-9]{32}\.preview\.openwork\.software$/,
   daytona: /^8080-[a-z0-9]+\.daytonaproxy\d{2}\.(?:net|eu)$/,
 };
 
-/** Cards and the image viewer share a copy and a retry key, not two allocations. */
 export function CheckpointProvider({ children }: { children: ReactNode }) {
   const [states, setStates] = useState<Record<string, LaunchState>>({});
   const [now, setNow] = useState<number | null>(null);
@@ -44,8 +42,6 @@ export function CheckpointProvider({ children }: { children: ReactNode }) {
     if (active.current.has(key)) return;
     active.current.add(key);
     if (newCopy) pending.current.delete(key);
-    // Keep the nonce after an uncertain failure. A successful explicit new-copy
-    // action gets a new nonce; retrying a lost response cannot spend another slot.
     const requestId = pending.current.get(key) ?? crypto.randomUUID();
     pending.current.set(key, requestId);
     const update = (patch: Partial<LaunchState>) => setStates((before) => ({ ...before, [key]: { ...empty, ...before[key], ...patch } }));

@@ -1,17 +1,10 @@
 import type { AuditJobOutcomeDeclaration } from "../src/audit/job-outcomes.js"
 import type { AuditServiceActionDeclaration } from "../src/audit/service-actions.js"
 
-// Enforces design §7: every den-api route (app.routes) and every HTTP-reachable
-// better-auth endpoint carries exactly one audit declaration, declarations are
-// well formed. No generated report is required.
-//   pnpm --filter @openwork-ee/den-api audit:coverage
-
 function setEnvDefault(name: string, value: string) {
   if (!process.env[name]?.trim()) process.env[name] = value
 }
 
-// Importing the app initializes Better Auth's OAuth resource registry. These
-// defaults satisfy env validation; the database must also have its schema.
 setEnvDefault("OPENWORK_DEV_MODE", "1")
 setEnvDefault("DB_MODE", "mysql")
 setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/openwork_den")
@@ -24,8 +17,6 @@ setEnvDefault("DEN_AUTOMATIONS_RUNTIME_ENABLED", "true")
 const ACTION = /^[a-z][a-z0-9_.-]*$/
 const KIND = /^[a-z][a-z0-9_.-]{0,127}$/
 const RESOURCE_TYPE = /^[a-z][a-z0-9_.-]{0,63}$/
-// Path parameters that carry bearer secrets (claim codes, reset tokens, OTPs) must
-// never become an audit resource id. Allowlist: none.
 const SECRET_PARAM = /(token|secret|password|code|otp)$/i
 const SECRET_PARAM_ALLOWLIST: ReadonlySet<string> = new Set<string>()
 
@@ -37,7 +28,6 @@ function betterAuthEndpoint(value: unknown): Endpoint | null {
   const options = value.options
   if (typeof options !== "object" || options === null) return null
   const metadata = "metadata" in options ? options.metadata : undefined
-  // better-call registers only endpoints with a path and without SERVER_ONLY metadata.
   if (typeof metadata === "object" && metadata !== null && "SERVER_ONLY" in metadata && metadata.SERVER_ONLY) return null
   const method = "method" in options ? options.method : undefined
   const methods = (Array.isArray(method) ? method : [method]).filter((entry): entry is string => typeof entry === "string")
@@ -76,7 +66,6 @@ async function main() {
   const exclusionKeys = new Set(registry.MCP_CONSUMPTION_EXCLUSIONS.map(({ method, path }) => registry.auditRouteKey(method, path)))
   const operationalKeys = new Set(registry.OPERATIONAL_EXCLUSIONS.map(({ method, path }) => registry.auditRouteKey(method, path)))
   const highVolumeKeys = new Set(registry.HIGH_VOLUME_EXCLUSIONS.map(({ method, path }) => registry.auditRouteKey(method, path)))
-  // The operational exclusion is exactly GET /, /health and /ready; widening it needs a reviewed change here.
   const expectedOperational = ["GET /", "GET /health", "GET /ready"]
   if ([...operationalKeys].sort().join(",") !== expectedOperational.join(",")) fail("OPERATIONAL_EXCLUSIONS must be exactly GET /, /health, /ready", [...operationalKeys].sort().join(", "))
   for (const declaration of declarations) {
@@ -129,8 +118,6 @@ async function main() {
     else if (!ACTION.test(target)) fail("invalid legacy bridge target", `${action} -> ${target}`)
     else if (!domainChangeEventTypes.includes(target)) fail("legacy bridge target not registered in src/audit/domain/catalog.ts", `${action} -> ${target}`)
   }
-  // Service-layer (non-HTTP) actions: same naming rules, unique, and never
-  // sharing an action or event type with a route declaration or domain event.
   const routeActions = new Set(declarations.map((declaration) => declaration.action))
   const routeEventTypes = new Set(declarations.flatMap(registry.auditRouteEventTypes))
   const serviceActionNames = new Set<string>()
@@ -151,7 +138,6 @@ async function main() {
     if (declaration.class === "tenant_external" && !declaration.external) fail("tenant_external service action without external system", label)
     if (declaration.class === "tenant_job" && !declaration.jobOutcome) fail("tenant_job service action without jobOutcome", label)
   }
-  // Background job outcomes (src/audit/job-outcomes.ts): full event types, unique, never shared with request/domain/service events.
   const serviceEventTypes = new Set(serviceDeclarations.flatMap(serviceActions.auditServiceActionEventTypesFor))
   const jobEventTypes = new Set<string>()
   const jobDeclarations: readonly AuditJobOutcomeDeclaration[] = jobOutcomes.auditJobOutcomeDeclarations
@@ -199,5 +185,4 @@ try {
   console.error(error)
   code = 1
 }
-// Importing the app starts background timers and pools; exit explicitly.
 process.exit(code)

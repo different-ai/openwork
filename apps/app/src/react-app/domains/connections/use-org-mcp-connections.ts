@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { featureAnalytics } from "@/app/lib/analytics";
 
 import { createDenClient, readDenSettings, type DenClient, type DenExternalMcpConnection } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
@@ -13,11 +14,6 @@ import { connectPollOutcome, type ConnectionSignInProblem } from "./connection-s
 import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native-provider-connections";
 import { openMemberApiKeyDialog } from "./member-api-key-dialog";
 
-// Mirrors the poll-until-connected pattern used for local MCP OAuth
-// (mcp-auth-modal.tsx) — the external server's redirect completes on a
-// background browser tab/window, so the desktop app finds out by polling
-// Den for the connection's `connectedForMe` flag rather than any callback
-// into the app itself.
 const CONNECT_POLL_INTERVAL_MS = 2_000;
 const CONNECT_TIMEOUT_MS = 90_000;
 
@@ -61,14 +57,8 @@ async function disconnectMemberAccount(
 
 export type OrgMcpConnectOptions = {
   forceFreshAuthorization?: boolean;
-  /**
-   * Stop waiting as soon as Den records that this member's sign-in came back
-   * but did not connect, and say why (libraryConnectorOrgSetup).
-   */
-  reportReadinessFailure?: boolean;
 };
 
-/** A sign-in that came back to Den but did not connect, with Den's reason. */
 export type OrgMcpConnectFailureDetail = ConnectionSignInProblem & { connectionId: string };
 
 export type OrgMcpConnectionCardState = {
@@ -98,13 +88,6 @@ export function isOrgMcpPollScopeCurrent(
   return scope.generation === currentGeneration && scope.organizationId === activeOrganizationId;
 }
 
-/**
- * Pure projection from a raw Den connection to what the card should show.
- * A `shared`-credential connection is set up once by an admin — the member
- * never "connects" it themselves, so it's shown as managed, not actionable.
- * A `per_member` connection needs the CALLING member's own OAuth, tracked by
- * `connectedForMe` rather than the connection-wide `connected` flag.
- */
 export function resolveOrgMcpConnectionCardState(
   connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">
     & Partial<Pick<DenExternalMcpConnection, "authType" | "credentialHealth">>,
@@ -140,15 +123,7 @@ export function resolveOrgMcpConnectionCardState(
   };
 }
 
-/**
- * Org-level External MCP Connections (Den's `/v1/mcp-connections`) usable by
- * the signed-in member. The settings catalog projects them into Marketplace
- * or My Extensions; they execute through Den's `search_capabilities` /
- * `execute_capability` surface, not local per-workspace `mcpServers` entries.
- */
 export function useOrgMcpConnections() {
-  // Settings remounts every time the extensions panel opens, so start from
-  // whatever the app already fetched instead of an empty list.
   const prefetched = readCloudInventoryScope();
   const [connections, setConnectionsState] = useState<DenExternalMcpConnection[]>(
     () => (prefetched ? readCachedOrgMcpConnections(prefetched) ?? [] : []),
@@ -244,7 +219,8 @@ export function useOrgMcpConnections() {
     const attempt = { startedAt: Date.now(), previousCheckedAt: previous?.readiness?.checkedAt ?? null };
 
     if (previous?.authType === "apikey" && previous.credentialMode === "per_member") {
-      await openMemberApiKeyDialog(connectionId, { connectionName: previous.name, replacing: previous.connectedForMe === true });
+      const saved = await openMemberApiKeyDialog(connectionId, { connectionName: previous.name, replacing: previous.connectedForMe === true });
+      if (saved) featureAnalytics.connectionSignInSucceeded({ connector_kind: "custom" });
       await refresh();
       return;
     }
@@ -267,6 +243,7 @@ export function useOrgMcpConnections() {
       const result = await client.startMcpConnectionConnect(orgId, connectionId);
       if (!isActionScopeCurrent(pollScope)) return;
       if (result.status === "connected") {
+        if (!previous?.connectedForMe || options?.forceFreshAuthorization) featureAnalytics.connectionSignInSucceeded({ connector_kind: "custom" });
         await refresh(pollScope);
         if (!isActionScopeCurrent(pollScope)) return;
         setConnectingId(null);
@@ -285,6 +262,7 @@ export function useOrgMcpConnections() {
       pollRef.current = window.setInterval(async () => {
         if (!isActionScopeCurrent(pollScope)) return;
         if (Date.now() - startedAt >= CONNECT_TIMEOUT_MS) {
+          featureAnalytics.connectionSignInFailed({ connector_kind: "custom" });
           stopPolling();
           setError(orgMcpConnectFailureMessage("timeout"));
           setConnectingId(null);
@@ -314,23 +292,24 @@ export function useOrgMcpConnections() {
           const outcome = connectPollOutcome(match, attempt, {
             previousConnectedAt,
             reconnectPending: match ? connectionNeedsReconnect(match) : false,
-            reportFailure: options?.reportReadinessFailure === true,
           });
           if (outcome.kind === "connected") {
+            featureAnalytics.connectionSignInSucceeded({ connector_kind: "custom" });
             stopPolling();
             setConnectingId(null);
           } else if (outcome.kind === "failed") {
+            featureAnalytics.connectionSignInFailed({ connector_kind: "custom" });
             stopPolling();
             setError(outcome.problem.reason);
             setConnectFailure({ ...outcome.problem, connectionId });
             setConnectingId(null);
           }
         } catch {
-          // Transient — keep polling until the timeout above gives up.
         }
       }, CONNECT_POLL_INTERVAL_MS);
     } catch (connectError) {
       if (!isActionScopeCurrent(pollScope)) return;
+      featureAnalytics.connectionSignInFailed({ connector_kind: "custom" });
       setError(connectError instanceof Error ? connectError.message : "Failed to start the connection.");
       setConnectingId(null);
     }

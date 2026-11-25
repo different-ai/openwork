@@ -288,10 +288,6 @@ function QueuedDraftRow(props: {
   );
 }
 
-/**
- * Shows the follow-up messages the user has queued while the agent is busy.
- * Each entry can be reordered, edited, sent immediately, or removed.
- */
 export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
   if (props.items.length === 0) return null;
   const ids = props.items.map((item) => item.id);

@@ -11,8 +11,6 @@ import {
   scrubUnknownRecord,
 } from "./observability/scrub";
 
-// Official Next.js integration: initialize the bundled SDK before hydration.
-// next.config.js exposes a token only for eligible hosted production builds.
 const posthogToken = process.env.NEXT_PUBLIC_POSTHOG_KEY;
 if (process.env.NODE_ENV === "production" && posthogToken && typeof window !== "undefined"
   && window.location.origin === "https://app.openworklabs.com" && !window.posthog) {
@@ -36,10 +34,8 @@ if (process.env.NODE_ENV === "production" && posthogToken && typeof window !== "
       save_campaign_params: false,
       before_send: beforeSendPosthog,
     });
-    // Compatibility for existing analytics call sites; no auth helpers change.
     window.posthog = posthog;
   } catch {
-    // Optional analytics initialization must not prevent application startup.
   }
 }
 
