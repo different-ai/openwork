@@ -6,6 +6,7 @@ import {
   ConnectorMappingTable,
   MarketplacePluginTable,
   MarketplaceTable,
+  MemberTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
   PluginTable,
@@ -239,13 +240,54 @@ function isCreatorGrant(grant: GrantRow, creatorId: string): boolean {
   return !grant.orgWide && !grant.teamId && grant.orgMembershipId === creatorId
 }
 
-export function privateImportOwner(ctx: ConfigAreaContext, spec: Record<string, unknown>) {
-  if (!ctx.features.configPrivateItems || spec.creatorOnly !== true) return undefined
+const PRIVATE_FLAG_REQUIRED = "Enable private Config migrations in this organization before importing creator-only items."
+const PRIVATE_OWNER_REQUIRED = "A creator-only item needs exactly one owner. Map the owner or skip this item."
+
+export async function exportablePrivateCreators(ctx: ConfigAreaContext, grants: readonly GrantRow[]) {
+  const memberIds = [...new Set(grants.flatMap((grant) => grant.orgMembershipId ? [normalizeDenTypeId("member", grant.orgMembershipId)] : []))]
+  if (memberIds.length === 0) return new Set<string>()
+  const rows = await ctx.db.select({ id: MemberTable.id }).from(MemberTable).where(and(
+    eq(MemberTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId)),
+    inArray(MemberTable.id, memberIds), isNull(MemberTable.removedAt),
+  ))
+  return new Set<string>(rows.map((row) => row.id))
+}
+
+export function canExportCreatorOnly(grants: GrantRow[], creatorId: string, creators: Set<string>, names: AudienceNames) {
+  const [grant] = grants
+  return grants.length === 1 && grant?.role === "manager" && isCreatorGrant(grant, creatorId) && creators.has(creatorId) && names.memberEmails.has(creatorId)
+}
+
+function privateManagerRef(spec: Record<string, unknown>) {
+  const access = accessByRoleSchema.safeParse(spec.access)
+  if (!access.success) return false
+  const { orgWide, members, teams } = access.data
+  return orgWide === null && members.manager.length === 1 && members.viewer.length === 0 && members.editor.length === 0
+    && Object.values(teams).every((refs) => refs.length === 0)
+}
+
+export function privateImportPreflight(ctx: ConfigAreaContext, op: ConfigApplyOp, info: ConfigPreflightInfo) {
+  if (op.kind === "delete" || op.item.spec.creatorOnly !== true) return null
+  if (!ctx.features.configPrivateItems) return { block: PRIVATE_FLAG_REQUIRED }
+  const owner = info.refs?.find((ref) => ref.path === "access.members.manager[0]")
+  if (!privateManagerRef(op.item.spec) || !owner || owner.resolution === "drop" || owner.resolution === "unresolved") return { block: PRIVATE_OWNER_REQUIRED }
+  return null
+}
+
+export async function privateImportOwner(ctx: ConfigAreaContext, spec: Record<string, unknown>) {
+  if (spec.creatorOnly !== true) return undefined
+  if (!ctx.features.configPrivateItems) throw new ConfigApplyError("private_migration_disabled", PRIVATE_FLAG_REQUIRED, 409)
   const grants = desiredGrants(spec.access)
   const [grant] = grants
-  return grants.length === 1 && grant?.role === "manager" && grant.value.orgMembershipId
-    ? normalizeDenTypeId("member", grant.value.orgMembershipId)
-    : undefined
+  if (grants.length !== 1 || grant?.role !== "manager" || !grant.value.orgMembershipId) {
+    throw new ConfigApplyError("private_owner_required", PRIVATE_OWNER_REQUIRED, 409)
+  }
+  const id = normalizeDenTypeId("member", grant.value.orgMembershipId)
+  const [owner] = await ctx.db.select({ id: MemberTable.id }).from(MemberTable).where(and(
+    eq(MemberTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId)), eq(MemberTable.id, id), isNull(MemberTable.removedAt),
+  )).limit(1)
+  if (!owner) throw new ConfigApplyError("private_owner_required", PRIVATE_OWNER_REQUIRED, 409)
+  return owner.id
 }
 
 export type SharedPlugins = {

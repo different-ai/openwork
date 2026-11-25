@@ -207,3 +207,49 @@ test("Config reviews a SCIM-owned skill only after its owner is provisioned", as
   const late = await review()
   assert.equal(field(late, "plan", "summary", "blocking"), 0, JSON.stringify(late))
 })
+
+test("creator-only imports require an owner and an enabled destination", async () => {
+  const source = await den.createOrg(await den.signUp("Privacy Source"), "Privacy source")
+  const target = await den.createOrg(await den.signUp("Privacy Target"), "Privacy target")
+  const creator = await den.newMember(source.owner, source.orgId, "Private Creator")
+  await den.join(target.owner, target.orgId, creator)
+  const name = `privacy-check-${den.stamp}`
+  const sourceAdmin = den.as(source.owner, source.orgId)
+  const targetAdmin = den.as(target.owner, target.orgId)
+  expectStatus(await den.setFeature(source.orgId, "configPrivateItems", true), 200)
+  expectStatus(await den.as(creator, source.orgId)("POST", "/v1/plugins", { name, components: [{ type: "skill", input: {
+    rawSourceText: `---\nname: ${name}\ndescription: Synthetic privacy check.\n---\n\nRead the fixture.`,
+  } }] }), 201)
+  const exportPath = "/v1/config-blobs/export?areas=plugins.skills,plugins.plugins"
+  const blob = expectStatus(await sourceAdmin("GET", exportPath), 200)
+  async function submit() {
+    const body = expectStatus(await targetAdmin("POST", "/v1/config-blobs/change-requests", { blob, mode: "merge" }), 202)
+    const id = text(field(body, "changeRequest", "id"), "request id")
+    await settle(targetAdmin, id)
+    return `/v1/config-blobs/change-requests/${id}`
+  }
+  async function assertBlocked(path: string, reason: RegExp) {
+    const body = expectStatus(await targetAdmin("GET", `${path}/plan`), 200)
+    assert.equal(field(body, "plan", "summary", "blocking"), 2, JSON.stringify(body))
+    assert.match(JSON.stringify(body), reason)
+    expectStatus(await targetAdmin("POST", `${path}/apply`, { planHash: field(body, "plan", "planHash") }), 409)
+  }
+  await assertBlocked(await submit(), /Enable private Config migrations/)
+  expectStatus(await den.setFeature(target.orgId, "configPrivateItems", true), 200)
+  const path = await submit()
+  const refs = ["skills", "plugins"].map((area) => {
+    const [item] = list(field(blob, "areas", "plugins", area, "items"))
+    return { area: `plugins.${area}`, ref: text(item?.id, "item id"), path: "access.members.manager[0]", resolution: { drop: true } }
+  })
+  expectStatus(await targetAdmin("PUT", `${path}/decisions`, { refs }), 200)
+  await assertBlocked(path, /creator-only item needs exactly one owner/)
+  for (const table of ["config_object", "plugin"]) {
+    const [rows] = await mysql.execute(`SELECT id FROM ${table} WHERE organization_id = ? AND created_by_org_membership_id = ?`, [target.orgId, target.owner.memberId])
+    assert.deepEqual(rows, [])
+  }
+  expectStatus(await sourceAdmin("DELETE", `/v1/members/${creator.memberId}`), 204)
+  const afterRemoval = expectStatus(await sourceAdmin("GET", exportPath), 200)
+  for (const area of ["skills", "plugins"]) {
+    assert.equal(list(field(afterRemoval, "areas", "plugins", area, "items")).some((item) => item.name === name), false)
+  }
+})
