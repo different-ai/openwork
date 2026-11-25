@@ -57,17 +57,8 @@ function parseArguments(value: unknown): JsonObject {
   }
 }
 
-function toolResponse(content: unknown): JsonObject {
-  const text = contentText(content)
-  const trimmed = text.trim()
-  if (trimmed.startsWith("{")) {
-    try {
-      const parsed: unknown = JSON.parse(trimmed)
-      if (isJsonObject(parsed)) return parsed
-    } catch {
-    }
-  }
-  return { content: text }
+function toolResponseAsText(content: unknown): JsonObject {
+  return { content: contentText(content) }
 }
 
 function toolCallsOf(message: JsonObject): JsonObject[] {
@@ -279,7 +270,7 @@ export function toGeminiBody(body: JsonObject, input: {
       case "tool": {
         const id = typeof message.tool_call_id === "string" ? message.tool_call_id : ""
         const name = toolNames.get(id) ?? (typeof message.name === "string" && message.name ? message.name : "tool")
-        pushContent(contents, "user", [{ functionResponse: { name, response: toolResponse(message.content) } }])
+        pushContent(contents, "user", [{ functionResponse: { name, response: toolResponseAsText(message.content) } }])
         break
       }
     }

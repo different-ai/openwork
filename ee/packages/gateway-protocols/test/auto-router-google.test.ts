@@ -159,7 +159,7 @@ test("google request: tool calls, named tool results, and thought signature repl
       { functionCall: { name: "list", args: {} } },
     ] },
     { role: "user", parts: [
-      { functionResponse: { name: "read", response: { ok: true } } },
+      { functionResponse: { name: "read", response: { content: "{\"ok\":true}" } } },
       { functionResponse: { name: "list", response: { content: "a b c" } } },
     ] },
     { role: "model", parts: [{ functionCall: { name: "read", args: { path: "c" } }, thoughtSignature: SKIP_THOUGHT_SIGNATURE }] },
@@ -170,6 +170,28 @@ test("google request: tool calls, named tool results, and thought signature repl
   const older = googleTranslator.toUpstream(request(body, { upstreamModel: "gemini-2.5-flash" }))
   const contents = Array.isArray(older.body.contents) ? older.body.contents : []
   assert.deepEqual(contents[3], { role: "model", parts: [{ functionCall: { name: "read", args: { path: "c" } } }] })
+})
+
+test("google request: JSON tool results stay text so $ref keys and deep nesting reach Gemini as data", () => {
+  const schema = JSON.stringify({ type: "object", properties: { user: { $ref: "#/definitions/User" } } })
+  const deep = "{\"a\":".repeat(60) + "1" + "}".repeat(60)
+  const body: JsonObject = {
+    messages: [
+      { role: "user", content: "Fetch the schema" },
+      { role: "assistant", content: null, tool_calls: [
+        { id: "call_a", type: "function", function: { name: "fetch", arguments: "{}" } },
+        { id: "call_b", type: "function", function: { name: "fetch", arguments: "{}" } },
+      ] },
+      { role: "tool", tool_call_id: "call_a", content: schema },
+      { role: "tool", tool_call_id: "call_b", content: deep },
+    ],
+  }
+  const out = googleTranslator.toUpstream(request(body))
+  const contents = Array.isArray(out.body.contents) ? out.body.contents : []
+  assert.deepEqual(contents[2], { role: "user", parts: [
+    { functionResponse: { name: "fetch", response: { content: schema } } },
+    { functionResponse: { name: "fetch", response: { content: deep } } },
+  ] })
 })
 
 test("google request: thinking config by model generation", () => {
