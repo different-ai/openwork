@@ -439,7 +439,13 @@ card, not only the name of the value, before pasting.
    op://Private/Deploy/token". The card shows the exact command and "As
    $DEPLOY_TOKEN"; choose Run. Start a new chat first if the feature was
    turned on after this one began.
-8. To try a locked password manager, tell the agent which one it is, for
+8. To try a key you paste for several runs, ask the agent to test an API
+   with a key you will paste. Paste it, tick "Keep for this chat, in memory
+   only", and choose Run. The next card for that key has nothing to paste;
+   choose "Always for this program in this chat" and later runs of that
+   program with the key show no card. Settings › Computer use lists it under
+   "Always used without asking", with Remove.
+9. To try a locked password manager, tell the agent which one it is, for
    example "the password is in Bitwarden, item example.com". The card lists
    the command and a row for the session key; paste the key, tick "Keep for
    this chat, in memory only" if you expect more sign-ins, and choose Run and
