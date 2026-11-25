@@ -22,7 +22,7 @@ const runtime = await launchHeadlessWeb({
     OPENWORK_PORT: "8778", OPENWORK_WEB_PORT: "5178", HOST: "127.0.0.1", VITE_HOST: "127.0.0.1",
   },
 });
-await writeFile("/opt/openwork-preview/services.json", JSON.stringify({ app: runtime.manifest.webUrl, engine: runtime.manifest.openworkUrl }), { mode: 0o600 });
+await writeFile("/opt/openwork-preview/services.json", JSON.stringify({ app: runtime.manifest.webUrl, engine: runtime.manifest.openworkUrl, engineVersion: "v2" }), { mode: 0o600 });
 await writeFile("/opt/openwork-preview/outputs.json", JSON.stringify({
   openworkToken: { value: runtime.manifest.token, secret: true, group: "OpenWork" },
   openworkHostToken: { value: runtime.manifest.hostToken, secret: true, group: "OpenWork" },

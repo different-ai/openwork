@@ -118,7 +118,7 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
       { intent: "Web app from latest dev on Freestyle", command: `${UP} preview-app-web --place freestyle --stage <stage> --source ref:dev ${DETACH}` },
       { intent: "This checkout's web app", command: `${UP} preview-app-web --stage <stage>` },
     ],
-    caveats: ["The source web app and its server, not Den's web UI. No Den or activation is seeded."],
+    caveats: ["The source web app and its server, not Den's web UI. No Den or activation is seeded. For real turns append -- --live-model <development-vercel-team-id> on either remote placement."],
   },
   "acme-web": {
     family: "web",
