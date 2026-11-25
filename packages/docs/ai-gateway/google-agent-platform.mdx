@@ -1,24 +1,67 @@
 ---
 title: "Google Agent Platform (Vertex AI)"
-description: "Set up Gemini and Claude on Google's Gemini Enterprise Agent Platform with your own OAuth app and per-member Google sign-in through OpenWork AI Gateway."
+description: "Connect Gemini and Claude on Google's Gemini Enterprise Agent Platform to OpenWork AI Gateway with a shared service account or per-member Google sign-in."
 ---
 
-Connect Google's **Gemini Enterprise Agent Platform (formerly Vertex AI)** to OpenWork AI Gateway. Your organization creates a Google OAuth application, and each member signs in with their own Google account to use the models you assign.
+Connect Google's **Gemini Enterprise Agent Platform (formerly Vertex AI)** to OpenWork AI Gateway. Use a shared Google Cloud service account or let each member sign in with their own Google account.
 
 Google has [officially renamed Vertex AI](https://docs.cloud.google.com/gemini-enterprise-agent-platform/vertex-ai-name-changes). Its console now uses names such as **Agent Platform**, **Agent Platform API**, and **Agent Platform Model Garden**. OpenWork's provider catalog still uses the following identifiers:
 
 | Models you want | OpenWork provider |
 | --- | --- |
-| Gemini through Google Cloud | **Google Vertex AI** — `google-vertex` |
-| Claude through Google Cloud | **Google Vertex Anthropic** — `google-vertex-anthropic` |
+| Gemini through Google Cloud | **Vertex** — `google-vertex` |
+| Claude through Google Cloud | **Vertex (Anthropic)** — `google-vertex-anthropic` |
 
 This guide uses **Agent Platform** for the Google product and retains the provider identifiers you need to select in OpenWork.
+
+| Authentication mode | What you set up |
+| --- | --- |
+| **Shared API key** | [A Google Cloud service account](#use-a-shared-service-account). OpenWork sends inference requests as that account. |
+| **Each member signs in** | [A Google OAuth app](#set-up-per-member-google-sign-in). OpenWork sends inference requests as the signed-in Google user. |
+
+## Use a shared service account
+
+### Prepare Google Cloud
+
+1. Open the [Google Cloud console](https://console.cloud.google.com/) and select a project with billing enabled, or create a dedicated test project and link it to a billing account. Copy the **Project ID** from the project dashboard.
+2. Under **APIs & Services → Library**, enable `aiplatform.googleapis.com`. Google may label it **Gemini Enterprise Agent Platform API** or **Vertex AI API**.
+3. Open **Agent Platform → Model Garden** and pick a managed Gemini chat model. Check its model ID and supported locations. Managed Gemini inference uses Google's publisher endpoint, so you can call it as soon as your project has access to the model. For Claude, also complete the [model access steps](#claude).
+4. Under **IAM & Admin → Service Accounts**, create a dedicated service account for OpenWork. Grant it **Agent Platform User** (also called **Vertex AI User**, `roles/aiplatform.user`) on the project, or a custom role that allows inference with `aiplatform.endpoints.predict`.
+5. Open the service account and select **Keys → Add key → Create new key → JSON**. Keep the downloaded file private. If your organization blocks service account keys, use [per-member Google sign-in](#set-up-per-member-google-sign-in) where available. [Google's service account key documentation](https://docs.cloud.google.com/iam/docs/keys-create-delete) explains the required permissions and policies.
+
+<Frame caption="Confirm the Agent Platform API shows Enabled in your Google Cloud project.">
+  <img src="/images/google-agent-platform/vertex-api-enabled.jpg" alt="Google Cloud API details showing aiplatform.googleapis.com with status Enabled" />
+</Frame>
+
+### Add and test Vertex in OpenWork Cloud
+
+1. As an organization owner or admin, open [OpenWork Cloud](https://app.openworklabs.com/dashboard) and go to **AI Gateway → AI Providers → Add a provider**. Choose **Vertex** (`google-vertex`) for Gemini or **Vertex (Anthropic)** (`google-vertex-anthropic`) for Claude.
+2. Under **Key**, select **Shared API key**. Enter your **Google Cloud project** ID and a **Region** supported by your model. The default is `global`. Paste the contents of the downloaded key into **Service account JSON**.
+3. Under **Who can use it**, choose who can call the models through the shared credential. For an initial test, turn off **Everyone in the organization** and add yourself using **Add person**.
+4. Under **Models**, choose **Only the ones I pick** and select one model. Select **Test Vertex** and complete the identity check if prompted. When OpenWork reports that the model answered its test prompt, select **Add Vertex**. Both button labels follow the provider name.
+5. Confirm the model appears in **My Library → Models**. Open a new OpenWork chat in the same organization, choose the model listed under **Vertex**, and send `Reply with exactly: Connection works.` Check that the reply shows the model you selected. Both the provider test and the chat request use the Google Cloud project's inference quota and may incur charges.
+
+<Frame caption="The Vertex provider form in OpenWork Cloud with Shared API key selected.">
+  <img src="/images/google-agent-platform/shared-provider-form.jpg" alt="Add Vertex form with the Google Cloud project, Region, Service account JSON, access options, and Test Vertex button" />
+</Frame>
+
+<Frame caption="Once the test model answers, select Add Vertex to save the provider.">
+  <img src="/images/google-agent-platform/shared-provider-test-passed.jpg" alt="Gemini 4 Neon selected and OpenWork confirming that Vertex answered the test prompt" />
+</Frame>
+
+<Frame caption="A successful chat request after adding Gemini 4 Neon through Vertex.">
+  <img src="/images/google-agent-platform/shared-provider-chat-response.jpg" alt="An OpenWork chat prompt asking for Connection works, followed by that reply" />
+</Frame>
+
+If the test fails, check that the JSON key is active, the service account has inference access on the project, and the model is available in the selected region. If the test succeeds and the model is missing from chat, check **Who can use it** and refresh the chat's model list.
+
+## Set up per-member Google sign-in
 
 <Info>
   You do not need gcloud, local Application Default Credentials (ADC), a service-account key, or an Anthropic API key for this sign-in mode. This is separate from a Google Workspace connection for Gmail, Drive, or Calendar, and from signing in to OpenWork itself.
 </Info>
 
-## Before you begin
+### Before you begin
 
 You need:
 
