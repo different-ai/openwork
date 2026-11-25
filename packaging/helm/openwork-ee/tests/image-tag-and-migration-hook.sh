@@ -79,11 +79,8 @@ for example in "$chart_dir"/examples/values.*.yaml; do
   example_rendered="$tmp_dir/$(basename "$example").rendered.yaml"
   helm template openwork-ee "$chart_dir" -f "$example" > "$example_rendered"
   example_tag="$(sed -n -E 's/^  tag: *"?([^"]+)"?$/\1/p' "$example" | head -n 1)"
-  if [[ -z "$example_tag" ]]; then
-    printf 'Expected %s to set image.tag\n' "$example" >&2
-    exit 1
-  fi
-  assert_all_image_tags "$example_rendered" "$example_tag"
+  # An example can pin an image tag or follow the chart's appVersion.
+  assert_all_image_tags "$example_rendered" "${example_tag:-$chart_app_version}"
 done
 
 # 5. Migration hook: retry-safe delete policy and a deadline that survives a cold pull.

@@ -7,7 +7,17 @@ Each kind has one owner and one place.
 | --- | --- | --- | --- |
 | Infrastructure input | Where the deployment runs and how big it is: account or project, region, address, network, size | The customer's cloud admin | An approved run in their cloud. Each input is `fixed` or `editable` |
 | Capability | What the deployment can do: Workbot, Slack assistant, Automations, AI Gateway, cloud computers | The customer's workspace admin | A switch. If the deployment lacks what the capability needs, turning it on is an approved run |
-| Rollout flag | How OpenWork ships unfinished work | OpenWork | Never a customer step |
+| Preview flag | Optional early access to unfinished work | OpenWork owns the flag; a platform admin can opt in | Org Config Import or `/admin` |
+
+## Preview flags
+
+A finished capability must never depend on a flag in a customer install. For
+unfinished work, use short-lived `preview_flags` with an owner and expiry, and
+retire the flag at general availability. A platform admin can opt an organization
+in through `acme.config.json` (`settings.features` on releases with the old name,
+`settings.preview_flags` on releases with the new name) or through `/admin`.
+Previews are not part of the required install steps. The gaps below document
+exceptions in the current implementations, not patterns for new capabilities.
 
 ## The catalog
 

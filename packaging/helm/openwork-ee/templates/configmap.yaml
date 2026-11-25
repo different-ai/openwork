@@ -1,3 +1,4 @@
+{{- include "openwork-ee.validateOrganizationConfigBoundary" . }}
 {{- include "openwork-ee.gateway.validate" . }}
 {{- $gateway := include "openwork-ee.gateway" . | fromYaml }}
 apiVersion: v1
