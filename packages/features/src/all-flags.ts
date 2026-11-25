@@ -21,6 +21,8 @@ export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-
 export { default as endedSandboxNotice } from "@openwork/features/flags/ended-sandbox-notice"
 export { default as flatSessionPanes } from "@openwork/features/flags/flat-session-panes"
 export { default as followUpDelivery } from "@openwork/features/flags/follow-up-delivery"
+export { default as diagnosticsConfigExport } from "@openwork/features/flags/diagnostics-config-export"
+export { default as followUpSuggestions } from "@openwork/features/flags/follow-up-suggestions"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
 export { default as gmailThreadRead } from "@openwork/features/flags/gmail-thread-read"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
