@@ -18,7 +18,7 @@ import { listTeamsForMember } from "../../member-teams.js"
 import type { PluginArchActorContext } from "../../routes/org/plugin-system/access.js"
 import { createResourceAccessGrant, deleteResourceAccessGrant } from "../../routes/org/plugin-system/store.js"
 import { assignDefaultExternalKey, setExternalKey, type KeyedItem, type KeyedKind } from "../../routes/org/plugin-system/external-keys.js"
-import type { ConfigApplyOp, ConfigAreaContext, ConfigDb, ConfigItem } from "../area.js"
+import type { ConfigApplyOp, ConfigAreaContext, ConfigDb, ConfigItem, ConfigPreflightInfo } from "../area.js"
 import {
   ConfigApplyError,
   configRouteContext,
