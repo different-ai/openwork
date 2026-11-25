@@ -25,6 +25,8 @@ const questions = {
   pitch: { type: "boolean", instructions: `${DATA_RULE} Is the primary purpose unsolicited vendor sales, a partnership pitch, marketing, agency, staffing, or promotional outreach directed at OpenWork? Exclude potential customers buying OpenWork and individuals applying for work themselves.` },
 } satisfies Record<ActionCategory, EvaluationRequest["questions"][string]>
 
+const WIN_THRESHOLD: Record<ActionCategory, number> = { bug: 0.6, enterprise: 0.6, job_ask: 0.8, pitch: 0.8 }
+
 const answer = z.object({ type: z.literal("boolean"), probability: z.number().min(0).max(1) })
 const answers = z.strictObject({ bug: answer, enterprise: answer, job_ask: answer, pitch: answer })
 
@@ -43,7 +45,7 @@ export async function classifySupportTriage(model: EvaluationModel, { title, fir
   let category: z.infer<typeof supportTriageCategory> = "needs_review"
   if (best && second) {
     if (best.probability <= 0.2) category = "other"
-    else if (best.probability >= 0.8 && second.probability <= 0.8 && best.probability - second.probability >= 0.2 - Number.EPSILON) category = best.category
+    else if (best.probability >= WIN_THRESHOLD[best.category] && best.probability - second.probability >= 0.2 - Number.EPSILON) category = best.category
   }
   return { category, judgmentDetail }
 }

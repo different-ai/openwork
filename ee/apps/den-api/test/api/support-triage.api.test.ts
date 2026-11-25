@@ -39,7 +39,12 @@ test("fixed thresholds decide all categories and only bounded evidence goes to J
     { category: "other", scores: { pitch: 0.2 } },
     { category: "needs_review", scores: { bug: 0.99, pitch: 0.81 } },
     { category: "needs_review", scores: { bug: 0.85, pitch: 0.66 } },
-    { category: "needs_review", scores: { bug: 0.79 } },
+    { category: "bug", scores: { bug: 0.6 } },
+    { category: "enterprise", scores: { enterprise: 0.6, pitch: 0.4 } },
+    { category: "needs_review", scores: { bug: 0.59 } },
+    { category: "needs_review", scores: { enterprise: 0.59 } },
+    { category: "needs_review", scores: { job_ask: 0.79 } },
+    { category: "needs_review", scores: { pitch: 0.79 } },
   ]
   for (const { category, scores } of cases) {
     const judgment = await classifySupportTriage(fakeModel(Object.fromEntries(Object.entries(scores).filter((entry): entry is [string, number] => typeof entry[1] === "number")), inspect), evidence)
@@ -124,7 +129,7 @@ test("poll pagination, enable boundary, deduplication, category actions, and saf
     assert.equal(field(input.state, "report", "firstMessage"), "First customer message")
     assert.equal(field(input.state, "report", "senderDomain"), "example.invalid")
     assert.equal(field(input.state, "report", "freeMailDomain"), false)
-    return fakeModel(title === "other" ? {} : title === "needs_review" ? { bug: 0.75 } : { [title === "broken" ? "pitch" : title === "uncertain" ? "enterprise" : title.split(" ")[0]]: 0.95 })(input)
+    return fakeModel(title === "other" ? {} : title === "needs_review" ? { bug: 0.55 } : { [title === "broken" ? "pitch" : title === "uncertain" ? "enterprise" : title.split(" ")[0]]: 0.95 })(input)
   }
   const plainFetch: typeof fetch = async (input, options) => {
     assert.equal(String(input), "https://core-api.uk.plain.com/graphql/v1")
