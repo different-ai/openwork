@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import manifest from "./opencode-v1-artifacts.json" with { type: "json" };
-import { opencodeV1Pin, prepareOpencodeV1 } from "./prepare-opencode-v1.mjs";
+import { opencodeV1Pin, opencodeV1TarCommand, prepareOpencodeV1 } from "./prepare-opencode-v1.mjs";
 
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 function setup(t) {
@@ -67,4 +67,43 @@ test("release pins require a matching version and asset, and mirrors retain the 
   assert.throws(() => opencodeV1Pin("v0", asset, "anomalyco/opencode"), /Missing/);
   assert.throws(() => opencodeV1Pin("v0", "../asset.zip", "custom/build"), /Invalid/);
   assert.throws(() => opencodeV1Pin("v0", asset, "custom/build", { OPENCODE_ARCHIVE_SHA256: "a".repeat(64) }), /both/);
+});
+
+test("Windows zip extraction uses System32 bsdtar instead of Git Bash GNU tar on PATH", (t) => {
+  assert.equal(opencodeV1TarCommand({ platform: "linux" }), "tar");
+  assert.equal(
+    opencodeV1TarCommand({ platform: "win32", env: { SystemRoot: "D:\\Windows" }, fileExists: (p) => p === "D:\\Windows\\System32\\tar.exe" }),
+    "D:\\Windows\\System32\\tar.exe",
+  );
+  assert.equal(
+    opencodeV1TarCommand({ platform: "win32", env: {}, fileExists: () => false }),
+    "tar.exe",
+  );
+
+  const root = mkdtempSync(join(tmpdir(), "openwork-sidecar-win-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const asset = "opencode-windows-x64-baseline.zip";
+  const binary = Buffer.from("windows pe bytes");
+  const archiveBytes = Buffer.from("zip fixture bytes");
+  writeFileSync(join(root, asset), archiveBytes);
+  const calls = [];
+  prepareOpencodeV1({
+    sidecarDir: join(root, "sidecars"),
+    cacheDir: join(root, "cache"),
+    asset,
+    url: "https://example.invalid/opencode.zip",
+    targets: ["opencode-x86_64-pc-windows-msvc.exe", "opencode.exe"],
+    pin: { sha256: digest(archiveBytes), binarySha256: digest(binary) },
+    fetchArchive: (_url, dest) => copyFileSync(join(root, asset), dest),
+    platform: "win32",
+    env: { SystemRoot: "C:\\Windows" },
+    fileExists: (p) => p === "C:\\Windows\\System32\\tar.exe",
+    run: (cmd, args, opts) => {
+      calls.push({ cmd, args });
+      writeFileSync(join(opts.cwd, "opencode.exe"), binary);
+    },
+  });
+  assert.deepEqual(calls, [{ cmd: "C:\\Windows\\System32\\tar.exe", args: ["-xf", asset, "opencode.exe"] }]);
+  assert.deepEqual(readFileSync(join(root, "sidecars", "opencode.exe")), binary);
+  assert.deepEqual(readFileSync(join(root, "sidecars", "opencode-x86_64-pc-windows-msvc.exe")), binary);
 });

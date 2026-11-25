@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join, win32 } from "node:path";
 import { homedir } from "node:os";
 import manifest from "./opencode-v1-artifacts.json" with { type: "json" };
 
@@ -34,7 +34,17 @@ function download(url, output) {
   ], { stdio: "inherit" });
 }
 
-export function prepareOpencodeV1({ sidecarDir, asset, url, pin, targets, sign, cacheDir, fetchArchive = download }) {
+export function opencodeV1TarCommand({ platform = process.platform, env = process.env, fileExists = existsSync } = {}) {
+  if (platform !== "win32") return "tar";
+  const systemRoot = env.SystemRoot?.trim() || env.windir?.trim() || "C:\\Windows";
+  const bsdtar = win32.join(systemRoot, "System32", "tar.exe");
+  return fileExists(bsdtar) ? bsdtar : "tar.exe";
+}
+
+export function prepareOpencodeV1({
+  sidecarDir, asset, url, pin, targets, sign, cacheDir,
+  fetchArchive = download, platform = process.platform, env = process.env, fileExists = existsSync, run = execFileSync,
+}) {
   mkdirSync(sidecarDir, { recursive: true });
   if (!sign && targets.every((name) => matches(join(sidecarDir, name), pin.binarySha256))) {
     for (const name of targets) chmodSync(join(sidecarDir, name), 0o755);
@@ -64,11 +74,12 @@ export function prepareOpencodeV1({ sidecarDir, asset, url, pin, targets, sign, 
     }
 
     // All official CLI releases contain a single root-level binary. Windows
-    // ships bsdtar, which also accepts ZIP files, and requires relative paths.
-    if (asset.endsWith(".zip") && process.platform !== "win32") {
-      execFileSync("unzip", ["-q", asset, binaryName], { cwd: staging });
+    // ships bsdtar in System32\tar.exe (which reads .zip), whereas Git Bash
+    // puts MSYS GNU tar ahead of System32 on PATH (which rejects .zip).
+    if (asset.endsWith(".zip") && platform !== "win32") {
+      run("unzip", ["-q", asset, binaryName], { cwd: staging });
     } else {
-      execFileSync(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", asset, binaryName], { cwd: staging });
+      run(opencodeV1TarCommand({ platform, env, fileExists }), ["-xf", asset, binaryName], { cwd: staging });
     }
     if (!matches(binary, pin.binarySha256)) throw new Error(`OpenCode v1 binary integrity mismatch: ${asset}`);
     if (sign && !cacheHit) {
