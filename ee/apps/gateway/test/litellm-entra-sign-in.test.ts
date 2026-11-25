@@ -396,6 +396,7 @@ function app(input: {
   refreshMemberToken?: RefreshMemberToken
   onCredentialRead?: () => void
   memberRows?: GatewayMemberAccessRow[]
+  upstreamResponse?: () => Response
 }) {
   const sent: Request[] = []
   const row = accessRow()
@@ -418,6 +419,7 @@ function app(input: {
   registerGatewayRoutes(api, {
     fetch: async (request, init) => {
       sent.push(new Request(request, init))
+      if (input.upstreamResponse) return input.upstreamResponse()
       return Response.json({ id: "chatcmpl_1", object: "chat.completion", model, choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } })
     },
     insertRequestLog: async () => {},
@@ -562,3 +564,33 @@ for (const path of [gatewayModelsPath, cursorModelsPath, claudeCodeModelsPath, c
     assert.equal(sent.length, 0)
   })
 }
+
+test("upstream LiteLLM 403 model denial and 401 JWT rejection return actionable Entra guidance without echoing tokens", async () => {
+  const denied = app({
+    settings: liteLlmSettings("entra"),
+    credential: entraCredential(apiScope),
+    upstreamResponse: () => Response.json(
+      { error: { message: `The requested model '${model}' is not available for this API key. Raw token: entra-member-access-fixture` } },
+      { status: 403 },
+    ),
+  })
+  const deniedRes = await denied.send()
+  assert.equal(deniedRes.status, 403)
+  const deniedText = await deniedRes.text()
+  assert.match(deniedText, /LiteLLM denied access to gpt-fixture for your Microsoft account/)
+  assert.doesNotMatch(deniedText, /entra-member-access-fixture|replace your credential|Litellm/)
+
+  const rejected = app({
+    settings: liteLlmSettings("entra"),
+    credential: entraCredential(apiScope),
+    upstreamResponse: () => Response.json(
+      { error: { message: "Authentication Error, Invalid issuer for Bearer entra-member-access-fixture" } },
+      { status: 401 },
+    ),
+  })
+  const rejectedRes = await rejected.send()
+  assert.equal(rejectedRes.status, 401)
+  const rejectedText = await rejectedRes.text()
+  assert.match(rejectedText, /LiteLLM JWT issuer, audience, and v2 access token settings/)
+  assert.doesNotMatch(rejectedText, /entra-member-access-fixture|Litellm/)
+})

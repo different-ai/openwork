@@ -249,24 +249,29 @@ Use a LiteLLM version that supports `litellm_jwtauth.issuers` and audience lists
 general_settings:
   enable_jwt_auth: true
   litellm_jwtauth:
+    user_id_jwt_field: "oid"
+    # Set to true to auto-create LiteLLM users on first sign-in, or false if you provision users in advance.
+    user_id_upsert: true
     issuers:
       - issuer: "https://login.microsoftonline.com/<tenant-id>/v2.0"
         jwks_url: "https://login.microsoftonline.com/<tenant-id>/discovery/v2.0/keys"
         audience:
           - "<the audience you already accept>"
           - "<openwork-application-id>"
+        user_id_jwt_field: "oid"
 ```
 
-A proxy set up with the global `JWT_ISSUER` and `JWT_AUDIENCE` variables expects one audience, not a JSON or comma-separated audience list. To accept OpenWork's tokens next to the ones it already accepts, configure the matching `issuers` entry like the one above. For a new proxy, list only the OpenWork application ID, not the placeholder for an existing audience. Keep the claim mappings your proxy already uses to find the user and team.
+A proxy set up with the global `JWT_ISSUER` and `JWT_AUDIENCE` variables expects one audience, not a JSON or comma-separated audience list. To accept OpenWork's tokens next to the ones it already accepts, configure the matching `issuers` entry like the one above. For a new proxy, list only the OpenWork application ID, not the placeholder for an existing audience. Keep the claim mappings your proxy already uses to find the user and team (`user_id_upsert` belongs under `litellm_jwtauth`, not inside an individual `issuers` entry).
 
 <Warning>
   LiteLLM's `issuers` list routes validation; it is not an issuer allowlist. An unmatched issuer falls back to global JWT validation. Keep `JWT_ISSUER`, `JWT_AUDIENCE` and `JWT_PUBLIC_KEY_URL` configured for that fallback, or explicitly reject unmatched issuers in your proxy's validation policy. Do not disable issuer or audience validation to make sign-in work.
 </Warning>
 
-Two things to know about Entra tokens:
+Three things to know about Entra tokens and LiteLLM permissions:
 
 - Entra ID puts a token's scopes in the `scp` claim. LiteLLM's scope settings read `scope`, so they don't see Entra scopes: map people from other claims, such as `oid`, `groups` or `roles`.
-- The person must resolve to a LiteLLM user or team that may call the models you list in OpenWork. LiteLLM refuses the others.
+- The person must resolve to a LiteLLM user (either pre-provisioned by their Entra `oid` or created via `user_id_upsert: true`) or team that is allowed to call every model you list in OpenWork. LiteLLM returns `403` for models outside that user's or team's allowlist.
+- If you add or replace models in `model_list` later, also update any existing LiteLLM users or teams whose `models` allowlist is restricted to older model names (note that LiteLLM's `POST /user/update` ignores an empty `models: []` list; pass the explicit model names instead).
 
 ### 3. Add the provider in OpenWork
 
@@ -325,7 +330,8 @@ If LiteLLM can't be read, OpenWork keeps the last synced models and shows the er
 | Microsoft sign-in: `AADSTS65001` or a consent screen people can't accept | Nobody consented to the scope | Select **Grant admin consent** on the app registration |
 | Microsoft sign-in: **The Microsoft Entra ID app registration requires administrator repair** | The client secret is wrong or expired | Enter a new client secret on the provider page |
 | Microsoft sign-in works, but LiteLLM answers `Invalid issuer` or `Audience doesn't match` | The token is a v1 token, or LiteLLM doesn't list the app's client ID as an audience | Set `requestedAccessTokenVersion` to `2` and add the client ID to the issuer's `audience`. See [which tokens LiteLLM receives](#which-tokens-litellm-receives) |
-| Microsoft sign-in works, but LiteLLM refuses a model | The person's LiteLLM user or team may not call it | Give them the model in LiteLLM, or remove it from the provider's model list |
+| Microsoft sign-in works, but LiteLLM says the user does not exist | `user_id_upsert` is off and the person's Entra `oid` has no LiteLLM user record | Add the user in LiteLLM using their Entra `oid` as `user_id`, or set `user_id_upsert: true` under `litellm_jwtauth` |
+| Microsoft sign-in works, but LiteLLM refuses a model (`403`) | The person's LiteLLM user or team allowlist does not include that `model_name`, or their budget is reached | Grant the model (and check budget) on that user or team in LiteLLM, or remove the model from the provider's model list in OpenWork |
 | "That is a Microsoft Graph scope" when you save | The scope belongs to Microsoft Graph, not to your app registration | Enter the scope you added under **Expose an API**, such as `api://<application-id>/access` |
 
 ## Requirements and limits

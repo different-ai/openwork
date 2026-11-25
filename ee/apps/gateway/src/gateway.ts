@@ -3,7 +3,7 @@ import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { validateInferenceUrl, createGcpServiceAccountTokenMinter, createAwsSsoRoleCredentialMinter, isAllowedRequestHeader, parseBedrockModelPath, parseGoogleModelPath, stripApiVersionPrefix, isAwsFamily, materializeAuth, resolveUpstream, type ResolvedUpstream } from "@openwork-ee/gateway-upstreams"
-import { BEDROCK_MANTLE_DEFAULT_API_PATH, parseGatewayModelAlias, isLiteLlmProviderId, liteLlmEntraScope, liteLlmSpendTrackingEnabled, isTrueFoundryProviderId, trueFoundryTracksUsageCosts } from "@openwork-ee/gateway-catalog"
+import { BEDROCK_MANTLE_DEFAULT_API_PATH, classifyLiteLlmAuthError, parseGatewayModelAlias, isLiteLlmProviderId, liteLlmEntraScope, liteLlmKeySource, liteLlmSpendTrackingEnabled, isTrueFoundryProviderId, trueFoundryTracksUsageCosts, type LiteLlmAuthErrorReason, type LiteLlmKeySource } from "@openwork-ee/gateway-catalog"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
@@ -165,6 +165,83 @@ export function genericProviderAuthError(input: {
   return { response, errorCode }
 }
 
+export function liteLlmProviderAuthError(input: {
+  status: 401 | 403
+  providerId: string
+  credentialMode: "org" | "member"
+  keySource: LiteLlmKeySource | null
+  modelId: string
+  reason: LiteLlmAuthErrorReason
+  requestId: string
+}) {
+  const denied = input.status === 403
+  const model = input.modelId.trim() || "this model"
+  let message: string
+  if (input.credentialMode === "member" && input.keySource === "entra") {
+    if (denied) {
+      if (input.reason === "model_denied") {
+        message = `LiteLLM denied access to ${model} for your Microsoft account. Ask your LiteLLM administrator to grant your user or team access to ${model}.`
+      } else if (input.reason === "user_not_found") {
+        message = "LiteLLM did not recognize your Microsoft account. Ask your LiteLLM administrator to add your user or enable user_id_upsert in LiteLLM."
+      } else if (input.reason === "budget_exceeded") {
+        message = "LiteLLM blocked this request because your LiteLLM budget limit was reached. Ask your LiteLLM administrator to check your user or team budget."
+      } else {
+        message = `LiteLLM denied access to ${model} for your Microsoft sign-in. Ask your LiteLLM administrator to check your user or team permissions and budget in LiteLLM.`
+      }
+    } else if (input.reason === "jwt_mismatch") {
+      message = "LiteLLM rejected your Microsoft sign-in token. Ask your administrator to check the LiteLLM JWT issuer, audience, and v2 access token settings, then sign in again."
+    } else if (input.reason === "user_not_found") {
+      message = "LiteLLM did not recognize your Microsoft account. Ask your LiteLLM administrator to add your user or enable user_id_upsert in LiteLLM."
+    } else {
+      message = "LiteLLM rejected your Microsoft sign-in. Sign in with Microsoft again in OpenWork; if the problem persists, ask your administrator to check LiteLLM JWT settings."
+    }
+  } else if (input.credentialMode === "org") {
+    if (denied) {
+      if (input.reason === "model_denied") {
+        message = `LiteLLM denied access to ${model} for your organization's key. Ask your administrator to check the key's allowed models in LiteLLM and sync LiteLLM in AI Gateway.`
+      } else if (input.reason === "budget_exceeded") {
+        message = "LiteLLM blocked this request because your organization's LiteLLM budget limit was reached. Ask your administrator to check the key budget in LiteLLM."
+      } else {
+        message = `LiteLLM denied access to ${model} for your organization's key. Ask your administrator to check the key's permissions and budget in LiteLLM.`
+      }
+    } else {
+      message = "LiteLLM rejected your organization's API key. Ask your administrator to check or replace the LiteLLM key in AI Gateway."
+    }
+  } else if (input.keySource === "issued") {
+    if (denied) {
+      if (input.reason === "model_denied") {
+        message = `LiteLLM denied access to ${model} for your LiteLLM user or team. Ask your LiteLLM administrator to check your model access and sync LiteLLM in AI Gateway.`
+      } else if (input.reason === "budget_exceeded") {
+        message = "LiteLLM blocked this request because your LiteLLM budget limit was reached. Ask your LiteLLM administrator to check your user or team budget."
+      } else {
+        message = `LiteLLM denied access to ${model} for your LiteLLM account. Ask your LiteLLM administrator to check your user or team permissions and budget in LiteLLM.`
+      }
+    } else {
+      message = "LiteLLM rejected your OpenWork-managed LiteLLM key. Ask your administrator to sync LiteLLM in AI Gateway."
+    }
+  } else if (denied) {
+    if (input.reason === "model_denied") {
+      message = `LiteLLM denied access to ${model} for your LiteLLM key. Ask your LiteLLM administrator to grant your key access to ${model}, or reconnect a key with access.`
+    } else if (input.reason === "budget_exceeded") {
+      message = "LiteLLM blocked this request because your LiteLLM key's budget limit was reached. Ask your LiteLLM administrator to check your budget."
+    } else {
+      message = `LiteLLM denied access to ${model} for your LiteLLM key. Ask your LiteLLM administrator to check your key's permissions and budget, or reconnect your key.`
+    }
+  } else {
+    message = "LiteLLM rejected your LiteLLM key. Reconnect your LiteLLM key in OpenWork, or ask your LiteLLM administrator if it was revoked."
+  }
+  const errorCode = denied ? "provider_permission_denied" : "provider_authentication_failed"
+  const response = Response.json({ error: {
+    source: "openwork_gateway",
+    message,
+    type: "invalid_request_error",
+    code: errorCode,
+    provider_id: input.providerId,
+  } }, { status: input.status })
+  response.headers.set("x-openwork-request-id", input.requestId)
+  return { response, errorCode }
+}
+
 function displayProviderName(providerId: string) {
   const knownNames: Record<string, string> = {
     openrouter: "OpenRouter",
@@ -173,6 +250,8 @@ function displayProviderName(providerId: string) {
     deepseek: "DeepSeek",
     google: "Google",
     mistral: "Mistral",
+    litellm: "LiteLLM",
+    truefoundry: "TrueFoundry",
   }
   return knownNames[providerId.toLowerCase()] ?? providerId.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
@@ -1082,6 +1161,33 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         lifetime.dispose()
         await upstream.body?.cancel().catch(() => {})
         return response
+      }
+
+      if (isLiteLlmProviderId(provider.provider_id) && (upstream.status === 401 || upstream.status === 403)) {
+        const snippet = new TextDecoder().decode(await readBoundedBody({ body: upstream.body, signal: lifetime.signal }, 4096).catch(() => new Uint8Array()))
+        const reason = classifyLiteLlmAuthError(snippet)
+        const keySource = liteLlmKeySource(provider)
+        gatewayLog.warn("litellm upstream auth or permission failure", {
+          request_id: openworkRequestId,
+          organization_id: identity.organizationId,
+          inference_provider_id: provider.id,
+          status: upstream.status,
+          credential_mode: selection.row.credentialSet.credential_mode,
+          litellm_key_source: keySource,
+          litellm_auth_reason: reason,
+        })
+        const result = liteLlmProviderAuthError({
+          status: upstream.status,
+          providerId: provider.id,
+          credentialMode: selection.row.credentialSet.credential_mode,
+          keySource,
+          modelId: selection.row.model.model_id,
+          reason,
+          requestId: openworkRequestId,
+        })
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode: result.errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
+        lifetime.dispose()
+        return result.response
       }
 
       if (upstream.status === 401 || upstream.status === 403) {

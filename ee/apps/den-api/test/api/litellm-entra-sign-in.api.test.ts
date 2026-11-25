@@ -29,9 +29,17 @@ const LITELLM_ADMIN_KEY = "sk-litellm-admin-fixture"
 const TOKEN_URL = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`
 const JWKS_URL = `https://login.microsoftonline.com/${TENANT}/discovery/v2.0/keys`
 
-// A key-based LiteLLM proxy, for the modes that existed before.
+// A key-based LiteLLM proxy, for the modes that existed before, plus optional override for Entra connect-check tests.
+let liteLlmModelsHandler: ((authHeader: string) => { status: number; body: unknown }) | null = null
 const liteLlm = await startFakeHttpServer((request, _body, response) => {
   const path = (request.url ?? "/").split("?")[0]
+  if (path === "/v1/models" && liteLlmModelsHandler) {
+    const result = liteLlmModelsHandler(String(request.headers.authorization ?? ""))
+    response.statusCode = result.status
+    response.setHeader("content-type", "application/json")
+    response.end(JSON.stringify(result.body))
+    return
+  }
   const body = path === "/v1/models" ? { data: [{ id: "gpt-fixture" }, { id: "claude-fixture" }] }
     : path === "/model_group/info" ? { data: [] }
       : path === "/team/list" ? []
@@ -430,6 +438,57 @@ test("a key-based LiteLLM provider and Microsoft Foundry sign-in work as before"
   assert.equal(tokenRequests[0]?.get("scope"), COGNITIVE_SIGN_IN)
   const listed = await admin("GET", "/v1/inference-providers")
   assert.equal(list(field(listed.body, "inferenceProviders")).find((provider) => provider.id === foundryId)?.credentialStatus, "ready")
+})
+
+test("Entra callback probes LiteLLM /v1/models and warns on mismatch without blocking sign-in", async () => {
+  const created = await owner("POST", "/v1/inference-providers/litellm", entraProvider({ name: "LiteLLM (Connect Check)", baseUrl: liteLlm.url }))
+  assert.equal(created.status, 201, summary(created))
+  const checkProviderId = text(field(created.body, "inferenceProvider", "id"), "provider id")
+
+  let probeCount = 0
+  const seenBearers: string[] = []
+  let nextResponse: { status: number; body: unknown } = { status: 200, body: { data: [{ id: "gpt-fixture" }, { id: "claude-fixture" }] } }
+  liteLlmModelsHandler = (authHeader) => {
+    probeCount += 1
+    seenBearers.push(authHeader)
+    return nextResponse
+  }
+
+  try {
+    // Verified when all configured models are listed.
+    const verifiedSignIn = await signIn(person, checkProviderId)
+    assert.equal(verifiedSignIn.callback.status, 200, summary(verifiedSignIn.callback))
+    assert.equal(probeCount, 1)
+    assert.equal(seenBearers[0], `Bearer ${ACCESS_TOKEN}`)
+    assert.match(verifiedSignIn.callback.text, /Connection verified with LiteLLM\./)
+    assert.doesNotMatch(verifiedSignIn.callback.text, /LiteLLM needs attention/)
+
+    // Missing configured model renders an amber warning while keeping sign-in stored.
+    nextResponse = { status: 200, body: { data: [{ id: "gpt-fixture" }] } }
+    const missingSignIn = await signIn(person, checkProviderId)
+    assert.equal(missingSignIn.callback.status, 200, summary(missingSignIn.callback))
+    assert.match(missingSignIn.callback.text, /LiteLLM needs attention/)
+    assert.match(missingSignIn.callback.text, /claude-fixture/)
+    assert.equal((await usable(person, checkProviderId))?.credentialStatus, "ready")
+
+    // 401 JWT issuer mismatch renders actionable JWT guidance without echoing the token.
+    nextResponse = { status: 401, body: { error: { message: `Invalid issuer for ${ACCESS_TOKEN}` } } }
+    const rejectedSignIn = await signIn(person, checkProviderId)
+    assert.equal(rejectedSignIn.callback.status, 200, summary(rejectedSignIn.callback))
+    assert.match(rejectedSignIn.callback.text, /LiteLLM needs attention/)
+    assert.match(rejectedSignIn.callback.text, /issuer, audience, and v2 access token settings/)
+    assert.equal(rejectedSignIn.callback.text.includes(ACCESS_TOKEN), false)
+
+    // Non-auth proxy error fails open silently with the standard completion page.
+    nextResponse = { status: 502, body: { error: "bad_gateway" } }
+    const skippedSignIn = await signIn(person, checkProviderId)
+    assert.equal(skippedSignIn.callback.status, 200, summary(skippedSignIn.callback))
+    assert.match(skippedSignIn.callback.text, /Connection complete/)
+    assert.doesNotMatch(skippedSignIn.callback.text, /LiteLLM needs attention/)
+  } finally {
+    liteLlmModelsHandler = null
+    await owner("DELETE", `/v1/inference-providers/${checkProviderId}`)
+  }
 })
 
 test("no API response carries a token or the client secret", () => {
