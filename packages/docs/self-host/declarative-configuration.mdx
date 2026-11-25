@@ -16,6 +16,12 @@ To copy a whole organization's configuration, review changes as a plan before th
 are written, or move from OpenWork Cloud to a self-hosted Den, see
 [Export and import organization configuration](/self-host/export-import-configuration).
 
+## Choose one writer per resource
+
+Keyed PUTs, dashboard saves, and approved [Org Config imports](/self-host/export-import-configuration#which-change-takes-effect) write to the same organization state. An external key identifies a resource; it does not lock it against dashboard edits or imports. A successful keyed PUT can replace fields changed in the dashboard or by an import, subject to the resource's write and omission rules. A dashboard edit can likewise change the resulting values. There is no continuous reconciliation or fixed precedence between these writers.
+
+For each resource, choose the dashboard, a reviewed import, or a keyed script as your normal writer. If you choose a script, keep its manifest current and serialize writes. A Helm or Terraform update is a separate operation: it changes what the installation can run, not these organization records.
+
 ## Apply by key
 
 ```http
