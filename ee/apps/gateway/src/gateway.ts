@@ -1181,7 +1181,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
           providerId: provider.id,
           credentialMode: selection.row.credentialSet.credential_mode,
           keySource,
-          modelId: selection.row.model.model_id,
+          modelId: selection.row.model?.model_id ?? selection.upstreamModel ?? "",
           reason,
           requestId: openworkRequestId,
         })
