@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
+import { joinBaseUrl } from "@openwork/types/url";
 
+import { readDenApiBase } from "../../_lib/den-api-base";
 import { getManagedBrandIconUrl, parseOrgListPayload } from "../_lib/den-org";
 import { DenToastProvider } from "./_components/den-toast";
 import { OrgDashboardShell } from "./_components/org-dashboard-shell";
@@ -10,7 +11,7 @@ import { OrgDashboardProvider } from "./_providers/org-dashboard-provider";
 import { DashboardQueryClientProvider } from "./_providers/query-client-provider";
 
 async function getWorkspaceFaviconUrl(): Promise<string | null> {
-  const apiBase = readBaseUrlEnv(process.env, "DEN_API_BASE");
+  const apiBase = readDenApiBase();
   if (!apiBase) {
     return null;
   }
