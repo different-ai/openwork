@@ -91,7 +91,7 @@ async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null)
   if (ids === null) {
     const { shared } = await loadSharedPlugins(ctx.db, organizationId)
     const sharedIds = await sharedConfigObjectIds({ db: ctx.db, organizationId, objects: rows, sharedPluginIds: shared.ids })
-    rows = rows.filter((row) => sharedIds.has(row.id))
+    rows = rows.filter((row) => row.objectType === "skill" || sharedIds.has(row.id))
   }
   if (rows.length === 0) return []
   const objectIds = rows.map((row) => row.id)
