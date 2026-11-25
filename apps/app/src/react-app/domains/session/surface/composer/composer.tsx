@@ -66,7 +66,8 @@ import { formatRelativeTime, isMacPlatform } from "@/app/utils";
 import { filterSessionReferenceCandidates } from "./session-reference-search";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
-import { filterMentionItems, inlineMentionSuggestions, isSingleWordMentionQuery, type MentionItem, type MentionSuggestion, type MentionTrigger } from "./mention-suggestions";
+import { useDesktopFeature } from "../../status/use-desktop-feature";
+import { availableMentionItems, filterMentionItems, inlineMentionSuggestions, isSingleWordMentionQuery, type MentionItem, type MentionSuggestion, type MentionTrigger } from "./mention-suggestions";
 
 type ComposerProps = {
   draft: string;
@@ -753,12 +754,14 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (!slashQuery) return slashItems.slice(0, 8);
     return fuzzysort.go(slashQuery, slashItems, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
   }, [inlineSuggestions, slashItems, legacySlashOpen, slashQuery, slashTrigger]);
+  const computerMentions = useDesktopFeature("composerComputerMentions");
   const mentionFiltered = useMemo<MentionSuggestion[]>(() => {
-    if (inlineSuggestions) return mentionTrigger
-      ? inlineMentionSuggestions(mentionItems, sessionReferences?.candidates() ?? [], mentionTrigger.query, props.sessionId)
-      : [];
-    return mentionOpen ? filterMentionItems(mentionItems, mentionQuery) : [];
-  }, [inlineSuggestions, mentionTrigger, mentionItems, sessionReferences, props.sessionId, mentionOpen, mentionQuery]);
+    if (inlineSuggestions && !mentionTrigger || !inlineSuggestions && !mentionOpen) return [];
+    const available = availableMentionItems(mentionItems, computerMentions);
+    return inlineSuggestions && mentionTrigger
+      ? inlineMentionSuggestions(available, sessionReferences?.candidates() ?? [], mentionTrigger.query, props.sessionId)
+      : filterMentionItems(available, mentionQuery);
+  }, [computerMentions, inlineSuggestions, mentionTrigger, mentionItems, sessionReferences, props.sessionId, mentionOpen, mentionQuery]);
   const sessionFiltered = useMemo(() => {
     if (!sessionMenuOpen || !sessionReferences) return [];
     return filterSessionReferenceCandidates(sessionReferences.candidates(), sessionQuery, { excludeSessionId: props.sessionId });
@@ -1075,6 +1078,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     const draft = editorRef.current?.insertMentionAtSelection(item.kind, item.value, inlineSuggestions);
     if (draft == null) return false;
     props.onInsertMention(item.kind, item.value, draft);
+    if (item.kind === "computer") markFeatureUsed("composerComputerMentions");
     if (inlineSuggestions) markFeatureUsed("composerInlineSuggestions");
     setMentionOpen(false);
     return true;

@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
-  inlineMentionAtCaret, inlineMentionSuggestions, type MentionItem,
+  availableMentionItems, filterMentionItems, inlineMentionAtCaret, inlineMentionSuggestions, type MentionItem,
 } from "../src/react-app/domains/session/surface/composer/mention-suggestions";
 import type { SessionReferenceCandidate } from "../src/components/chat/session-reference";
+import { COMPUTER_MENTIONS } from "../src/react-app/domains/session/surface/composer/computer-mentions";
+import composerComputerMentions from "../../../packages/features/src/flags/composer-computer-mentions";
 
 function candidate(title: string, sessionId = "ses_report"): SessionReferenceCandidate {
   return { workspaceId: "ws_reports", workspaceTitle: "Weekly reference", updatedAt: 1, sessionId, title };
@@ -38,6 +40,20 @@ describe("inline mentions", () => {
     expect(inlineMentionSuggestions([notes], tasks, "weekly reference")).toEqual([]);
     expect(inlineMentionSuggestions([notes], tasks, "weekly report", "ses_report")).toEqual([]);
     expect(inlineMentionSuggestions([notes], tasks, "zzqxxzzq")).toEqual([]);
+  });
+
+  test("hides run targets by default without hiding files, agents, or task references", () => {
+    const agent: MentionItem = { id: "agent:review", kind: "agent", value: "review", label: "review" };
+    const items = [...COMPUTER_MENTIONS, notes, agent];
+    expect(composerComputerMentions.default).toBe(false);
+    const available = availableMentionItems(items, composerComputerMentions.default);
+    expect(filterMentionItems(available, "")).toEqual([notes, agent]);
+    expect(inlineMentionSuggestions(available, [candidate("Weekly report")], "").map((item) => item.kind)).toEqual(["file", "agent", "task"]);
+    for (const query of ["cloud", "desktop"]) {
+      expect(filterMentionItems(available, query)).toEqual([]);
+      expect(inlineMentionSuggestions(available, [], query)).toEqual([]);
+    }
+    expect(availableMentionItems(items, true)).toEqual(items);
   });
 
   test("reserves four rows for each group", () => {

@@ -27,6 +27,10 @@ export function inlineMentionAtCaret(text: string, caret: number) {
   return { query, offset, end: caret + suffix.length };
 }
 
+export function availableMentionItems(items: MentionItem[], computerMentions: boolean) {
+  return computerMentions ? items : items.filter((item) => item.kind !== "computer");
+}
+
 export function filterMentionItems(items: MentionItem[], query: string, limit = 8) {
   return query
     ? fuzzysort.go(query, items, { keys: ["label"], limit }).map((entry) => entry.obj)
