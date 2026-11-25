@@ -32,7 +32,7 @@ export type ItemMatch = {
 }
 
 export type AreaMatchInput = {
-  area: Pick<ConfigArea, "key" | "naturalKeys" | "similarity">
+  area: Pick<ConfigArea, "key" | "naturalKeys" | "similarity" | "identityOnly">
   blobItems: readonly ConfigBlobItem[]
   targetItems: readonly ConfigItem[]
   aliases?: ReadonlyMap<string, string>
@@ -77,6 +77,20 @@ export function validateBlobItems(areaKey: string, items: readonly ConfigBlobIte
 export function matchArea(input: AreaMatchInput): AreaMatchResult {
   const { area, blobItems, targetItems } = input
   const errors = validateBlobItems(area.key, blobItems)
+  const onlyIdentity = (match: ItemMatch) => area.identityOnly?.(blobItemAsConfigItem(match.blob, match.index)) === true
+  const compatible = (match: ItemMatch, item: ConfigItem) => onlyIdentity(match) === (area.identityOnly?.(item) === true)
+  const ownerRef = (spec: ConfigItem["spec"]) => {
+    const access = spec.access
+    if (!isPlainObject(access) || !isPlainObject(access.members)) return null
+    const manager = access.members.manager
+    return Array.isArray(manager) && manager.length === 1 && isConfigRef(manager[0]) ? manager[0].$ref : null
+  }
+  const compatibleKey = (match: ItemMatch, item: ConfigItem) => {
+    if (!compatible(match, item)) return false
+    if (!onlyIdentity(match)) return true
+    const owner = ownerRef(match.blob.spec)
+    return owner !== null && owner === ownerRef(item.spec)
+  }
   const targetsById = new Map(targetItems.map((item) => [item.id, item]))
   const targetsByKey = new Map<string, ConfigItem[]>()
   for (const item of targetItems) if (item.key) pushTo(targetsByKey, item.key, item)
@@ -111,9 +125,9 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
       continue
     }
     const target = targetsById.get(targetId)
-    if (!target || taken.has(targetId)) {
+    if (!target || taken.has(targetId) || !compatible(match, target)) {
       match.flags.push("needs_mapping")
-      match.reasons.push(target ? `confirmed target ${targetId} is already matched to another item` : `confirmed target ${targetId} no longer exists`)
+      match.reasons.push(!target ? `confirmed target ${targetId} no longer exists` : !compatible(match, target) ? "the selected item has different privacy" : `confirmed target ${targetId} is already matched to another item`)
       continue
     }
     const tier: ConfigMatchTier = match.blob.id === targetId ? "id" : match.blob.id && input.aliases?.get(match.blob.id) === targetId ? "alias" : "decision"
@@ -123,20 +137,20 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
   for (const match of matches) {
     if (!isOpen(match) || !match.blob.id) continue
     const target = targetsById.get(match.blob.id)
-    if (target && !taken.has(target.id)) claim(match, target, "id")
+    if (target && !taken.has(target.id) && compatible(match, target)) claim(match, target, "id")
   }
 
   for (const match of matches) {
     if (!isOpen(match) || !match.blob.id) continue
     const localId = input.aliases?.get(match.blob.id)
     const target = localId ? targetsById.get(localId) : undefined
-    if (target && !taken.has(target.id)) claim(match, target, "alias")
+    if (target && !taken.has(target.id) && compatible(match, target)) claim(match, target, "alias")
   }
 
   for (const match of matches) {
     if (!match.target || decided.has(match.index) || (match.matchedBy !== "id" && match.matchedBy !== "alias") || !match.blob.key) continue
     const byKey = targetsByKey.get(match.blob.key)?.[0]
-    if (byKey && byKey.id !== match.target.id) {
+    if (byKey && byKey.id !== match.target.id && compatibleKey(match, byKey)) {
       match.flags.push("conflict.identity")
       match.reasons.push(`${match.matchedBy} matches "${match.target.name}" but key "${match.blob.key}" matches "${byKey.name}"`)
       match.candidates = [
@@ -148,21 +162,21 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
 
   for (const match of matches) {
     if (!isOpen(match) || !match.blob.key) continue
-    const target = targetsByKey.get(match.blob.key)?.find((item) => !taken.has(item.id))
+    const target = targetsByKey.get(match.blob.key)?.find((item) => !taken.has(item.id) && compatibleKey(match, item))
     if (target) claim(match, target, "key")
   }
 
   for (const naturalKey of area.naturalKeys) {
     const blobByValue = new Map<string, ItemMatch[]>()
     for (const match of matches) {
-      if (!isOpen(match)) continue
+      if (!isOpen(match) || onlyIdentity(match)) continue
       const value = naturalKey.get(blobItemAsConfigItem(match.blob, match.index))
       if (value === null) continue
       pushTo(blobByValue, value, match)
     }
     const targetByValue = new Map<string, ConfigItem[]>()
     for (const item of targetItems) {
-      if (taken.has(item.id)) continue
+      if (taken.has(item.id) || area.identityOnly?.(item)) continue
       const value = naturalKey.get(item)
       if (value === null) continue
       pushTo(targetByValue, value, item)
@@ -174,8 +188,8 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
     }
   }
 
-  const openMatches = matches.filter(isOpen)
-  const openTargets = targetItems.filter((item) => !taken.has(item.id))
+  const openMatches = matches.filter((match) => isOpen(match) && !onlyIdentity(match))
+  const openTargets = targetItems.filter((item) => !taken.has(item.id) && !area.identityOnly?.(item))
   if (openMatches.length > 0 && openTargets.length > 0 && openMatches.length * openTargets.length > MAX_PROPOSAL_PAIRS) {
     for (const match of openMatches) {
       match.matchedBy = "proposed"

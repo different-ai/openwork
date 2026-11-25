@@ -1637,6 +1637,7 @@ export async function getConfigObjectDetail(context: PluginArchActorContext, con
 
 export async function createConfigObject(input: {
   context: PluginArchActorContext
+  configImportOwnerId?: MemberId
   externalKey?: string
   id?: ConfigObjectId
   objectType: ConfigObjectRow["objectType"]
@@ -1657,7 +1658,7 @@ export async function createConfigObject(input: {
   const now = new Date()
   const projection = deriveProjection({ objectType: input.objectType, value: input.value })
   const organizationId = input.context.organizationContext.organization.id
-  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
+  const createdByOrgMembershipId = input.configImportOwnerId ?? input.context.organizationContext.currentMember.id
   const configObjectId = input.id ?? createDenTypeId("configObject")
   const versionId = createDenTypeId("configObjectVersion")
   const normalizedPayloadJson = input.objectType === "skill"
@@ -2756,6 +2757,7 @@ export async function getPluginDetail(context: PluginArchActorContext, pluginId:
 
 export async function createPlugin(input: {
   context: PluginArchActorContext
+  configImportOwnerId?: MemberId
   description?: string | null
   externalKey?: string
   id?: PluginId
@@ -2764,6 +2766,7 @@ export async function createPlugin(input: {
   sourceRepositoryUrl?: string | null
   sourceSchemaVersion?: string | null
 }) {
+  const createdByOrgMembershipId = input.configImportOwnerId ?? input.context.organizationContext.currentMember.id
   const now = new Date()
   const name = input.name.trim()
   const existing = await db
@@ -2771,7 +2774,7 @@ export async function createPlugin(input: {
     .from(PluginTable)
     .where(and(
       eq(PluginTable.organizationId, input.context.organizationContext.organization.id),
-      eq(PluginTable.createdByOrgMembershipId, input.context.organizationContext.currentMember.id),
+      eq(PluginTable.createdByOrgMembershipId, createdByOrgMembershipId),
       eq(PluginTable.name, name),
       eq(PluginTable.status, "active"),
       isNull(PluginTable.deletedAt),
@@ -2785,7 +2788,7 @@ export async function createPlugin(input: {
 
   const row = {
     createdAt: now,
-    createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+    createdByOrgMembershipId,
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
     externalKey: null,
@@ -2803,10 +2806,10 @@ export async function createPlugin(input: {
     await tx.insert(PluginTable).values(row)
     await tx.insert(PluginAccessGrantTable).values({
       createdAt: now,
-      createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+      createdByOrgMembershipId,
       id: createDenTypeId("pluginAccessGrant"),
       organizationId: input.context.organizationContext.organization.id,
-      orgMembershipId: input.context.organizationContext.currentMember.id,
+      orgMembershipId: createdByOrgMembershipId,
       orgWide: false,
       pluginId: row.id,
       role: "manager",

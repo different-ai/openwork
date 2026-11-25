@@ -31,6 +31,7 @@ import {
   accessSpec,
   adoptItemKey,
   applyAccess,
+  privateImportOwner,
   ensureItemKeys,
   itemKey,
   exportedRefIds,
@@ -71,6 +72,7 @@ const mcpConnectionSchema = z.object({
 const emptyAccess = { orgWide: null, teams: { viewer: [], editor: [], manager: [] }, members: { viewer: [], editor: [], manager: [] } }
 
 const specSchema = z.object({
+  creatorOnly: z.literal(true).optional(),
   description: z.string().max(65535).nullable().default(null),
   archived: z.boolean().default(false),
   components: z.array(specRefSchema).max(1000).default([]),
@@ -196,6 +198,7 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
   const names = await loadAudienceNames(ctx.db, organizationId, grants)
 
   const items = rows.map((row): ConfigItem => {
+    const ownGrants = grants.filter((grant) => grant.resourceId === row.id)
     const ownComponents = components.filter((entry) => entry.pluginId === row.id)
       .sort((left, right) => left.object.id.localeCompare(right.object.id))
       .map((entry) => ({ $ref: `plugins.skills/${entry.object.id}`, name: entry.object.title }))
@@ -222,7 +225,8 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
         description: row.description ?? null,
         archived: row.status === "archived",
         components: ownComponents,
-        access: accessSpec(grants.filter((grant) => grant.resourceId === row.id), names),
+        access: accessSpec(ownGrants, names),
+        ...(ctx.features.configPrivateItems && !shared.ids.has(row.id) ? { creatorOnly: true } : {}),
         collections: ownCollections,
         mcpConnections: ownBindings,
         sourceRepositoryUrl: row.sourceRepositoryUrl ?? null,
@@ -334,6 +338,7 @@ export const pluginsPluginsArea = defineConfigArea({
   tables: ["plugin", "plugin_config_object", "plugin_access_grant", "plugin_mcp_requirement_binding", "marketplace_plugin"],
   assignedKeys: true,
   ensureKeys: (ctx, items) => ensureItemKeys("plugin", ctx.organizationId, items),
+  identityOnly: (item) => item.spec.creatorOnly === true,
   naturalKeys: [{
     label: "built-in plugin name",
     get: (item) => item.spec.builtIn === true ? `builtin:${normalizeText(item.name)}` : null,
@@ -341,7 +346,7 @@ export const pluginsPluginsArea = defineConfigArea({
     label: "name",
     get: (item) => item.spec.builtIn === true ? null : normalizeText(item.name) || null,
   }],
-  uniqueAmongCreates: [{ label: "the name", get: (item) => item.name.trim() || null }],
+  uniqueAmongCreates: [{ label: "the name", get: (item) => item.spec.creatorOnly === true ? null : item.name.trim() || null }],
   similarity: (blob, target) => {
     const reasons: string[] = []
     const name = nameSimilarity(blob.name, target.name)
@@ -426,6 +431,7 @@ export const pluginsPluginsArea = defineConfigArea({
         await requirePluginArchCapability(actor, "plugin.create")
         const created = await log.run({ action: "create", target: "plugin", detail: name }, () => createPlugin({
           context: actor,
+          configImportOwnerId: privateImportOwner(ctx, raw),
           ...(op.preferredId ? { id: normalizeDenTypeId("plugin", op.preferredId) } : {}),
           name,
           ...(itemKey(op.item.key) ? { externalKey: itemKey(op.item.key) } : {}),

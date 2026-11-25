@@ -239,6 +239,15 @@ function isCreatorGrant(grant: GrantRow, creatorId: string): boolean {
   return !grant.orgWide && !grant.teamId && grant.orgMembershipId === creatorId
 }
 
+export function privateImportOwner(ctx: ConfigAreaContext, spec: Record<string, unknown>) {
+  if (!ctx.features.configPrivateItems || spec.creatorOnly !== true) return undefined
+  const grants = desiredGrants(spec.access)
+  const [grant] = grants
+  return grants.length === 1 && grant?.role === "manager" && grant.value.orgMembershipId
+    ? normalizeDenTypeId("member", grant.value.orgMembershipId)
+    : undefined
+}
+
 export type SharedPlugins = {
   ids: Set<string>
   sourceMapped: Set<string>

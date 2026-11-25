@@ -13,6 +13,7 @@ import {
   accessSpec,
   adoptItemKey,
   applyAccess,
+  privateImportOwner,
   ensureItemKeys,
   itemKey,
   jsonOverlap,
@@ -39,6 +40,7 @@ const contentSchema = z.object({
 }).strict()
 
 const specSchema = z.object({
+  creatorOnly: z.literal(true).optional(),
   type: z.enum(configObjectTypeValues),
   archived: z.boolean().default(false),
   content: contentSchema,
@@ -88,10 +90,11 @@ async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null)
     const version = latest.get(row.id)
     return !(row.objectType === "app" && version && isAuthoredMcpAppVersion(version))
   })
-  if (ids === null && !ctx.features.configPrivateItems) {
+  let sharedIds = new Set<string>()
+  if (ids === null || ctx.features.configPrivateItems) {
     const { shared } = await loadSharedPlugins(ctx.db, organizationId)
-    const sharedIds = await sharedConfigObjectIds({ db: ctx.db, organizationId, objects: rows, sharedPluginIds: shared.ids })
-    rows = rows.filter((row) => sharedIds.has(row.id))
+    sharedIds = await sharedConfigObjectIds({ db: ctx.db, organizationId, objects: rows, sharedPluginIds: shared.ids })
+    if (ids === null && !ctx.features.configPrivateItems) rows = rows.filter((row) => sharedIds.has(row.id))
   }
   if (rows.length === 0) return []
   const objectIds = rows.map((row) => row.id)
@@ -114,6 +117,7 @@ async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null)
   }
 
   const items = rows.map((row): ConfigItem => {
+    const ownGrants = grants.filter((grant) => grant.resourceId === row.id)
     const version = latest.get(row.id)
     const remote = remoteByObject.get(row.id)
     const sourceManaged = row.sourceMode === "connector" || row.connectorInstanceId !== null
@@ -129,7 +133,8 @@ async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null)
           payload: payloads.get(row.id) ?? null,
           schemaVersion: version?.schemaVersion ?? null,
         },
-        access: accessSpec(grants.filter((grant) => grant.resourceId === row.id), names),
+        access: accessSpec(ownGrants, names),
+        ...(ctx.features.configPrivateItems && !sharedIds.has(row.id) ? { creatorOnly: true } : {}),
         description: row.description ?? null,
         sourcePath: row.currentRelativePath ?? null,
         origin: row.sourceMode,
@@ -166,6 +171,7 @@ export const pluginsSkillsArea = defineConfigArea({
   tables: ["config_object", "config_object_version", "config_object_access_grant", "remote_mcp_app"],
   assignedKeys: true,
   ensureKeys: (ctx, items) => ensureItemKeys("config_object", ctx.organizationId, items),
+  identityOnly: (item) => item.spec.creatorOnly === true,
   naturalKeys: [{
     label: "source file",
     get: (item) => item.spec.managedBy === "source" && typeof item.spec.source === "string" && typeof item.spec.sourcePath === "string"
@@ -262,6 +268,7 @@ export const pluginsSkillsArea = defineConfigArea({
         await requirePluginArchCapability(actor, "config_object.create")
         const created = await log.run({ action: "create", target: "object", detail: `${spec.type} "${op.item.name}"` }, () => createConfigObject({
           context: actor,
+          configImportOwnerId: privateImportOwner(ctx, raw),
           ...(op.preferredId ? { id: normalizeDenTypeId("configObject", op.preferredId) } : {}),
           ...(itemKey(op.item.key) ? { externalKey: itemKey(op.item.key) } : {}),
           objectType: spec.type,

@@ -103,6 +103,7 @@ export type ConfigArea = {
   tables: string[]
   naturalKeys: ConfigNaturalKey[]
   assignedKeys?: boolean
+  identityOnly?: (item: ConfigItem) => boolean
   similarity?: ConfigSimilarity
   secretFields: string[]
   redactCredentials?: (spec: ConfigSpec) => { spec: ConfigSpec; problems: string[] }
