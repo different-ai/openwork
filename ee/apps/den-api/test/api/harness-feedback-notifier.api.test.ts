@@ -43,7 +43,7 @@ const now = () => new Date(time)
 const fixture = { symptom: "Fixture-only symptom: fluorescent umbrella.", workaround: "Fixture-only workaround: copper teapot." }
 const clear: EvaluationModel = async ({ questions }) => ({
   durationMs: 1, inputTokens: null,
-  answers: Object.fromEntries(Object.keys(questions).map((key) => [key, { type: "boolean", probability: ["actionable", "tool_error"].includes(key) ? 0.95 : 0.1 }])),
+  answers: Object.fromEntries(Object.keys(questions).map((key) => [key, { type: "boolean", probability: ["actionable", "tool_error", "c1"].includes(key) ? 0.95 : 0.1 }])),
 })
 
 async function classifyFixture() {
@@ -52,7 +52,7 @@ async function classifyFixture() {
   const [report] = await claimDueHarnessFeedback(1, now())
   assert.ok(report)
   assert.equal(report.id, id)
-  assert.equal(await processHarnessFeedbackReport(report, clear, clock), true)
+  assert.equal(await processHarnessFeedbackReport(report, clear, async () => ({ title: "Demo tool drops page selection", theme: "browser" }), clock), true)
   const [classified] = await db.$primary.select().from(Reports).where(eq(Reports.id, id))
   assert.ok(classified?.groupId)
   return classified.groupId
@@ -88,7 +88,7 @@ test("new classified group is delivered once across concurrent ticks; a matching
   assert.ok(request)
   assert.match(request, /New harness issue/)
   assert.match(request, /Category: Tool error/)
-  assert.match(request, /Surface: Tool/)
+  assert.match(request, /New harness issue\\nDemo tool drops page selection\\nTheme: Browser\\nCategory: Tool error\\nTool: demo_tool/)
   assert.match(request, /Tool: demo_tool/)
   assert.ok(request.includes(`${env.webUrl}/admin/harness-feedback?group=${groupId}`))
   for (const disallowed of [...Object.values(fixture), organizationId, memberId, "judgmentDetail"]) assert.ok(!request.includes(disallowed))
@@ -157,12 +157,12 @@ test("groups are not sent after their organization leaves the allowlist", async 
 
 test("Slack payloads escape controls and neutralize mentions; only definite pre-connect errors can retry", async () => {
   const tool = "demo&<> @channel @here <!everyone> <@U000>"
-  const row = { id: createDenTypeId("harnessFeedbackGroup"), title: `Tool error (${tool})`, surface: "tool", category: "tool_error", tool } satisfies Parameters<HarnessFeedbackSender>[0]
+  const row = { id: createDenTypeId("harnessFeedbackGroup"), title: `Tool error (${tool})`, theme: "browser", category: "tool_error", tool } satisfies Parameters<HarnessFeedbackSender>[0]
   let inspected = false
   assert.equal(await makeSender(async (_url, options) => {
     const body = String(options?.body)
     assert.ok(!body.includes("@channel") && !body.includes("@here"))
-    assert.ok(body.includes("demo&amp;&lt;&gt; @\u200bchannel @\u200bhere &lt;!everyone&gt; &lt;@U000&gt;"))
+    assert.ok(body.includes("demo&amp;‹› ＠channel ＠here ‹!everyone› ‹＠U000›"))
     inspected = true
     return new Response()
   })(row), "delivered")

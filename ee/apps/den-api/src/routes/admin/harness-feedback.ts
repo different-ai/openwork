@@ -8,6 +8,7 @@ import { harnessFeedbackOrganizationIds, isHarnessFeedbackOrganization, listHarn
 import { listHarnessFeedback, readHarnessFeedbackGroup, readUngroupedHarnessFeedbackReport, requeueHarnessFeedbackReports, retryHarnessFeedbackGroup } from "../../harness-feedback/repository.js"
 import { clearHarnessFeedbackWebhook, hasHarnessFeedbackWebhook, readHarnessFeedbackWebhook, setHarnessFeedbackWebhook } from "../../harness-feedback/settings.js"
 import { normalizeHarnessFeedbackWebhook, sendHarnessFeedbackSlackTest } from "../../harness-feedback/slack.js"
+import { harnessFeedbackTheme } from "../../harness-feedback/themes.js"
 import { adminRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -42,6 +43,8 @@ const feedbackSchema = z.object({
     id: z.string(),
     organizationId: z.string(),
     title: z.string(),
+    theme: harnessFeedbackTheme.nullable(),
+    themeLabel: z.string().nullable(),
     category: z.string().nullable(),
     categoryLabel: z.string().nullable(),
     surface: z.enum(HARNESS_FEEDBACK_SURFACES),
@@ -51,6 +54,7 @@ const feedbackSchema = z.object({
     lastSeenAt: z.string().datetime(),
     notifyState: z.enum(HARNESS_FEEDBACK_NOTIFY_STATES),
   })),
+  themes: z.array(z.object({ theme: harnessFeedbackTheme, label: z.string(), count: z.number().int() })),
   ungroupedReports: z.array(reportSchema),
 })
 
@@ -71,7 +75,7 @@ export function registerAdminHarnessFeedbackRoutes<T extends { Variables: AuthCo
   app.get(settings, describeRoute({
     tags,
     summary: "Get harness feedback settings",
-    description: "Returns the organizations whose agents may send harness feedback, whether a Slack webhook is saved for new feedback groups, and whether the evaluation service that classifies reports is configured.",
+    description: "Returns the organizations whose agents may send harness feedback, whether a Slack webhook is saved for new issues, and whether the evaluation service that classifies reports is configured.",
     responses: { 200: jsonResponse("Harness feedback settings returned.", settingsSchema), ...routeErrors },
   }), noStore, adminRoute(), async (c) => {
     const [organizations, webhookConfigured] = await Promise.all([listHarnessFeedbackOrganizations(), hasHarnessFeedbackWebhook()])
@@ -90,7 +94,7 @@ export function registerAdminHarnessFeedbackRoutes<T extends { Variables: AuthCo
       method: "DELETE",
       enabled: false,
       summary: "Turn off harness feedback for an organization",
-      description: "Stops accepting harness feedback from agents in the organization and hides its groups and reports from the admin list. Stored reports are kept.",
+      description: "Stops accepting harness feedback from agents in the organization and hides its issues and reports from the admin list. Stored reports are kept.",
       done: "Harness feedback is off for the organization.",
     },
   ]
@@ -116,7 +120,7 @@ export function registerAdminHarnessFeedbackRoutes<T extends { Variables: AuthCo
   app.put(slackSettings, describeRoute({
     tags,
     summary: "Save the harness feedback Slack webhook",
-    description: "Saves the Slack incoming webhook that receives a message for each new harness feedback group, replacing any saved one. Body: { webhookUrl: string }, an HTTPS URL on hooks.slack.com. The URL is stored encrypted and never returned.",
+    description: "Saves the Slack incoming webhook that receives a message for each new harness issue, replacing any saved one. Body: { webhookUrl: string }, an HTTPS URL on hooks.slack.com. The URL is stored encrypted and never returned.",
     responses: {
       200: jsonResponse("The webhook was saved.", okSchema),
       400: jsonResponse("The body was not a Slack webhook URL.", errorSchema("invalid_webhook")),
@@ -139,7 +143,7 @@ export function registerAdminHarnessFeedbackRoutes<T extends { Variables: AuthCo
   app.delete(slackSettings, describeRoute({
     tags,
     summary: "Remove the harness feedback Slack webhook",
-    description: "Deletes the saved Slack webhook, so new harness feedback groups stop being posted to Slack. Succeeds when no webhook is saved.",
+    description: "Deletes the saved Slack webhook, so new harness issues stop being posted to Slack. Succeeds when no webhook is saved.",
     responses: { 200: jsonResponse("No webhook is saved.", okSchema), ...routeErrors },
   }), noStore, adminRoute(), async (c) => {
     await clearHarnessFeedbackWebhook()
@@ -171,19 +175,24 @@ export function registerAdminHarnessFeedbackRoutes<T extends { Variables: AuthCo
   app.get(path, describeRoute({
     tags,
     summary: "List harness feedback",
-    description: "Returns totals, the most recently seen feedback groups and the reports not yet in a group, across the organizations that have harness feedback on. Reports that need review come first. Symptom and workaround text is left out; read a group or an ungrouped report for it.",
+    description: "Returns totals, the theme counts, the most recently seen issues and the reports not yet in an issue, across the organizations that have harness feedback on. Reports that need review come first. Symptom and workaround text is left out; read an issue or an ungrouped report for it.",
     parameters: [{
       name: "group",
       in: "query",
       required: false,
       description: "A feedback group id to list first. Ignored when it is not a group id.",
       schema: { type: "string" },
+    }, {
+      name: "theme", in: "query", required: false,
+      description: "Only return issues in this theme. Totals still cover all themes.",
+      schema: { type: "string", enum: harnessFeedbackTheme.options },
     }],
     responses: { 200: jsonResponse("Harness feedback returned.", feedbackSchema), ...routeErrors },
   }), noStore, adminRoute(), async (c) => {
     const selected = c.req.query("group")
     return c.json(await listHarnessFeedback(await harnessFeedbackOrganizationIds(),
-      selected && isDenTypeId("harnessFeedbackGroup", selected) ? selected : undefined), 200, headers)
+      selected && isDenTypeId("harnessFeedbackGroup", selected) ? selected : undefined,
+      harnessFeedbackTheme.safeParse(c.req.query("theme")).data), 200, headers)
   })
 
   app.get(`${path}/reports/:organizationId/:reportId`, describeRoute({
@@ -243,7 +252,7 @@ export function registerAdminHarnessFeedbackRoutes<T extends { Variables: AuthCo
     },
   }), noStore, adminRoute(), async (c) => {
     const { organizationId, groupId } = c.req.param()
-    const unavailable = () => c.json({ error: "not_found", message: "This group is no longer available to retry. Refresh the list." }, 404, headers)
+    const unavailable = () => c.json({ error: "not_found", message: "This issue is no longer available to retry. Refresh the list." }, 404, headers)
     if (!isDenTypeId("organization", organizationId) || !(await isHarnessFeedbackOrganization(organizationId, { fresh: true })) || !isDenTypeId("harnessFeedbackGroup", groupId)) return unavailable()
     return await retryHarnessFeedbackGroup(organizationId, groupId) ? c.json({ queued: true }, 200, headers) : unavailable()
   })

@@ -7,6 +7,9 @@ export const HARNESS_FEEDBACK_STATES: readonly ["pending", "classified", "reject
   ["pending", "classified", "rejected", "needs_review"]
 export const HARNESS_FEEDBACK_NOTIFY_STATES: readonly ["pending", "delivered", "failed"] = ["pending", "delivered", "failed"]
 
+export const HARNESS_FEEDBACK_THEMES: readonly ["secrets", "browser", "computer_use", "connections", "sessions", "automations", "files", "skills", "artifacts", "app", "other"] =
+  ["secrets", "browser", "computer_use", "connections", "sessions", "automations", "files", "skills", "artifacts", "app", "other"]
+
 export const HarnessFeedbackOrganizationTable = mysqlTable("harness_feedback_organization", {
   organizationId: denTypeIdColumn("organization", "organization_id").primaryKey(),
   enabledBy: denTypeIdColumn("user", "enabled_by").notNull(),
@@ -25,6 +28,7 @@ export const HarnessFeedbackGroupTable = mysqlTable("harness_feedback_group", {
   organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
   fingerprint: varchar("fingerprint", { length: 128 }).notNull(),
   title: varchar("title", { length: 255 }).notNull(),
+  theme: varchar("theme", { length: 24, enum: HARNESS_FEEDBACK_THEMES }),
   category: varchar("category", { length: 64 }),
   surface: varchar("surface", { length: 24, enum: HARNESS_FEEDBACK_SURFACES }).notNull(),
   tool: varchar("tool", { length: 80 }),

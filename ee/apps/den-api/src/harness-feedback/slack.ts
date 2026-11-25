@@ -1,8 +1,8 @@
 import type { HarnessFeedbackGroupTable } from "@openwork-ee/den-db/schema"
 import { harnessFeedbackCategoryLabel } from "./classifier.js"
-import { harnessFeedbackSurfaceLabel } from "./grouping.js"
+import { HARNESS_FEEDBACK_THEME_LABELS } from "./themes.js"
 
-export type SlackFeedbackGroup = Pick<typeof HarnessFeedbackGroupTable.$inferSelect, "id" | "title" | "category" | "surface" | "tool">
+export type SlackFeedbackGroup = Pick<typeof HarnessFeedbackGroupTable.$inferSelect, "id" | "title" | "theme" | "category" | "tool">
 export type SlackDelivery = "delivered" | "permanent" | "transient" | "uncertain"
 export type HarnessFeedbackSender = (group: SlackFeedbackGroup) => Promise<SlackDelivery>
 
@@ -13,14 +13,21 @@ export function escapeSlack(value: string) {
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 }
 
+export function neutralizeHarnessFeedbackSlackText(value: string) {
+  return value.replace(/\s+/gu, " ").replace(/\p{C}/gu, "").trim()
+    .replace(/(?:[\w+.-]+:\/\/[^\s<>]+|[\p{L}\p{N}-]+(?:[.\u3002\uff0e\uff61][\p{L}\p{N}-]+)+)/gu,
+      (link) => link.replace("://", "[:]//").replace(/[.\u3002\uff0e\uff61]/gu, "[.]"))
+    .replaceAll("@", "＠").replaceAll("<", "‹").replaceAll(">", "›")
+}
+
 function message(group: SlackFeedbackGroup, webUrl: string) {
   const link = new URL("/admin/harness-feedback", webUrl)
   link.searchParams.set("group", group.id)
   const details = [
-    escapeSlack(group.title),
+    escapeSlack(neutralizeHarnessFeedbackSlackText(group.title)),
+    `Theme: ${group.theme ? HARNESS_FEEDBACK_THEME_LABELS[group.theme] : "Unassigned"}`,
     `Category: ${escapeSlack(harnessFeedbackCategoryLabel(group.category) ?? "Uncategorized")}`,
-    `Surface: ${escapeSlack(harnessFeedbackSurfaceLabel(group.surface))}`,
-    ...(group.tool ? [`Tool: ${escapeSlack(group.tool)}`] : []),
+    ...(group.tool ? [`Tool: ${escapeSlack(neutralizeHarnessFeedbackSlackText(group.tool))}`] : []),
   ].join("\n")
   return {
     ...slackPayload(`${HEADING}\n${details}\n${escapeSlack(link.href)}`),

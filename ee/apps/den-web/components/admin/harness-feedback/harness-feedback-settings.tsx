@@ -93,7 +93,7 @@ export function HarnessFeedbackSettings({ revision, refresh }: { revision: numbe
       {result.status !== "loading" && result.status !== "ready" ? <DenNotice presentation="inline" message="Couldn’t load feedback settings." action={<DenButton size="sm" variant="secondary" onClick={refresh}>Try again</DenButton>} /> : null}
       {!data && result.status === "loading" ? <div role="status" aria-label="Loading settings" className="h-48 animate-pulse rounded-lg bg-muted motion-reduce:animate-none" /> : null}
       {data ? <>
-        {!data.jevConfigured ? <DenNotice tone="neutral" presentation="inline" message="Jev isn’t set up on this deployment. Reports will wait until automatic classification is available." /> : null}
+        {!data.jevConfigured ? <DenNotice tone="neutral" presentation="inline" message="Jev isn’t set up on this deployment. Reports will wait until automatic classification and issue naming are available." /> : null}
         <section aria-labelledby="feedback-organizations" className="space-y-2">
           <h3 id="feedback-organizations" className="text-sm font-medium">Enabled organizations</h3>
           {!data.organizations.length ? <p className="text-sm text-muted-foreground">Harness feedback is off. Add an organization to start collecting reports.</p> : (
