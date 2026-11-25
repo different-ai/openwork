@@ -246,6 +246,7 @@ declare global {
         startAgentTurn?: (sessionId: string) => Promise<boolean>;
         endAgentTurn?: (sessionId: string) => Promise<boolean>;
         setAgentPermissionRules?: (rules: DesktopAgentPermissionRule[] | null) => Promise<boolean>;
+        openTabExternal?: (tabId: string) => Promise<void>;
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;
         destroy?: () => Promise<void>;
         onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;

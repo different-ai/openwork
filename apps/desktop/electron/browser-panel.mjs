@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 
-import { app, BrowserWindow, WebContentsView, clipboard, dialog, nativeImage, session, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, dialog, nativeImage, session } from "electron";
 import {
   AGENT_VIEWPORTS,
   DEFAULT_AGENT_VIEWPORT as DEFAULT_PAGE_SIZE,
@@ -815,6 +815,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
   }
 
+  async function openTabInDefaultBrowser(url, isCurrent) {
+    if (!url || !isHttpUrl(url)) throw new Error("Open a web page first.");
+    await checkBrowserPolicy({ url, external: true });
+    if (!isCurrent()) throw new Error("The page changed. Open it again from its tab.");
+    const result = await openExternalUrl(url);
+    if (!result.ok && !result.pending) throw new Error(result.error);
+  }
+
   async function handleMenuChoice(request, itemId, isCurrent) {
     const tab = getBrowserTab(request.tabId);
 
@@ -851,10 +859,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         if (request.url) clipboard.writeText(request.url);
         break;
       case "open-external":
-        if (request.url && isHttpUrl(request.url)) {
-          await checkPolicy?.({ url: request.url, external: true });
-          if (isCurrent()) await shell.openExternal(request.url);
-        }
+        await openTabInDefaultBrowser(request.url, isCurrent);
         break;
       case "close-tab":
         if (tab) closeUserBrowserTab(tab.tabId);
@@ -2417,6 +2422,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         if (tab) releaseAgentViewport(tab);
       }
       return true;
+    });
+    ipcMain.handle("openwork:browser:openTabExternal", async (event, tabId) => {
+      if (!isMainRenderer(event)) throw new Error("Use the browser toolbar to open this page.");
+      const tab = getBrowserTab(tabId);
+      const url = browserTabUrl(tab);
+      const isCurrent = () => !!tab && getBrowserTab() === tab && !tab.view.webContents.isDestroyed()
+        && registry.ownerOf(tabId) === registry.visibleSessionId() && browserTabUrl(tab) === url;
+      if (!isCurrent()) throw new Error("Select this tab first.");
+      await openTabInDefaultBrowser(url, isCurrent);
     });
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
     ipcMain.handle("openwork:browser:chooseLinkDestination", (event, id, destination) => {

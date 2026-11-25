@@ -315,6 +315,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     startAgentTurn(sessionId) { return ipcRenderer.invoke("openwork:browser:startAgentTurn", sessionId); },
     endAgentTurn(sessionId) { return ipcRenderer.invoke("openwork:browser:endAgentTurn", sessionId); },
     setAgentPermissionRules(rules) { return ipcRenderer.invoke("openwork:browser:setAgentPermissionRules", rules); },
+    openTabExternal(tabId) { return ipcRenderer.invoke("openwork:browser:openTabExternal", tabId); },
     showTabContextMenu(tabId, point) { return ipcRenderer.invoke("openwork:browser:tabContextMenu", tabId, point); },
     destroy() {
       lastBrowserGeometry = null;

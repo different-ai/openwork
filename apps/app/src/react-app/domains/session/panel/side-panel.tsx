@@ -5,6 +5,7 @@ import {
   Blocks,
   ArrowLeft,
   ArrowRight,
+  ExternalLink,
   Globe,
   Loader2,
   MessagesSquare,
@@ -463,6 +464,18 @@ export function BrowserPanelContent({
                 <Globe />
               </InputGroupAddon>
             </InputGroup>
+            <Tooltip>
+              <TooltipTrigger render={(
+                <Button variant="ghost" size="icon-sm" aria-label="Open in default browser"
+                  disabled={busy || suspended || !/^https?:\/\//i.test(tab.url) || !getElectronBrowser()?.openTabExternal}
+                  onClick={() => { void getElectronBrowser()?.openTabExternal?.(tab.id).catch((error: unknown) => {
+                    reportFailure("Could not open this page in your default browser.", error);
+                  }); }}>
+                  <ExternalLink />
+                </Button>
+              )} />
+              <TooltipContent>Open in default browser</TooltipContent>
+            </Tooltip>
             <PageSizeMenu tabId={tab.id} viewport={tab.agentViewport ?? null} />
             {tab.siteToolCount > 0 ? (
               <Popover>
