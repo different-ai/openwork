@@ -41,6 +41,12 @@ test("Config moves a private skill and its file to a member joining later, witho
     rawSourceText: `---\nname: ${name}\ndescription: Summarize field notes.\n---\n\n${contents}`,
     normalizedPayloadJson: { files: [{ path: "references/guide.md", text: guide }] },
   } }] }), 201)
+  const flagOff = expectStatus(await a("GET", "/v1/config-blobs/export?areas=plugins.skills,plugins.plugins"), 200)
+  for (const area of ["skills", "plugins"]) {
+    assert.equal(list(field(flagOff, "areas", "plugins", area, "items")).some((item) => item.name === name), false, `Flag off: private ${area} are not exported`)
+  }
+  expectStatus(await den.setFeature(source.orgId, "configPrivateItems", true), 200)
+  expectStatus(await den.setFeature(target.orgId, "configPrivateItems", true), 200)
   const whole = expectStatus(await a("GET", "/v1/config-blobs/export"), 200)
   assert.equal(list(field(whole, "areas", "plugins", "skills", "items")).filter((item) => item.name === name).length, 1)
   const blob = expectStatus(await a("GET", "/v1/config-blobs/export?areas=members.people,plugins.skills,plugins.plugins"), 200)
