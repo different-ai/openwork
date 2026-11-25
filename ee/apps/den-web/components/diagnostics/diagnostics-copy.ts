@@ -67,6 +67,28 @@ export const INSTALLATION_COPY = {
   lockedSub: "Ask whoever set up OpenWork for your organization",
 } as const;
 
+export const INSTALLATION_CONFIG_COPY = {
+  name: "Configuration",
+  chart: (version: string) => `Helm chart ${version}`,
+  running: (version: string) => `Running ${version}`,
+  mismatch: "Version mismatch",
+  match: "Matches chart",
+  runningVersion: "Running version",
+  chartVersion: "Helm chart",
+  chartAppVersion: "Chart app version",
+  mismatchDetail: (chart: string, running: string) => `The chart installs ${chart} and the server runs ${running}. Set the image tag to ${chart}, or upgrade the chart.`,
+  mismatchLabel: "Mismatch",
+  lockedFeatures: "Locked by deployment",
+  noLockedFeatures: "None",
+  on: "on",
+  off: "off",
+  contents: "Included",
+  contentsValue: "Versions, capability states and locked features. No secrets, addresses or emails.",
+  copy: "Copy configuration",
+  copied: "Copied",
+  download: "Download configuration",
+} as const;
+
 export function lockedSectionCopy(permission: string): { name: string; sub: string } {
   if (!isPermissionKey(permission)) return { name: "Requires an organization permission", sub: "Ask an organization owner or admin" };
   const label = getPermissionDefinition(permission).label;
@@ -371,6 +393,7 @@ const ATTENTION_COPY: Record<DiagnosticsAttentionCode, (item: DiagnosticsAttenti
   }),
   service_misconfigured: (item) => ({ text: `${item.subject} is misconfigured`, action: "See details" }),
   service_unreachable: (item) => ({ text: `Couldn't reach ${item.subject}`, action: "See details" }),
+  installation_version_skew: (item) => ({ text: item.detail ? `${item.subject} is not the version the Helm chart installs (${item.detail})` : `${item.subject} is not the version the Helm chart installs`, action: "See details" }),
 };
 
 export function attentionCopy(item: DiagnosticsAttention): AttentionCopy {

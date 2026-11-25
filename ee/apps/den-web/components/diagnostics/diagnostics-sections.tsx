@@ -22,6 +22,7 @@ import {
 } from "../../app/(den)/_lib/den-org";
 import { providerIconSlug } from "../../app/(den)/dashboard/_components/library-models";
 import { InstallationRows } from "../services/service-rows";
+import { InstallationConfigRow, type InstallationConfigActions } from "./installation-config-row";
 import {
   CONNECTOR_ACTIONS,
   CONNECTOR_COPY,
@@ -344,12 +345,13 @@ function ConnectorRows({ connectors, ...props }: { connectors: ConnectorsDiagnos
   );
 }
 
-export function InstallationSection({ report, now }: SectionProps) {
+export function InstallationSection({ report, now, configActions }: SectionProps & { configActions: InstallationConfigActions | null }) {
   const installation = report.installation;
   if (installation.access === "operator") {
     return (
       <DiagnosticsSection id="diagnostics-installation" title={SECTION_TITLES.installation} scope={INSTALLATION_COPY.selfHosted} testId="diagnostics-installation">
         <InstallationRows readiness={installation.services} server={installation.server} now={now} />
+        {installation.config && configActions ? <InstallationConfigRow config={installation.config} actions={configActions} /> : null}
       </DiagnosticsSection>
     );
   }

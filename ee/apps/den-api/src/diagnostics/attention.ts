@@ -50,6 +50,10 @@ export function deriveDiagnosticsAttention(sections: Pick<OrgDiagnostics, "deskt
       if (service.state === "misconfigured") items.push({ ...base, severity: "error", code: "service_misconfigured" })
       else if (service.state === "unreachable") items.push({ ...base, severity: "error", code: "service_unreachable" })
     }
+    const config = sections.installation.config
+    if (config?.versionSkew) {
+      items.push({ section: "installation", targetId: "config", severity: "warning", code: "installation_version_skew", subject: "OpenWork server", count: null, detail: config.helmAppVersion ?? null })
+    }
   }
 
   const errors = items.filter((item) => item.severity === "error")

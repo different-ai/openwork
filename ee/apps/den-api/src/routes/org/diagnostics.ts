@@ -1,4 +1,4 @@
-import { desktopStartupReportSchema, orgDiagnosticsSchema } from "@openwork/types/den/diagnostics"
+import { desktopStartupReportSchema, diagnosticsIncludeSchema, orgDiagnosticsSchema } from "@openwork/types/den/diagnostics"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -13,10 +13,15 @@ import { memberPermissionsForRequest, type OrgRouteVariables } from "./shared.js
 const DESKTOP_STARTUP_RATE_LIMIT = 20
 const DESKTOP_STARTUP_RATE_WINDOW_MS = 3_600_000
 
+const includeQuery = diagnosticsIncludeSchema.optional()
+  .describe("With config, a self-hosted installation administrator also gets `installation.config`: the running and Helm chart versions, whether they differ, each deployment capability's state and the features the deployment locks on or off. Fixed codes, feature keys and booleans only. Ignored for every other caller and on OpenWork Cloud.")
+
 const diagnosticsQuerySchema = z.object({
   strict: z.enum(["0", "1", "true", "false"]).optional()
     .describe("With 1 or true, answer 503 (same body) when any attention item is an error. For post-deploy smoke tests."),
+  include: includeQuery,
 })
+const diagnosticsCheckQuerySchema = z.object({ include: includeQuery })
 const rateLimitedSchema = z.object({ error: z.literal("rate_limited") })
 
 type DiagnosticsContext = {
@@ -36,6 +41,7 @@ async function diagnosticsCaller(c: DiagnosticsContext): Promise<DiagnosticsCall
       operator ??= isLocalDeploymentOperator({ user: c.get("user"), session: c.get("session"), apiKey: c.get("apiKey") })
       return operator
     },
+    features: payload.features,
   }
 }
 
@@ -60,8 +66,8 @@ export function registerOrgDiagnosticsRoutes<T extends { Variables: OrgRouteVari
     async (c) => {
       const caller = await diagnosticsCaller(c)
       if (!caller) return c.json({ error: "organization_not_found" }, 404)
-      const diagnostics = await readOrgDiagnostics(caller, { refresh: true })
-      const { strict } = c.req.valid("query")
+      const { strict, include } = c.req.valid("query")
+      const diagnostics = await readOrgDiagnostics(caller, { refresh: true, includeConfig: include === "config" })
       c.header("Cache-Control", "no-store")
       const failing = (strict === "1" || strict === "true") && hasDiagnosticsErrors(diagnostics.attention)
       return c.json(diagnostics, failing ? 503 : 200)
@@ -76,6 +82,7 @@ export function registerOrgDiagnosticsRoutes<T extends { Variables: OrgRouteVari
       description: "Starts, in the background, every live check the caller's sections allow: provider model listings with organization-held credentials (never a model request or a member's credential), the Slack assistant token, the caller's own Google API check, and installation services for installation administrators. Shares the rate limits of background checks (one per organization, or per member for connectors, every 30 seconds). Answers with the current diagnostics; poll GET /v1/org/diagnostics until `checking` is false.",
       responses: {
         202: jsonResponse("Checks started, already running, or nothing to check.", orgDiagnosticsSchema),
+        400: jsonResponse("The query was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         404: jsonResponse("No active organization.", notFoundSchema),
         429: jsonResponse("Every requested check ran recently; Retry-After says when another may start. Same body.", orgDiagnosticsSchema),
@@ -83,10 +90,11 @@ export function registerOrgDiagnosticsRoutes<T extends { Variables: OrgRouteVari
       ...{ "x-mcp": false },
     }),
     orgMemberRoute(),
+    queryValidator(diagnosticsCheckQuerySchema),
     async (c) => {
       const caller = await diagnosticsCaller(c)
       if (!caller) return c.json({ error: "organization_not_found" }, 404)
-      const { diagnostics, retryAfter } = await checkOrgDiagnostics(caller)
+      const { diagnostics, retryAfter } = await checkOrgDiagnostics(caller, { includeConfig: c.req.valid("query").include === "config" })
       c.header("Cache-Control", "no-store")
       if (retryAfter !== null) {
         c.header("Retry-After", String(retryAfter))

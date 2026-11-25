@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { deploymentCapabilityStatusListSchema } from "@openwork/managed-deployments/capability-state"
 import { denServerFactsSchema, deploymentServiceReadinessSchema } from "@openwork/types/den/service-readiness"
 
 /** Steps measured from desktop process start. */
@@ -156,8 +157,36 @@ export const connectorsDiagnosticsSchema = z.strictObject({
 })
 export type ConnectorsDiagnostics = z.infer<typeof connectorsDiagnosticsSchema>
 
+/** A released version (1.2.3, 1.2.3-rc.1), a source build ("dev", "commit 1a2b3c4") or "unknown". Anything else is never echoed. */
+export const installationVersionSchema = z.string().regex(/^(?:\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.]{1,32})?(?:\+[0-9A-Za-z.]{1,32})?|commit [0-9a-f]{7}|dev|unknown)$/)
+
+/**
+ * What a self-hosted installation runs with, safe to hand to support:
+ * versions, capability states and which features the deployment locks on or
+ * off. Fixed codes, feature keys and booleans only. Never a secret, token,
+ * address, email or the raw value of a setting.
+ */
+export const installationConfigSchema = z.strictObject({
+  appVersion: installationVersionSchema,
+  helmChartVersion: installationVersionSchema.optional(),
+  helmAppVersion: installationVersionSchema.optional(),
+  versionSkew: z.boolean().meta({ description: "True when the Helm chart names an app version and the running server is a different one." }),
+  deploymentCapabilities: deploymentCapabilityStatusListSchema,
+  lockedFeatures: z.record(z.string().regex(/^[a-z][A-Za-z0-9]{0,63}$/), z.boolean()),
+}).meta({ ref: "InstallationConfig" })
+export type InstallationConfig = z.infer<typeof installationConfigSchema>
+
+/** `GET /v1/org/diagnostics?include=config`: also return the installation's sanitized configuration. */
+export const diagnosticsIncludeSchema = z.enum(["config"])
+export type DiagnosticsInclude = z.infer<typeof diagnosticsIncludeSchema>
+
 export const installationDiagnosticsSchema = z.discriminatedUnion("access", [
-  z.strictObject({ access: z.literal("operator"), server: denServerFactsSchema, services: deploymentServiceReadinessSchema }),
+  z.strictObject({
+    access: z.literal("operator"),
+    server: denServerFactsSchema,
+    services: deploymentServiceReadinessSchema,
+    config: installationConfigSchema.optional().meta({ description: "Present only when the request asks with include=config." }),
+  }),
   z.strictObject({ access: z.literal("managed") }),
   z.strictObject({ access: z.literal("locked"), reason: z.literal("installation_admin_required") }),
 ])
@@ -168,6 +197,7 @@ export const diagnosticsAttentionCodeSchema = z.enum([
   "desktop_startup_failures",
   "connector_slack_token_rejected", "connector_slack_not_installed", "connector_google_api_disabled",
   "service_misconfigured", "service_unreachable",
+  "installation_version_skew",
 ])
 export type DiagnosticsAttentionCode = z.infer<typeof diagnosticsAttentionCodeSchema>
 

@@ -131,6 +131,10 @@
   },
   "apiPublicUrl": "https://api.openworklabs.com",
   "serviceVersion": "commit 0123456",
+  "helm": {
+    "chartVersion": "<undefined>",
+    "appVersion": "<undefined>"
+  },
   "publicUrlTrustedOrigins": [
     "https://app.openworklabs.com",
     "https://web.openworklabs.com",
