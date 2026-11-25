@@ -391,12 +391,16 @@ export const pluginsPluginsArea = defineConfigArea({
     return readPlugins(ctx, ids)
   },
 
-  async preflight(ctx, op) {
+  async preflight(ctx, op, info) {
     if (op.kind !== "create") return ownManagerAccessPreflight(ctx, op)
+    const ownerRef = ctx.features.configPrivateItems && op.item.spec.creatorOnly === true
+      ? info.refs?.find((ref) => ref.path === "access.members.manager[0]") : undefined
+    if (ownerRef?.resolution === "planned" || ownerRef?.resolution === "invite") return null
+    const ownerId = ownerRef?.resolution === "target" && ownerRef.id ? ownerRef.id : ctx.actor.memberId
     const name = op.item.name.trim()
     const [existing] = await ctx.db.select({ id: PluginTable.id }).from(PluginTable).where(and(
       eq(PluginTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId)),
-      eq(PluginTable.createdByOrgMembershipId, normalizeDenTypeId("member", ctx.actor.memberId)),
+      eq(PluginTable.createdByOrgMembershipId, normalizeDenTypeId("member", ownerId)),
       eq(PluginTable.name, name),
       eq(PluginTable.status, "active"),
       isNull(PluginTable.deletedAt),
