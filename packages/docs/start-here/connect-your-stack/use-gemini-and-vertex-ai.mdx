@@ -32,7 +32,7 @@ Use this when your organization wants to bill Gemini or Claude requests to its G
 2. In OpenWork AI Gateway, the admin adds **Vertex** (`google-vertex`) for Gemini or **Vertex (Anthropic)** (`google-vertex-anthropic`) for Claude, enters the Google Cloud project ID and region, and chooses the models and people who can use them.
 3. Members pick an assigned model in OpenWork. With per-member sign-in, they first connect their Google account.
 
-Requests are billed to your Google Cloud project, and Google IAM decides who can run inference. Self-hosted deployments first need to [enable OpenWork Gateway](/self-host/gateway).
+Requests are billed to your Google Cloud project. OpenWork controls which members can select the model, and Google Cloud IAM controls inference access for the shared service account or the signed-in Google user. Self-hosted deployments first need to [enable OpenWork Gateway](/self-host/gateway).
 
 ## Option 3: Your own gateway in front of Vertex AI
 

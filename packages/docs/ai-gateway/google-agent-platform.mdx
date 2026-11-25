@@ -35,11 +35,11 @@ This guide uses **Agent Platform** for the Google product and retains the provid
 
 ### Add and test Vertex in OpenWork Cloud
 
-1. As an organization owner or admin, open [OpenWork Cloud](https://app.openworklabs.com/dashboard) and go to **AI Gateway → AI Providers → Add a provider**. Choose **Vertex** (`google-vertex`) for Gemini or **Vertex (Anthropic)** (`google-vertex-anthropic`) for Claude.
+1. As an organization owner or admin, open [OpenWork Cloud](https://app.openworklabs.com/dashboard) and go to **AI Gateway → AI Providers → Add a provider**. If the organization has no providers yet, select **Add your first AI provider** on the AI Gateway page. Choose **Vertex** (`google-vertex`) for Gemini or **Vertex (Anthropic)** (`google-vertex-anthropic`) for Claude.
 2. Under **Key**, select **Shared API key**. Enter your **Google Cloud project** ID and a **Region** supported by your model. The default is `global`. Paste the contents of the downloaded key into **Service account JSON**.
 3. Under **Who can use it**, choose who can call the models through the shared credential. For an initial test, turn off **Everyone in the organization** and add yourself using **Add person**.
 4. Under **Models**, choose **Only the ones I pick** and select one model. Select **Test Vertex** and complete the identity check if prompted. When OpenWork reports that the model answered its test prompt, select **Add Vertex**. Both button labels follow the provider name.
-5. Confirm the model appears in **My Library → Models**. Open a new OpenWork chat in the same organization, choose the model listed under **Vertex**, and send `Reply with exactly: Connection works.` Check that the reply shows the model you selected. Both the provider test and the chat request use the Google Cloud project's inference quota and may incur charges.
+5. Confirm the model appears in **My Library → Models**. In OpenWork Desktop, open a new chat in the same organization, choose the model listed under your Vertex provider, and send `Reply with exactly: Connection works.` Check that the reply shows the model you selected. Both the provider test and the chat request use the Google Cloud project's inference quota and may incur charges.
 
 <Frame caption="The Vertex provider form in OpenWork Cloud with Shared API key selected.">
   <img src="/images/google-agent-platform/shared-provider-form.jpg" alt="Add Vertex form with the Google Cloud project, Region, Service account JSON, access options, and Test Vertex button" />
