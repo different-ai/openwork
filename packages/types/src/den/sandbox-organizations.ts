@@ -43,6 +43,8 @@ export const sandboxJoinRoleInputSchema = z.object({ joinRole: sandboxJoinRoleSc
 export const sandboxExtendInputSchema = z.object({ days: z.number().int().min(1).max(SANDBOX_MAX_DAYS) }).strict();
 
 export const sandboxStateSchema = z.enum(["open", "expired", "closed"]);
+export const memberSandboxStatusSchema = z.object({ state: sandboxStateSchema.nullable() });
+
 
 export const sandboxSchema = z.object({
   id: z.string(),
