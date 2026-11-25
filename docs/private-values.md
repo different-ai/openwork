@@ -189,6 +189,8 @@ all kept, with nothing left to paste, has a wider "Always":
 - **"Always for this site in this chat"** covers any request to the same
   site, with the same kept values in the same places.
 
+![A card for a program run with a kept value: one line says the model never sees it, and Always names the program it covers](private-values/kept-value-always.png)
+
 It is wider on purpose. The person already chose to keep the value for the
 chat, and a script can change between two runs of the same command, so naming
 the exact command would promise nothing more. It ends when the value has to be
