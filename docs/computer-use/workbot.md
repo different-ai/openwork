@@ -182,11 +182,6 @@ person's Files are copied in again on next use. Computers from before this
 existed carry only `/workspace`. An idle replacement happens only when both
 carry over. **Rebuild computer** still starts clean, carrying nothing.
 
-A sandbox gateway's template is rebuilt by hand, so a replacement can come up on
-the same older image. The computer then stays where it is and the runner tries
-again a day later, or 10 minutes later if the computer can't serve this runner
-at all.
-
 ### Freestyle instead of Daytona
 
 Freestyle runs the same desktop from a snapshot captured while the desktop is
@@ -239,28 +234,6 @@ for the next turn. The builder installs the desktop on Freestyle's Ubuntu base,
 with Chromium for Testing in place of Debian's package and patched Node 24.x
 (24.22.1 or newer). A runtime change is an image change: deploying it builds a
 new snapshot, and existing computers move to it as described above.
-
-### Through a sandbox gateway
-
-The `sandboxGateway` feature flag moves one organization's Workbot computers onto
-the runner's sandbox gateway (Differently) while every other organization keeps
-the runner's own Freestyle or Daytona account. The gateway holds those provider
-keys and picks the provider by its own policies. Configure it on the runner with
-its own settings, apart from `HEADLESS_COMPUTER`:
-
-```dotenv
-SANDBOX_GATEWAY=differently
-SANDBOX_GATEWAY_URL=https://differently.example.com
-SANDBOX_GATEWAY_API_KEY=<project-scoped key>
-SANDBOX_GATEWAY_TEMPLATE=<template mapped to the desktop image>
-```
-
-With the flag on and the gateway down or unable to start a computer, new
-computers are made on the runner's own provider, and the runner logs the change.
-A computer already on the gateway stays there, and the gateway's own refusals
-(quotas, placement policy) are errors, never a reason to go around it.
-Organizations without the flag never use the gateway. See the runner's
-[sandbox gateway notes](../../ee/apps/headless-runner/README.md#sandbox-gateway).
 
 ## Transport and rollout
 

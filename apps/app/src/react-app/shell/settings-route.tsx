@@ -89,6 +89,7 @@ import {
   resolveLiveGatewayImportedProviders,
   resolvePendingGatewaySignIns,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { resyncAfterGatewaySignIn } from "@/react-app/domains/connections/provider-auth/live-provider-sync";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import ProviderAuthModal, { PROVIDER_LABELS } from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import { keylessProviderIds } from "@/react-app/domains/connections/provider-auth/provider-policy";
@@ -134,6 +135,7 @@ import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView, sectionForFilter, type ExtensionsSection } from "@/react-app/domains/settings/pages/extensions-view";
 import { McpView } from "@/react-app/domains/settings/pages/mcp-view";
+import { buildLibraryModelProviders } from "@/react-app/shell/library-model-providers";
 import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
 import { UpdatesView } from "@/react-app/domains/settings/pages/updates-view";
 import { useDebugViewModel } from "@/react-app/domains/settings/state/debug-view-model";
@@ -355,6 +357,7 @@ export function parseSettingsPath(pathname: string): {
         || tail === "commands"
         || tail === "agents"
         || tail === "plugins"
+        || tail === "models"
         || tail === "needs-sign-in"
         || tail === "needs-admin-setup"
         || tail === "ready"
@@ -466,11 +469,6 @@ export type SettingsSurfaceProps = {
   workspaceId?: string;
   onClose?: () => void;
 };
-
-function PermissionsSandboxPanel(props: Omit<React.ComponentProps<typeof SandboxPanel>, "rollout">) {
-  const rollout = useDesktopFeature("sandboxTools", true);
-  return <SandboxPanel {...props} rollout={rollout} />;
-}
 
 function PermissionsRouteStart() {
   const marked = useRef(false);
@@ -888,8 +886,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         openUrl: (url) => platform.openLink(url),
         resync: async () => {
           synced = false;
-          const result = await providerAuthStore.runCloudProviderSync("manual");
-          synced = result?.outcome === "handled_server_side" || result?.outcome === "handled_live";
+          synced = await resyncAfterGatewaySignIn({
+            runSync: () => providerAuthStore.runCloudProviderSync("manual", { refreshGatewayCatalog: true }),
+            refreshProviders: () => providerAuthStore.refreshProviders({ force: true }),
+            gatewayUsageProviderScope: () => providerAuthStore.getSnapshot().gatewayUsageProviderScope,
+          });
         },
         isConnected: () => {
           if (!synced) return false;
@@ -910,6 +911,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       if (gatewayConnectAbort.current === controller) setConnectingGatewayProviderId(null);
     }
   }, [platform, providerAuthStore]);
+  const libraryModelProviders = useMemo(
+    () => cloudSession.isSignedIn
+      ? buildLibraryModelProviders({
+          liveGatewayProviders,
+          importedCloudProviders: settingsImportedCloudProviders,
+          gatewayConnectProviders,
+        })
+      : null,
+    [cloudSession.isSignedIn, liveGatewayProviders, settingsImportedCloudProviders, gatewayConnectProviders],
+  );
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
 
@@ -2310,7 +2321,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 void connectionsStore.refreshMcpServers();
               }}
             />
-            <PermissionsSandboxPanel
+            <SandboxPanel
               workspaceState={permissionsWorkspaceState}
               client={selectedWorkspaceEndpoint?.client ?? openworkClient}
               workspaceId={runtimeWorkspaceId}
@@ -2403,6 +2414,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 onOpenDen={openProviderCloudPage}
                 onOpenModelConnections={() => { void platform.openLink(denDashboardUrl(readDenSettings().baseUrl, "modelConnections")); }}
                 gatewayConnectProviders={gatewayConnectProviders}
+                liveGatewayProviders={liveGatewayProviders}
                 connectingGatewayProviderId={connectingGatewayProviderId}
                 onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
                 checkDesktopAppRestriction={checkDesktopRestriction}
@@ -2571,6 +2583,20 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 onDetailIdChange={onDetailIdChange}
                 onRefresh={onRefresh}
                 opencodeImport={opencodeConnectionsImport}
+                libraryModels={libraryModelProviders ? {
+                  providers: libraryModelProviders,
+                  signingInKey: connectingGatewayProviderId,
+                  onSignIn: (signInKey) => {
+                    const provider = gatewayConnectProviders.find((candidate) => gatewayConnectProviderKey(candidate) === signInKey);
+                    if (!provider) return;
+                    void handleConnectGatewayProvider(provider);
+                  },
+                  onCancelSignIn: () => {
+                    gatewayConnectAbort.current?.abort();
+                    setConnectingGatewayProviderId(null);
+                  },
+                  onOpenAiProviders: () => navigateSettingsPath("ai"),
+                } : undefined}
               />
             )}
 

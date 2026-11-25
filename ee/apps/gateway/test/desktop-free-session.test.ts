@@ -47,7 +47,7 @@ test("desktop grant covers guest and member calls, rejects replay and follows th
   const app = new Hono()
   let address = "203.0.113.40"
   let required = true
-  const common = { config, store, fetch, clientAddress: () => address, requireDesktop: async () => required }
+  const common = { config, store, fetch, clientAddress: () => address, requireDesktop: () => required }
   registerAnonymousInferenceRoutes(app, common)
   const principal = { kind: "member" as const, id: createDenTypeId("user"), memberId: createDenTypeId("member"),
     organizationId: createDenTypeId("organization"), inferenceKeyId: createDenTypeId("inferenceKey") }

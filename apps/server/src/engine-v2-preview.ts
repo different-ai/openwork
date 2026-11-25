@@ -1408,6 +1408,10 @@ export function createEngineV2Preview(options: {
       if (!stopping) await start();
       return true;
     } catch (error) {
+      if (stopping && error === autoUpgradeAbort.signal.reason) {
+        warn(`Automatic upgrade paused: ${errorMessage(error)}`);
+        return false;
+      }
       lastError = errorMessage(error);
       autoUpgradeRetry = engineAutoUpgradeRetry(autoUpgradeRetry?.attempts ?? 0);
       reportEngineFailure("upgrade", error);

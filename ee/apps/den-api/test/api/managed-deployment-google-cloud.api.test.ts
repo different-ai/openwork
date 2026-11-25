@@ -2,7 +2,9 @@ import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { after, test } from "node:test"
 import { enrollmentAudience, heartbeatAudience, serviceAccountEmail } from "@openwork/managed-deployments/gcp"
-import { deploymentStepSchema, managedDeploymentConfigurationSchema } from "@openwork/managed-deployments/schema"
+import {
+  deploymentStepSchema, managedDeploymentConfigurationSchema, managedDeploymentLaunchSchema, managedDeploymentListSchema, managedDeploymentSchema,
+} from "@openwork/managed-deployments/schema"
 import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { bootDen, field, list, summary, text } from "./harness.js"
 
@@ -73,6 +75,33 @@ test("readiness and creation require organization approval and a configured Goog
   assert.deepEqual(field((await otherOwner("GET", path)).body, "deployments"), [])
   assert.equal((await configuration(otherOwner)).find((entry) => entry.provider === "aws")?.reason, "ready")
   assert.equal((await launch(otherOwner, aws)).handoff, "open_link")
+})
+
+test("a Google Cloud deployment in Hong Kong is recorded, listed and handed to the installer with its region", async () => {
+  process.env.DEN_MANAGED_DEPLOYMENT_GCP_RELEASE = gcpRelease
+  const enabled = await den.setFeature(pilot.orgId, feature, true)
+  assert.equal(enabled.status, 200, summary(enabled))
+  const target = { ...gcp.target, region: "asia-east2" }
+  const created = await owner("POST", path, { ...gcp, domainName: "hong-kong.example.test", target })
+  assert.equal(created.status, 200, summary(created))
+  assert.deepEqual(managedDeploymentSchema.parse(created.body).target, target)
+  const id = text(field(created.body, "id"), "deployment id")
+
+  const listed = await owner("GET", path)
+  assert.equal(listed.status, 200, summary(listed))
+  assert.deepEqual(managedDeploymentListSchema.parse(listed.body).deployments.find((entry) => entry.id === id)?.target, target)
+
+  const launched = await owner("POST", `${path}/${id}/launch`, { kind: "install" })
+  assert.equal(launched.status, 200, summary(launched))
+  const { handoff } = managedDeploymentLaunchSchema.parse(launched.body)
+  assert.equal(handoff.action, "run_in_cloud_shell")
+  const encoded = handoff.command?.match(/--config-base64 '([A-Za-z0-9+/=]+)'/)?.[1]
+  assert.ok(encoded)
+  assert.deepEqual(field(JSON.parse(Buffer.from(encoded, "base64").toString("utf8")), "target"), target)
+
+  const refused = await owner("POST", path, { ...gcp, target: { ...gcp.target, region: "ap-east-1" } })
+  assert.equal(refused.status, 400, summary(refused))
+  assert.equal(field(refused.body, "error"), "invalid_request")
 })
 
 test("turning off Google Cloud blocks pending handoffs and enrollment, but enrolled progress and signed health still work", async (t) => {

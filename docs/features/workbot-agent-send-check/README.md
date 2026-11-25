@@ -1,9 +1,8 @@
 # Workbot: Your agent checks each message before sending
 
 Feature `workbotAgentSendCheck` (cloud only, off by default). Author: `reachjalil`.
-It works on top of [Your agent's brief](../workbot-agent-brief/README.md): `workbotProactive` and `workbotAgentBrief`
-must both be on for a member, the deployment needs `DEN_AGENT_EVALUATION_API_KEY`, and an admin turns the check on in
-Manage › Workbot.
+It works on top of [Your agent's brief](../workbot-agent-brief/README.md) for members whose agents are enabled.
+The deployment needs `DEN_AGENT_EVALUATION_API_KEY`, and an admin turns the check on in Manage › Workbot.
 
 With the brief, a check has two steps: the check reads the member's sources and reports findings, then a short
 message turn writes at most a few messages. In the replay evals that pipeline misses far fewer important items than

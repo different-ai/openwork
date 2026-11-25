@@ -5,7 +5,7 @@ import { AuthSessionTable, HarnessFeedbackGroupTable, HarnessFeedbackReportTable
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { bootDen, field, list, summary } from "./harness.js"
 
-const den = await bootDen({ env: { DEN_FEATURE_CONNECT_STANDARD_TOOLS: "true" } })
+const den = await bootDen()
 after(() => den.close())
 const { db, client } = await import("../../src/db.js")
 const { HARNESS_FEEDBACK_RATE_LIMIT } = await import("../../src/harness-feedback/repository.js")
@@ -35,18 +35,18 @@ async function disableAll() {
   await setEnabled(outsideOrgId, false)
 }
 
-async function mcp(accessToken: string, method: string, view = "search", params: object = {}) {
-  return den.request(accessToken, "POST", `/mcp/agent?tools=${view}`, {
+async function mcp(accessToken: string, method: string, params: object = {}) {
+  return den.request(accessToken, "POST", "/mcp/agent", {
     headers: { accept: "application/json, text/event-stream" }, body: { jsonrpc: "2.0", id: 1, method, params },
   })
 }
 
-async function expectTool(accessToken: string, eligible: boolean, view = "search") {
-  const listed = await mcp(accessToken, "tools/list", view)
+async function expectTool(accessToken: string, eligible: boolean) {
+  const listed = await mcp(accessToken, "tools/list")
   assert.equal(listed.status, 200, summary(listed))
   assert.match(listed.text, /"tools":\[/)
   assert.equal(listed.text.includes(`"name":"${tool}"`), eligible)
-  const init = await mcp(accessToken, "initialize", view, { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fixture-client", version: "1.0.0" } })
+  const init = await mcp(accessToken, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fixture-client", version: "1.0.0" } })
   assert.equal(init.status, 200, summary(init))
   assert.match(init.text, /"instructions":/)
   assert.equal(init.text.includes(`call ${tool} once`), eligible)
@@ -87,7 +87,6 @@ test("app and headless capture bounded reports, deduplicate concurrent calls, an
   await setEnabled(organizationId)
   try {
     await expectTool(token, true)
-    await expectTool(token, true, "full")
     for (const args of [{ ...input, symptom: "a".repeat(401) }, { ...input, organizationId: other.orgId }]) {
       const invalid = await den.callMcpTool(token, tool, args)
       assert.ok(invalid.isError || invalid.rpcError !== null, invalid.raw)

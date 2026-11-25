@@ -44,8 +44,8 @@ import {
 } from "../extension-items";
 import {
   extensionFilterLabel,
-  extensionInventoryFilters,
   extensionTaxonomyLabel,
+  libraryInventoryFilters,
   isLibraryMcpDirectoryEntry,
   matchesExtensionFilter,
   primaryLibraryFilter,
@@ -133,6 +133,8 @@ import {
   type LibraryAudience,
   type LibrarySection,
 } from "../library-sharing";
+import { ProviderIcon } from "../../../design-system/provider-icon";
+import { librarySignInBrand, type LibraryModelProvider } from "../library-models";
 import { seededConnectorDraft } from "../../session/surface/composer/connector-token";
 import { useStartSeededChat } from "../../../shell/use-start-seeded-chat";
 import { libraryConnectorCues } from "../library-connector-cues";
@@ -238,7 +240,39 @@ export type McpViewProps = {
   pluginsContent?: ReactNode;
   onOpenCloudAccount?: () => void;
   opencodeImport?: OpencodeConnectionsImportSource;
+  libraryModels?: LibraryModelsSource;
 };
+
+export type LibraryModelsSource = {
+  providers: LibraryModelProvider[];
+  signingInKey: string | null;
+  onSignIn: (signInKey: string) => void;
+  onCancelSignIn: () => void;
+  onOpenAiProviders: () => void;
+};
+
+function libraryModelsSummary(provider: LibraryModelProvider, shown = 3): string {
+  if (provider.modelNames.length === 0) {
+    if (provider.modelCount === 0) return t("extensions.models_none");
+    return provider.modelCount === 1 ? t("extensions.models_one") : t("extensions.models_count", { count: String(provider.modelCount) });
+  }
+  const names = provider.modelNames.slice(0, shown).join(", ");
+  const rest = provider.modelNames.length - shown;
+  return rest > 0 ? t("extensions.models_names_more", { names, count: String(rest) }) : names;
+}
+
+function libraryModelsSignInCopy(provider: LibraryModelProvider): string {
+  switch (librarySignInBrand(provider)) {
+    case "google":
+      return t("extensions.models_sign_in_google");
+    case "aws":
+      return t("extensions.models_sign_in_aws");
+    case "microsoft":
+      return t("extensions.models_sign_in_microsoft");
+    case "account":
+      return t("extensions.models_sign_in_account");
+  }
+}
 
 const builtInExtensionDisabledReason = () => t("extensions.disabled_by_organization");
 const manageExtensionsDisabledReason = () => desktopRestrictionNotice("allowManageExtensions");
@@ -1881,6 +1915,49 @@ export function McpView(props: McpViewProps) {
     });
   }
 
+  const libraryModels = props.libraryModels;
+  for (const provider of libraryModels?.providers ?? []) {
+    if (!libraryModels) break;
+    const signIn = provider.state === "needs_signin" ? provider.signInKey : null;
+    const waiting = signIn !== null && libraryModels.signingInKey === signIn;
+    const startSignIn = signIn && !waiting ? () => libraryModels.onSignIn(signIn) : undefined;
+    rows.push({
+      needsSignIn: provider.state === "needs_signin",
+      key: `model:${provider.id}`,
+      section: "openwork",
+      taxonomy: "model",
+      searchText: `${provider.name} ${provider.modelNames.join(" ")}`,
+      node: (
+        <ExtensionCard
+          name={provider.name}
+          description={provider.state === "blocked"
+            ? t("extensions.models_blocked")
+            : waiting
+              ? t("extensions.models_waiting")
+              : provider.state === "needs_signin"
+                ? libraryModelsSignInCopy(provider)
+                : libraryModelsSummary(provider)}
+          icon={<ProviderIcon providerId={provider.providerKey ?? provider.id} providerName={provider.name} size={18} />}
+          taxonomy="model"
+          connected={provider.state === "ready"}
+          connecting={waiting}
+          disabled={props.busy}
+          statusChip={provider.state === "needs_signin"
+            ? { label: t("extensions.row_chip_sign_in"), tone: "attention" }
+            : provider.state === "blocked"
+              ? { label: t("extensions.row_action_set_up"), tone: "setup" }
+              : undefined}
+          nextActionLabel={startSignIn ? t("extensions.row_action_sign_in") : undefined}
+          onNextAction={startSignIn}
+          onClick={startSignIn ?? libraryModels.onOpenAiProviders}
+          trailing={waiting ? (
+            <Button size="sm" variant="ghost" onClick={libraryModels.onCancelSignIn}>{t("common.cancel")}</Button>
+          ) : undefined}
+        />
+      ),
+    });
+  }
+
   const sharedOwned = ownedPlugins.filter((plugin) => isLibraryAudienceShared(libraryCloud.audienceFor(plugin.id)));
   const firstSharedOwned = sharedOwned[0];
   const openworkRowCount = rows.filter((row) => row.section === "openwork").length;
@@ -2093,7 +2170,7 @@ export function McpView(props: McpViewProps) {
       ) : null}
 
       <div className="mb-5 flex flex-wrap items-center gap-1.5" aria-label={t("extensions.filters_label")}>
-        {extensionInventoryFilters.map((f) => {
+        {libraryInventoryFilters({ models: Boolean(props.libraryModels) }).map((f) => {
           const selected = filter === f;
           return (
             <button
@@ -2346,11 +2423,11 @@ export function LibraryEmptyState(props: {
       ? t("extensions.cloud_unavailable")
       : props.cloudIssue && category !== "all"
         ? t("extensions.cloud_library_title")
-        : t(category === "skill" ? "extensions.empty_skill_title" : category === "plugin" ? "extensions.empty_plugin_title" : "extensions.empty_all_title");
+        : t(category === "skill" ? "extensions.empty_skill_title" : category === "plugin" ? "extensions.empty_plugin_title" : category === "model" ? "extensions.empty_model_title" : "extensions.empty_all_title");
   const description = props.searching
     ? t("extensions.empty_filtered_hint")
     : props.error || (category !== "all" ? props.cloudIssue : undefined)
-      || t(category === "skill" ? "extensions.empty_skill_hint" : category === "plugin" ? "extensions.empty_plugin_hint" : "extensions.empty_all_hint");
+      || t(category === "skill" ? "extensions.empty_skill_hint" : category === "plugin" ? "extensions.empty_plugin_hint" : category === "model" ? "extensions.empty_model_hint" : "extensions.empty_all_hint");
   const addKind = libraryAddKindsForFilter(category)[0];
   return (
     <div className="flex flex-col items-center gap-3 rounded-[10px] border border-dashed border-dls-border bg-dls-surface px-6 py-12 text-center">

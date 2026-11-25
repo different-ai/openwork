@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { classifyLiteLlmAuthError, type LiteLlmAuthErrorReason } from "@openwork-ee/gateway-catalog"
 import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
 import type { ModelsDevProvider } from "./models-dev.js"
 import { matchTrueFoundryModel as matchCatalogModel } from "./truefoundry-models.js"
@@ -304,4 +305,109 @@ export function liteLlmPersonalModels(ownerModels: readonly string[], keyModels:
 
 export function liteLlmMirrorFingerprint(source: Pick<LiteLlmKeyRecord, "teamId" | "models" | "aliases" | "tags" | "expiresAt">): string {
   return createHash("sha256").update(JSON.stringify([source.teamId, [...source.models].sort(), Object.entries(source.aliases).sort(), [...source.tags].sort(), source.expiresAt])).digest("base64url").slice(0, 43)
+}
+
+const ENTRA_CONNECT_CHECK_TIMEOUT_MS = 4_000
+const ENTRA_CONNECT_ERROR_BYTES = 4_096
+
+export type LiteLlmEntraConnectCheck =
+  | { outcome: "verified"; listedCount: number }
+  | { outcome: "missing_models"; missingModels: string[]; warning: string }
+  | { outcome: "rejected"; status: 401 | 403; reason: LiteLlmAuthErrorReason; warning: string }
+  | { outcome: "skipped"; status: number | null; reason: "invalid_url" | "unreachable" | "bad_response" }
+
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return ""
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (total < maxBytes) {
+      const next = await reader.read()
+      if (next.done) break
+      const slice = next.value.byteLength > maxBytes - total ? next.value.subarray(0, maxBytes - total) : next.value
+      chunks.push(slice)
+      total += slice.byteLength
+    }
+  } catch {
+    return ""
+  } finally {
+    await reader.cancel().catch(() => {})
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.byteLength }
+  return new TextDecoder("utf-8", { fatal: false }).decode(merged)
+}
+
+function formatMissingModelsWarning(missingModels: readonly string[]): string {
+  const shown = missingModels.slice(0, 5).join(", ")
+  const remainder = missingModels.length > 5 ? ` and ${missingModels.length - 5} more` : ""
+  return `LiteLLM accepted your Microsoft sign-in, but these configured models were not listed for your account: ${shown}${remainder}. Ask your LiteLLM administrator to check the model names and your user or team permissions.`
+}
+
+function entraConnectRejectedWarning(status: 401 | 403, reason: LiteLlmAuthErrorReason): string {
+  if (reason === "user_not_found") {
+    return "LiteLLM did not recognize your Microsoft account. Ask your LiteLLM administrator to add your user or enable user_id_upsert in LiteLLM."
+  }
+  if (status === 403) {
+    if (reason === "budget_exceeded") {
+      return "LiteLLM blocked this check because your LiteLLM budget limit was reached. Ask your LiteLLM administrator to check your user or team budget."
+    }
+    return "LiteLLM denied access for your Microsoft account. Ask your LiteLLM administrator to check your user or team permissions in LiteLLM."
+  }
+  if (reason === "jwt_mismatch") {
+    return "LiteLLM rejected your Microsoft sign-in token. Ask your administrator to check the LiteLLM JWT issuer, audience, and v2 access token settings."
+  }
+  return "LiteLLM rejected your Microsoft sign-in token. Ask your administrator to check LiteLLM JWT settings (issuer, audience, and user mapping)."
+}
+
+export async function verifyLiteLlmEntraToken(input: {
+  baseUrl: string
+  accessToken: string
+  configuredModels: readonly string[]
+  fetchImpl?: LiteLlmFetch
+  timeoutMs?: number
+}): Promise<LiteLlmEntraConnectCheck> {
+  let endpoints: LiteLlmEndpoints
+  try { endpoints = normalizeLiteLlmBaseUrl(input.baseUrl) } catch {
+    return { outcome: "skipped", status: null, reason: "invalid_url" }
+  }
+  const fetchImpl = input.fetchImpl ?? createInferenceEgressFetch()
+  let response: Response
+  try {
+    response = await fetchImpl(`${endpoints.adminBaseUrl}/v1/models`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${input.accessToken}`, accept: "application/json" },
+      redirect: "error",
+      signal: AbortSignal.timeout(input.timeoutMs ?? ENTRA_CONNECT_CHECK_TIMEOUT_MS),
+    })
+  } catch {
+    return { outcome: "skipped", status: null, reason: "unreachable" }
+  }
+  if (response.status === 401 || response.status === 403) {
+    const reason = classifyLiteLlmAuthError(await readBoundedText(response, ENTRA_CONNECT_ERROR_BYTES))
+    return { outcome: "rejected", status: response.status, reason, warning: entraConnectRejectedWarning(response.status, reason) }
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {})
+    return { outcome: "skipped", status: response.status, reason: "bad_response" }
+  }
+  let body: unknown
+  try { body = await response.json() } catch {
+    return { outcome: "skipped", status: response.status, reason: "bad_response" }
+  }
+  if (!isRecord(body) || !Array.isArray(body.data)) {
+    return { outcome: "skipped", status: response.status, reason: "bad_response" }
+  }
+  const returned = new Set<string>()
+  for (const entry of body.data) {
+    const id = isRecord(entry) ? readString(entry.id) : null
+    if (id && !id.includes("*")) returned.add(id.toLowerCase())
+  }
+  const missingModels = input.configuredModels.filter((id) => !returned.has(id.toLowerCase()))
+  if (missingModels.length > 0) {
+    return { outcome: "missing_models", missingModels, warning: formatMissingModelsWarning(missingModels) }
+  }
+  return { outcome: "verified", listedCount: returned.size }
 }

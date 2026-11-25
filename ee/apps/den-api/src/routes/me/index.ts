@@ -517,6 +517,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       operationId: "reportPrivateValueFill",
       "x-mcp": false,
       summary: "Report a private-value use outcome",
+      description: "Records in the organization audit log that the signed-in person's desktop used a private value: where it went, which field, where it came from and whether it worked. The value itself is never sent. Available only when private values are on for the organization.",
       responses: {
         200: jsonResponse("Whether the outcome was recorded in the organization audit log.", privateValueFillReportResponseSchema),
         400: jsonResponse("The fill report was invalid.", invalidRequestSchema),

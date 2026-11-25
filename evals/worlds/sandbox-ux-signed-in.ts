@@ -1,12 +1,10 @@
 import { createServer, request } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
-import { denFetch } from "@openwork/behaviors";
 import { server } from "../packages/env/src/den.ts";
 import { resolvePlace } from "../packages/env/src/place.ts";
-import { isRecord } from "./packaged-sandbox-fixtures.ts";
 import { uxDockerDatabase } from "./sandbox-ux-docker-db.ts";
 
-export async function uxSignedInDen(flag = true) {
+export async function uxSignedInDen() {
   // Pin infrastructure to the local test containers even under infisical run.
   delete process.env.OPENWORK_EVAL_DEN_API_URL;
   delete process.env.OPENWORK_EVAL_DEN_WEB_URL;
@@ -25,15 +23,6 @@ export async function uxSignedInDen(flag = true) {
       throw new Error(`Local Den boot failed: ${message.replace(/https?:\/\/127\.0\.0\.1:\d+[^\s]*/g, "[loopback URL]").replaceAll(db.mysql, "[test database]")}`);
     });
     stack.use(den);
-    // Same platform-admin API used by organization-capabilities.ts, without the Seed runtime.
-    const headers = { authorization: `Bearer ${den.admin.token}`, "content-type": "application/json" };
-    const context = await denFetch(den.admin, "/v1/org", { headers });
-    const org = isRecord(context.body) && isRecord(context.body.organization) ? context.body.organization : null;
-    if (typeof org?.id !== "string") throw new Error("No seeded org ID");
-    const enabled = await denFetch(den.admin, `/v1/admin/organizations/${org.id}/capabilities`, {
-      method: "PUT", headers, body: JSON.stringify({ capabilities: { sandboxTools: flag } }),
-    });
-    if (!enabled.response.ok) throw new Error(`Enabling sandboxTools failed: HTTP ${enabled.response.status}`);
     const member = den.members.riley;
     if (!member) throw new Error("Local Den did not provision test member");
     const proxy = await uxDenProxy(den.ref.apiUrl);

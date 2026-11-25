@@ -25,6 +25,24 @@ const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const FILE_BROWSER_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
+const CATALOG_SKIPPABLE_FS_ERROR_CODES = new Set([
+  "EACCES",
+  "EPERM",
+  "ENOENT",
+  "ETIMEDOUT",
+  "EIO",
+  "EBUSY",
+  "ENOTCONN",
+  "ELOOP",
+  "EINVAL",
+  "ENOTSUP",
+]);
+
+function isSkippableCatalogFsError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if ("code" in error && typeof error.code === "string") return CATALOG_SKIPPABLE_FS_ERROR_CODES.has(error.code);
+  return error.message.startsWith("Invalid package ");
+}
 const MAX_PATH_COMPONENT_BYTES = 255;
 const INBOX_MULTIPART_MAX_BYTES = 250_000_000;
 const INBOX_MULTIPART_FRAMING_BYTES = 1_000_000;
@@ -612,15 +630,17 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
 
   const walk = async (dirPath: string) => {
     const entries = await readdir(dirPath, { withFileTypes: true }).catch((error: unknown) => {
-      if (error instanceof Error && "code" in error && (error.code === "EACCES" || error.code === "EPERM")) {
-        if (dirPath === rootResolved) {
+      if (dirPath === rootResolved && error instanceof Error && "code" in error) {
+        if (error.code === "EACCES" || error.code === "EPERM") {
           throw new ApiError(403, "workspace_permission_denied", "OpenWork does not have permission to list this workspace folder.");
         }
+        if (error.code === "ENOENT") {
+          throw new ApiError(404, "workspace_not_found", "The workspace folder no longer exists.");
+        }
+      }
+      if (dirPath !== rootResolved && isSkippableCatalogFsError(error)) {
         skippedDirectories.push(relative(rootResolved, dirPath).replace(/\\/g, "/"));
         return [];
-      }
-      if (dirPath === rootResolved && error instanceof Error && "code" in error && error.code === "ENOENT") {
-        throw new ApiError(404, "workspace_not_found", "The workspace folder no longer exists.");
       }
       throw error;
     });
@@ -639,7 +659,8 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
         try {
           info = await stat(absPath);
         } catch (error: unknown) {
-          if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")) {
+          if (isSkippableCatalogFsError(error)) {
+            if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) skippedDirectories.push(rel);
             continue;
           }
           throw error;
@@ -660,7 +681,7 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
       try {
         info = await stat(absPath);
       } catch (error: unknown) {
-        if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM")) {
+        if (isSkippableCatalogFsError(error)) {
           continue;
         }
         throw error;

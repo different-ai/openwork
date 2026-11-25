@@ -197,7 +197,6 @@ test("celld includes the runner's transitive dependencies and desktop-image cros
     "packages/sandbox/src/index.ts",
     "packages/sandbox-freestyle/src/index.ts",
     "packages/sandbox-daytona/src/index.ts",
-    "packages/sandbox-differently/src/index.ts",
     "packages/computer-use/computer-x11-driver.mjs",
     "packages/codemode/src/index.ts",
     "packages/types/src/browser-demonstration.ts",

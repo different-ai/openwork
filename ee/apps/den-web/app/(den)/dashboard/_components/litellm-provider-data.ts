@@ -8,7 +8,6 @@ import { readInferenceProviderFromPayload, type DenInferenceProvider } from "./i
 export { LITELLM_PROVIDER_ID } from "@openwork-ee/gateway-catalog";
 export const LITELLM_DOC_URL = "https://docs.litellm.ai";
 export const LITELLM_ENTRA_DOC_URL = "https://openworklabs.com/docs/ai-gateway/litellm#microsoft-sign-in";
-export const LITELLM_ENTRA_FEATURE = "litellmEntraMemberSignIn";
 
 export type LiteLlmMode = "org" | "member" | "issued" | "entra";
 export type LiteLlmIssueStrategy = "per_team" | "mirror";
@@ -101,9 +100,9 @@ export function liteLlmModeLabel(mode: LiteLlmMode) {
   return mode === "org" ? "One organization key" : mode === "issued" ? "OpenWork creates keys" : mode === "entra" ? "Microsoft sign-in" : "Each person's own key";
 }
 
-export function liteLlmModeOptions(entraAvailable: boolean): Array<{ value: LiteLlmMode; label: string; disabled: boolean }> {
+export function liteLlmModeOptions(): Array<{ value: LiteLlmMode; label: string }> {
   const modes: LiteLlmMode[] = ["org", "member", "issued", "entra"];
-  return modes.map((value) => ({ value, label: liteLlmModeLabel(value), disabled: value === "entra" && !entraAvailable }));
+  return modes.map((value) => ({ value, label: liteLlmModeLabel(value) }));
 }
 
 export function liteLlmIssueStrategyLabel(strategy: LiteLlmIssueStrategy) {
