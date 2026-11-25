@@ -18,6 +18,8 @@ import { computersIntros } from "./computers";
 import { settingsIntros } from "./settings";
 import { toolTesterIntros } from "./tool-tester";
 
+import { supportTriageIntro } from "./support-triage";
+
 export const FEATURE_INTROS: readonly FeatureIntro[] = [
   ...aiGatewayIntros,
   ...analyticsIntros,
@@ -37,6 +39,7 @@ export const FEATURE_INTROS: readonly FeatureIntro[] = [
   ...computersIntros,
   ...settingsIntros,
   ...toolTesterIntros,
+  supportTriageIntro,
 ];
 
 export function getFeatureIntro(key: FeatureIntroKey): FeatureIntro | null {

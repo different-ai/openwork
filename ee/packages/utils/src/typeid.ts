@@ -152,6 +152,7 @@ export const idTypesMapNameToPrefix = {
   workbotUsageDay: "wud",
   harnessFeedbackGroup: "hfg",
   harnessFeedbackReport: "hfr",
+  supportTriageThread: "stt",
   remoteDevice: "rdv",
   remoteDeviceEvent: "rde",
   automationShare: "ats",
