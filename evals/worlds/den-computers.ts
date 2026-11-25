@@ -3,14 +3,14 @@ import type { DenSession } from "@openwork/behaviors";
 import { denFetch, freshSession } from "@openwork/behaviors";
 import { z } from "zod";
 import { organizationComputerListResponseSchema, organizationComputerDetailResponseSchema, remoteDeviceListResponseSchema, remoteDeviceResponseSchema } from "@openwork/types/den/remote-devices";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 const contextSchema = z.object({ organization: z.object({ id: z.string() }), currentMember: z.object({ id: z.string(), role: z.string() }) });
 
 /** Ordinary Den organization management, never the platform /admin surface.
  * Device registrations, role changes and runner inventory use the product API.
  * Stored worker registrations alone use seed-only inserts in the disposable DB.
- * The platform owner is used only to arrange the rollout and membership fixture.
+ * The platform owner is used only to arrange the membership fixture.
  */
 export async function denComputersWorld(seed: Seed) {
   const stack = new AsyncDisposableStack();
@@ -20,7 +20,8 @@ export async function denComputersWorld(seed: Seed) {
       members: { manager: { name: "Alex Morgan" }, owner: { name: "Casey Rivera" }, member: { name: "Riley Chen" }, foreign: { name: "Foreign Owner" } },
     } });
     if (!den.database) throw new Error("Computers proof requires a disposable local database, never an attached Den");
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { remoteComputers: true });
+    const organizationId = await seededOrganizationId(seed, den.admin);
+    if (!organizationId) throw new Error("Could not resolve the seeded organization.");
     const request = (session: DenSession, path: string, body?: unknown, method = body === undefined ? "GET" : "POST", org = organizationId) =>
       denFetch(session, path, { method, headers: { authorization: `Bearer ${session.token}`, "x-openwork-org-id": org }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const send = async (session: DenSession, path: string, body?: unknown, method?: string, org?: string) => {

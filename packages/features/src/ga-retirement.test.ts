@@ -35,6 +35,7 @@ const graduated = [
   "nativeMcpEvents",
   "gatewayOpenCodeSetup", "importOpencodeConnections", "lowStorageWarning",
   "providerFilterSyncFix", "questionMinimize",
+  "remoteComputers",
 ]
 
 test("completed rollouts are retired rather than permanently enabled flags", () => {

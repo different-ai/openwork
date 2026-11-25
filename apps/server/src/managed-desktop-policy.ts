@@ -578,7 +578,16 @@ class ManagedDesktopPolicy {
   }
 
   async remoteComputersEnabled(): Promise<boolean> {
-    return this.organizationFeatureEnabled("remoteComputers");
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) return false;
+    try {
+      await this.readDenJson(session, "/v1/org", generation);
+      this.identityChanged(generation);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async browserSecretHandlesEnabled(): Promise<boolean> {
@@ -641,7 +650,7 @@ class ManagedDesktopPolicy {
     return { ok: false, code: "den_unavailable" };
   }
 
-  private async organizationFeatureEnabled(key: "remoteComputers" | "browserSecretHandles" | "privateValues"): Promise<boolean> {
+  private async organizationFeatureEnabled(key: "browserSecretHandles" | "privateValues"): Promise<boolean> {
     const session = this.session;
     const generation = this.generation;
     if (!session) return false;

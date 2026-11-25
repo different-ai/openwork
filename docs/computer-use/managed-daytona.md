@@ -38,10 +38,10 @@ Configure Den with `DAYTONA_SNAPSHOT=<cloud-desktop-version>` and
 Cloud image upgrade policy handles workers when they are idle. Use a dedicated
 test deployment for the experimental VM image before changing a shared runtime.
 
-In `/admin`, enable **computerUse** and **remoteComputers** for the test
-organization. The image/class settings describe the installed runtime, not
-feature access. Both flags are checked against the signed-in organization by
-the worker on every tool or viewer request and periodically during active work.
+In `/admin`, enable **computerUse** for the test organization. The image/class
+settings describe the installed runtime, not feature access. The worker
+verifies the organization sign-in with Den on every tool or viewer request and
+periodically during active work.
 
 ## Use it
 

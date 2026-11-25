@@ -132,5 +132,4 @@ These remain controlled rollouts or operational switches. Neither a stale code d
 | `workbotAgentCheckGate` | Workbot: Your agent skips checks when nothing new arrived |
 | `workbotAgentSendCheck` | Workbot: Your agent checks each message before sending |
 | `browserDemonstrations` | Workbot: teach browser tasks |
-| `remoteComputers` | Desktop: computer use on remote computers |
 | `remoteTasksOptIn` | Desktop: other devices reach a computer only after its owner allows it |

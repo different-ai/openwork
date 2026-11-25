@@ -1,5 +1,6 @@
 // The cloud computer's secret routes over real HTTP: the contract, the rollout gate, and that a value sent to them is
-// in no log line, error or response. Every value here is made up for the test.
+// in no log line, error or response. Also when the server offers remote computers: only to an organization session
+// Den confirms. Every value here is made up for the test.
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,7 +11,10 @@ import type { ServerConfig } from "../src/types.js";
 
 const VALUE = 'fake "quoted" \\ pass wörd ✓ & <b> 100% a+b=c';
 const SESSION = "conversation-one";
-const features = { remoteComputers: true, browserSecretHandles: true };
+const DEN_SESSION = { orgId: "org_fixture", token: "fixture-den-token" };
+const features = { browserSecretHandles: true };
+let denAnswers = true;
+let denUrl = "";
 const logged: string[] = [];
 const cleanup: (() => unknown)[] = [];
 let temp = "";
@@ -34,7 +38,8 @@ beforeAll(async () => {
   // The organization as the server reads it: its rollouts, and permissions that leave the host usable.
   const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => {
     const path = new URL(request.url).pathname;
-    return path === "/v1/org" ? Response.json({ features }) : path === "/v1/me/desktop-config" ? Response.json({ agentPermissions: { rules: [] } }) : new Response(null, { status: 404 });
+    if (path === "/v1/org") return denAnswers ? Response.json({ features }) : new Response(null, { status: 500 });
+    return path === "/v1/me/desktop-config" ? Response.json({ agentPermissions: { rules: [] } }) : new Response(null, { status: 404 });
   } });
   cleanup.push(() => den.stop());
   config = {
@@ -42,7 +47,8 @@ beforeAll(async () => {
     trustedDenOrigin: "http://127.0.0.1:1", approval: { mode: "auto", timeoutMs: 1000 }, corsOrigins: [],
     workspaces: [], authorizedRoots: [temp], readOnly: false, startedAt: Date.now(), tokenSource: "generated", hostTokenSource: "generated", logFormat: "json", logRequests: true,
   };
-  await managedDesktopPolicy(config).setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_fixture", token: "fixture-den-token" });
+  denUrl = `http://127.0.0.1:${den.port}`;
+  await managedDesktopPolicy(config).setSession({ baseUrl: denUrl, ...DEN_SESSION });
   recordOutput();
   // The cloud computer exists only inside the operator-installed Linux runtime. Its secret store and approvals need no
   // display, so the server is started as that runtime would start it.
@@ -82,7 +88,7 @@ const routes: [string, string, unknown?][] = [
   ["POST", "/cloud-computer/request", { sessionId: SESSION, id: "guessed-or-discovered-id", answer: "allow" }],
 ];
 
-test("cloud enrollment and approval stay disabled even with both rollouts and guest-readable authority", async () => {
+test("cloud enrollment and approval stay disabled even with the rollout on and guest-readable authority", async () => {
   expect((await fetch(`${base}/cloud-computer/secrets?sessionId=${SESSION}`)).status).toBe(401);
   for (const headers of [{}, { "x-openwork-host-token": config.hostToken }]) {
     for (const [method, path, body] of routes) {
@@ -97,13 +103,11 @@ test("a disabled route never parses or echoes a malformed enrollment or approval
   }
 });
 
-test("rollout changes cannot re-enable cloud secret enrollment or approval", async () => {
-  for (const off of ["browserSecretHandles", "remoteComputers"] as const) {
-    features[off] = false;
-    try {
-      for (const [method, path, body] of routes) expect(await call(method, path, body)).toMatchObject({ status: 404, json: { code: "feature_disabled" } });
-    } finally { features[off] = true; }
-  }
+test("turning the secrets rollout off cannot re-enable cloud secret enrollment or approval", async () => {
+  features.browserSecretHandles = false;
+  try {
+    for (const [method, path, body] of routes) expect(await call(method, path, body)).toMatchObject({ status: 404, json: { code: "feature_disabled" } });
+  } finally { features.browserSecretHandles = true; }
 });
 
 test("disabled routes never log or persist the submitted fake value", async () => {
@@ -117,4 +121,14 @@ test("disabled routes never log or persist the submitted fake value", async () =
     expect(output.includes(spelling)).toBe(false);
     expect(written.includes(spelling)).toBe(false);
   }
+});
+
+test("remote computers are offered only to a signed-in organization that Den confirms", async () => {
+  const offered = async () => (await call("GET", "/managed-policy/remote-computers")).json;
+  expect(await offered()).toEqual({ enabled: true });
+  denAnswers = false;
+  try { expect(await offered()).toEqual({ enabled: false }); } finally { denAnswers = true; }
+  await managedDesktopPolicy(config).clearSession();
+  try { expect(await offered()).toEqual({ enabled: false }); } finally { await managedDesktopPolicy(config).setSession({ baseUrl: denUrl, ...DEN_SESSION }); }
+  expect(await offered()).toEqual({ enabled: true });
 });

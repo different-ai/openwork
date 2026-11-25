@@ -439,7 +439,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
   const watched = new Set();
   let remoteGeneration = 0;
   let remoteUpdateRevision = 0;
-  // `remoteComputers`: off, VMs are hidden and every chat uses a local computer.
+  // True only while the person is signed in to an organization and Den has verified it.
+  // Otherwise VMs are hidden and every chat uses a local computer.
   let remoteEnabled = false;
   let remoteRequested = false;
   let saved = null;
@@ -1792,9 +1793,10 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       return view(asked);
     },
     /**
-     * The renderer reports the `remoteComputers` feature. Turning it off ends a
-     * session running on a VM at once; each chat keeps its saved choice and
-     * returns to it when the feature is back on.
+     * The renderer reports whether the person is signed in to an organization;
+     * remote computers are offered only once Den has verified it. Signing out ends
+     * a session running on a VM at once; each chat keeps its saved choice and
+     * returns to it after the next verified sign-in.
      */
     async setRemoteEnabled(enabled) {
       const update = ++remoteUpdateRevision;

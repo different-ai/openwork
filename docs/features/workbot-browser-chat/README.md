@@ -4,7 +4,7 @@
 
 Feature key: `workbotBrowserChat` · Deployments: cloud and self-hosted · Default: off · Author: @benjaminshafii
 
-Needs browser use (`browserUse` with `remoteComputers`). Den only reports it on when browser use is on for the member.
+Needs browser use (`browserUse`). Den only reports it on when browser use is on for the member.
 
 ## What people see
 
@@ -20,7 +20,7 @@ On narrower windows the conversation floats over the browser instead (the existi
 
 ## How it works
 
-- Den's `GET /v1/workbot/session` returns `browserChat` (`workbotBrowserChat && browserUse && remoteComputers`); Workbot's `/v1/workbot/me` passes it to the page only with browser access.
+- Den's `GET /v1/workbot/session` returns `browserChat`; Workbot's `/v1/workbot/me` passes it to the page only with browser access.
 - The page uses its workspace shell (the same one as the workspace assistant and browser teaching): one conversation shown on Home, in the dock, or in the floating chat, never two at once.
 - The docked chat sends through the same `/v1/workbot/messages` call as Home, with the browser tab's `WorkbotViewContext` when the chip is on.
 

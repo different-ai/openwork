@@ -408,17 +408,6 @@ export const questionInThread = definePreview({
   default: false,
 })
 
-export const remoteComputers = definePreview({
-  label: "Desktop: computer use on remote computers",
-  description: "Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available.",
-  category: "computerUse",
-  added: "2026-10-20",
-  owner: "reachjalil",
-  expiresOn: "2026-12-31",
-  deployments: everywhere,
-  default: false,
-})
-
 export const remoteDesktopDeviceLogin = definePreview({
   label: "Remote desktop device sign-in",
   description: "Sign a remote OpenWork desktop into an organization by approving a code on another computer.",
