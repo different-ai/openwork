@@ -1,18 +1,17 @@
 # Workbot: Computers in its profile
 
-- Feature: `workbotProfileComputers`
-- Deployments: cloud and self-hosted; default **off**
+- Generally available on Cloud and self-hosted (retired rollout: `workbotProfileComputers`)
 - Owner: `benjaminshafii`
 
-With the profile sheet and Devices enabled, the existing Devices navigation entry moves into Workbot's profile as **Computers**, using the same monitor-and-device icon, selected state and arrow-key navigation as the other tabs. The centered profile has six equal-width tabs; phone and desktop use the same list.
+Workbot's profile contains the **Computers** tab, using the same monitor-and-device icon, selected state and arrow-key navigation as the other tabs. The centered profile has six equal-width tabs; phone and desktop use the same list.
 
 The list is the existing member-scoped `WorkbotDevices`: loading, empty, retry, last-known data, availability and guarded Open actions are unchanged. Opening a Workbot computer closes the sheet and invokes the same chat/draft checks as the Devices page. No machine is provisioned by opening this tab. Existing `/devices` links still work.
 
 ## Try it
 
-Enable the feature only in an isolated test organization with `remoteDevices`, `workbotProfileSheet`, `workbotWorkingStatus`, `workbotProfileNav` and `workbotCenteredProfile`. Open Workbot's profile, select Computers, and inspect the existing inventory. Check desktop and narrow phone widths, arrow keys, Home/End and Escape.
+In a test organization with Workbot and remote access configured, open Workbot's profile, select Computers, and inspect the existing inventory. Check desktop and narrow phone widths, arrow keys, Home/End and Escape.
 
-Turning the switch off restores the standalone Devices entry without changing inventory, permissions, chats or running tasks. If Devices or the profile sheet is unavailable, the move does not apply. Watch for duplicate navigation, overflow and failed inventory reads.
+Workbot and computer access rules still apply. Watch for duplicate navigation, overflow and failed inventory reads.
 
 ## UI evidence
 

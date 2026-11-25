@@ -13,7 +13,6 @@ import {
 } from "@openwork/types/den/agent-permissions"
 import { configRefSchema, type ConfigApplyStep } from "@openwork/types/den/config-blobs"
 import { z } from "zod"
-import { isSandboxRequirement } from "../../agent-permissions.js"
 import { agentPermissionPolicyChangedEvent, type AgentPermissionAuditScope } from "../../audit/domain/agent-permissions.js"
 import { appendDomainChanges } from "../../audit/domain/legacy.js"
 import { currentAuditChangeCapture } from "../../audit/request-capture.js"
@@ -327,10 +326,6 @@ export const membersAgentPermissionsArea = defineConfigArea({
       const desired = new Map<AgentPermissionKey, AgentPermissionSetting | null>()
       for (const key of keys) {
         const setting = settings[key]
-        if (!ctx.features.sandboxTools && isSandboxRequirement(key, setting)) {
-          warnings.push(`${definitionOf(key)?.label ?? key} was not changed because the sandbox is turned off.`)
-          continue
-        }
         desired.set(key, setting ?? null)
       }
       return desired

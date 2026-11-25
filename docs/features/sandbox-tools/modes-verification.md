@@ -1,5 +1,7 @@
 # Use and Force OpenWork Sandbox: packaged verification
 
+> Historical record from before the sandbox rollout switch was retired. See [modes.md](modes.md) for current behavior.
+
 Feature: `sandboxTools` (cloud and self-hosted, off by default). Contract: [modes.md](modes.md).
 
 Everything here ran on packaged, ad-hoc signed macOS arm64 builds of the branch, each with its own profile,

@@ -377,8 +377,8 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
           return null
         }
         const enrolledAt = new Date()
-        const expiresAt = current.kind === "configure" ? new Date(enrolledAt.getTime() + RUN_LIFETIME_MS) : current.expires_at
-        await tx.update(ManagedDeploymentRunTable).set({ state: "provisioning", token_hash: hashToken(token), last_seen_at: enrolledAt, expires_at: expiresAt }).where(eq(ManagedDeploymentRunTable.id, runId))
+        const fullLifetimeFromEnrollment = new Date(enrolledAt.getTime() + RUN_LIFETIME_MS)
+        await tx.update(ManagedDeploymentRunTable).set({ state: "provisioning", token_hash: hashToken(token), last_seen_at: enrolledAt, expires_at: fullLifetimeFromEnrollment }).where(eq(ManagedDeploymentRunTable.id, runId))
         const [stored] = await tx.select({ expiresAt: ManagedDeploymentRunTable.expires_at }).from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1)
         return stored ?? null
       })

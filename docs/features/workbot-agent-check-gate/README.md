@@ -1,8 +1,8 @@
 # Workbot: Your agent skips checks when nothing new arrived
 
 Feature `workbotAgentCheckGate` (cloud only, off by default). Author: `reachjalil`.
-It works on top of [Your agent's brief](../workbot-agent-brief/README.md): `workbotProactive` and `workbotAgentBrief`
-must both be on for a member, and an admin turns the gate on in Manage › Workbot.
+It works on top of [Your agent's brief](../workbot-agent-brief/README.md) for members whose agents are enabled.
+An admin turns the gate on in Manage › Workbot.
 
 With the brief, a member's agent checks every two hours in working hours. Each check is an agent turn that reads
 their email, calendar and chat with tools: in the replay evals about 25,000 input tokens and several model calls, and

@@ -43,8 +43,8 @@ return credentials or URLs. Public `/health` remains a liveness check. See
 |---|---|---|---|
 | `GET` | `/health` | | `{ ok: true }` |
 | `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
-| `GET` | `/v1/computers` | | `{ version: 1, generatedAt, sources, sandboxes }`: every conversation computer as its provider reports it now, for Den's admin page. The runner asks the sandbox gateway (`sources[].source: "gateway"`, with each pool's health) and its own provider (`"direct"`) with its keys, and returns each computer's key (the `hc-…` slug), provider id, status and reason, place, size and times; never a conversation id or a credential. A source that does not answer comes back with `status: "unreachable"` and an error code while the other is still listed; a provider that cannot be listed in one read (Daytona) is `unsupported`. At most 2,000 computers per source (`truncated`). Answered by the router on celld, so it wakes no cell; `sources: []` when the runner has no computers |
-| `GET` | `/v1/computers/:source/:id` | | One of them in full, for the admin page's computer view: `{ version: 1, generatedAt, computer, limits, settings, placement, events, eventsError }`. `source` is `gateway` or `direct`; `id` is the provider's id from the list. `computer` is the list's record; `limits` are the provider's own rules for it; `settings` is how this runner treats that source's computers (the image new ones are built from, seconds before it pauses one, days it keeps one). `placement` is the gateway's decision with every pool it weighed. `events` are the gateway's lifecycle events, newest first (at most 40), never commands, file calls or ports; `null` with `eventsError` when the provider keeps none (`unsupported`) or the runner's key may not read them (`http_403`: the gateway needs `audit:read`). Nothing is run on the computer, so reading never wakes a paused one or keeps an idle one awake. `404 unknown_computer` for one the provider does not have or that is not this runner's, `502 provider_unreachable` with a `code`, `400 invalid_computer` |
+| `GET` | `/v1/computers` | | `{ version: 1, generatedAt, sources, sandboxes }`: every conversation computer as its provider reports it now, for Den's admin page. The runner asks its own provider (`sources[].source: "direct"`) with its keys, and returns each computer's key (the `hc-…` slug), provider id, status and reason, place, size and times; never a conversation id or a credential. A source that does not answer comes back with `status: "unreachable"` and an error code while the other is still listed; a provider that cannot be listed in one read (Daytona) is `unsupported`. At most 2,000 computers per source (`truncated`). Answered by the router on celld, so it wakes no cell; `sources: []` when the runner has no computers |
+| `GET` | `/v1/computers/:source/:id` | | One of them in full, for the admin page's computer view: `{ version: 1, generatedAt, computer, limits, settings, placement, events, eventsError }`. `source` is `direct` (`gateway` is still accepted and answers `404`); `id` is the provider's id from the list. `computer` is the list's record; `limits` are the provider's own rules for it; `settings` is how this runner treats that source's computers (the image new ones are built from, seconds before it pauses one, days it keeps one). `placement` is `null` and `events` is `null` with `eventsError: "unsupported"`: the runner's own providers keep neither. Nothing is run on the computer, so reading never wakes a paused one or keeps an idle one awake. `404 unknown_computer` for one the provider does not have or that is not this runner's, `502 provider_unreachable` with a `code`, `400 invalid_computer` |
 | `POST` | `/v1/cells/ids` | `{ names }` (at most 2,000) | celld only. `{ ids: { [name]: id } }`: the cell host's id for each cell name (`session:<session id>`, `owner:<owner>`, `service`); a name that is not a cell's is left out. A node's state report lists the cells it holds in memory by id alone, and this is how Den's admin page says whose each one is. Derived from the name by the router: no cell is woken or touched |
 | `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, files?, computer?, reactions?, tasks?, owner?, ref?, timeZone?, autoTitle?, memoryOf?, memoryScope?: "owner" }` | session (`hs_…`). `files`, `computer`, `reactions` and `tasks` are off unless set to `true` (see [Isolation](#isolation)). `maxSteps` (0–100000) is the session's own limit on model calls per turn instead of `HEADLESS_MAX_STEPS`: `0` means no limit, and `null` goes back to the runner's. See [Several conversations per person](#several-conversations-per-person) for the rest |
 | `PUT` | `/v1/sessions/:id` | same body as `POST` | `201` session when created, `200` when updated; settings left out keep their value. The caller picks the id (`hs_` + 8–96 of `A-Za-z0-9_-`), so it can keep one durable conversation per person without storing the runner's id. Workbot derives one per member, and one per side chat |
@@ -285,7 +285,7 @@ The runner is a private service with one caller (Den), which authorizes each per
 - **Previews:** slide decks, documents and PDFs get page images (LibreOffice, then `pdftoppm`), served at `GET /v1/sessions/:id/saved-files/:fileId/preview` and `/preview/:page`.
 - **Only for sessions with `computer: true`.** Others never see the tools, and nothing starts a VM for them.
 - **Lifecycle:** one VM per session, found by a slug derived from the session id. Paused `HEADLESS_COMPUTER_PAUSE_SECONDS` (300) after the last turn unless a `background` job runs; deleted after `HEADLESS_COMPUTER_KEEP_DAYS` (14) unused, or with the session.
-- **Listing them:** `GET /v1/computers` lists every conversation's computer at the sandbox gateway and at the direct provider, by the labels the runner puts on each one (`kind: headless-computer`, and the deployment's scope when it has one). Den's `/admin › Computer fleet` page reads it, and `GET /v1/computers/:source/:id` for one computer's own page.
+- **Listing them:** `GET /v1/computers` lists every conversation's computer at the runner's provider, by the labels the runner puts on each one (`kind: headless-computer`, and the deployment's scope when it has one). Den's `/admin › Computer fleet` page reads it, and `GET /v1/computers/:source/:id` for one computer's own page.
 - **Image:** the snapshot is built from the package's install script: `pnpm --filter @openwork-ee/headless-computer snapshot:build`.
 - Every file under `memory/` in the scratch workspace is shown to the model at the start of each turn, so long-term memory survives older turns dropping out of context
 
@@ -301,7 +301,7 @@ Den and Workbot at the new URL. Every celld deploy proves this with its smoke co
 
 - **Same token, model and MCP settings** on the Node runner.
 - **Same bucket** (`HEADLESS_FILES=s3`): kept files' bytes stay there; the export carries only their keys.
-- **Same computer settings** (`HEADLESS_COMPUTER`, its key, snapshot, `HEADLESS_COMPUTER_SCOPE`, and any `SANDBOX_GATEWAY_*`): a conversation's computer
+- **Same computer settings** (`HEADLESS_COMPUTER`, its key, snapshot, and `HEADLESS_COMPUTER_SCOPE`): a conversation's computer
   is found by a hash of its id, so it keeps its `/workspace`.
 
 Pause Slack, Automations and Workbot first (export refuses a conversation while a turn runs). Den knows every
@@ -350,11 +350,7 @@ Nothing on celld changes, so pointing the URLs back is the rollback.
 | `HEADLESS_COMPUTER` | `off` | `freestyle` or `daytona` makes a computer available to sessions created with `computer: true` |
 | `FREESTYLE_API_KEY` | | For `freestyle`. Use a Freestyle account for this runner alone; the key never enters a VM |
 | `HEADLESS_COMPUTER_SNAPSHOT` | built from the package | Snapshot id or slug new computers boot from |
-| `SANDBOX_GATEWAY` | `off` | `differently` adds a [sandbox gateway](#sandbox-gateway) for sessions created with `sandboxGateway: true`; every other session keeps `HEADLESS_COMPUTER` |
-| `SANDBOX_GATEWAY_URL`, `SANDBOX_GATEWAY_API_KEY` | | For the gateway: its HTTPS API and a project-scoped key. The gateway holds the provider credentials |
-| `SANDBOX_GATEWAY_TEMPLATE` | | For the gateway: its template for the computer image, which it maps to each provider's own image |
 | `HEADLESS_COMPUTER_PAUSE_SECONDS` | `300` | Pause a computer this long after its last turn, unless a `background` job runs |
-| `SANDBOX_GATEWAY_PAUSE_SECONDS` | `HEADLESS_COMPUTER_PAUSE_SECONDS` | The same for gateway computers. Worth raising on private pools: a Fast Sandbox pause writes a full checkpoint for minutes, and the gateway reclaims idle computers itself when its pool fills |
 | `HEADLESS_COMPUTER_KEEP_DAYS` | `14` | Freestyle deletes a computer unused this long |
 | `HEADLESS_SENTRY_DSN` | unset | Optional Sentry error reports (both hosts, posted over `fetch`): failed turns by error code, startup recovery errors and 500s. Codes, ids and counts only, never content or credentials. Unset sends nothing |
 | `HEADLESS_SENTRY_ENVIRONMENT`, `HEADLESS_SENTRY_RELEASE` | unset, `headless-runner@<HEADLESS_RUNNER_VERSION>` | Tags on those reports |
@@ -435,110 +431,9 @@ from `HEADLESS_COMPUTER_KEEP_DAYS` so paused disks can expire too. Desktop mode
 rejects container snapshots. See [Workbot's Computer tab](../../../docs/computer-use/workbot.md)
 for image preparation, shared applications and the live microVM lifecycle check.
 
-### Sandbox gateway
-
-A sandbox gateway sits in front of several providers and is configured apart
-from `HEADLESS_COMPUTER`. Today that is
-[Differently](https://github.com/different-ai/differently), a self-hostable
-control plane in front of OpenSandbox, Daytona and Freestyle. Set
-`SANDBOX_GATEWAY=differently`, `SANDBOX_GATEWAY_URL`, `SANDBOX_GATEWAY_API_KEY`
-(a project-scoped key) and `SANDBOX_GATEWAY_TEMPLATE`. The gateway holds the
-provider keys and decides by its own policies which provider runs each computer.
-
-Only sessions created or updated with `sandboxGateway: true` use it. Workbot
-sends that for organizations with the `sandboxGateway` feature flag on, so one
-organization can try the gateway while the rest stay on the runner's own
-provider. Sessions without the setting never touch the gateway, even when the
-runner's own provider is down.
-
-A session's computer is placed when one is first needed, and the runner records
-which side made it (the `computer_sides` table):
-
-- **Gateway healthy:** the computer is started through the gateway and stays
-  there. Health is infrastructure only: Differently answers
-  `GET /v1/capabilities` and an enabled pool is healthy. The answer is kept for
-  30 seconds, and each change is logged once.
-- **Gateway unhealthy, or it can't start the computer** (unreachable, a timeout,
-  a 5xx, or a sandbox that failed to start): the computer is made on
-  `HEADLESS_COMPUTER` instead. A failed start marks the gateway unhealthy, so
-  later sessions skip it until the next check.
-- **The gateway refuses** (a quota, no eligible pool, a permission or an
-  unsupported request): the call fails. That is the gateway's policy, and the
-  runner never routes around it.
-- **A computer stays where it was made.** One on the gateway errors while the
-  gateway is down. One made on the runner's own provider is kept until it is
-  gone; the session's next computer goes through the gateway again.
-- **The flag is on but the runner has no gateway:** the session keeps
-  `HEADLESS_COMPUTER`, and the runner logs it once per session.
-- **The flag is switched:** the session's next computer comes from the other
-  side. The one it had pauses and expires where it was, and deleting the session
-  removes both.
-
-Gateway computers share the runner's scope, pause, keep-days, persistence and
-desktop settings, and ask for Daytona's size (2 CPUs, 4 GiB, 8 GiB disk). They
-are paused when idle only where every pool the gateway lets the runner's key
-use can pause or stop (pools that can only stop are stopped, keeping the disk),
-which the adapter reads from Differently as it creates them. Elsewhere (for
-example OpenSandbox on Kubernetes without a snapshot registry) an idle computer
-runs until Differently's TTL removes it. With only a gateway configured,
-sessions without the setting get no computer. The desktop viewer needs a gateway pool that publishes port
-URLs: Freestyle, Daytona, or OpenSandbox behind its ingress gateway, Fast
-Sandbox microVMs included. Differently's
-[OpenWork guide](https://github.com/different-ai/differently/blob/pre-release/docs/guides/openwork.md)
-covers the server side.
-
-#### Fast Sandbox microVMs
-
-OpenSandbox's Fast Sandbox runs each computer as a Firecracker microVM restored
-from a template's memory snapshot. The template is built from
-`Dockerfile.desktop-fast-sandbox`, a layer on the desktop image:
-
-```sh
-docker build -f ee/packages/headless-computer/Dockerfile.desktop -t <registry>/workbot-desktop:<tag> .
-docker build -f ee/packages/headless-computer/Dockerfile.desktop-fast-sandbox \
-  --build-arg DESKTOP_IMAGE=<registry>/workbot-desktop:<tag> -t <registry>/workbot-desktop-fast-sandbox:<tag> ee/packages/headless-computer
-```
-
-Create the template (OpenSandbox `POST /v1/templates`) with 2 CPUs, `4Gi` memory
-and `8Gi` disk, `entrypoint: ["/usr/local/sbin/fast-sandbox-guest-init", "tail",
-"-f", "/dev/null"]`, and a readiness probe that waits for the desktop:
-`cmd://printf '{}' | /usr/local/sbin/openwork-desktop-bridge call /health`. The
-entrypoint starts the desktop as the runner does, so the snapshot captures it
-running, as the Freestyle snapshot does; it also fixes `/run`'s mode and keeps
-the clock with chrony. Point the Differently template's image for that pool at the
-template's id.
-
-The guest kernel must have nftables' `inet` family, `reject` and the owner match
-built in, or the desktop's egress guard cannot load and the desktop refuses to
-start; OpenSandbox 1.2.0's stock kernel has none of them (Differently's
-OpenSandbox pools guide lists the options). Measured on Azure
-(`Standard_D16s_v6`, nested KVM): a computer is running in about 2 s once the
-template is on the node; pause, which writes a full checkpoint of disk and
-memory, takes about three minutes and resume about a second, with processes and
-open windows kept.
-
-Keep the template on the runner's desktop image. When
-`dist/desktop-image.version` changes, rebuild it and update both of the
-Differently template's entries: this pool's template id and the Freestyle
-snapshot the runner deploy built. Until then the template's computers stay on
-the older image, and the deploy warns, in its log and in Slack. A node's template
-cache holds one desktop-sized template by default, and Fast Sandbox doesn't fetch
-an evicted one again (Differently's Azure guide): boot a computer from the new
-template to put it on the node, switch Differently to it right away, then delete
-the old one.
-
-A new guest on the same image needs no rebuild. The runner installs its guest
-into the computers it starts, which adds about 4 s to a new computer's first
-open, and into an idle computer just before pausing it, so one used since the
-deploy opens without that wait. A computer paused before the deploy gets the
-guest on its next open. Guests change most days, and a template takes about
-five minutes to build and a Differently configuration change to adopt, so the
-template follows the image and not the guest.
-
 Opt-in verification, creating and cleaning one real computer:
 
 ```sh
 HEADLESS_COMPUTER=daytona DAYTONA_API_KEY=… HEADLESS_COMPUTER_SNAPSHOT=… pnpm --filter @openwork-ee/headless-computer proof:live
 HEADLESS_COMPUTER=freestyle FREESTYLE_API_KEY=… pnpm --filter @openwork-ee/headless-computer proof:live
-SANDBOX_GATEWAY=differently SANDBOX_GATEWAY_URL=… SANDBOX_GATEWAY_API_KEY=… SANDBOX_GATEWAY_TEMPLATE=… pnpm --filter @openwork-ee/headless-computer proof:live
 ```

@@ -914,7 +914,7 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
       computerUse: true,
       remoteComputers: features.remoteComputers,
       browserUse: true,
-      sandboxGateway: features.sandboxGateway,
+      sandboxGateway: false,
     },
   }
 }

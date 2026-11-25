@@ -134,7 +134,7 @@ type ManagedOpencodeServerOptions = {
   stateDir?: string;
 };
 
-class ManagedOpencodeExitError extends Error {
+export class ManagedOpencodeExitError extends Error {
   readonly exitCode: number | null;
   readonly addressInUse: boolean;
 
@@ -165,9 +165,9 @@ function isInside(parent: string, child: string): boolean {
   return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
-function foreignStorageExit(error: unknown, env: NodeJS.ProcessEnv): ForeignStorage | null {
+export function foreignStorageExit(error: unknown, env: NodeJS.ProcessEnv): ForeignStorage | null {
   if (!(error instanceof ManagedOpencodeExitError) || error.exitCode !== 1) return null;
-  if (!env.OPENCODE_DB?.trim() && FOREIGN_DATABASE_EXIT.test(error.message)) return "database";
+  if (FOREIGN_DATABASE_EXIT.test(error.message)) return "database";
   const config = error.message.match(FOREIGN_CONFIG_EXIT)?.[1]?.trim();
   if (config && isInside(globalOpencodeConfigDir(env), config)) return "config";
   return null;

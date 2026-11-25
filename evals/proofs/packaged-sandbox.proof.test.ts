@@ -16,11 +16,11 @@ test("a packaged desktop member can add Linux tools and then confine all tools t
   await step("before: the member opens the packaged app with ordinary host tools allowed", async () => {
     await user.see("composer", { editable: true, timeoutMs: 120_000 });
     const settings = await probe.eventually(() => probe.desktopApi(world.settingsPath), {
-      within: 90_000, label: "the isolated organization rollout reaches the packaged server",
-      until: result => result.status === 200 && JSON.stringify(result.body).includes('"featureEnabled":true'),
+      within: 90_000, label: "the isolated organization policy reaches the packaged server",
+      until: result => result.status === 200 && JSON.stringify(result.body).includes('"verification":"verified"'),
     });
-    evidence.recordAssertionEvidence("The real packaged app starts with the verified rollout", `${world.artifact.embeddedServer}; packaged: ${world.isPackaged}; settings: ${JSON.stringify(settings.body)}`, world.isPackaged && settings.status === 200);
-    expect(settings.body).toMatchObject({ useSandbox: false, forceSandbox: false, featureEnabled: true });
+    evidence.recordAssertionEvidence("The real packaged app starts with the verified policy", `${world.artifact.embeddedServer}; packaged: ${world.isPackaged}; settings: ${JSON.stringify(settings.body)}`, world.isPackaged && settings.status === 200);
+    expect(settings.body).toMatchObject({ useSandbox: false, forceSandbox: false, verification: "verified" });
     await user.screenshot();
   });
   await step("when: the member adds a sandbox alongside the computer’s tools", async () => {

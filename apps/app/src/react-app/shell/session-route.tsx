@@ -1020,6 +1020,7 @@ export function SessionRoute() {
     cloudProviderSyncReady,
     cloudProviderList,
     refreshCloudProviderSync,
+    resyncGatewaySignIn,
     liveProviderSync,
   } = useSessionProviderAuth({
     opencodeClient: providerAuthClient,
@@ -1156,14 +1157,7 @@ export function SessionRoute() {
         openUrl: (url) => platform.openLink(url),
         resync: async () => {
           synced = false;
-          const liveSyncSkipsManualRefresh = sessionProviderAuthStore.getSnapshot().liveGatewayProviders !== null;
-          if (liveSyncSkipsManualRefresh) {
-            const result = await sessionProviderAuthStore.runCloudProviderSync("manual");
-            synced = result?.outcome === "handled_live" || result?.outcome === "handled_server_side";
-            return;
-          }
-          await refreshCloudProviderSync("manual");
-          synced = sessionProviderAuthStore.getSnapshot().gatewayUsageProviderScope != null;
+          synced = await resyncGatewaySignIn();
         },
         isConnected: () => synced && (request
           ? sessionProviderAuthStore.isGatewayModelAvailable(provider, request.model)
@@ -1179,7 +1173,7 @@ export function SessionRoute() {
       if (!signal.aborted && !request) toast.error(describeRouteError(error));
       return false;
     }
-  }, [platform, refreshCloudProviderSync, sessionProviderAuthStore]);
+  }, [platform, resyncGatewaySignIn, sessionProviderAuthStore]);
   const refreshOrganizationModelAccess = useCallback(async () => {
     await refreshCloudProviderSync("manual");
   }, [refreshCloudProviderSync]);

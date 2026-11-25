@@ -114,22 +114,10 @@ test("a runner without teaching navigation keeps every other setting", async () 
     requests.push(body)
     return "teachingNavigation" in body ? Response.json({ error: "invalid_request" }, { status: 400 }) : Response.json({ id: "hs_main_example" })
   } })
-  const saved = await client.putSession("hs_main_example", { files: true, desktop: true, desktopViews: ["browser"], documentNavigation: true, teachingNavigation: true, sandboxGateway: true, browserRecovery: true })
+  const saved = await client.putSession("hs_main_example", { files: true, desktop: true, desktopViews: ["browser"], documentNavigation: true, teachingNavigation: true, browserRecovery: true })
   assert.ok(saved.ok)
   assert.equal(requests.length, 2)
-  assert.deepEqual(requests[1], { files: true, desktop: true, desktopViews: ["browser"], documentNavigation: true, sandboxGateway: true, browserRecovery: true })
-})
-
-test("a runner without a sandbox gateway keeps the conversation, on its own computer provider", async () => {
-  const requests: Record<string, unknown>[] = []
-  const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async (_url, init) => {
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>
-    requests.push(body)
-    return "sandboxGateway" in body ? Response.json({ error: "invalid_request" }, { status: 400 }) : Response.json({ id: "hs_sidechat_example" })
-  } })
-  const saved = await client.putSession("hs_sidechat_example", { computer: true, owner: "example", ref: "sidechat_example", sandboxGateway: true, strict: true })
-  assert.ok(saved.ok)
-  assert.deepEqual(requests, [{ computer: true, sandboxGateway: true, owner: "example", ref: "sidechat_example" }, { computer: true, owner: "example", ref: "sidechat_example" }])
+  assert.deepEqual(requests[1], { files: true, desktop: true, desktopViews: ["browser"], documentNavigation: true, browserRecovery: true })
 })
 
 test("browser recovery session policy preserves explicit on and off on current runners", async () => {
@@ -148,11 +136,11 @@ test("an older runner drops only browser recovery before other compatibility fal
     const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async (_url, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       requests.push(body)
-      return "browserRecovery" in body || "sandboxGateway" in body ? Response.json({ error: "invalid_request" }, { status: 400 }) : Response.json({ id: "hs_recovery" })
+      return "browserRecovery" in body ? Response.json({ error: "invalid_request" }, { status: 400 }) : Response.json({ id: "hs_recovery" })
     } })
     const settings = { computer: true, desktop: true, desktopViews: ["browser"] as Array<"browser">, owner: "example", ref: "sidechat_example", memoryScope: "owner" as const }
-    assert.ok((await client.putSession("hs_recovery", { ...settings, browserRecovery, sandboxGateway: true, strict: true })).ok)
-    assert.deepEqual(requests, [{ ...settings, browserRecovery, sandboxGateway: true }, { ...settings, sandboxGateway: true }, settings])
+    assert.ok((await client.putSession("hs_recovery", { ...settings, browserRecovery, strict: true })).ok)
+    assert.deepEqual(requests, [{ ...settings, browserRecovery }, settings])
   }
 })
 

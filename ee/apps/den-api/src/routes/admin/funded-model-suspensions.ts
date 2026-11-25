@@ -9,7 +9,7 @@ import type { AuthContextVariables } from "../../session.js"
 
 const user = denTypeIdSchema("user")
 const params = z.object({ userId: user })
-const result = z.object({ userId: user, enforcementEnabled: z.boolean(), suspended: z.boolean(), recent: z.array(z.object({
+const result = z.object({ userId: user, suspended: z.boolean(), recent: z.array(z.object({
   reference: z.string(), suspendedAt: z.iso.datetime(), suspendedBy: user, releasedAt: z.iso.datetime().nullable(), releasedBy: user.nullable(), releaseReference: z.string().nullable(),
 })) })
 const responses = { 200: jsonResponse("Account-wide status and up to 50 recent decisions.", result), 400: { description: "Invalid input." },
@@ -19,7 +19,7 @@ const tags = ["Admin"]
 const path = "/v1/admin/users/:userId/funded-model-suspensions"
 export function registerFundedModelSuspensions<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   app.get(path, describeRoute({ tags, summary: "Inspect funded model suspensions for an account",
-    description: "Returns the deployment enforcement state, active suspension status across organizations, and recent operator decisions.", responses }),
+    description: "Returns active suspension status across organizations and recent operator decisions.", responses }),
     adminRoute(), paramValidator(params), async c => c.json(await fundedSuspensionStatus(c.req.valid("param").userId), 200, { "cache-control": "no-store" }))
   app.post(path, describeRoute({ tags, summary: "Suspend funded model access across organizations",
     description: "Record an explicit provider request against the confirmed OpenWork user. Repeating the same reference preserves the original decision.", responses: mutationResponses }),

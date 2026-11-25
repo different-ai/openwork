@@ -8,7 +8,7 @@ import { runNewPipeline, runOldPipeline, type DayRun, type Pipeline, type Replay
 import { judgeMessage, reportMarkdown, scoreDay, type DayScore } from "./agent-replay/score.ts";
 
 /**
- * Replay evals for Your agent's brief (workbotAgentBrief): every recorded day (agent-replay/day-scenarios.ts) run
+ * Replay evals for Your agent's brief: every recorded day (agent-replay/day-scenarios.ts) run
  * through today's prompts and the brief's two-step pipeline, N times each, with the same model and read-only tools;
  * scored deterministically and by an LLM judge (agent-replay/score.ts).
  *

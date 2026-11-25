@@ -4,7 +4,6 @@ import {
   AGENT_RESPONSIBILITIES,
   agentResponsibilitySchema,
   type AgentResponsibility,
-  type AgentTemplateContent,
   type MemberAgentInput,
   type WorkbotProactiveSettings,
 } from "@openwork/types/den/workbot-proactive"
@@ -29,15 +28,6 @@ export function mutedOf(row: Pick<MemberChoices, "overrides"> | null | undefined
     if (parsed.success) muted.add(parsed.data)
   }
   return muted
-}
-
-export function enabledOf(template: AgentTemplateContent): Set<AgentResponsibility> {
-  return new Set(AGENT_RESPONSIBILITIES.filter((responsibility) => template.responsibilities[responsibility]))
-}
-
-export function activeResponsibilities(template: AgentTemplateContent, row: Pick<MemberChoices, "overrides"> | null): AgentResponsibility[] {
-  const muted = mutedOf(row)
-  return AGENT_RESPONSIBILITIES.filter((responsibility) => template.responsibilities[responsibility] && !muted.has(responsibility))
 }
 
 export function memberChoiceChange(

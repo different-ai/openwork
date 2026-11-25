@@ -1,4 +1,4 @@
-import { getOrganizationFeatures } from "../features.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { eventThreadForPrincipal } from "../mcp-events/context.js"
 import { MAX_SUBSCRIPTION_TTL_MS } from "../mcp-events/protocol.js"
 import { SESSION_EVENT } from "../native-mcp-events/protocol.js"
@@ -23,13 +23,12 @@ export async function followRemoteSession(input: {
   const reference = typeof payload.commandId === "string" ? { commandId: payload.commandId }
     : typeof payload.sessionId === "string" ? { sessionId: payload.sessionId } : null
   if (!reference) return input.result
-  const features = await getOrganizationFeatures(input.organizationId, { userId: input.principal.userId })
-  if (!features.mcpThreads || !features.nativeMcpEvents) return input.result
+  if (!await organizationFeatureEnabled(input.organizationId, "mcpThreads", { userId: input.principal.userId })) return input.result
   const withFields = (fields: Record<string, unknown>): RemoteSessionToolResult => {
     const next = { ...payload, ...fields }
     return { ...input.result, content: [{ type: "text", text: JSON.stringify(next) }], structuredContent: next }
   }
-  const thread = features.mcpThreadEvents ? await eventThreadForPrincipal(input.principal) : null
+  const thread = await eventThreadForPrincipal(input.principal)
   if (!thread) return withFields({ event: { name: SESSION_EVENT, arguments: reference, delivery: ["webhook", "poll"] }, note: [payload.note, EVENT_NOTE].filter(Boolean).join(" ") })
   try {
     const watch = await subscribeNativeThread(thread, [...input.principal.scopes], { name: SESSION_EVENT, arguments: reference, instruction: FOLLOW_REMOTE_SESSION_INSTRUCTION, ttlMs: MAX_SUBSCRIPTION_TTL_MS })

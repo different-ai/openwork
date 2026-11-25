@@ -2177,14 +2177,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const inlineSuggestions = useDesktopFeature("composerInlineSuggestions");
-  const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
-  const chatRunCommandsEnabled = useDesktopFeature("chatRunCommands");
   const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
   const questionInThreadEnabled = useDesktopFeature("questionInThread");
-  const chatTableExpandEnabled = useDesktopFeature("chatTableExpand");
   const skipThreadQuestionBeforeSendRef = useRef<(() => void) | null>(null);
   const followUpSuggestion = useFollowUpSuggestion({
-    enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
+    enabled: !archived && !snapshot?.session.parentID,
     client: opencodeClient,
     sessionId: props.sessionId,
     messages: renderedMessages,
@@ -3368,7 +3365,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       const messageID = createPromptMessageID();
       dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
       if (!claimQueuedSend(props.sessionId, messageID, true)) return;
-      markFeatureUsed("chatRunCommands");
       if (!isOpencodeV2Client(opencodeClient)) {
         const text = runCommandPrompt(command);
         try {
@@ -3713,7 +3709,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   return (
     <DevProfiler id="SessionSurface">
-    <MarkdownTableExpand enabled={chatTableExpandEnabled}>
+    <MarkdownTableExpand>
     <div
       data-session-surface-id={props.sessionId}
       data-session-surface-workspace-id={props.workspaceId}
@@ -3839,7 +3835,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onStopSubagentSession={archived ? undefined : handleStopSubagentSession}
                       composerSubagentToolCallIds={subagentTrackerToolCallIds}
                       onResumeInterrupted={archived ? undefined : handleResumeInterrupted}
-                      onRunCommand={chatRunCommandsEnabled && !archived && archiveStateKnown && !archiveHeld ? handleRunCommand : undefined}
+                      onRunCommand={!archived && archiveStateKnown && !archiveHeld ? handleRunCommand : undefined}
                       onOpenLibraryDetail={props.onOpenLibraryDetail}
                       onMcpReconnect={handleMcpReconnect}
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}

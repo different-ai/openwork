@@ -2,14 +2,14 @@
 
 import { PERSONAL_SKILLS_MAX_BYTES, personalSkillsBundleSchema, personalSkillsImportResponseSchema } from "@openwork/types/den/personal-skills";
 import { useQueryClient } from "@tanstack/react-query";
-import { Download, LockKeyhole, Upload } from "lucide-react";
+import { Download, Upload } from "lucide-react";
 import { useId, useState } from "react";
 import { DenActionList, DenActionRow } from "../../_components/ui/action-row";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
-import { getLibraryRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getLibraryRoute } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useConfigDownload } from "./config-blobs/config-blobs-data";
@@ -27,7 +27,6 @@ export function PrivateSkillsScreen() {
   const [file, setFile] = useState<{ name: string; body: string; count: number } | null>(null);
   const [pending, setPending] = useState<"import" | "export" | null>(null);
   const [notice, setNotice] = useState<{ tone: "error" | "success"; message: string } | null>(null);
-  const enabled = orgFeatureEnabled(orgContext, "personalSkillPortability");
 
   async function pick(picked: File | undefined) {
     setFile(null);
@@ -48,7 +47,7 @@ export function PrivateSkillsScreen() {
   }
 
   async function run(action: "import" | "export") {
-    if (!orgId || !enabled || pending) return;
+    if (!orgId || pending) return;
     setPending(action);
     setNotice(null);
     try {
@@ -80,9 +79,7 @@ export function PrivateSkillsScreen() {
   return (
     <ItemPage testId="private-skills-screen">
       <DenPageHeader title="Move private skills" size="compact" action={<DenButton href={getLibraryRoute(orgSlug)} variant="secondary" size="sm">Back to My Library</DenButton>} />
-      {orgBusy || !orgContext ? null : !enabled ? (
-        <DenNotice tone="neutral" icon={LockKeyhole} message="Moving private skills isn't enabled in this workspace." />
-      ) : (
+      {orgBusy || !orgContext ? null : (
         <>
           <DenActionList>
             <DenActionRow description="Download your unshared skills as a JSON file. The file contains the full skill text, so keep it private." action={

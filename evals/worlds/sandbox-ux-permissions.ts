@@ -43,9 +43,9 @@ type PermissionsCapture = {
   resources: { name: string; startTime: number; duration: number; responseEnd: number; serverTiming: { name: string; duration: number }[] }[];
   performanceMarks: Record<string, number | null>;
 };
-export async function pollPermissions(surface: AttachedSurface, options: { modes: boolean; expectSwitch: boolean; captureMs: number; limitMs: number }) {
+export async function pollPermissions(surface: AttachedSurface, options: { modes: boolean; captureMs: number; limitMs: number }) {
   const captureStarted = performance.now();
-  await evaluateOnSurface(surface, browserScript(({ modes, expectSwitch, captureMs, limitMs }) => {
+  await evaluateOnSurface(surface, browserScript(({ modes, captureMs, limitMs }) => {
     Reflect.deleteProperty(window, "__permissionsCapture");
     void (async (): Promise<PermissionsCapture> => {
       performance.setResourceTimingBufferSize(4000);
@@ -77,7 +77,7 @@ export async function pollPermissions(surface: AttachedSurface, options: { modes
         if (retry) marks["sandbox-retry-enabled"] ??= now;
         const settingsError = retry?.parentElement?.innerText?.includes("Couldn't load sandbox settings.");
         if (settingsError) marks["sandbox-settings-error-with-retry"] ??= now;
-        if (add && (!modes || (folders && sandbox)) && (!expectSwitch || enabled(toggle))) marks.tti ??= now;
+        if (add && (!modes || (folders && sandbox)) && enabled(toggle)) marks.tti ??= now;
         const lines = new Set(document.body.innerText.split("\n").map(text => text.trim()).filter(line => /loading|checking|pulling in|disconnected|starting|failed|unable|error|retry|unavailable|couldn.t/i.test(line)));
         for (const line of lines) {
           const prior = active.get(line);
@@ -118,7 +118,7 @@ export async function pollPermissions(surface: AttachedSurface, options: { modes
 export async function installPermissionsFetchTrace(surface: AttachedSurface) {
   await evaluateOnSurface(surface, () => {
     const upstream = globalThis.fetch;
-    const rows: { path: string; start: number; end?: number; status?: number; serverTiming?: string | null; outcome?: string; verification?: string; featureEnabled?: boolean; pending?: boolean }[] = [];
+    const rows: { path: string; start: number; end?: number; status?: number; serverTiming?: string | null; outcome?: string; verification?: string; pending?: boolean }[] = [];
     globalThis.fetch = (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
       const result = upstream(input, init);
@@ -134,7 +134,6 @@ export async function installPermissionsFetchTrace(surface: AttachedSurface) {
         const body: unknown = await response.clone().json();
         if (!body || typeof body !== "object") return;
         if ("verification" in body && typeof body.verification === "string") row.verification = body.verification;
-        if ("featureEnabled" in body && typeof body.featureEnabled === "boolean") row.featureEnabled = body.featureEnabled;
         if ("pending" in body && typeof body.pending === "boolean") row.pending = body.pending;
       }, () => {
         row.end = performance.now();

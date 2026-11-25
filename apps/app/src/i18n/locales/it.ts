@@ -470,7 +470,6 @@ export default {
   "sandbox.force_description": "L'agente opera solo nella sandbox e può accedere soltanto a questo progetto e alle cartelle autorizzate.",
   "sandbox.managed": "Gestito dalla tua organizzazione",
   "sandbox.included": "Incluso in Imponi OpenWork Sandbox",
-  "sandbox.unavailable": "La sandbox non è disponibile per questo account, quindi gli agenti non possono usare gli strumenti finché non sarà disponibile.",
   "sandbox.pending": "Salvato. Si applica al termine delle attività in corso.",
   "sandbox.pending_computer": "Le attività in corso possono ancora usare questo computer.",
   "sandbox.pending_sandbox": "Le attività in corso restano nella sandbox.",

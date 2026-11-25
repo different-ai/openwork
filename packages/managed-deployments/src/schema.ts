@@ -156,7 +156,7 @@ export function awsPortalBase(value: string) {
   return `https://${url.hostname}${path || (classic ? "/start" : "")}`
 }
 
-export const gcpRegionSchema = z.enum(["us-central1", "us-east1", "us-east4", "us-west1", "us-west2", "europe-west1", "europe-west2", "europe-west3", "asia-southeast1", "australia-southeast1"])
+export const gcpRegionSchema = z.enum(["us-central1", "us-east1", "us-east4", "us-west1", "us-west2", "europe-west1", "europe-west2", "europe-west3", "asia-east2", "asia-southeast1", "australia-southeast1"])
 export const gcpTargetSchema = z.object({
   projectId: z.string().trim().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/, "Enter a Google Cloud project ID."),
   projectNumber: z.string().regex(/^\d{1,20}$/, "Enter the numeric Google Cloud project number."),

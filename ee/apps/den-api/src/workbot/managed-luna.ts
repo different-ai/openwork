@@ -1,4 +1,3 @@
-import { freeModelsNeedDesktop } from "../features.js"
 import { signWorkbotFreeGrant } from "@openwork/free-auto/node"
 import { WORKBOT_FREE_GRANT_HEADER, WORKBOT_FREE_GRANT_TTL_MS } from "@openwork/free-auto"
 import { assertFundedUserAllowed } from "../openai-safety/account-suspensions.js"
@@ -12,10 +11,6 @@ import { db } from "../db.js"
 import { env } from "../env.js"
 import { ensureMemberInferenceKey, getMemberInferenceAccess, issueMemberFreeInferenceCredential, organizationAllowsManagedModels, readInferenceMetadata } from "../inference.js"
 import { CloudAgentGatewayAccessError, type CloudAgentGatewayActor } from "./gateway-model.js"
-
-async function workbotFreeBlockedByDesktop(organizationId: string): Promise<boolean> {
-  return !env.workbotFreeGrantSecret && await freeModelsNeedDesktop(organizationId)
-}
 
 export function workbotUsesManagedDefault(chosen: string | null): boolean {
   return chosen === null || isWorkbotManagedLuna(chosen)
@@ -42,7 +37,6 @@ export async function workbotOrganizationManagedDefaultRoutable(organizationId: 
   const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, orgId)).limit(1)
   if (!organization) return false
   if (readInferenceMetadata(organization.metadata)) return true
-  if (await workbotFreeBlockedByDesktop(orgId)) return false
   return env.inferenceFree.enabled && freeInferenceOrganizationAllowed(organization.metadata)
 }
 
@@ -54,7 +48,7 @@ export async function workbotManagedLunaState(actor: CloudAgentGatewayActor) {
     .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt))).limit(1)
   if (!member) throw new CloudAgentGatewayAccessError("model_access_unavailable")
   const paid = Boolean(readInferenceMetadata(member.metadata))
-  const allowed = await organizationAllowsManagedModels(organizationId) && (paid || !await workbotFreeBlockedByDesktop(organizationId))
+  const allowed = await organizationAllowsManagedModels(organizationId)
   const [upstream] = paid ? await db.select({ id: InferenceOrgUpstreamProviderKeyTable.id }).from(InferenceOrgUpstreamProviderKeyTable)
     .where(and(eq(InferenceOrgUpstreamProviderKeyTable.organization_id, organizationId), eq(InferenceOrgUpstreamProviderKeyTable.provider, "openrouter"), eq(InferenceOrgUpstreamProviderKeyTable.status, "active"))).limit(1) : []
   const paidReady = allowed && paid && Boolean(upstream) && INFERENCE_MODEL_ALIASES[INFERENCE_FREE_MODEL_ID].enabled
@@ -71,7 +65,7 @@ export async function workbotManagedLunaAccess(actor: CloudAgentGatewayActor, mo
     const apiKey = await ensureMemberInferenceKey(state.input)
     return { baseUrl: `${env.modelsPublicBaseUrl.replace(/\/+$/, "")}/api/v1`, apiKey, protocol: "openai", model: INFERENCE_FREE_MODEL_ID }
   }
-  if (model !== WORKBOT_FREE_LUNA_ID || !state.allowed || await workbotFreeBlockedByDesktop(state.input.organizationId) || !["free", "exhausted"].includes(state.free.kind)) throw new CloudAgentGatewayAccessError("model_access_unavailable")
+  if (model !== WORKBOT_FREE_LUNA_ID || !state.allowed || !["free", "exhausted"].includes(state.free.kind)) throw new CloudAgentGatewayAccessError("model_access_unavailable")
   const issued = await issueMemberFreeInferenceCredential(state.input)
   if (!("credential" in issued)) throw new CloudAgentGatewayAccessError("model_access_unavailable")
   const secret = env.workbotFreeGrantSecret

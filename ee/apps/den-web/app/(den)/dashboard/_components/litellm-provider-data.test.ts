@@ -16,13 +16,13 @@ function keyInput(mode: "org" | "member" | "issued"): LiteLlmCreateInput {
   return { name: "LiteLLM", baseUrl: " https://litellm.example.com ", mode, apiKey: " sk-fixture ", access: everyone, issueStrategy: "mirror", mirrorFallback: "error" };
 }
 
-test("turning Microsoft sign-in off keeps a locked choice and leaves every key mode available", () => {
-  const off = liteLlmModeOptions(false);
-  const on = liteLlmModeOptions(true);
-  assert.deepEqual(off.map((option) => option.value), ["org", "member", "issued", "entra"]);
-  assert.deepEqual(off.filter((option) => !option.disabled), on.filter((option) => option.value !== "entra"));
-  assert.deepEqual(off.find((option) => option.value === "entra"), { value: "entra", label: "Microsoft sign-in", disabled: true });
-  assert.equal(on.every((option) => !option.disabled), true);
+test("Microsoft sign-in is offered alongside every key mode", () => {
+  assert.deepEqual(liteLlmModeOptions(), [
+    { value: "org", label: "One organization key" },
+    { value: "member", label: "Each person's own key" },
+    { value: "issued", label: "OpenWork creates keys" },
+    { value: "entra", label: "Microsoft sign-in" },
+  ]);
 });
 
 test("the three key modes send exactly what they sent before Microsoft sign-in existed", () => {

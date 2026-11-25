@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import manifest from "./opencode-v1-artifacts.json" with { type: "json" };
@@ -20,6 +20,13 @@ export function opencodeV1Pin(version, asset, repo, env = process.env) {
     throw new Error(`Missing OpenCode v1 integrity pin for ${version}/${asset}`);
   }
   return manifest.assets[asset];
+}
+
+// Windows bsdtar reads ZIP files; GNU tar from Git Bash on PATH does not.
+function windowsTar(env = process.env) {
+  const systemRoot = env.SystemRoot?.trim() || env.windir?.trim() || "C:\\Windows";
+  const bsdtar = join(systemRoot, "System32", "tar.exe");
+  return existsSync(bsdtar) ? bsdtar : "tar.exe";
 }
 
 function matches(path, expected) {
@@ -68,7 +75,7 @@ export function prepareOpencodeV1({ sidecarDir, asset, url, pin, targets, sign, 
     if (asset.endsWith(".zip") && process.platform !== "win32") {
       execFileSync("unzip", ["-q", asset, binaryName], { cwd: staging });
     } else {
-      execFileSync(process.platform === "win32" ? "tar.exe" : "tar", ["-xf", asset, binaryName], { cwd: staging });
+      execFileSync(process.platform === "win32" ? windowsTar() : "tar", ["-xf", asset, binaryName], { cwd: staging });
     }
     if (!matches(binary, pin.binarySha256)) throw new Error(`OpenCode v1 binary integrity mismatch: ${asset}`);
     if (sign && !cacheHit) {

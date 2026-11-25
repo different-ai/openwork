@@ -62,7 +62,6 @@ export type WorkbotDeps = {
   guidedNavigation?: (organizationId: string) => Promise<boolean>
   teachingNavigation?: (organizationId: string) => Promise<boolean>
   connectors?: () => Promise<WorkbotConnectors>
-  sandboxGateway?: boolean
   browserRecovery?: boolean
   stepTurns?: boolean
   sessionCells?: boolean
@@ -409,7 +408,6 @@ async function settleSession(actor: WorkbotActor, timeZone: string, deps: Workbo
     reactions: true,
     tasks: true,
     documentNavigation: guidedNavigation,
-    ...(deps.sandboxGateway !== undefined ? { sandboxGateway: deps.sandboxGateway } : {}),
     browserRecovery: deps.browserRecovery === true,
     owner: workbotOwner(actor.organizationId, actor.memberId),
     timeZone,

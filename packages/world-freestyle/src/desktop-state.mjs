@@ -79,9 +79,13 @@ export async function observeDesktop({ nonce, expectedWorkspacePath }, loadProdu
     flags.productContractRead = record(DEFAULT_MODEL) && typeof DEFAULT_MODEL.providerID === "string" && typeof DEFAULT_MODEL.modelID === "string";
     if (!flags.productContractRead) return flags;
     const modelRef = `${DEFAULT_MODEL.providerID}/${DEFAULT_MODEL.modelID}`;
+    const FREE_PROVIDER = "openwork-free";
     const ordinaryModel = (model) => model === undefined || model === null || model === "" || model === modelRef
-      || (record(model) && model.providerID === DEFAULT_MODEL.providerID && model.modelID === DEFAULT_MODEL.modelID);
+      || (typeof model === "string" && model.startsWith(`${FREE_PROVIDER}/`))
+      || (record(model) && ((model.providerID === DEFAULT_MODEL.providerID && model.modelID === DEFAULT_MODEL.modelID) || model.providerID === FREE_PROVIDER));
+    const withoutFree = (providers) => (record(providers) ? Object.fromEntries(Object.entries(providers).filter(([id]) => id !== FREE_PROVIDER)) : providers);
     flags.ordinaryDefaultModel = ordinaryModel(localStorage.getItem("openwork.defaultModel")) && ordinaryModel(prefs.defaultModel);
+    flags.modelSeen = { productDefault: modelRef, stored: localStorage.getItem("openwork.defaultModel"), preference: prefs.defaultModel ?? null };
     const info = await desktop.openworkServerInfo();
     const bootstrap = await desktop.getDesktopBootstrapConfig();
     const base = new URL(info.baseUrl);
@@ -106,7 +110,7 @@ export async function observeDesktop({ nonce, expectedWorkspacePath }, loadProdu
       && nativeWorkspace.id === workspace?.id && localUrl(nativeWorkspace.baseUrl) && localUrl(nativeWorkspace.opencode?.baseUrl)
       && !nativeWorkspace.openworkHostUrl && !nativeWorkspace.openworkToken;
     flags.noNativeCloudSession = cloud?.hasSession === false;
-    flags.noProvisionedModel = record(providers?.provider) && emptyMap(providers.provider)
+    flags.noProvisionedModel = record(providers?.provider) && emptyMap(withoutFree(providers.provider))
       && Array.isArray(cloud?.providers) && cloud.providers.length === 0 && Array.isArray(cloud?.skippedProviders) && cloud.skippedProviders.length === 0;
     if (!flags.nativeWorkspaceMatches) return flags;
     const prefix = `/workspace/${encodeURIComponent(nativeWorkspace.id)}`;
@@ -116,7 +120,9 @@ export async function observeDesktop({ nonce, expectedWorkspacePath }, loadProdu
     flags.noNativeConversations = Array.isArray(sessions) && sessions.length === 0;
     const configs = [config?.opencode, runtime?.runtime, runtime?.effectiveRuntime,
       runtime?.sources?.projectOpencode?.config, runtime?.sources?.globalOpencode?.config];
-    flags.noProvisionedModel = flags.noProvisionedModel && configs.every((entry) => record(entry) && emptyMap(entry.provider) && ordinaryModel(entry.model) && ordinaryModel(entry.small_model));
+    flags.noProvisionedModel = flags.noProvisionedModel && configs.every((entry) => record(entry) && emptyMap(withoutFree(entry.provider)) && ordinaryModel(entry.model) && ordinaryModel(entry.small_model));
+    flags.modelSeen = { ...flags.modelSeen, cloudProviders: cloud?.providers?.length ?? null,
+      configs: configs.map((entry) => record(entry) ? { providers: Object.keys(entry.provider ?? {}), model: entry.model ?? null, small_model: entry.small_model ?? null } : null) };
     const imports = config?.openwork?.cloudImports;
     flags.noCloudConfiguration = record(config?.openwork) && configs.every((entry) => record(entry) && !entry.managedPolicy
       && emptyMap(entry.mcp?.["openwork-cloud"]) && !Object.keys(entry.mcp ?? {}).some((key) => /^(openwork-connect-|openwork-direct-|openwork-app-host-connect-)/.test(key)))
@@ -142,6 +148,7 @@ export async function inspectDesktop({ reload = false, timeoutMs = 60_000, loadC
   let surface;
   let init;
   let ready = false;
+  let modelSeen = null;
   diagnostics.cleanupSucceeded = true;
   try {
     const { attachSurface, addInitScript, browserScript, evaluate, probeAppState, isInteractive } = await loadCdp();
@@ -161,6 +168,7 @@ export async function inspectDesktop({ reload = false, timeoutMs = 60_000, loadC
       diagnostics.interactive = Boolean(state && isInteractive(state) && state.surface === "workspace" && state.workspaceId);
       const observed = profile ? await evaluate(surface.client, browserScript(observeDesktop, [{ nonce, expectedWorkspacePath: profile.expectedWorkspacePath }]), { timeoutMs: 20_000, awaitPromise: true }).catch(() => null) : null;
       for (const key of observationKeys) diagnostics[key] = observed?.[key] === true;
+      modelSeen = observed?.modelSeen ?? modelSeen;
       if (Object.values(diagnostics).every((value) => value === true)) {
         ready = true;
         break;
@@ -178,6 +186,7 @@ export async function inspectDesktop({ reload = false, timeoutMs = 60_000, loadC
     noProvisionedModel: true, ordinaryDefaultModel: true, noNativeCloudSession: true, noNativeProviderCredentials: true, isolatedProfile: true, noBootstrap: true,
   };
   report(diagnostics);
+  if (!diagnostics.ordinaryDefaultModel || !diagnostics.noProvisionedModel) console.error("Desktop model state:", JSON.stringify(modelSeen));
   const error = new Error(`Desktop did not reach pristine signed-out state: ${JSON.stringify(diagnostics)}`);
   error.diagnostics = diagnostics;
   throw error;

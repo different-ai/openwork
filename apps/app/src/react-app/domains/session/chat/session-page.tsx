@@ -500,12 +500,11 @@ export function SessionPage(props: SessionPageProps) {
   const splitPanelOpen = useUiStateStore((state) => (
     splitSession ? state.sidePanelState[getSidePanelSessionKey(splitSession.sessionId)] != null : false
   ));
-  const sideChatPanelEnabled = useDesktopFeature("sideChatPanel");
   const primarySidePanelSessionKey = getSidePanelSessionKey(props.selectedSessionId);
   const panelSessionId = panelSessionForWorkbench({
     primarySessionId: props.selectedSessionId ?? null,
     primaryWorkspaceId: props.selectedWorkspaceId,
-    split: sideChatPanelEnabled ? splitSession : null,
+    split: splitSession,
     splitPanelOpen,
     focusedPane: focusedWorkbenchPane,
   });
@@ -662,7 +661,6 @@ export function SessionPage(props: SessionPageProps) {
   const { isPoppedOut: browserIsPoppedOut, placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
-  const sessionMultiSelectEnabled = useDesktopFeature("sessionMultiSelect");
   const [primaryChatElement, setPrimaryChatElement] = useState<HTMLElement | null>(null);
   const computerUse = isElectronRuntime();
   useComputerEndTurn(props.sidebar.sessionStatusById, computerUse);
@@ -748,8 +746,7 @@ export function SessionPage(props: SessionPageProps) {
     primarySessionId: props.selectedSessionId ?? null,
     primaryWorkspaceId: props.selectedWorkspaceId,
     split: splitSession,
-    splitTakesPanel: sideChatPanelEnabled,
-  }), [panelSessionId, props.selectedSessionId, props.selectedWorkspaceId, sideChatPanelEnabled, splitSession]);
+  }), [panelSessionId, props.selectedSessionId, props.selectedWorkspaceId, splitSession]);
   const panelSessionForChat = useCallback(
     (chatSessionId: string) => panelSessionForItemFrom(chatSessionId) ?? chatSessionId,
     [panelSessionForItemFrom],
@@ -1490,7 +1487,6 @@ export function SessionPage(props: SessionPageProps) {
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
           sessionAttentionKindById={props.sidebar.sessionAttentionKindById}
           sessionTreeEnabled={sessionTreeEnabled}
-          sessionMultiSelectEnabled={sessionMultiSelectEnabled}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
