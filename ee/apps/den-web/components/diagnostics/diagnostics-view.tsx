@@ -11,6 +11,7 @@ import { diagnosticsRowId, formatAgo, latestCheckedAt, orderAttention, overallSt
 import { DiagnosticsSkeletonRow } from "./diagnostics-row";
 import { ConnectorsSection, DesktopSection, InstallationSection, ProvidersSection } from "./diagnostics-sections";
 import type { DiagnosticsFailure } from "./diagnostics-transport";
+import type { InstallationConfigActions } from "./installation-config-row";
 
 export type DiagnosticsViewProps = {
   report: OrgDiagnostics | null;
@@ -25,6 +26,7 @@ export type DiagnosticsViewProps = {
   onCheckNow: () => void;
   onCopyReport: () => void;
   onRetry: () => void;
+  configActions: InstallationConfigActions | null;
 };
 
 const DOT_CLASSES: Record<OverallStatus["kind"] | "error", string> = {
@@ -160,7 +162,7 @@ export function DiagnosticsView(props: DiagnosticsViewProps) {
           <DesktopSection report={report} now={now} orgSlug={orgSlug} />
           <ProvidersSection report={report} now={now} orgSlug={orgSlug} />
           <ConnectorsSection report={report} now={now} orgSlug={orgSlug} />
-          <InstallationSection report={report} now={now} orgSlug={orgSlug} />
+          <InstallationSection report={report} now={now} orgSlug={orgSlug} configActions={props.configActions} />
         </>
       ) : loadFailure && !loading ? (
         <div className="mt-6"><FailureNotice failure={loadFailure} onRetry={props.onRetry} /></div>

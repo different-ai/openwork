@@ -5,12 +5,14 @@ import {
   type DesktopStartupStep,
   type DiagnosticsAttention,
   type DiagnosticsSectionId,
+  type InstallationConfig,
   type OrgDiagnostics,
   type ProviderCheck,
 } from "@openwork/types/den/diagnostics";
 
 export const DIAGNOSTICS_PATH = "/v1/org/diagnostics";
 export const DIAGNOSTICS_CHECK_PATH = `${DIAGNOSTICS_PATH}/check`;
+export const DIAGNOSTICS_INCLUDE_CONFIG = "?include=config";
 export const DIAGNOSTICS_POLL_MS = 2_000;
 export const DIAGNOSTICS_POLL_LIMIT_MS = 30_000;
 const MAX_RETRY_AFTER_SECONDS = 3_600;
@@ -80,6 +82,27 @@ export function diagnosticsRowId(section: DiagnosticsSectionId, targetId: string
 
 export function diagnosticsReportText(report: OrgDiagnostics): string {
   return JSON.stringify(report, null, 2);
+}
+
+export function installationConfigOf(report: OrgDiagnostics): InstallationConfig | null {
+  return report.installation.access === "operator" ? report.installation.config ?? null : null;
+}
+
+export function installationConfigExportText(report: OrgDiagnostics): string | null {
+  const config = installationConfigOf(report);
+  if (!config) return null;
+  return JSON.stringify({ kind: "openwork.installation-config", version: 1, generatedAt: report.generatedAt, deployment: report.deployment, ...config }, null, 2);
+}
+
+export function installationConfigFileName(report: OrgDiagnostics): string {
+  return `openwork-installation-config-${report.generatedAt.slice(0, 10)}.json`;
+}
+
+export type InstallationVersionState = "mismatch" | "match" | "unknown";
+
+export function installationVersionState(config: InstallationConfig): InstallationVersionState {
+  if (config.versionSkew) return "mismatch";
+  return config.helmAppVersion ? "match" : "unknown";
 }
 
 export type StepSegment = { step: DesktopStartupStep; typicalMs: number; percent: number };
