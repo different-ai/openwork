@@ -8,7 +8,7 @@ export type HarnessFeedbackSender = (group: SlackFeedbackGroup) => Promise<Slack
 
 const HEADING = "New harness issue"
 
-function escapeSlack(value: string) {
+export function escapeSlack(value: string) {
   return value.replace(/\s+/gu, " ").replace(/@(?=channel\b|here\b|everyone\b)/giu, "@\u200b")
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 }
@@ -44,7 +44,7 @@ export function normalizeHarnessFeedbackWebhook(value: string) {
   return url.href
 }
 
-function slackPayload(text: string) {
+export function slackPayload(text: string) {
   return { text, mrkdwn: false, link_names: 0, parse: "none", unfurl_links: false, unfurl_media: false }
 }
 
@@ -58,7 +58,7 @@ export function createHarnessFeedbackSlackSender(options: SlackTransport & { web
   return (group) => postToSlack(options, message(group, options.webUrl))
 }
 
-async function postToSlack(options: SlackTransport, payload: ReturnType<typeof message> | ReturnType<typeof slackPayload>): Promise<SlackDelivery> {
+export async function postToSlack(options: SlackTransport, payload: ReturnType<typeof slackPayload> & { blocks?: ReturnType<typeof message>["blocks"] }): Promise<SlackDelivery> {
   const send = options.fetch ?? fetch
   const signal = AbortSignal.timeout(options.timeoutMs ?? 5_000)
   let response: Response
