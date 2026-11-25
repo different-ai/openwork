@@ -1,4 +1,3 @@
-/** Resolve what a person submitted in the address bar, without sending partial input to search. */
 export function browserAddressDestination(input: string): string {
   const value = input.trim();
   if (!value) throw new Error("Enter a search or website address.");
