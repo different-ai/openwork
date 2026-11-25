@@ -909,16 +909,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       if (gatewayConnectAbort.current === controller) setConnectingGatewayProviderId(null);
     }
   }, [platform, providerAuthStore]);
-  const libraryModelsEnabled = useDesktopFeature("desktopLibraryModels");
   const libraryModelProviders = useMemo(
-    () => libraryModelsEnabled && cloudSession.isSignedIn
+    () => cloudSession.isSignedIn
       ? buildLibraryModelProviders({
           liveGatewayProviders,
           importedCloudProviders: settingsImportedCloudProviders,
           gatewayConnectProviders,
         })
       : null,
-    [libraryModelsEnabled, cloudSession.isSignedIn, liveGatewayProviders, settingsImportedCloudProviders, gatewayConnectProviders],
+    [cloudSession.isSignedIn, liveGatewayProviders, settingsImportedCloudProviders, gatewayConnectProviders],
   );
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
@@ -2587,7 +2586,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                   onSignIn: (signInKey) => {
                     const provider = gatewayConnectProviders.find((candidate) => gatewayConnectProviderKey(candidate) === signInKey);
                     if (!provider) return;
-                    markFeatureUsed("desktopLibraryModels");
                     void handleConnectGatewayProvider(provider);
                   },
                   onCancelSignIn: () => {
