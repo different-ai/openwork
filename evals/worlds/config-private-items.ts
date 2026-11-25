@@ -63,11 +63,11 @@ export async function configPrivateItemsWorld(seed: Seed) {
           const [match] = matches;
           if (matches.length !== 1 || !isRecord(match) || typeof match.id !== "string") throw new Error("The recipient did not have one imported plugin.");
           const pluginId = match.id;
-          const detail = await seed.api(member, `/v1/plugins/${encodeURIComponent(pluginId)}`);
-          const plugin = isRecord(detail.body) && isRecord(detail.body.item) ? detail.body.item : null;
-          const skills = plugin && Array.isArray(plugin.skills) ? plugin.skills : [];
-          const skill = skills.find((item: unknown) => isRecord(item) && item.name === name);
-          if (!isRecord(skill) || typeof skill.id !== "string") throw new Error("The recipient's plugin does not contain the imported skill.");
+          const detail = await seed.api(member, `/v1/plugins/${encodeURIComponent(pluginId)}/resolved`);
+          const items = isRecord(detail.body) && Array.isArray(detail.body.items) ? detail.body.items : [];
+          const skill = items.flatMap((item: unknown) => isRecord(item) && isRecord(item.configObject) ? [item.configObject] : [])
+            .find((item: Record<string, unknown>) => item.objectType === "skill" && item.title === name);
+          if (!detail.response.ok || !skill || typeof skill.id !== "string") throw new Error("The recipient's plugin does not contain the imported skill.");
           const edit = await seed.api(member, `/v1/config-objects/${encodeURIComponent(skill.id)}/versions`, {
             method: "POST", body: JSON.stringify({ input: { rawSourceText: `---\nname: ${name}\ndescription: Summarize synthetic field notes.\n---\n\n${body}` } }),
           });
