@@ -205,11 +205,17 @@ export function conversationRemoteTasks(messages: readonly UIMessage[], now = Da
   return { current, earlier: candidates, followUps }
 }
 
-function remoteEntryListed(entry: RemoteThreadEntry, followUps: readonly RemoteThreadFollowUp[], now: number): boolean {
+function remoteEntryListed(
+  entry: RemoteThreadEntry,
+  followUps: readonly RemoteThreadFollowUp[],
+  now: number,
+  includeSettled = false,
+): boolean {
   if (!entry.status) return false
   if (followUps.some((followUp) => remoteFollowUpMatches(followUp, entry.start, entry.status?.sessionId ?? null))) return true
   if (remoteThreadAwaitingFollowUp(entry, now)) return true
   const state = entry.status?.state
+  if (includeSettled && state === "idle") return true
   return state !== undefined && state !== "idle" && state !== "error"
 }
 
@@ -219,9 +225,11 @@ export function selectComposerRemoteTasks(
   organizationId: string | null,
   now: number,
   owner?: RemoteThreadOwner,
+  options: { includeSettled?: boolean } = {},
 ): RemoteTrackerTask[] {
+  const includeSettled = options.includeSettled === true
   const listable = (entry: RemoteThreadEntry | undefined): entry is RemoteThreadEntry =>
-    Boolean(entry && organizationId && entry.organizationId === organizationId && remoteEntryListed(entry, tasks.followUps, now))
+    Boolean(entry && organizationId && entry.organizationId === organizationId && remoteEntryListed(entry, tasks.followUps, now, includeSettled))
   const listed = tasks.earlier.filter((task) => listable(threads[task.start.key]))
   const known = new Set([...tasks.earlier, ...tasks.current].map((task) => task.start.key))
   const owned = !owner ? [] : Object.values(threads)
@@ -234,13 +242,12 @@ export function selectComposerRemoteTasks(
 }
 
 const NO_FOLLOW_UPS: readonly RemoteThreadFollowUp[] = []
-const EMPTY_REMOTE_TASKS: ConversationRemoteTasks = { current: [], earlier: [], followUps: [] }
 
 export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: RemoteThreadOwner): RemoteTrackerTask[] {
   const liveSyncEnabled = useDesktopFeature("remoteSessionLiveSync")
   const tasks = useMemo<ConversationRemoteTasks>(
-    () => (liveSyncEnabled ? EMPTY_REMOTE_TASKS : conversationRemoteTasks(messages)),
-    [liveSyncEnabled, messages],
+    () => conversationRemoteTasks(messages),
+    [messages],
   )
   const organizationId = useRemoteThreadOrganization()
   const { workspaceId, sessionId } = owner
@@ -264,14 +271,14 @@ export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: Re
     if (!liveSyncEnabled && followUps.length > 0) reviveRemoteThreads(followUps)
   }, [liveSyncEnabled, followUps, matchSignature])
   const listedSignature = useRemoteThreadStore((state) =>
-    selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner).map((task) => task.start.key).join("\n"))
+    selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner, { includeSettled: liveSyncEnabled }).map((task) => task.start.key).join("\n"))
   return useMemo(() => {
     if (!listedSignature) return []
     const keys = new Set(listedSignature.split("\n"))
     const threads = useRemoteThreadStore.getState().threads
-    return selectComposerRemoteTasks(tasks, threads, organizationId, Date.now(), { workspaceId, sessionId })
+    return selectComposerRemoteTasks(tasks, threads, organizationId, Date.now(), { workspaceId, sessionId }, { includeSettled: liveSyncEnabled })
       .filter((task) => keys.has(task.start.key))
-  }, [tasks, listedSignature, organizationId, workspaceId, sessionId])
+  }, [tasks, listedSignature, organizationId, workspaceId, sessionId, liveSyncEnabled])
 }
 
 export function subagentTrackerSummary(kinds: readonly SubagentTrackerKind[]): { kind: SubagentTrackerKind; text: string }[] {
@@ -329,10 +336,10 @@ export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
   const anyAttention = current.includes("attention")
   const settled = current.length === ids.length && current.every((kind) => kind === "done" || kind === "stopped" || kind === "error")
   const allQuiet = current.length === ids.length && current.every((kind) => kind === "done" || kind === "stopped")
-  const expanded = manualExpanded ?? (anyAttention || (!allQuiet && ids.length <= 3))
+  const expanded = manualExpanded ?? (anyAttention || ((!allQuiet || remoteTasks.length > 0) && ids.length <= 3))
   const summary = subagentTrackerSummary(current)
 
-  if (ids.length === 0 || (!props.parentActive && settled)) return null
+  if (ids.length === 0 || (!props.parentActive && settled && remoteTasks.length === 0)) return null
   const unresolved = !props.parentActive && current.length < ids.length
 
   return (

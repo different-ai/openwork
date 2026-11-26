@@ -272,9 +272,16 @@ export default {
       const normalized = normalizedTool(toolId);
       if (!isRecord(input)) return input;
       const isExecCapability = normalized === "openwork-cloud_execute_capability";
-      const isDirectRemote = normalized === "openwork-cloud_remote_session_create" || normalized === "openwork-cloud_remote_session_attach";
+      const isDirectRemote = normalized === "openwork-cloud_remote_session_create"
+        || normalized === "openwork-cloud_remote_session_attach"
+        || normalized === "openwork-cloud_remote_session_send"
+        || normalized === "openwork-cloud_remote_session_answer";
       if (!isExecCapability && !isDirectRemote) return input;
-      if (isExecCapability && input.name !== "remote-session:create" && input.name !== "remote-session:attach") return input;
+      if (isExecCapability
+        && input.name !== "remote-session:create"
+        && input.name !== "remote-session:attach"
+        && input.name !== "remote-session:send"
+        && input.name !== "remote-session:answer") return input;
       const originSessionId = await resolveRootSessionId(call.sessionID);
       if (!originSessionId && !originWorkspaceId) return input;
       const origin = {

@@ -221,6 +221,13 @@ export interface RemoteSessionCommandStore {
     now: number
     limit: number
   }): Promise<RemoteSessionCommand[]>
+  bindParentIfUnbound?(input: {
+    organizationId: string
+    createdByUserId: string
+    commandId: string
+    parentSessionId: string
+    parentWorkspaceId?: string | null
+  }): Promise<boolean>
   detach(input: {
     organizationId: string
     runner?: { ownerMemberId: string; runnerId: string }
@@ -807,6 +814,26 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       ),
     )).orderBy(desc(RemoteSessionCommandTable.updated_at), desc(RemoteSessionCommandTable.id)).limit(input.limit)
     return rows.map(mapCommand)
+  },
+
+  async bindParentIfUnbound(input) {
+    const commandId = commandIdOrNull(input.commandId)
+    if (!commandId) return false
+    const orgId = normalizeDenTypeId("organization", input.organizationId)
+    const userId = normalizeDenTypeId("user", input.createdByUserId)
+    const result = await db.update(RemoteSessionCommandTable).set({
+      parent_session_id: input.parentSessionId,
+      parent_workspace_id: input.parentWorkspaceId ?? null,
+      updated_at: new Date(),
+    }).where(and(
+      eq(RemoteSessionCommandTable.id, commandId),
+      eq(RemoteSessionCommandTable.org_id, orgId),
+      eq(RemoteSessionCommandTable.created_by_user_id, userId),
+      isNull(RemoteSessionCommandTable.parent_session_id),
+    ))
+    if (!automationUpdateChangedRows(result)) return false
+    signalRemoteSessionUserUpdate(orgId, userId)
+    return true
   },
 
   async detach(input) {
