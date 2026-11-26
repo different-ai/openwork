@@ -156,6 +156,16 @@ export const idTypesMapNameToPrefix = {
   remoteDevice: "rdv",
   remoteDeviceEvent: "rde",
   automationShare: "ats",
+  personalAgent: "pga",
+  personalAgentRevision: "pgv",
+  personalAgentShare: "pgs",
+  personalAgentRequest: "pgq",
+  personalAgentChat: "pgc",
+  personalAgentEvent: "pge",
+  personalAgentAudience: "pgu",
+  personalAgentSharedLogin: "pgl",
+  toolPermissionRule: "tpr",
+  toolApproval: "tpa",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

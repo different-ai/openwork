@@ -1,0 +1,44 @@
+---
+title: "Choose what an agent can use"
+sidebarTitle: "Permissions"
+description: "Choose which tools an agent can use, answer requests in chat, and check its monthly spend."
+---
+<Warning>
+Agents are in private alpha. OpenWork does not officially support this feature yet, and how it works may change. To try it, ask your OpenWork contact to turn it on for your organization.
+</Warning>
+
+These settings apply to tools listed under **What it can use**. By default, a tool marked read-only can run without asking. Other tools ask first. Built-in connections don't have these settings.
+
+| Setting | What happens |
+| --- | --- |
+| **Allow** | The agent can use the tool without asking, unless an admin rule says otherwise. |
+| **Ask** | The agent needs a yes before it can use the tool. |
+| **Block** | The agent can't use the tool. |
+
+## Answer a tool request
+
+When a tool needs a yes, the run doesn't use it. A card in the chat names the tool and connection. The options depend on your role and your organization's rules:
+
+![A request in the chat to let Bug watcher use Create issue in Linear, with Deny, Always allow and Allow once](/images/agents/tool-request.png)
+
+- **Deny** refuses the request.
+- **Allow once** covers the tool for the whole of the requester's next run of this agent that calls it. The run that asked can't use it, even if it is still going. A run that doesn't call the tool leaves the approval for the next one. An unused approval expires after 7 days. A block still wins.
+- **Always allow** lets the agent use the tool on future runs. A lasting change to tool access needs the owner's approval. This option isn't offered when the organization requires approval for each run.
+
+Approval doesn't resume the run that asked. The app requests another run if you approve your own request. If someone else approves it, you can run the agent again yourself.
+
+## Change a setting
+
+Click the agent's name to open its panel. Go to **Settings**, then **What it can use**. Find the connection and choose **Allow**, **Ask**, or **Block**. A manager's change waits for the owner's approval. Tool settings are separate from the brief. A saved change applies the next time the agent tries to use a tool, even in a run that's already going. The agent also follows [organization tool rules](/agents/tool-permissions).
+
+![Settings for Bug watcher: each Linear tool set to Allow, Ask or Block](/images/agents/what-it-can-use.png)
+
+During setup, you can say what the agent should never do. For example, if you say "Never post in Slack," OpenWork tries to block the matching tools. Check **What it can use** to confirm what was blocked.
+
+- **Blocked by your admin** means the setting is locked.
+- **Your admin requires this to ask first.** means you can't choose **Allow**. You can still choose **Block**.
+- **Allowed by your admin.** doesn't override your **Ask** or **Block**.
+
+## Check spending
+
+In **Settings**, check this month's cost under **Spend**. The owner can set a **Monthly budget**. If several limits apply, the lowest one wins. See [Limits](/agents/limits).

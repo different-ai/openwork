@@ -87,6 +87,9 @@ export type CloudAgentExecutorInput = OwnerScope & {
   signal: AbortSignal
   onAdmitted: (receipt: Record<string, unknown>) => Promise<void>
   workspaceId?: string | null
+  mcpScopes?: readonly string[]
+  forAgent?: boolean
+  onModelResolved?: (model: AgentAction["model"]) => Promise<void>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

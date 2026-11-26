@@ -48,7 +48,7 @@ import {
   getWorkbotSettingsRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
-import { canOpenAdminRoute } from "./admin-route-access";
+import { agentsAdminRoute, canOpenAdminRoute } from "./admin-route-access";
 import { type WorkbotEntry, workbotEntryHref, workbotNavMarker } from "./workbot-entry";
 
 export type DashboardNavChild = {
@@ -91,6 +91,7 @@ export type BuildDashboardNavSectionsInput = {
   runtimeConfigLoaded: boolean;
   libraryNeedsSignIn?: number;
   managedDeployments?: boolean;
+  personalAgents?: boolean;
   desktopPolicyScreenRemoved?: boolean;
   workbotSettingsInTeams?: boolean;
   canManageDeploymentServices?: boolean;
@@ -106,6 +107,7 @@ export function buildDashboardNavSections({
   runtimeConfigLoaded,
   libraryNeedsSignIn = 0,
   managedDeployments = false,
+  personalAgents = false,
   desktopPolicyScreenRemoved = false,
   workbotSettingsInTeams = false,
   canManageDeploymentServices = false,
@@ -155,6 +157,7 @@ export function buildDashboardNavSections({
         { href: getComputersRoute(orgSlug), label: "Computers", icon: Laptop, testId: "dashboard-nav-computers" },
         ...(!workbotSettingsInTeams ? [{ href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" }] : []),
         ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
+        ...(personalAgents ? [{ href: agentsAdminRoute, label: "Agents", icon: Radar }] : []),
       ].filter((item) => canOpen(item.href))
     : [];
   const observabilityItems: DashboardNavItem[] = orgSlug

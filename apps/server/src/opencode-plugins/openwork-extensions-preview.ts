@@ -29,7 +29,9 @@ import {
   type OpenworkSessionModel,
 } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
+import { personalAgentProposalSchema } from "@openwork/types/den/personal-agents";
 import { withOnceTimestamp } from "../automation-proposal-input.js";
+import { withNumberedWeekdays } from "../agent-proposal-input.js";
 import { SESSION_TREE_QUERY_ID, sessionLinkMetadata, type SessionLink } from "@openwork/types/session-link";
 import {
   appendAgentInstructions,
@@ -343,6 +345,15 @@ async function serverGet(path: string): Promise<unknown> {
   return payload;
 }
 
+async function personalAgentsEnabled(): Promise<boolean> {
+  try {
+    const payload = await serverGet("/managed-policy/personal-agents");
+    return isRecord(payload) && payload.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
 async function readConnectSkillDescriptors(): Promise<ConnectSkillDescriptor[]> {
   try {
     const parsed = connectSkillsEnvelopeSchema.safeParse(
@@ -378,12 +389,14 @@ async function readOpenworkAgentContext(
   engineMcpStatusClient: OpenWorkEngineMcpStatusClient | undefined,
   engineMcpStatusDirectory: string | undefined,
 ): Promise<Record<string, unknown>> {
-  const [uiResult, skills, mcps] = await Promise.all([
+  const [uiResponse, skills, mcps] = await Promise.all([
     uiControlRequest("context"),
     readConnectSkillDescriptors(),
     readEngineMcpDescriptors(engineMcpStatusClient, engineMcpStatusDirectory),
   ]);
-  const contributions = buildOpenworkProviderContributions(skills, mcps);
+  const { personalAgentsEnabled: agentsEnabled, ...uiFields } = isRecord(uiResponse) ? uiResponse : {};
+  const uiResult = isRecord(uiResponse) ? uiFields : uiResponse;
+  const contributions = buildOpenworkProviderContributions(skills, mcps, agentsEnabled === true);
   const providerAffordances = contributions.flatMap((contribution) => contribution.affordances);
   const uiContext = isRecord(uiResult) && isRecord(uiResult.context) ? uiResult.context : null;
   if (!uiContext) {
@@ -489,6 +502,16 @@ async function executeOpenworkAffordance(
     return affordanceResult(
       request.id,
       proposeAutomation(request.args ?? {}, context),
+      affordanceProposalEffects,
+    );
+  }
+  if (request.id === "agent.propose") {
+    if (!await personalAgentsEnabled()) {
+      return unavailableAffordance(request.id, "Agents are not turned on for this organization.");
+    }
+    return affordanceResult(
+      request.id,
+      proposePersonalAgent(request.args ?? {}),
       affordanceProposalEffects,
     );
   }
@@ -1599,6 +1622,16 @@ function proposeAutomation(rawArgs: unknown, context: OpenCodeContext): object {
     proposal,
     created: false,
     limitation: "Nothing is created until the person reviews the card. The card offers the places this member can run it: Desktop runs only while a signed-in desktop is connected; Cloud runs headlessly in OpenWork Cloud when the organization and member have Cloud available.",
+  };
+}
+
+function proposePersonalAgent(rawArgs: unknown): object {
+  return {
+    ok: true,
+    kind: "agent-proposal",
+    proposal: personalAgentProposalSchema.parse(withNumberedWeekdays(rawArgs)),
+    created: false,
+    limitation: "Nothing exists yet. The card now on screen asks the person \"Start like this?\"; the agent, its routine and its first run start only when they say yes there. Do not describe the card or what happens next, and do not create the agent yourself.",
   };
 }
 

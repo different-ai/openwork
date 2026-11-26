@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { connectionBlockerFromToolCalls } from "@openwork/headless-threads"
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { MemberTable } from "@openwork-ee/den-db/schema"
+import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { ExternalMcpConnectionTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { isAutomationCloudDefaultModel, type AutomationUsage } from "@openwork/types/automations"
 import { db } from "../db.js"
@@ -15,11 +15,15 @@ import {
   type RunnerTurn,
 } from "../headless-runner/client.js"
 import { isModelAccessRefusal } from "../headless-runner/model-access-refusal.js"
+import { parseExternalCapabilityName } from "../mcp/external-capabilities.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
+import { parseNativeCapabilityName } from "../mcp/native-capabilities.js"
 import { connectionBlockedExecution, type CloudAgentEvent, type CloudAgentExecution, type CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { cloudAutomationRuntime } from "./headless-runtime.js"
 import { organizationCloudModel } from "../workbot/model.js"
+import { headlessRunCostMicros, headlessRunPricing } from "./headless-run-pricing.js"
 import { cloudAgentGatewayCatalog } from "../workbot/gateway-model.js"
+import { collectRunStepFacts, runStepConnector, runStepOutcome, type RunStepCandidate } from "./run-step-facts.js"
 
 const POLL_INTERVAL_MS = 2_000
 const RUNNER_UNREACHABLE = { ok: false as const, status: 503, error: "headless_send_unavailable" }
@@ -82,7 +86,7 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 async function ownerUserId(scope: OwnerScope) {
-  const members = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(
+  const members = await db.$primary.select({ userId: MemberTable.userId }).from(MemberTable).where(and(
     eq(MemberTable.id, normalizeDenTypeId("member", scope.ownerMemberId)),
     eq(MemberTable.organizationId, normalizeDenTypeId("organization", scope.organizationId)),
     isNull(MemberTable.removedAt),
@@ -104,30 +108,51 @@ function defaultDeps(): HeadlessAgentExecutorDeps {
   }
 }
 
-function usageFromTurn(turn: RunnerTurn | undefined): AutomationUsage {
+function usageFromTurn(turn: RunnerTurn, rates: unknown): AutomationUsage {
   return {
     inputTokens: turn?.usage?.inputTokens ?? null,
     outputTokens: turn?.usage?.outputTokens ?? null,
-    costMicros: null,
+    costMicros: headlessRunCostMicros(rates, turn.usage),
   }
 }
 
-function transcriptEvents(messages: RunnerMessage[], usage: AutomationUsage): CloudAgentEvent[] {
+async function enrichConnectorEvents(
+  organizationId: string,
+  events: CloudAgentEvent[],
+  steps: Map<number, RunStepCandidate>,
+) {
+  const facts = await collectRunStepFacts(steps, async (connectionIds) => (
+    db.$primary.select({ id: ExternalMcpConnectionTable.id, name: ExternalMcpConnectionTable.name })
+      .from(ExternalMcpConnectionTable).where(and(
+        eq(ExternalMcpConnectionTable.organizationId, normalizeDenTypeId("organization", organizationId)),
+        inArray(ExternalMcpConnectionTable.id, connectionIds),
+      ))
+  ))
+  for (const [index, stepFacts] of facts) Object.assign(events[index].payload, stepFacts)
+}
+
+async function transcriptEvents(organizationId: string, messages: RunnerMessage[], usage: AutomationUsage): Promise<CloudAgentEvent[]> {
   const events: CloudAgentEvent[] = []
+  const steps = new Map<number, RunStepCandidate>()
   for (const message of messages.slice(-100)) {
     const messageId = message.messageId ?? null
     if (message.role === "user") events.push({ type: "user", payload: { messageId, text: message.text.slice(0, 20_000) } })
     if (message.role === "assistant") {
       events.push({ type: "assistant", payload: { messageId, text: message.text.slice(0, 20_000) } })
       for (const call of message.toolCalls) {
+        const connector = runStepConnector(call, (name) => parseExternalCapabilityName(name) ?? parseNativeCapabilityName(name))
+        if (connector) steps.set(events.length, connector)
         events.push({ type: "capability_execution", payload: { messageId, partId: call.id, callId: call.id, name: call.name, status: null } })
       }
     }
     if (message.role === "tool") {
       const index = events.findIndex((event) => event.type === "capability_execution" && event.payload.callId === message.callId)
       if (index >= 0) events[index] = { ...events[index], payload: { ...events[index].payload, status: message.isError ? "error" : "completed" } }
+      const step = steps.get(index)
+      if (step) step.outcome = runStepOutcome(message)
     }
   }
+  if (steps.size) await enrichConnectorEvents(organizationId, events, steps)
   events.push({ type: "usage", payload: usage })
   return events
 }
@@ -153,9 +178,8 @@ function failure(input: {
   }
 }
 
-function turnFailure(turn: RunnerTurn, messages: RunnerMessage[]): CloudAgentExecution {
-  const usage = usageFromTurn(turn)
-  const events = [...transcriptEvents(messages, usage), { type: "terminal" as const, payload: { status: "failed", code: turn.error } }]
+function turnFailure(turn: RunnerTurn, transcript: CloudAgentEvent[], usage: AutomationUsage): CloudAgentExecution {
+  const events = [...transcript, { type: "terminal" as const, payload: { status: "failed", code: turn.error } }]
   const code = turn.error ?? "headless_run_failed"
   if (code === "turn_timeout") {
     return failure({ code: "execution_timed_out", message: "The Automation run exceeded its maximum runtime.", events, usage })
@@ -189,9 +213,10 @@ export async function executeHeadlessAgent(
   let sessionId: string | null = previous?.sessionId ?? null
   const messageId = previous?.messageId ?? headlessMessageIdForRun(input.automationRunId)
   try {
+    const runsFor = input.forAgent ? "the person this run uses" : "the Automation owner"
     const userId = await deps.ownerUserId(input)
     if (!userId) {
-      return failure({ code: "owner_membership_lost", message: "The Automation owner is no longer an active organization member.", needsAttention: true })
+      return failure({ code: "owner_membership_lost", message: input.forAgent ? "The person this run uses is no longer a member of this organization." : "The Automation owner is no longer an active organization member.", needsAttention: true })
     }
     const actor = { userId, organizationId: input.organizationId }
 
@@ -232,9 +257,16 @@ export async function executeHeadlessAgent(
         if (!selected || !catalog.models.some((entry) => entry.id === selected)) throw new Error("cloud_agent_gateway_model_unavailable")
         model = selected
       } catch {
-        return failure({ code: "provider_unavailable", message: "The selected cloud model is not available to the Automation owner. Check their model access and try again.", needsAttention: true })
+        return failure({ code: "provider_unavailable", message: `The selected cloud model is not available to ${runsFor}. Check their model access and try again.`, needsAttention: true })
       }
     }
+    const priced = async (modelId: string) => {
+      if (!input.forAgent) return null
+      const found = await headlessRunPricing(input.organizationId, modelId).catch(() => null)
+      if (found) await input.onModelResolved?.(found.model)
+      return found
+    }
+    let pricing = await priced(model)
     let modelAccessRequired = storedTurn?.modelAccessRequired === true
     const ttlMs = Math.min(input.maximumRuntimeMs + TOKEN_GRACE_MS, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS)
     const runSessionId = sessionId
@@ -247,8 +279,9 @@ export async function executeHeadlessAgent(
       ttlMs,
       ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
       ...(execution ? { execution } : {}),
+      ...(input.mcpScopes?.length ? { mcpScopes: input.mcpScopes } : {}),
     }).catch((error: unknown) => (isModelAccessRefusal(error) ? null : RUNNER_UNREACHABLE))
-    const accessFailure = () => failure({ code: "provider_unavailable", message: "The cloud model is not available to the Automation owner. Check their model access and try again.", needsAttention: true })
+    const accessFailure = () => failure({ code: "provider_unavailable", message: `The cloud model is not available to ${runsFor}. Check their model access and try again.`, needsAttention: true })
 
     const sent = await sendTurn()
     if (!sent) return accessFailure()
@@ -278,7 +311,10 @@ export async function executeHeadlessAgent(
       const turn = read.value.turns.find((entry) => entry.messageId === messageId)
       if (!turn || ACTIVE_TURN_STATUSES.has(turn.status)) continue
       if (turn.status === "interrupted") {
-        model = turn.model ?? model
+        if (turn.model && turn.model !== model) {
+          model = turn.model
+          pricing = await priced(model)
+        }
         modelAccessRequired ||= turn.modelAccessRequired === true
         const resumed = await sendTurn()
         if (!resumed) return accessFailure()
@@ -288,18 +324,18 @@ export async function executeHeadlessAgent(
         }
         continue
       }
+      const usage = usageFromTurn(turn, pricing?.rates)
       if (turn.status === "aborted") {
-        return failure({ code: "cancelled", status: "cancelled", message: "The Automation run was cancelled.", events: [{ type: "terminal", payload: { status: "cancelled" } }] })
+        return failure({ code: "cancelled", status: "cancelled", message: "The Automation run was cancelled.", ...(input.forAgent ? { usage } : {}), events: [{ type: "terminal", payload: { status: "cancelled" } }] })
       }
-      if (turn.status === "failed") return turnFailure(turn, read.value.messages)
-
-      const usage = usageFromTurn(turn)
+      const events = await transcriptEvents(input.organizationId, read.value.messages, usage)
+      if (turn.status === "failed") return turnFailure(turn, events, usage)
       const answer = read.value.messages.filter((message) => message.role === "assistant" && message.toolCalls.length === 0).at(-1)
       const resultSummary = (answer?.role === "assistant" ? answer.text : read.value.finalAssistantText).trim()
         || "The Automation run finished without a written result."
       const blocker = connectionBlockerFromToolCalls(read.value.messages.flatMap((message) => message.role === "tool" ? [{ name: message.name, output: message.output }] : []))
       if (blocker) {
-        return connectionBlockedExecution({ blocker, answer: answer?.role === "assistant" ? answer.text : read.value.finalAssistantText, usage, events: transcriptEvents(read.value.messages, usage) })
+        return connectionBlockedExecution({ blocker, answer: answer?.role === "assistant" ? answer.text : read.value.finalAssistantText, usage, events })
       }
       return {
         ok: true,
@@ -308,7 +344,7 @@ export async function executeHeadlessAgent(
         resultSummary: resultSummary.slice(0, RESULT_SUMMARY_LIMIT),
         usage,
         events: [
-          ...transcriptEvents(read.value.messages, usage),
+          ...events,
           { type: "terminal", payload: { status: "succeeded", model: turn.model ?? null } },
         ],
       }

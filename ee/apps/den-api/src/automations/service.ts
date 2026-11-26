@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto"
 import type { AutomationClaimResult, AutomationListItem } from "@openwork/automations"
-import { AUTOMATION_MANUAL_CLAIM_WINDOW_MS, calendarTriggerPrompt, desktopRunnerConnected } from "@openwork/automations"
+import {
+  AUTOMATION_MANUAL_CLAIM_WINDOW_MS,
+  calendarTriggerPrompt,
+  desktopRunnerConnected,
+  organizationToolRuleInstructions,
+  personalAgentRunInstructions,
+} from "@openwork/automations"
 import { AUTOMATION_RUNNER_WORK_RUN_LIMIT, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY, isAutomationCloudDefaultModel } from "@openwork/types/automations"
 import type {
   AutomationCloudTarget,
@@ -34,8 +40,18 @@ import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent
 import { cloudAutomationRuntime, HEADLESS_AGENT_ENGINE_KIND, type CloudAutomationRuntime } from "./headless-runtime.js"
 import { automationTargetAllowed } from "./organization-availability.js"
 import { CalendarTriggerSource, type CalendarTriggerSourceDeps } from "./calendar-trigger-source.js"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { PERSONAL_AGENT_ROUTINE_INSTRUCTIONS_MAX_LENGTH } from "@openwork/types/den/personal-agents"
+import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { appLogger } from "../observability/logger.js"
+import type { PersonalAgentTransaction } from "../personal-agents/access.js"
+import { personalAgentRepository } from "../personal-agents/repository.js"
+import { HTTPException } from "hono/http-exception"
+import { admitPersonalAgentRun } from "../personal-agents/run-admission.js"
+import { readPersonalAgentRunMemory, savePersonalAgentRoutineState } from "../personal-agents/memory.js"
+import { cachedOrganizationFeatureEnabled, organizationFeatureEnabled } from "../features.js"
+import { automationRunScope } from "../mcp/workbot-turn-limits.js"
+import { readOrganizationWrittenToolRules } from "../tool-permissions/rules.js"
+import { markFeaturesUsed } from "../feature-usage.js"
 import {
   getOpenWorkWebRuntimeAccess,
   OPENWORK_WEB_ACCESS_REQUIRED_CODE,
@@ -66,8 +82,30 @@ function readableBy(scope: OwnerScope, schedule: AutomationSchedule) {
 }
 
 export type AutomationPlacementOptions = { agentCaller?: boolean }
+export type AutomationCreateOptions = {
+  initialState?: "inactive"
+  agent?: { agentId: string }
+  tx?: PersonalAgentTransaction
+}
+
+function requireAgentRoutineRunsAsCloudAgent(
+  automation: { agentId?: string | null },
+  target: AutomationExecutionTarget,
+  action: AutomationAction | undefined,
+) {
+  if (!automation.agentId) return
+  if (target !== "cloud" || action?.kind !== "agent") throw new Error("personal_agent_routine_cloud_agent_only")
+  if (action.instructions.length > PERSONAL_AGENT_ROUTINE_INSTRUCTIONS_MAX_LENGTH) throw new Error("personal_agent_routine_instructions_too_long")
+}
+
+async function requireRoutineAgentActive(scope: OwnerScope, automation: { agentId?: string | null }) {
+  if (!automation.agentId) return
+  const agent = await personalAgentRepository.get({ ...scope, agentId: automation.agentId })
+  if (agent?.agent.state !== "active") throw new Error("personal_agent_archived")
+}
 export type AutomationRunNowOptions = AutomationPlacementOptions & {
   executionTarget?: AutomationExecutionTarget
+  actingMemberId?: string
 }
 export type DesktopRunnerScope = OwnerScope & {
   runnerId: string
@@ -309,6 +347,7 @@ export class AutomationService {
   }
 
   async get(scope: OwnerScope, automationId: string) {
+    if (!isDenTypeId("automation", automationId)) return null
     const item = await automationRepository.get({ ...scope, automationId })
     return item && readableBy(scope, item.revision.schedule) ? this.reconcileModelAttention(item, scope) : null
   }
@@ -325,7 +364,7 @@ export class AutomationService {
     return this.create({ ...scope, modelAttentionCapable: true }, definition, { initialState: "inactive" })
   }
 
-  async create(scope: OwnerScope, definition: CreateAutomationDefinition, options: { initialState?: "inactive" } = {}) {
+  async create(scope: OwnerScope, definition: CreateAutomationDefinition, options: AutomationCreateOptions = {}) {
     this.requireScheduleAllowed(scope, definition.schedule, "action" in definition ? definition.executionTarget : "desktop")
     await this.requireTargetAllowed(scope.organizationId, "action" in definition ? "cloud" : "desktop")
     if ("action" in definition) {
@@ -346,18 +385,34 @@ export class AutomationService {
     } else {
       await this.requireNewModel(scope, definition.model, "desktop")
     }
-    const created = await automationRepository.create({ ...scope, definition, initialState: options.initialState, now: Date.now() })
-    return this.reconcileModelAttention(created, scope)
+    if (options.agent) {
+      requireAgentRoutineRunsAsCloudAgent(
+        { agentId: options.agent.agentId },
+        "action" in definition ? definition.executionTarget : "desktop",
+        "action" in definition ? definition.action : undefined,
+      )
+    }
+    const created = await automationRepository.create({
+      ...scope,
+      definition,
+      initialState: options.initialState,
+      tx: options.tx,
+      ...(options.agent ? { agent: options.agent } : {}),
+      now: Date.now(),
+    })
+    return options.tx ? created : this.reconcileModelAttention(created, scope)
   }
 
-  async update(scope: OwnerScope, automationId: string, changes: UpdateAutomation, options: AutomationPlacementOptions = {}) {
-    const current = await this.get(scope, automationId)
+  async update(scope: OwnerScope, automationId: string, changes: UpdateAutomation, options: AutomationPlacementOptions & { tx?: PersonalAgentTransaction } = {}) {
+    const current = options.tx ? await automationRepository.get({ ...scope, automationId, tx: options.tx }) : await this.get(scope, automationId)
     if (!current) return null
     const currentTarget = current.revision.executionTarget ?? "desktop"
     const nextTarget = changes.executionTarget ?? currentTarget
     this.requireScheduleAllowed(scope, changes.schedule ?? current.revision.schedule, nextTarget, current.revision.schedule)
     const moved = nextTarget !== currentTarget
     const nextAction = changes.action ?? current.revision.action
+    requireAgentRoutineRunsAsCloudAgent(current.automation, nextTarget, nextAction)
+    await requireRoutineAgentActive(scope, current.automation)
     if (nextTarget === "desktop" && nextAction?.kind === "saved_script") {
       throw new Error("automation_action_target_mismatch")
     }
@@ -380,13 +435,14 @@ export class AutomationService {
         )
       }
     }
-    const updated = await automationRepository.update({ ...scope, automationId, changes, now: Date.now() })
-    return this.reconcileModelAttention(updated, scope)
+    const updated = await automationRepository.update({ ...scope, automationId, changes, now: Date.now(), tx: options.tx })
+    return options.tx ? updated : this.reconcileModelAttention(updated, scope)
   }
 
-  async activate(scope: OwnerScope, automationId: string) {
-    const current = await this.get(scope, automationId)
+  async activate(scope: OwnerScope, automationId: string, tx?: PersonalAgentTransaction) {
+    const current = tx ? await automationRepository.get({ ...scope, automationId, tx }) : await this.get(scope, automationId)
     if (!current) return null
+    await requireRoutineAgentActive(scope, current.automation)
     if ((current.revision.executionTarget ?? "desktop") === "cloud") {
       await this.requireCloudRuntimeAccess(scope)
     }
@@ -404,12 +460,13 @@ export class AutomationService {
         current.revision.executionTarget ?? "desktop",
       )
     }
-    const activated = await automationRepository.setState({ ...scope, automationId, state: "active", now: Date.now() })
-    return activated ? this.reconcileModelAttention(activated, scope) : null
+    const activated = await automationRepository.setState({ ...scope, automationId, state: "active", now: Date.now(), tx })
+    return activated && !tx ? this.reconcileModelAttention(activated, scope) : activated
   }
 
-  deactivate(scope: OwnerScope, automationId: string) {
-    return automationRepository.setState({ ...scope, automationId, state: "inactive", now: Date.now() })
+  async deactivate(scope: OwnerScope, automationId: string, tx?: PersonalAgentTransaction) {
+    return automationRepository.setState({ ...scope, automationId, state: "inactive", now: Date.now(), tx,
+      beforeAgentStateChange: (automation) => requireRoutineAgentActive(scope, automation) })
   }
 
   archive(scope: OwnerScope, automationId: string) {
@@ -419,19 +476,24 @@ export class AutomationService {
   async runNow(scope: OwnerScope, automationId: string, options: AutomationRunNowOptions = {}): Promise<AutomationRun | null> {
     const current = await this.get(scope, automationId)
     if (!current || current.automation.state === "archived") return null
+    const actingMemberId = current.automation.agentId ? options.actingMemberId ?? scope.ownerMemberId : undefined
+    const sharedRun = actingMemberId !== undefined && actingMemberId !== scope.ownerMemberId
+    const actorScope = actingMemberId ? { ...scope, ownerMemberId: actingMemberId } : scope
     const savedTarget = current.revision.executionTarget ?? "desktop"
     const target = options.executionTarget ?? savedTarget
-    if (target !== savedTarget) await this.requireTargetMove(scope, current.revision.action, target, options)
+    requireAgentRoutineRunsAsCloudAgent(current.automation, target, current.revision.action)
+    await requireRoutineAgentActive(scope, current.automation)
+    if (target !== savedTarget) await this.requireTargetMove(actorScope, current.revision.action, target, options)
     else {
       await this.requireTargetAllowed(scope.organizationId, target)
-      if (target === "cloud") await this.requireCloudRuntimeAccess(scope)
+      if (target === "cloud") await this.requireCloudRuntimeAccess(actorScope)
     }
     const revision = { ...current.revision, executionTarget: target }
-    let blocked = current.automation.needsAttentionReason
+    let blocked = sharedRun ? null : current.automation.needsAttentionReason
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
     } else if (!blocked) {
-      const access = await resolveAutomationModelAccess({ ...scope, ...current.revision.model, executionTarget: target })
+      const access = await resolveAutomationModelAccess({ ...actorScope, ...current.revision.model, executionTarget: target })
       if (!access.ok && shouldApplyAutomationModelAccessFailure({
         model: current.revision.model,
         failure: access,
@@ -441,7 +503,7 @@ export class AutomationService {
     }
     if (blocked) {
       const now = Date.now()
-      if (ownPlacement(current.revision, target)) await automationRepository.markNeedsAttention({
+      if (!sharedRun && ownPlacement(current.revision, target)) await automationRepository.markNeedsAttention({
         automationId: current.automation.id,
         expectedRevisionId: current.revision.id,
         reason: { ...blocked, occurredAt: now },
@@ -449,6 +511,7 @@ export class AutomationService {
       })
       const skipped = await automationRepository.recordSkippedManual({
         ...scope,
+        actingMemberId,
         automation: current.automation,
         revision,
         nonce: randomUUID(),
@@ -464,18 +527,26 @@ export class AutomationService {
       automation: { ...current.automation, state: "active" },
       revision,
       trigger: "manual",
+      actingMemberId,
       scheduledFor: null,
       nonce: randomUUID(),
       leaseOwner: schedulerOwner,
       leaseMs: env.automations.leaseMs,
       claimDeadlineMs: AUTOMATION_MANUAL_CLAIM_WINDOW_MS,
       now: claimedAt,
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.message === "personal_agent_run_queue_full") {
+        throw new HTTPException(409, { message: error.message, res: Response.json({
+          error: error.message, message: "This agent already has several runs waiting. Try again when one finishes.",
+        }, { status: 409 }) })
+      }
+      throw error
     })
     if (claim.kind === "overlap") await recordAutomationRunCompleted({ runId: claim.run.id, terminalAt: claimedAt })
     if (claim.kind === "claimed" && claim.run.executionTarget === "cloud") {
       this.startCloudRun(claim.run.id)
     }
-    return (await automationRepository.getRunReceipt({ ...scope, runId: claim.run.id }))?.run ?? claim.run
+    return (await automationRepository.getRunReceipt({ ...scope, runId: claim.run.id, actingMemberId, includeOwnerRuns: !sharedRun }))?.run ?? claim.run
   }
 
   listRuns(scope: OwnerScope, automationId: string, input: { cursor?: string; limit?: number }) {
@@ -486,8 +557,9 @@ export class AutomationService {
     return automationRepository.listRunsInRange({ ...scope, from: input.from, to: input.to, cursor: input.cursor, limit: input.limit ?? 200 })
   }
 
-  getRun(scope: OwnerScope, runId: string) {
-    return automationRepository.getRunReceipt({ ...scope, runId })
+  async getRun(scope: OwnerScope, runId: string, options: Pick<Parameters<typeof automationRepository.getRunReceipt>[0], "actingMemberId" | "includeOwnerRuns" | "agentId"> = {}) {
+    if (!isDenTypeId("automationRun", runId)) return null
+    return automationRepository.getRunReceipt({ ...scope, runId, ...options })
   }
 
   async cancelRun(scope: OwnerScope, runId: string): Promise<AutomationRun | null> {
@@ -842,7 +914,7 @@ export class AutomationService {
     const engineKind = target.engineKind
       ?? (target.actionKind === "saved_script"
         ? CLOUD_CODEMODE_ENGINE_KIND
-        : await this.agentEngine({ organizationId: target.organizationId, ownerMemberId: target.ownerMemberId }, target.model))
+        : await this.agentEngine({ organizationId: target.organizationId, ownerMemberId: target.actingMemberId ?? target.ownerMemberId }, target.model))
     const headlessEngine = engineKind === HEADLESS_AGENT_ENGINE_KIND
     const claimed = await automationRepository.claimCloud({
       runId,
@@ -854,9 +926,11 @@ export class AutomationService {
       now: Date.now(),
     })
     if (!claimed) return
+    const actorScope = { organizationId: claimed.automation.organizationId, ownerMemberId: claimed.actingMemberId ?? claimed.automation.ownerMemberId }
+    const ownerRun = actorScope.ownerMemberId === claimed.automation.ownerMemberId
     const webAccess = headlessEngine || (runtime === "headless" && claimed.revision.action?.kind === "saved_script")
       ? { hasAccess: true }
-      : await this.getOpenWorkWebAccess(claimed.automation.organizationId, { memberId: claimed.automation.ownerMemberId })
+      : await this.getOpenWorkWebAccess(claimed.automation.organizationId, { memberId: actorScope.ownerMemberId })
     if (!webAccess.hasAccess) {
       const now = Date.now()
       await this.skipRun({
@@ -865,7 +939,7 @@ export class AutomationService {
         message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
         now,
       })
-      if (ownPlacement(claimed.revision, "cloud")) await automationRepository.markNeedsAttention({
+      if (ownerRun && ownPlacement(claimed.revision, "cloud")) await automationRepository.markNeedsAttention({
         automationId: claimed.automation.id,
         expectedRevisionId: claimed.revision.id,
         reason: {
@@ -956,6 +1030,29 @@ export class AutomationService {
       return
     }
 
+    const agentRun = claimed.automation.agentId
+      ? await admitPersonalAgentRun({
+        agentRevisionId: claimed.revision.agentRevisionId ?? undefined,
+        runId: claimed.run.id,
+        organizationId: claimed.automation.organizationId,
+        actingMemberId: claimed.actingMemberId ?? claimed.automation.ownerMemberId,
+        headless: engineKind === HEADLESS_AGENT_ENGINE_KIND,
+      })
+      : null
+    if (agentRun && !agentRun.ok) {
+      await this.completeCloud({
+        automationId: claimed.automation.id,
+        runId: claimed.run.id,
+        leaseOwner,
+        status: "failed",
+        resultSummary: agentRun.message,
+        updateArtifactState: false,
+        error: { code: agentRun.code, message: agentRun.message, retryable: false },
+        now: Date.now(),
+      })
+      return
+    }
+
     const controller = new AbortController()
     let monitoring = false
     const monitor = async () => {
@@ -1002,22 +1099,38 @@ export class AutomationService {
     interval.unref()
     const meeting = claimed.run.triggerContext
     const schedule = claimed.revision.schedule
-    const runAction = meeting?.kind === "calendar_meeting" && schedule.kind === "calendar"
+    const taskAction = meeting?.kind === "calendar_meeting" && schedule.kind === "calendar"
       ? { ...action, instructions: calendarTriggerPrompt({ instructions: action.instructions, trigger: schedule, meeting }) }
       : action
+    const organizationId = claimed.automation.organizationId
+    const agentId = claimed.automation.agentId
+    const memberId = claimed.actingMemberId ?? claimed.automation.ownerMemberId
     let result: CloudAgentExecution
     try {
+      const memory = agentId && await organizationFeatureEnabled(organizationId, "personalAgents")
+        ? await readPersonalAgentRunMemory({ organizationId, agentId, routineId: claimed.automation.id, memberId })
+        : undefined
+      const toolPermissions = !agentId && await cachedOrganizationFeatureEnabled(organizationId, "toolPermissions")
+      const preamble = toolPermissions ? organizationToolRuleInstructions(await readOrganizationWrittenToolRules(organizationId)) : []
+      const runAction = agentRun ? { ...taskAction, instructions: personalAgentRunInstructions({
+        agentName: agentRun.agentName, brief: agentRun.brief, instructions: taskAction.instructions,
+        organizationRules: agentRun.organizationRules, memory,
+      }) } : preamble.length ? { ...taskAction, instructions: [...preamble, taskAction.instructions].join("\n") } : taskAction
+      const mcpScopes = agentRun?.mcpScopes ?? (toolPermissions ? [automationRunScope(claimed.run.id)] : [])
       const state = await automationRepository.cloudRunState(claimed.run.id)
+      if (agentRun) markFeaturesUsed({ organizationId, memberId, keys: ["personalAgents"] })
       result = await executor({
-        organizationId: claimed.automation.organizationId,
-        ownerMemberId: claimed.automation.ownerMemberId,
+        organizationId,
+        ownerMemberId: memberId,
         automationRunId: claimed.run.id,
         automationName: claimed.automation.name,
         action: runAction,
         maximumRuntimeMs: claimed.revision.maximumRuntimeMs,
         previousReceipt: state?.receipt ?? null,
         workspaceId: runWorkspaceId(claimed.revision, "cloud"),
+        ...(mcpScopes.length ? { mcpScopes } : {}),
         signal: controller.signal,
+        ...(agentRun ? { forAgent: true, onModelResolved: (model: Parameters<typeof automationRepository.setCloudRunModel>[0]["model"]) => automationRepository.setCloudRunModel({ runId: claimed.run.id, leaseOwner, model }) } : {}),
         onAdmitted: async (receipt) => automationRepository.setCloudExecution({
           runId: claimed.run.id,
           leaseOwner,
@@ -1071,7 +1184,17 @@ export class AutomationService {
       error: result.ok ? null : { code: result.code, message: result.message, retryable: result.retryable },
       now: Date.now(),
     })
-    if (!result.ok && result.needsAttention && ownPlacement(claimed.revision, "cloud")) {
+    if (agentId && result.ok && (!claimed.actingMemberId || claimed.actingMemberId === claimed.automation.ownerMemberId)) {
+      try {
+        if (await organizationFeatureEnabled(organizationId, "personalAgents")) {
+          await savePersonalAgentRoutineState({ organizationId, agentId, runId: claimed.run.id, state: result.resultSummary,
+            memberId: claimed.actingMemberId ?? claimed.automation.ownerMemberId, writtenByAgent: false })
+        }
+      } catch {
+        logger.warn("Agent routine progress could not be saved", { run_id: claimed.run.id })
+      }
+    }
+    if ((!claimed.actingMemberId || claimed.actingMemberId === claimed.automation.ownerMemberId) && !result.ok && result.needsAttention && ownPlacement(claimed.revision, "cloud")) {
       const attentionCode = [
         "owner_membership_lost",
         "model_access_lost",

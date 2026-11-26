@@ -1527,6 +1527,13 @@
       "when": 1795657571148,
       "tag": "0218_remote_session_live_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 219,
+      "version": "5",
+      "when": 1795674920497,
+      "tag": "0219_agents_and_tool_permissions",
+      "breakpoints": true
     }
   ]
 }

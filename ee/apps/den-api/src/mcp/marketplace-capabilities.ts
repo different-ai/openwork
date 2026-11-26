@@ -1689,6 +1689,7 @@ export async function listAccessibleWorkflows(input: {
 
 export async function executeMarketplaceCapability(input: {
   buildTools?: BuildCodemodeTools
+  readOnly?: boolean
   body?: unknown
   configObjectId: string
   configObjectVersionId?: string
@@ -1766,6 +1767,7 @@ export async function executeMarketplaceCapability(input: {
   }
 
   if (canonicalConfigObjectType(row.configObject.objectType) === "workflow") {
+    if (input.readOnly) return { ok: false, error: "forbidden", message: "This agent can read the library, but cannot start a saved Workflow." }
     const orgMembershipId = input.member.orgMembershipId
     const live = liveRuntime?.success === true
       || (liveRuntime === undefined && workflowRunNeedsLiveRuntime(version.rawSourceText ?? "", input.body))

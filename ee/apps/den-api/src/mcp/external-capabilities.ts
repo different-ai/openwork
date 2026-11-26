@@ -47,8 +47,11 @@ import { compareCapabilityMatches, scoreText, tokenize } from "./search.js"
 import { EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT, scoreExternalTool, selectExternalMcpSearchConnections } from "./external-search-selection.js"
 import type { CapabilityMatch, CapabilityToolAnnotations } from "./search.js"
 import { AGENT_SOURCE_BLOCKED_MESSAGE, agentMayUseExternalTool, agentReadAllowlist, type AgentReadAllowlist } from "./agent-read-sources.js"
-import { connectionsWithheld, WORKBOT_CONNECTION_WITHHELD_MESSAGE } from "./workbot-turn-limits.js"
+import { AGENT_TOOL_WITHHELD_MESSAGE, connectionsWithheld, toolsWithheld, WORKBOT_CONNECTION_WITHHELD_MESSAGE } from "./workbot-turn-limits.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
+import { personalAgentRunId } from "./workbot-turn-limits.js"
+import { toolPermissionRefusal } from "../tool-permissions/dispatch.js"
+import { personalAgentCredentialMember } from "../personal-agents/shared-logins.js"
 import {
   codemodeScriptPath,
   resolveCodemodeConnectionNamespaceContext,
@@ -87,6 +90,8 @@ export type McpMemberIdentity = {
   orgMembershipId: DenTypeId<"member">
   teamIds: DenTypeId<"team">[]
   withheldConnectionIds?: ReadonlySet<string>
+  withheldTools?: ReadonlyMap<string, ReadonlySet<string>>
+  personalAgentScopes?: ReadonlySet<string>
 }
 
 export async function resolveMcpMemberIdentity(input: {
@@ -98,7 +103,23 @@ export async function resolveMcpMemberIdentity(input: {
 
 export function mcpMemberForToken<T extends McpMemberIdentity>(member: T, scopes: ReadonlySet<string>): T {
   const withheldConnectionIds = connectionsWithheld(scopes)
-  return withheldConnectionIds ? { ...member, withheldConnectionIds } : member
+  const withheldTools = toolsWithheld(scopes)
+  const personalAgentScopes = personalAgentRunId(scopes) === undefined ? undefined : scopes
+  if (!withheldConnectionIds && !withheldTools && !personalAgentScopes) return member
+  return {
+    ...member,
+    ...(withheldConnectionIds ? { withheldConnectionIds } : {}),
+    ...(withheldTools ? { withheldTools } : {}),
+    ...(personalAgentScopes ? { personalAgentScopes } : {}),
+  }
+}
+
+export function externalMcpToolWithheld(
+  member: Pick<McpMemberIdentity, "withheldTools"> | null | undefined,
+  connectionId: string,
+  toolName: string,
+): boolean {
+  return member?.withheldTools?.get(connectionId)?.has(toolName) === true
 }
 
 export function externalMcpConnectionHold(
@@ -725,6 +746,7 @@ async function probeExternalMcpConnection(input: {
   deadline: ExternalMcpLifecycleDeadline
   scriptNamespace?: string
   agent?: AgentReadAllowlist | null
+  scopes?: ReadonlySet<string>
 }): Promise<ExternalCapabilityMatch[]> {
   const matches: ExternalCapabilityMatch[] = []
   const add = (match: ExternalCapabilityMatch) => {
@@ -754,10 +776,13 @@ async function probeExternalMcpConnection(input: {
     }
     return matches
   }
+  const credentialMemberId = await personalAgentCredentialMember({
+    scopes: input.scopes ?? input.member.personalAgentScopes, connection, actingMemberId: input.member.orgMembershipId,
+  })
   if (connection.credentialMode === "per_member") {
     const account = await getConnectedAccountForListing({
       organizationId: connection.organizationId,
-      orgMembershipId: input.member.orgMembershipId,
+      orgMembershipId: credentialMemberId,
       providerId: connection.id,
     })
     const gap = memberCredentialGap(connection, account)
@@ -801,7 +826,7 @@ async function probeExternalMcpConnection(input: {
   try {
     tools = await listExternalMcpToolsThroughSearchCache({
       connection,
-      member: input.member,
+      member: { ...input.member, orgMembershipId: credentialMemberId },
       redirectUriBase: input.redirectUriBase,
       deadline: input.deadline,
       requestTimeoutMs: EXTERNAL_MCP_SEARCH_REQUEST_TIMEOUT_MS,
@@ -836,6 +861,7 @@ async function probeExternalMcpConnection(input: {
 
   for (const tool of tools) {
     if (isToolDisabled(connection.toolPolicy, tool.name)) continue
+    if (externalMcpToolWithheld(input.member, connection.id, tool.name)) continue
     if (input.agent && !agentMayUseExternalTool(input.agent, connection, tool)) continue
     const summary = tool.description ?? tool.title ?? tool.name
     const score = scoreExternalTool(connection.name, tool, input.queryTokens)
@@ -894,7 +920,8 @@ export async function searchExternalCapabilities(input: {
   const scriptNamespaces = namespaceContext?.namespaces.externalMcp
   const member = input.member
   const selectedConnections = selectExternalMcpSearchConnections(connections, queryTokens, EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT,
-    (connection) => cachedSearchTools(connection, member))
+    (connection) => connection.credentialMode === "per_member" && (member.personalAgentScopes || (input.scopes && personalAgentRunId(input.scopes)))
+      ? undefined : cachedSearchTools(connection, member))
   input.reportCoverage?.({
     eligibleConnections: connections.length,
     probedConnections: selectedConnections.length,
@@ -906,7 +933,8 @@ export async function searchExternalCapabilities(input: {
     limit,
     probe: (connection, sharedDeadline) => probeExternalMcpConnection({
       connection,
-      member: input.member!,
+      member,
+      scopes: input.scopes,
       queryTokens,
       redirectUriBase: input.redirectUriBase,
       limit,
@@ -962,6 +990,7 @@ export type ExternalCapabilityExecuteResult =
         | "provider_error"
         | "invalid_capability_arguments"
         | "policy_blocked"
+        | "needs_approval"
         | "insufficient_mcp_scope"
       reason?: "provider_not_read_only" | "provider_destructive" | "provider_schema_changed"
       message: string
@@ -1088,8 +1117,11 @@ export async function probeExternalConnectionStatus(input: {
   if (!canUse) {
     return { ok: false, error: "forbidden", message: `You have not been granted access to "${connection.name}".` }
   }
+  const credentialMemberId = await personalAgentCredentialMember({
+    scopes: input.member.personalAgentScopes, connection, actingMemberId: input.member.orgMembershipId,
+  })
   const account = connection.credentialMode === "per_member" && !connection.oauthIssuerReviewRequiredAt
-    ? await getConnectedAccountForListing({ organizationId: connection.organizationId, orgMembershipId: input.member.orgMembershipId, providerId: connection.id })
+    ? await getConnectedAccountForListing({ organizationId: connection.organizationId, orgMembershipId: credentialMemberId, providerId: connection.id })
     : null
   return listedExternalConnectionStatus(connection, account)
 }
@@ -1148,6 +1180,7 @@ async function prepareExternalCapability(input: {
   member: McpMemberIdentity | null
   connectionId: string
   toolName: string
+  scopes?: ReadonlySet<string>
 }): Promise<PreparedExternalCapability | ExternalCapabilityFailure> {
   if (!input.member) {
     return { ok: false, error: "forbidden", message: "No active org membership for this token." }
@@ -1172,7 +1205,7 @@ async function prepareExternalCapability(input: {
     return { ok: false, error: "unknown_capability", message: `Connection "${input.connectionId}" is a native provider connector and does not expose MCP tools.` }
   }
   const hold = externalMcpConnectionHold(connection, input.member)
-  if (hold?.reason === "withheld_from_workbot") {
+  if (hold?.reason === "withheld_from_workbot" && !input.member.personalAgentScopes) {
     return { ok: false, error: "forbidden", message: hold.message }
   }
 
@@ -1183,6 +1216,17 @@ async function prepareExternalCapability(input: {
   })
   if (!canUse) {
     return { ok: false, error: "forbidden", message: `You have not been granted access to "${connection.name}".` }
+  }
+
+  if (!input.member.personalAgentScopes && externalMcpToolWithheld(input.member, connection.id, input.toolName)) {
+    return {
+      ok: false,
+      error: "policy_blocked",
+      capability: buildExternalCapabilityName(connectionId, input.toolName),
+      message: `${input.toolName} ${AGENT_TOOL_WITHHELD_MESSAGE}`,
+      sameArgumentsRetryable: false,
+      retry: { action: "search_capabilities", searchRequired: true },
+    }
   }
 
   const policyDecision = evaluateToolPolicy(connection.toolPolicy, input.toolName)
@@ -1226,9 +1270,12 @@ async function prepareExternalCapability(input: {
   let member: { orgMembershipId: DenTypeId<"member"> } | undefined
   let account: Awaited<ReturnType<typeof getConnectedAccount>> = null
   if (connection.credentialMode === "per_member") {
+    const credentialMemberId = await personalAgentCredentialMember({
+      scopes: input.scopes ?? input.member.personalAgentScopes, connection, actingMemberId: input.member.orgMembershipId,
+    })
     account = await getConnectedAccount({
       organizationId: connection.organizationId,
-      orgMembershipId: input.member.orgMembershipId,
+      orgMembershipId: credentialMemberId,
       providerId: connection.id,
     })
     const gap = memberCredentialGap(connection, account)
@@ -1242,7 +1289,7 @@ async function prepareExternalCapability(input: {
         connectionStatus: gap.status,
       }
     }
-    member = { orgMembershipId: input.member.orgMembershipId }
+    member = { orgMembershipId: credentialMemberId }
   } else if (!hasSharedCredential(connection)) {
     const message = `"${connection.name}" is not connected yet.`
     return {
@@ -1260,7 +1307,7 @@ async function prepareExternalCapability(input: {
       organizationId: connection.organizationId,
       connectionId: connection.id,
       updatedAt: connection.updatedAt,
-      orgMembershipId: input.member.orgMembershipId,
+      orgMembershipId: member?.orgMembershipId ?? input.member.orgMembershipId,
       credentialIdentity: fingerprintReadinessIdentity(connection, account),
     },
   }
@@ -1340,6 +1387,7 @@ export async function executeExternalCapability(input: {
   requireReadOnly?: boolean
   refuseDestructive?: boolean
   requireSchemaMatch?: boolean
+  toolPermissionsEnabled?: boolean
   usageSource: CapabilityUsageSource
 }): Promise<ExternalCapabilityExecuteResult> {
   const prepared = await prepareExternalCapability(input)
@@ -1431,10 +1479,15 @@ export async function executeExternalCapability(input: {
       return { ok: true, tool, schemaWarnings }
     }
 
+    const permissionRefusal = async (tool: ExternalMcpTool): Promise<ExternalCapabilityFailure | null> => {
+      const refusal = await toolPermissionRefusal({ scopes: input.scopes, connection, tool,
+        actingMemberId: input.member?.orgMembershipId, teamIds: input.member?.teamIds, toolPermissionsEnabled: input.toolPermissionsEnabled })
+      return refusal ? { ok: false, capability: buildExternalCapabilityName(connection.id, input.toolName), ...refusal } : null
+    }
     const forwardedArguments = isRecord(input.args) ? input.args : {}
     let checked: CheckedTool
     let providerCall: ReturnType<typeof callExternalMcpTool>
-    if (input.requireReadOnly) {
+    if (input.requireReadOnly && personalAgentRunId(input.scopes) === undefined) {
       let refusal: ExternalCapabilityFailure | undefined
       let passed!: (value: CheckedTool) => void
       let failed!: (cause: unknown) => void
@@ -1446,10 +1499,15 @@ export async function executeExternalCapability(input: {
         args: forwardedArguments,
         member,
         lifecycleDeadline: deadline,
-        beforeCall: (tools) => {
+        beforeCall: async (tools) => {
           const result = check(tools)
           if (!result.ok) {
             refusal = result
+            throw new Error("OpenWork refused the call before it reached the provider.")
+          }
+          const blocked = await permissionRefusal(result.tool)
+          if (blocked) {
+            refusal = blocked
             throw new Error("OpenWork refused the call before it reached the provider.")
           }
           passed(result)
@@ -1464,13 +1522,16 @@ export async function executeExternalCapability(input: {
       }
     } else {
       const listTools = () => listExternalMcpTools(connection, redirectUri, member, undefined, deadline)
-      let result = check(await cachedExternalToolCatalog(catalogKey, listTools))
-      if (!result.ok && result.error === "unknown_capability") {
+      const agentMember = personalAgentRunId(input.scopes) === undefined ? null : input.member
+      let result = check(await (agentMember ? listTools() : cachedExternalToolCatalog(catalogKey, listTools)))
+      if (!agentMember && !result.ok && result.error === "unknown_capability") {
         forgetExternalToolCatalog(catalogKey)
         result = check(await cachedExternalToolCatalog(catalogKey, listTools))
       }
       if (!result.ok) return result
       checked = result
+      const refusal = await permissionRefusal(checked.tool)
+      if (refusal) return refusal
       providerCall = callExternalMcpTool({
         connection,
         redirectUri,

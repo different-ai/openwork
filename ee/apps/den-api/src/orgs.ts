@@ -1,3 +1,4 @@
+import { removeMemberPersonalAgentShares } from "./personal-agents/share-cleanup.js"
 import { recordFreeAutoFounder } from "@openwork-ee/den-db"
 import { assertWorkspaceCreateAllowed } from "./workspace-create-limit.js"
 import { peopleMemberCondition } from "./setup-agent-members.js"
@@ -2174,6 +2175,9 @@ export async function removeOrganizationMember(input: {
       .update(MemberTable)
       .set({ removedAt, removedByOrgMember: input.removedByOrgMemberId ?? null })
       .where(and(eq(MemberTable.id, member.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
+    if (env.features.deployment === "cloud") {
+      await removeMemberPersonalAgentShares(tx, input.organizationId, member.id)
+    }
     const auditEventIds = await appendDomainChanges(tx, capture, [memberRemovedEvent({ organizationId: input.organizationId, member, removedByMemberId: input.removedByOrgMemberId })])
 
     return { ok: true, member, auditEventIds }

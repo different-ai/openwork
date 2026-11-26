@@ -43,7 +43,10 @@ export function canViewDiagnostics(access: DenOrgAccessFlags): boolean {
     || access.canViewAllConnections;
 }
 
+export const agentsAdminRoute = `${getOrgDashboardRoute()}/agents`;
+
 const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
+  { prefix: agentsAdminRoute, allowed: (access) => access.isAdmin, needs: [] },
   {
     prefix: getAiGatewayRoute(),
     allowed: (access) => canOpenGatewayArea(access, "any") || access.canViewModelsSettings,
@@ -108,6 +111,7 @@ export function canOpenAdminRoute(pathname: string, access: DenOrgAccessFlags, c
 }
 
 export function adminRouteLockedMessage(pathname: string): string {
+  if (matchesPrefix(pathname, agentsAdminRoute)) return "Only organization owners and admins can manage agents.";
   const labels = (ruleFor(pathname)?.needs ?? []).map((key) => `“${getPermissionDefinition(key).label}”`);
   const needs = labels.length === 0
     ? "an organization permission"

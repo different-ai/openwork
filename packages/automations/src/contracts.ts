@@ -12,13 +12,13 @@ function canonical(value: unknown): string {
 /**
  * Portable stable digest; persistence may additionally use a cryptographic digest.
  *
- * Callers must include `workspaceId` only when it is set: a pinned workspace is
- * behavior-changing, but records created before pinning existed must keep their
- * digests byte-identical.
+ * Callers must include `workspaceId` and `agentRevisionId` only when they are
+ * set: a pinned workspace or agent version is behavior-changing, but records
+ * created before pinning existed must keep their digests byte-identical.
  */
 export function automationRevisionDigest(
   revision: Pick<AutomationRevision, "instructions" | "schedule" | "model" | "maximumRuntimeMs">
-    & Partial<Pick<AutomationRevision, "action" | "executionTarget" | "workspaceId">>,
+    & Partial<Pick<AutomationRevision, "action" | "executionTarget" | "workspaceId" | "agentRevisionId">>,
 ): string {
   const input = canonical(revision)
   let left = 0x811c9dc5

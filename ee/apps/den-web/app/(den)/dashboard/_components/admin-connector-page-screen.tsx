@@ -4,7 +4,7 @@ import { ChevronDown, Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useRef, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { getLibraryConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, getToolTesterRoute, permissionLockReason } from "../../_lib/den-org";
+import { getLibraryConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, getToolTesterRoute, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast } from "./access-summary";
@@ -33,6 +33,7 @@ import {
 } from "./mcp-connections-data";
 import { NativeProviderSettings } from "./native-provider-setup";
 import { SlackAssistantSetup } from "./slack-assistant-setup";
+import { ToolPermissionsSection } from "./tool-permissions/section";
 import { WhoCanUseIt } from "./who-can-use-it";
 
 function UseInAnotherApp({ connection, lockedReason }: { connection: ExternalMcpConnection; lockedReason: string | null }) {
@@ -266,6 +267,16 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
       ) : null}
 
       {native ? null : <WhatYourAiCanDo tools={tools.data?.tools ?? []} loading={tools.isLoading} signedIn={signedIn} error={Boolean(tools.error)} />}
+
+      {orgContext && memberAccess?.isAdmin && !native && !aliasOnly && orgFeatureEnabled(orgContext, "toolPermissions") ? (
+        <ToolPermissionsSection key={`${orgContext.organization.id}:${connectionId}`} org={orgContext} connectionId={connectionId}
+          signedIn={signedIn} catalog={tools} signingIn={signIn.pendingId === connectionId}
+          signInLabel={connection.authType === "oauth" && !connection.issuerReviewRequired ? "Sign in" : "Open settings"}
+          onSignIn={() => {
+            if (connection.authType === "oauth" && !connection.issuerReviewRequired) void signIn.signIn(connection);
+            else setSettingsOpen(true);
+          }} />
+      ) : null}
 
       {details.length > 0 ? (
         <section className="flex flex-col gap-2.5">

@@ -10,7 +10,7 @@ import { verifyChildTarget } from "@/lib/verify-child-target";
 import { isTaskToolPart, taskChildSessionId } from "@/lib/build-in-tools";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { UIMessage } from "ai";
+import type { DynamicToolUIPart, UIMessage } from "ai";
 import { hashKey, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, CircleAlert, LoaderCircle, Minimize2 } from "lucide-react";
@@ -179,6 +179,8 @@ import {
 import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
 import { NoCreatedSkillSharing, type CreatedSkillSharingProviderProps } from "@/react-app/kernel/created-skill-sharing";
+import { useSessionExtensions } from "@/react-app/kernel/session-extensions";
+import { personalAgentProposalsInParts } from "@/components/tools/openwork-automation-proposal";
 import type { ComponentType } from "react";
 import type {
   ChatToolReconnectAction,
@@ -1126,6 +1128,14 @@ function uncopiedChatReason(error: unknown): string | undefined {
 
 export function SessionSurface(props: SessionSurfaceProps) {
   const SkillSharingProvider = props.skillSharingProvider ?? NoCreatedSkillSharing;
+  const extensions = useSessionExtensions();
+  const extensionOwnsSession = extensions.ownedSessionIds.has(props.sessionId);
+  const approvalsEnabled = !extensionOwnsSession && extensions.renderChatApprovals !== undefined;
+  const completedAt = useSessionActivityStore((state) => {
+    if (!approvalsEnabled) return 0;
+    const record = state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId];
+    return record && !record.runActive && record.runStartedAt > 0 ? record.runStatusAt : 0;
+  });
   const local = useLocal();
   const { config: shellConfig } = useShellConfig();
   const showThinking = local.prefs.showThinking;
@@ -3358,6 +3368,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
     void typeComposerText(prompt);
   }, [typeComposerText]);
 
+  const latestAgentProposalId = useMemo(() => {
+    if (!extensionOwnsSession) return null;
+    return visibleMessages.flatMap((message) => message.role === "assistant" ? personalAgentProposalsInParts(message.parts) : [])
+      .at(-1)?.toolCallId ?? null;
+  }, [extensionOwnsSession, visibleMessages]);
+  const AgentProposalCard = extensions.ProposalCard;
+  const renderAgentProposal = useCallback((part: DynamicToolUIPart) => (
+    <AgentProposalCard
+      sessionId={props.sessionId}
+      workspaceId={props.workspaceId}
+      part={part}
+      latest={latestAgentProposalId === null || latestAgentProposalId === part.toolCallId}
+      readOnly={archived || !archiveStateKnown || archiveHeld}
+      setPrompt={handleMessageListSetPrompt}
+    />
+  ), [AgentProposalCard, archived, archiveStateKnown, archiveHeld, handleMessageListSetPrompt, latestAgentProposalId, props.sessionId, props.workspaceId]);
+
   const resumeGuardRef = useRef(createSingleFlight());
   const [resuming, setResuming] = useState(false);
   const handleResumeInterrupted = useCallback(async (recoveryPrompt: string) => {
@@ -3819,6 +3846,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
             ) : props.chatPane === "secondary" && snapshot && renderedMessages.length === 0 ? (
               null
             ) : (
+              <extensions.TranscriptFrame sessionId={props.sessionId}>
+              {snapshot && renderedMessages.length === 0 ? <extensions.Greeting sessionId={props.sessionId} setPrompt={handleMessageListSetPrompt} /> : null}
               <DevProfiler id="MessageList">
                 <OpenTargetProvider
                   client={props.client}
@@ -3846,7 +3875,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       showThinking={showThinking}
                       highlightQuery={findHighlightQuery}
                       developerMode={props.developerMode}
-                      displaySuggestions={!archived && shellConfig.starterCards && snapshot !== null && snapshot.messages.length === 0}
+                      displaySuggestions={!archived && !extensionOwnsSession && shellConfig.starterCards && snapshot !== null && snapshot.messages.length === 0}
+                      renderAgentProposal={extensions.proposalCards ? renderAgentProposal : undefined}
                       providerConnectedCount={props.providerConnectedCount ?? 0}
                       connectorIdentities={connectorIdentities}
                       syncDegraded={runSyncHealth.degraded}
@@ -3892,6 +3922,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   </EnvironmentVariableProvider>
                 </OpenTargetProvider>
               </DevProfiler>
+              <extensions.TranscriptFooter sessionId={props.sessionId} />
+              </extensions.TranscriptFrame>
             )}
             </SessionHistoryBoundary>
             {renderedMessages.length === 0 ? threadQuestionCard : null}
@@ -3921,6 +3953,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       </div>
 
       <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2 max-lg:pb-0">
+        {approvalsEnabled && !archived && extensions.renderChatApprovals?.(completedAt)}
         <GatewayUsageApprovalNotice />
         {gatewayNotice && gatewayScope ? <GatewayUsageNotice key={`${gatewayUsage.scopeKey}:${sessionOwner}:${gatewayCloudProviderId ?? ""}`} state={gatewayNotice} status={gatewayScope.status} stale={gatewayUsage.query.isError}
           providerName={gatewayScope.providerName} canSwitchProvider={gatewayCanSwitchProvider} sessionId={props.sessionId} messageSaved={hideGatewayError || hideDirectGatewayError} /> : null}

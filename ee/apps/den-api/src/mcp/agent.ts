@@ -28,6 +28,7 @@ import { getMcpResourceContext, isFirstPartyMcpPrincipal, mcpPrincipalCredential
 import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError, auditUnavailableToolResult, mcpAuditPrincipal, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus } from "../audit/mcp-service-audit.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { agentCheckRequestsAvailable, registerAgentCheckRequestTool } from "./agent-check-request.js"
+import { AGENT_NOTE_PROGRESS_TOOL_NAME, AGENT_REMEMBER_TOOL_NAME, registerAgentMemoryTools } from "./agent-memory-tools.js"
 import { HARNESS_FEEDBACK_INSTRUCTIONS, harnessFeedbackAvailable, registerHarnessFeedbackTool } from "./harness-feedback.js"
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
@@ -51,7 +52,7 @@ import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
 import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
 import { env } from "../env.js"
-import { getOrganizationFeatures } from "../features.js"
+import { cachedOrganizationFeatureContext } from "../features.js"
 import { getOrganizationContextForUser } from "../orgs.js"
 import { executeLiveArtifactWorkflow, getWorkflowDetail, getWorkflowSnapshot } from "../workflows.js"
 import { artifactFreshness } from "../workflow-artifacts.js"
@@ -112,7 +113,9 @@ import {
   supportsConnectNativeSkills,
 } from "./connect-mcp-server-index.js"
 import { registerAgentSkillTools } from "./skill-created-app.js"
-import { registerAgentSkillCatalogTools, standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
+import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
+import { personalAgentRunId } from "./workbot-turn-limits.js"
+import { GET_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, registerAgentSkillCatalogTools, standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
 import { isSkillDocumentUri, isSkillFileUri, readCachedSkill, rememberSkillRead, skillReadResponse } from "./skill-read-cache.js"
 import {
   parseSkillSyncRequest,
@@ -494,6 +497,22 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       return new Response(null, { status: 202 })
     }
     const organizationId = normalizeDenTypeId("organization", principal.organizationId)
+    const personalRun = personalAgentRunId(principal.scopes)
+    if (personalRun !== undefined) {
+      const refusal = await personalAgentRunDispatchRefusal(principal.scopes, organizationId)
+      if (refusal && method !== "tools/call") {
+        return c.json({ jsonrpc: "2.0", id: requestInfo.id, error: { code: -32000, message: refusal.message } })
+      }
+      if (method === "tools/call") {
+        if (requestInfo.id === null) return new Response(null, { status: 202 })
+        const allowed = new Set<string | null>([SEARCH_CAPABILITIES_TOOL_NAME, EXECUTE_CAPABILITY_TOOL_NAME,
+          EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME, LIST_SKILLS_TOOL_NAME, GET_SKILL_TOOL_NAME, AGENT_REMEMBER_TOOL_NAME, AGENT_NOTE_PROGRESS_TOOL_NAME])
+        const blocked = refusal ?? (allowed.has(requestInfo.toolName) ? null : personalAgentPolicyRefusal(PERSONAL_AGENT_UNAPPROVABLE_WRITE))
+        if (blocked) return c.json({ jsonrpc: "2.0", id: requestInfo.id, result: {
+          isError: true, content: textContent(JSON.stringify(blocked)), structuredContent: blocked,
+        } })
+      }
+    }
     const skillReadUri = method === "resources/read" && requestInfo.id !== null && isSkillDocumentUri(requestInfo.resourceUri)
       ? requestInfo.resourceUri
       : null
@@ -516,7 +535,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
 
     const finishIndexTiming = startMcpAppTiming("den.agent-index-read")
     const catalog = await getCatalog(app as unknown as Hono, c.env)
-    const organizationFeatures = await getOrganizationFeatures(organizationId, { userId: principal.userId })
+    const { features: organizationFeatures, organizationToolPermissions } = await cachedOrganizationFeatureContext(organizationId, principal.userId)
     const member = await resolveMcpMember({
       userId: principal.userId,
       organizationId: principal.organizationId,
@@ -544,6 +563,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       redirectUriBase,
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationFeatures,
+    organizationToolPermissions,
       audit: auditPrincipal,
       usageSource: "agent",
     })
@@ -618,7 +638,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       return skillBatchResponse(requestInfo.id, contents)
     }
     const executeCapabilityTool = async ({ name, arguments: args, schemaDigest, path, query, body }: CapabilityCall & { schemaDigest?: string }) => {
-      const plugin = appServersEnabled ? parseMarketplaceCapabilityName(name) : null
+      const plugin = appServersEnabled && !personalRun ? parseMarketplaceCapabilityName(name) : null
       const definition = plugin && await isActiveMcpApp({ organizationId: principal.organizationId, appId: plugin.configObjectId })
         ? await loadMcpAppServerDefinition({ ...appAccess, appId: plugin.configObjectId }).catch(() => null)
         : null
@@ -659,6 +679,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       remoteSessionEvents: organizationFeatures.mcpThreads,
       canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
       myAgent: Boolean(memberIdentity && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
+      personalAgents: Boolean(organizationFeatures.personalAgents && memberIdentity && principal.scopes.has(DEN_MCP_WRITE_SCOPE) && !capabilityContext.limitedAgentRun),
       skillsExtension,
       nativeEvents: Boolean(auditPrincipal),
       skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,
@@ -666,6 +687,9 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     if (auditPrincipal) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE), { poll: organizationFeatures.mcpThreads })
     if (harnessFeedback) registerHarnessFeedbackTool(server, principal)
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
+    if (personalRun !== undefined && memberIdentity && organizationFeatures.personalAgents) {
+      registerAgentMemoryTools(server, { organizationId, runId: personalRun, memberId: memberIdentity.orgMembershipId })
+    }
     if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true })) {
       registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })
     }

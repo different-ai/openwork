@@ -3514,6 +3514,11 @@ function createRoutes(
     jsonResponse({ enabled: await managedDesktopPolicy(config).remoteComputersEnabled() }));
   addRoute(routes, "GET", "/managed-policy/browser-secret-handles", "client", async () =>
     jsonResponse({ enabled: await managedDesktopPolicy(config).browserSecretHandlesEnabled() }));
+  addRoute(routes, "GET", "/managed-policy/personal-agents", "client", async () => {
+    const response = jsonResponse({ enabled: await managedDesktopPolicy(config).personalAgentsEnabled() });
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  });
   addRoute(routes, "GET", "/managed-policy/private-values", "client", async () =>
     jsonResponse(await managedDesktopPolicy(config).privateValuePolicy()));
   addRoute(routes, "POST", "/managed-policy/private-values/record", "client", async (ctx) => {
@@ -3885,7 +3890,10 @@ function createRoutes(
     },
   });
 
-  registerUiControlRoutes({ routes, jsonResponse, readJsonBody, requireClientScope });
+  registerUiControlRoutes({
+    routes, jsonResponse, readJsonBody, requireClientScope,
+    cachedPersonalAgentsEnabled: () => managedDesktopPolicy(config).cachedPersonalAgentsEnabled(),
+  });
 
   registerFileRoutes({
     routes,

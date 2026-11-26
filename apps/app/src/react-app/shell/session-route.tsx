@@ -116,6 +116,15 @@ import { ActivityPage } from "@/react-app/domains/activity/activity-page";
 import type { ActivityResource } from "@/react-app/kernel/activity-types";
 import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
+import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
+import { useQueryCacheState } from "@/react-app/infra/query-cache-state";
+import { agentPromptNoteParts } from "@/react-app/domains/agents/agent-prompt-note";
+import { usePersonalAgentSessionExtensions } from "@/react-app/domains/agents/agents-extension";
+import { PersonalAgentsProvider, type AgentScope, type AgentsRuntime } from "@/react-app/domains/agents/agents-runtime";
+import { useAgentNames } from "@/react-app/domains/agents/use-agents";
+import { SessionExtensionsProvider } from "@/react-app/kernel/session-extensions";
+import { ApprovalLoadError, ApprovalRefresh, ToolApprovalsStack } from "@/react-app/domains/tool-approvals/tool-approvals-stack";
+import { RunApprovalSlot, useAutomationApprovals } from "@/react-app/domains/tool-approvals/run-approval-slot";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { remoteThreadAttentionBySession, setRemoteSessionLiveSync, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { CreatedSkillSharingProvider } from "./created-skill-sharing-provider";
@@ -411,7 +420,26 @@ function focusedWorkbenchPaneOwner() {
     : null;
 }
 
+function personalAgentsOrganizationIdNow(snapshot: { scope: AgentScope; token: string } | null): AgentScope | null {
+  if (!snapshot) return null;
+  const { scope, token } = snapshot;
+  const settings = readDenSettings();
+  if (settings.activeOrgId?.trim() !== scope.organizationId || settings.baseUrl !== scope.denBaseUrl || settings.authToken?.trim() !== token) return null;
+  const features = getReactQueryClient().getQueryData<Record<string, boolean>>(["den", "org-features", scope.organizationId]);
+  return features?.personalAgents === true ? scope : null;
+}
+
+const NO_ORG_FEATURES: Record<string, boolean> = {};
+
 export function SessionRoute() {
+  const agentsDen = useAutomationsDenContext();
+  const orgFeaturesKey = useMemo(
+    () => (agentsDen.ready && agentsDen.organizationId ? ["den", "org-features", agentsDen.organizationId] : null),
+    [agentsDen.ready, agentsDen.organizationId],
+  );
+  const orgFeatures = useQueryCacheState<Record<string, boolean>>(orgFeaturesKey, NO_ORG_FEATURES);
+  const personalAgentsEnabled = orgFeatures.personalAgents === true;
+  const toolPermissionsEnabled = orgFeatures.toolPermissions === true;
   const navigate = useNavigate();
   const location = useLocation();
   const appsRouteActive = /^(?:\/apps|\/dashboard\/apps)(?:\/|$)/.test(location.pathname);
@@ -447,6 +475,18 @@ export function SessionRoute() {
   });
   const automationsRouteActive = automationsSurfaceAvailable && automationsRouteRequested;
   const denSettings = readDenSettings();
+  const personalAgentsIdentity = denAuth.verifiedIdentity;
+  const personalAgentsToken = denSettings.authToken?.trim();
+  const personalAgentsScope = useMemo<AgentScope | null>(() => denAuth.isSignedIn && personalAgentsToken && personalAgentsIdentity
+    && personalAgentsIdentity.organizationId === denSettings.activeOrgId?.trim()
+    ? {
+      denBaseUrl: denSettings.baseUrl,
+      organizationId: personalAgentsIdentity.organizationId,
+      principal: personalAgentsIdentity.principalId,
+    }
+    : null, [denAuth.isSignedIn, denSettings.activeOrgId, denSettings.baseUrl, personalAgentsIdentity, personalAgentsToken]);
+  const personalAgentsSnapshot = useRef<{ scope: AgentScope; token: string } | null>(null);
+  personalAgentsSnapshot.current = personalAgentsScope && personalAgentsToken ? { scope: personalAgentsScope, token: personalAgentsToken } : null;
   const retainedArtifactsScope = dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity
     && denAuth.verifiedIdentity.organizationId === denSettings.activeOrgId
     ? JSON.stringify([denSettings.baseUrl, denSettings.apiBaseUrl, denAuth.verifiedIdentity.principalId, denAuth.verifiedIdentity.organizationId])
@@ -1791,6 +1831,7 @@ export function SessionRoute() {
                   }
 
                   const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
+                  parts.push(...agentPromptNoteParts(targetSessionId, personalAgentsOrganizationIdNow(personalAgentsSnapshot.current)));
                   assertCurrent();
                   const system = await buildOpenworkSessionSystemContext(client, {
                     workspaceId: selectedWorkspaceId,
@@ -2164,6 +2205,7 @@ export function SessionRoute() {
                     return;
                   }
                   const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
+                  parts.push(...agentPromptNoteParts(targetSessionId, personalAgentsOrganizationIdNow(personalAgentsSnapshot.current)));
                   assertCurrent();
                   const system = await buildOpenworkSessionSystemContext(endpoint.client, {
                     workspaceId: workspace.id,
@@ -2715,6 +2757,51 @@ export function SessionRoute() {
     openNewSessionDraft({ workspaceId }, navigate);
     focusPromptSoon();
   }, [navigate]);
+
+  const renameSessionTitle = useCallback(async (sessionId: string, nextTitle: string, workspaceId: string) => {
+    const trimmed = nextTitle.trim();
+    if (!trimmed) return;
+    const owner = workspaces.find((workspace) => workspace.id === workspaceId
+      && sessionsByWorkspaceIdRef.current[workspace.id]?.some((session) => session.id === sessionId));
+    const endpoint = owner ? endpointForSessionWorkspace(owner) : null;
+    if (!owner || !endpoint) throw new Error("The session's workspace is no longer connected.");
+    const createEngineClient = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? createClientV2 : createClient;
+    const ownerClient = createEngineClient(endpoint.opencodeBaseUrl, owner.path, { token: endpoint.token, mode: "openwork" });
+    unwrap(await ownerClient.session.update({ sessionID: sessionId, title: trimmed, directory: owner.path }));
+    await reloadWorkspaceSessions(owner.id);
+  }, [endpointForSessionWorkspace, reloadWorkspaceSessions, workspaces]);
+
+  const agentsRuntime = useMemo<AgentsRuntime | null>(() => {
+    if (!personalAgentsEnabled || !agentsDen.ready || !agentsDen.client || !personalAgentsScope || !selectedWorkspaceId) return null;
+    return {
+      ...personalAgentsScope,
+      client: agentsDen.client,
+      workspaceId: selectedWorkspaceId,
+      selectedSessionId: selectedSessionId ?? null,
+      createSession: (workspaceId) => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, "primary"),
+      openSession: (workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId),
+      renameSession: (workspaceId, sessionId, title) => void renameSessionTitle(sessionId, title, workspaceId).catch(() => undefined),
+      sessionState: async (workspaceId, sessionId) => {
+        if (workspaceId !== selectedWorkspaceId || !opencodeClient) return "unknown";
+        try {
+          const found = await opencodeClient.session.get({ sessionID: sessionId });
+          if (found.data) return found.data.time.archived ? "gone" : "open";
+          return found.response?.status === 404 ? "gone" : "unknown";
+        } catch {
+          return "unknown";
+        }
+      },
+    };
+  }, [agentsDen.client, agentsDen.ready, handleCreateTaskInWorkspaceWithOpenMode, navigateToWorkspaceSession, opencodeClient, personalAgentsEnabled, personalAgentsScope, renameSessionTitle, selectedSessionId, selectedWorkspaceId]);
+  const agentExtensions = usePersonalAgentSessionExtensions(agentsRuntime);
+  const approvalsScope = useMemo(() => toolPermissionsEnabled && agentsDen.ready && agentsDen.client && personalAgentsScope
+    ? { ...personalAgentsScope, client: agentsDen.client } : null, [agentsDen.client, agentsDen.ready, personalAgentsScope, toolPermissionsEnabled]);
+  const automationApprovals = useAutomationApprovals(automationsRouteActive ? approvalsScope : null);
+  const sessionExtensions = useMemo(() => approvalsScope ? {
+    ...agentExtensions,
+    renderChatApprovals: (completedAt: number) => <ToolApprovalsStack scope={approvalsScope} surface="chat" completedAt={completedAt} />,
+  } : agentExtensions, [agentExtensions, approvalsScope]);
+  const agentNames = useAgentNames(agentsRuntime);
 
   const createNewSessionInSelectedWorkspace = useCallback(() => {
     if (selectedWorkspaceId) handleCreateTaskInWorkspace(selectedWorkspaceId);
@@ -3787,6 +3874,8 @@ export function SessionRoute() {
         engine={{ baseUrl: opencodeBaseUrl, directory: selectedWorkspaceRoot || undefined, token: selectedWorkspaceServerToken || undefined }}
       />
     ) : null}
+    <PersonalAgentsProvider value={agentsRuntime}>
+    <SessionExtensionsProvider value={sessionExtensions}>
     <SessionPage
       sandboxTrialNotice={<SandboxTrialNotice />}
       ref={composerImpressionRef}
@@ -3927,6 +4016,17 @@ export function SessionRoute() {
       ) : automationsRouteActive ? (
         <AutomationsPage
           providerCatalog={automationCatalog}
+          agentNames={agentNames}
+          approvals={approvalsScope ? {
+            pending: automationApprovals.pending,
+            renderForRun: ({ selectedRunId, ...input }) => <RunApprovalSlot
+              key={JSON.stringify([approvalsScope.denBaseUrl, approvalsScope.organizationId, approvalsScope.principal, input.automationId, selectedRunId, "runId" in input.placement])}
+              scope={approvalsScope} items={automationApprovals.items} claimRestart={automationApprovals.claimRestart} {...input} />,
+            renderStatus: (completedAt) => <>
+              {completedAt > 0 && <ApprovalRefresh key={completedAt} scope={approvalsScope} completedAt={completedAt} />}
+              {automationApprovals.isError && <ApprovalLoadError onRetry={() => void automationApprovals.refetch()} />}
+            </>,
+          } : undefined}
           workspaceId={selectedWorkspaceId}
           headerActionsTarget={automationsHeaderActionsTarget}
           onSignIn={() => handleOpenSettings("/settings/cloud-account")}
@@ -4077,22 +4177,7 @@ export function SessionRoute() {
       questionReplyBusy={questionReplyBusy}
       respondQuestion={respondQuestion}
       safeStringify={safeStringify}
-      onRenameSession={
-        opencodeClient
-          ? async (sessionId, nextTitle, workspaceId) => {
-              const trimmed = nextTitle.trim();
-              if (!trimmed) return;
-              const owner = workspaces.find((workspace) => workspace.id === workspaceId
-                && sessionsByWorkspaceId[workspace.id]?.some((session) => session.id === sessionId));
-              const endpoint = owner ? endpointForSessionWorkspace(owner) : null;
-              if (!owner || !endpoint) throw new Error("The session's workspace is no longer connected.");
-              const createEngineClient = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? createClientV2 : createClient;
-              const ownerClient = createEngineClient(endpoint.opencodeBaseUrl, owner.path, { token: endpoint.token, mode: "openwork" });
-              unwrap(await ownerClient.session.update({ sessionID: sessionId, title: trimmed, directory: owner.path }));
-              await reloadWorkspaceSessions(owner.id);
-            }
-          : undefined
-      }
+      onRenameSession={opencodeClient ? renameSessionTitle : undefined}
       onDeleteSession={
         client && selectedWorkspaceId
           ? async (sessionId, workspaceId) => {
@@ -4135,6 +4220,8 @@ export function SessionRoute() {
       extensionsActive={extensionsMainOpen}
       onAccessibleTargetsChange={setPaletteAccessibleTargets}
     />
+    </SessionExtensionsProvider>
+    </PersonalAgentsProvider>
     <CreateWorkspaceModal
       open={createWorkspaceOpen}
       onClose={() => {

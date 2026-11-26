@@ -89,6 +89,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   feature_change: { reason: "platform", note: "flag change history; settings.features writes it through updateOrganizationFeatureOverrides" },
 
   automation: { reason: "personal", note: "My Automations" },
+  personal_agent: { reason: "personal", note: "a member's own agents" },
   automation_runner: { reason: "runtime" },
   automation_runner_notification: { reason: "runtime" },
   artifact_view: { reason: "personal", note: "Apps; a later personal blob" },

@@ -1,0 +1,42 @@
+---
+title: "Tool permissions for the whole organization"
+sidebarTitle: "Organization tool permissions"
+description: "Set what tools can do across chats, Automations, Workbot, and agents."
+---
+<Warning>
+Tool permissions are in private alpha. OpenWork does not officially support this feature yet, and how it works may change. To try it, ask your OpenWork contact to turn it on for your organization.
+</Warning>
+
+Tool permissions are turned on separately for each organization. They work even if your organization doesn't use Agents. They apply to tools in chats, Automations, Workbot, and agents.
+
+![Tool permissions for the Linear connection: each tool set to Allow, Ask or Block, with Create issue blocked for everyone](/images/agents/tool-permissions.png)
+
+## Set a tool rule
+
+1. In the [OpenWork Cloud dashboard](https://app.openworklabs.com), open **Connectors** and choose a connection.
+2. Under **Tool permissions**, use **For** to choose everyone, a team, or one person.
+3. Next to a tool, choose **Allow**, **Ask**, or **Block**. To remove your rule for that tool and group or person, choose **Default**. It shows what applies without your rule, for example **Default (Ask)**. Other rules can still apply.
+
+To block every tool in the connection for the people you picked, turn on **Block this whole connection**.
+
+A **Block** always wins, even if someone approved a request. If there's no block, **Ask** wins over **Allow**. If no rule applies, tools that only read are allowed. Tools that change something ask first.
+
+On the **Connectors** page, use **Rules every run follows** to give agents and cloud Automations written instructions. Use tool rules when you need to enforce access.
+
+## Answer a request
+
+If a tool asks, the call doesn't go through. The person it asked sees a card in the OpenWork app with **Deny** and **Allow once**. For an Automation, the card is on the **Automations** page inside the run that asked, and that run shows **Needs your yes** in **Run history**. For a chat, it is above the message box.
+
+- For an Automation, **Allow once** covers the next run that uses that tool. The app tries to start a new run for you.
+- For a chat, **Allow once** covers the next try. Ask again in the chat.
+- For an agent, see [Answer a tool request](/agents/permissions#answer-a-tool-request).
+
+A yes doesn't resume the run that asked, and that run can't use it. An unused **Allow once** expires after 7 days. Only the person the tool ran for can answer.
+
+## What's not covered yet
+
+- Built-in connections such as Google Workspace and Microsoft 365.
+- Messages Workbot sends as the Slack bot.
+- The dashboard's tool tester.
+- Approving from Slack. Answer in the OpenWork app instead.
+- **Always allow** outside agents. An admin can set **Allow** instead.

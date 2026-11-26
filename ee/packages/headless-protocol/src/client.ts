@@ -516,7 +516,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
           ...(model ? { model } : {}),
           ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
           ...(input.readOnly || input.mcpReadOnly ? { readOnly: true } : {}),
-          ...((input.readOnly || input.mcpReadOnly) && input.mcpScopes?.length ? { scopes: input.mcpScopes } : {}),
+          ...(input.mcpScopes?.length ? { scopes: input.mcpScopes } : {}),
         })
         const modelAccess = issued.modelAccess ?? await deps.modelAccess?.(actor, { ...(model ? { model } : {}), ...(modelAccessRequired ? { modelAccessRequired: true } : {}) })
         return { ...issued, modelAccess }

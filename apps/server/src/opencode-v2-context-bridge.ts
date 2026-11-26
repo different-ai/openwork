@@ -98,7 +98,7 @@ export async function askEngineApproval(engine: EngineConnection | undefined, ap
 const rendererSessionCommandIds = ["session.archive", "session.pin", "session.rename", "session.set_model"];
 const commandIds: readonly string[] = [
   ...SESSION_GROUP_COMMAND_IDS, ...rendererSessionCommandIds,
-  "session.create", "session.send", "session.question.answer", "automation.propose",
+  "session.create", "session.send", "session.question.answer", "automation.propose", "agent.propose",
 ];
 const questionReplyRoute = /^\/workspace\/[^/]+\/opencode2\/api\/session\/[^/]+\/form\/[^/]+\/reply$/;
 const windowCommandIds: readonly string[] = [...rendererSessionCommandIds, "workspace.reload_sessions", "session.open"];

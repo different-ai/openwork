@@ -20,12 +20,14 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { removeTeamPersonalAgentAudiences } from "../../personal-agents/share-cleanup.js"
 import { deleteTeamAgentPermissionPolicy } from "../../agent-permissions.js"
 import { deleteTeamDefaultModel } from "../../default-model.js"
 import { deleteTeamWorkbotSettings } from "../../workbot/team-settings.js"
 import { deleteTeamPrompts } from "../../prompts.js"
 import { deleteTeamAutoRouterAccess } from "../../auto-router.js"
 import { db } from "../../db.js"
+import { env } from "../../env.js"
 import { invalidateTeamInferenceOAuth } from "../../llm/inference-provider-lifecycle.js"
 import { isScimManagedTeam } from "../../scim-groups.js"
 import { withOrganizationTeamMutation, withOrganizationMembershipUsageMutation, type TeamMutationTransaction } from "../../organization-team-roles.js"
@@ -446,6 +448,9 @@ export async function deleteTeam(c: ResourceActionContext, payload: ResourceOrga
 
     await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.teamId, team.id))
     await deleteTeamAgentPermissionPolicy(tx, team.id)
+    if (env.features.deployment === "cloud") {
+      await removeTeamPersonalAgentAudiences(tx, payload.organization.id, team.id)
+    }
     await deleteTeamDefaultModel(tx, team.id)
     await deleteTeamWorkbotSettings(tx, team.id)
     await deleteTeamPrompts(tx, team.id)
