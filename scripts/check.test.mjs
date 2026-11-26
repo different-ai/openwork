@@ -51,3 +51,16 @@ test("an unknown check name is an error that lists the known ones", () => {
   assert.throws(() => selectChecks(["typo"]), /Unknown check: typo\. Known: typecheck/);
   assert.deepEqual(selectChecks(["i18n"]).map((check) => check.name), ["i18n"]);
 });
+
+test("the API contract check skips without local MySQL and lints like the API Contract workflow", async () => {
+  const { contractDatabaseUnavailable } = await import("./den-contract-database.mjs");
+  const refused = async () => { throw new Error("connect ECONNREFUSED"); };
+  const accepted = async () => ({ end: async () => {} });
+  assert.match(await contractDatabaseUnavailable({ connect: refused }), /local MySQL is not reachable/);
+  assert.equal(await contractDatabaseUnavailable({ connect: accepted }), null);
+  assert.match(await contractDatabaseUnavailable({ url: "mysql://root:password@db.example.com:3306" }), /remote databases are never used/);
+  assert.ok(CHECKS.some((check) => check.name === "api-contract" && check.unavailable));
+  const workflow = readFileSync(resolve(root, ".github/workflows/api-contract.yml"), "utf8");
+  assert.ok(workflow.includes("pnpm api:lint"), "api-contract.yml no longer runs the Spectral lint");
+  assert.ok(readFileSync(resolve(root, "scripts/check-api-contract.mjs"), "utf8").includes("scripts/api-lint.mjs"));
+});
