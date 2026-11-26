@@ -16,7 +16,7 @@ import { describeRoute, generateSpecs, resolver } from "hono-openapi"
 import { z } from "zod"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { getOrganizationFeatures } from "./features.js"
+import { cachedOrganizationFeatureEnabled, getOrganizationFeatures } from "./features.js"
 import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
@@ -40,6 +40,7 @@ import { registerDevRoutes } from "./routes/dev/index.js"
 import { registerInternalRoutes } from "./routes/internal/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerAutomationRoutes } from "./routes/automations/index.js"
+import { registerToolPermissionRoutes } from "./routes/tool-permissions/index.js"
 import { registerPersonalAgentRoutes } from "./routes/personal-agents/index.js"
 import { registerSessionRunnerRoutes } from "./routes/session-runners/index.js"
 import { registerRemoteSessionRoutes } from "./routes/remote-sessions/index.js"
@@ -50,6 +51,7 @@ import { getCatalog } from "./mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "./mcp/capability-registry.js"
 import { executeMarketplaceCapability } from "./mcp/marketplace-capabilities.js"
 import { resolveMcpMemberIdentity } from "./mcp/external-capabilities.js"
+import { automationRunScope } from "./mcp/workbot-turn-limits.js"
 import { DEN_MCP_REQUESTED_SCOPES } from "./mcp/scopes.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
@@ -280,6 +282,7 @@ registerMeRoutes(app)
 registerSessionRunnerRoutes(app, { automationService: env.automations.runtimeEnabled ? automationService : undefined })
 registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled, sessionRunners: false })
 if (env.automations.runtimeEnabled) registerPersonalAgentRoutes(app)
+registerToolPermissionRoutes(app)
 registerRemoteSessionRoutes(app)
 registerOrgRoutes(app)
 registerSlackAssistantRoutes(app)
@@ -316,7 +319,9 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
   const member = await resolveMcpMemberIdentity({ userId, organizationId })
   if (!member) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
   const catalog = await getCatalog(app as unknown as Hono, undefined)
-  const principal = { userId, organizationId, scopes: new Set(DEN_MCP_REQUESTED_SCOPES), payload: {} }
+  const scopes = new Set<string>(DEN_MCP_REQUESTED_SCOPES)
+  if (await cachedOrganizationFeatureEnabled(organizationId, "toolPermissions")) scopes.add(automationRunScope(automationRunId))
+  const principal = { userId, organizationId, scopes, payload: {} }
   const capabilityContext = createCapabilityRegistryContext({
     app: app as unknown as Hono,
     env: undefined,
@@ -420,6 +425,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
       { name: "Managed deployments", description: "OpenWork installations in an organization's own cloud account: launch approval, installer milestones and health reports." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
+      { name: "Tool permissions", description: "Organization rules and member approvals for external connector tools." },
       { name: "Personal agents", description: "A member's own agents: a Markdown brief, a tool policy, and routines that run as Cloud Automations." },
       { name: "Devices", description: "Personal and shared computers, plus permission-gated team computer inventory for the current organization, including registered OpenWork instances. Inventory grants no control or access to private content." },
       { name: "Documents", description: "Connected Drive and OneDrive documents: listings, metadata and read-only previews." },

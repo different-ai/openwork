@@ -11,7 +11,7 @@ import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type CatalogApp, type McpToolOperation } from "./catalog.js"
 import { filterPersonalAgents, limitedAgentRunMayCall } from "./catalog-availability.js"
 import { isLimitedAgentRun } from "./workbot-turn-limits.js"
-import { organizationFeatureEnabled } from "../features.js"
+import { cachedOrganizationFeatureEnabled } from "../features.js"
 import { invokeMcpOperation } from "./invoke.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { appLogger } from "../observability/logger.js"
@@ -92,7 +92,7 @@ export function registerMcpRoutes<T extends { Variables: RequestIdVariables & Re
     const limitedAgentRun = isLimitedAgentRun(principal.scopes)
     const offered = filterPersonalAgents(
       catalog,
-      await organizationFeatureEnabled(principal.organizationId, "personalAgents", { userId: principal.userId }),
+      await cachedOrganizationFeatureEnabled(principal.organizationId, "personalAgents", { userId: principal.userId }),
     ).filter((operation) => !limitedAgentRun || limitedAgentRunMayCall(operation))
     const server = new McpServer({
       name: "openwork-den-api",

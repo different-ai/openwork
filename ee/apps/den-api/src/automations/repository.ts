@@ -50,6 +50,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
+import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
 import { automationAffectedRows, automationUpdateChangedRows } from "./update-result.js"
 import { cloudArtifactStateUpdate } from "./cloud-artifact-state.js"
@@ -262,18 +263,19 @@ function mapPersonalAgentRunSummary(row: RunRow, audience: RunAudience): Automat
   return { ...summary, executionThread: null, codemodeReceiptId: null, validatedResult: null, error: null, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null }
 }
 
-async function latestRun(automationId: AutomationRow["id"], audience: RunAudience, agentId?: AgentRow["id"]): Promise<AutomationRun | null> {
+async function latestRun(automationId: AutomationRow["id"], audience?: RunAudience, agentId?: AgentRow["id"]): Promise<AutomationRun | null> {
   const rows = await db.$primary.select().from(AutomationRunTable)
-    .where(and(eq(AutomationRunTable.automation_id, automationId), agentId ? personalAgentRunSummaryFilter(audience, agentId) : runActorFilter(audience)))
+    .where(and(eq(AutomationRunTable.automation_id, automationId), agentId ? personalAgentRunSummaryFilter(audience ?? {}, agentId) : audience ? runActorFilter(audience) : undefined))
     .orderBy(desc(AutomationRunTable.created_at), desc(AutomationRunTable.id)).limit(1)
   const [run] = rows
   if (!run) return null
-  return agentId ? mapPersonalAgentRunSummary(run, audience) : mapRun(run)
+  return agentId ? mapPersonalAgentRunSummary(run, audience ?? {}) : mapRun(run)
 }
 
 async function itemFromRows(automation: AutomationRow, revision: RevisionRow): Promise<AutomationListItem> {
-  const run = await latestRun(automation.id, { actingMemberId: automation.owner_member_id, includeOwnerRuns: true })
-  return { automation: { ...mapAutomation(automation), latestRunAt: run?.createdAt ?? null }, revision: mapRevision(revision), latestRun: run }
+  const run = await latestRun(automation.id, automation.agent_id ? { actingMemberId: automation.owner_member_id, includeOwnerRuns: true } : undefined)
+  const mapped = mapAutomation(automation)
+  return { automation: automation.agent_id ? { ...mapped, latestRunAt: run?.createdAt ?? null } : mapped, revision: mapRevision(revision), latestRun: run }
 }
 
 async function itemsFromRows(automations: AutomationRow[], memberId?: string): Promise<AutomationListItem[]> {
@@ -286,7 +288,7 @@ async function itemsFromRows(automations: AutomationRow[], memberId?: string): P
       )]
     : [])
   const [revisions, latestRuns] = await Promise.all([
-    db.$primary.select().from(AutomationRevisionTable).where(inArray(
+    (automations.some((automation) => automation.agent_id) ? db.$primary : db).select().from(AutomationRevisionTable).where(inArray(
       AutomationRevisionTable.id,
       automations.map((automation) => automation.current_revision_id),
     )),
@@ -312,7 +314,7 @@ async function itemsFromRows(automations: AutomationRow[], memberId?: string): P
       ? memberId ? await latestRun(automation.id, { actingMemberId: memberId, includeOwnerRuns: memberId === automation.owner_member_id }, automation.agent_id) : null
       : row ? mapRun(row) : null
     return {
-      automation: { ...mapAutomation(automation), latestRunAt: run?.createdAt ?? null },
+      automation: { ...mapAutomation(automation), ...(automation.agent_id ? { latestRunAt: run?.createdAt ?? null } : {}) },
       revision: mapRevision(revision),
       latestRun: run,
     }
@@ -342,13 +344,14 @@ function personalAgentQueueHead() {
 
 export class DenAutomationRepository implements AutomationRepository {
   async listQueuedCloud(input: { limit: number }): Promise<string[]> {
-    const rows = await db.$primary.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
-      .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
-      .where(and(
-        eq(AutomationRunTable.status, "queued"),
-        eq(AutomationRunTable.execution_target, "cloud"),
-        or(isNull(AutomationTable.agent_id), personalAgentQueueHead()),
-      )).orderBy(asc(AutomationRunTable.created_at), asc(AutomationRunTable.id)).limit(input.limit)
+    const queued = and(eq(AutomationRunTable.status, "queued"), eq(AutomationRunTable.execution_target, "cloud"))
+    const primary = env.features.deployment === "cloud"
+    const rows = await (primary
+      ? db.$primary.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
+        .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
+        .where(and(queued, or(isNull(AutomationTable.agent_id), personalAgentQueueHead())))
+      : db.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(queued)
+    ).orderBy(asc(AutomationRunTable.created_at), asc(AutomationRunTable.id)).limit(input.limit)
     return rows.map((row) => row.id)
   }
   async create(input: Parameters<AutomationRepository["create"]>[0] & {
@@ -547,9 +550,10 @@ export class DenAutomationRepository implements AutomationRepository {
     return revisions[0] ? (input.tx ? { automation: mapAutomation(rows[0]), revision: mapRevision(revisions[0]), latestRun: null } : itemFromRows(rows[0], revisions[0])) : null
   }
 
-  async setState(input: Parameters<AutomationRepository["setState"]>[0] & { tx?: AutomationTransaction }): Promise<AutomationListItem | null> {
+  async setState(input: Parameters<AutomationRepository["setState"]>[0] & { tx?: AutomationTransaction; beforeAgentStateChange?: (automation: Automation) => Promise<void> }): Promise<AutomationListItem | null> {
     const current = await this.get(input)
     if (!current) return null
+    if (current.automation.agentId) await input.beforeAgentStateChange?.(current.automation)
     const same = current.automation.state === input.state
     if (!same) {
       await (input.tx ?? db).update(AutomationTable).set({
@@ -1130,7 +1134,7 @@ export class DenAutomationRepository implements AutomationRepository {
       .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
       .where(and(
         eq(AutomationRunTable.id, normalizeRunId(input.runId)),
-        runActorFilter({ actingMemberId: input.ownerMemberId, includeOwnerRuns: true }),
+        or(isNull(AutomationTable.agent_id), runActorFilter({ actingMemberId: input.ownerMemberId, includeOwnerRuns: true })),
         eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
         eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
       )).limit(1)
@@ -1714,7 +1718,7 @@ export class DenAutomationRepository implements AutomationRepository {
       .from(AutomationRunTable).innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
       .where(and(
         eq(AutomationRunTable.id, normalizeRunId(input.runId)),
-        runActorFilter(audience),
+        or(isNull(AutomationTable.agent_id), runActorFilter(audience)),
         input.agentId ? eq(AutomationTable.agent_id, normalizeDenTypeId("personalAgent", input.agentId)) : undefined,
         eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
         eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
@@ -1727,7 +1731,7 @@ export class DenAutomationRepository implements AutomationRepository {
       .where(eq(AutomationRunEventTable.run_id, normalizeRunId(input.runId)))
       .orderBy(asc(AutomationRunEventTable.attempt), asc(AutomationRunEventTable.sequence))
     return {
-      automation: { ...mapAutomation(owned[0].automation), latestRunAt: (await latestRun(owned[0].automation.id, audience))?.createdAt ?? null },
+      automation: { ...mapAutomation(owned[0].automation), ...(owned[0].automation.agent_id ? { latestRunAt: (await latestRun(owned[0].automation.id, audience))?.createdAt ?? null } : {}) },
       revision: mapRevision(revisions[0]),
       run: mapRun(owned[0].run),
       events: events.map(mapEvent),
@@ -1738,7 +1742,9 @@ export class DenAutomationRepository implements AutomationRepository {
     const automation = await this.get(input)
     if (!automation) return { items: [], nextCursor: null }
     const limit = Math.max(1, Math.min(input.limit, 100))
-    const conditions = [eq(AutomationRunTable.automation_id, normalizeAutomationId(input.automationId)), runActorFilter({ actingMemberId: input.ownerMemberId, includeOwnerRuns: true })]
+    const conditions = [eq(AutomationRunTable.automation_id, normalizeAutomationId(input.automationId))]
+    const audience = automation.automation.agentId ? runActorFilter({ actingMemberId: input.ownerMemberId, includeOwnerRuns: true }) : undefined
+    if (audience) conditions.push(audience)
     if (input.cursor) conditions.push(lt(AutomationRunTable.id, normalizeRunId(input.cursor)))
     const rows = await db.select().from(AutomationRunTable).where(and(...conditions))
       .orderBy(desc(AutomationRunTable.id)).limit(limit + 1)
@@ -1755,7 +1761,7 @@ export class DenAutomationRepository implements AutomationRepository {
     const conditions = [
       eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
-      runActorFilter({ actingMemberId: input.ownerMemberId, includeOwnerRuns: true }),
+      or(isNull(AutomationTable.agent_id), runActorFilter({ actingMemberId: input.ownerMemberId, includeOwnerRuns: true })),
       gte(AutomationRunTable.created_at, new Date(input.from - pad)),
       lt(AutomationRunTable.created_at, new Date(input.to + pad)),
     ]

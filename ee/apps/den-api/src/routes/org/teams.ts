@@ -27,6 +27,7 @@ import { deleteTeamWorkbotSettings } from "../../workbot/team-settings.js"
 import { deleteTeamPrompts } from "../../prompts.js"
 import { deleteTeamAutoRouterAccess } from "../../auto-router.js"
 import { db } from "../../db.js"
+import { cachedOrganizationFeatureEnabled } from "../../features.js"
 import { invalidateTeamInferenceOAuth } from "../../llm/inference-provider-lifecycle.js"
 import { isScimManagedTeam } from "../../scim-groups.js"
 import { withOrganizationTeamMutation, withOrganizationMembershipUsageMutation, type TeamMutationTransaction } from "../../organization-team-roles.js"
@@ -447,7 +448,9 @@ export async function deleteTeam(c: ResourceActionContext, payload: ResourceOrga
 
     await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.teamId, team.id))
     await deleteTeamAgentPermissionPolicy(tx, team.id)
-    await removeTeamPersonalAgentAudiences(tx, payload.organization.id, team.id)
+    if (await cachedOrganizationFeatureEnabled(payload.organization.id, "personalAgents") || await cachedOrganizationFeatureEnabled(payload.organization.id, "toolPermissions")) {
+      await removeTeamPersonalAgentAudiences(tx, payload.organization.id, team.id)
+    }
     await deleteTeamDefaultModel(tx, team.id)
     await deleteTeamWorkbotSettings(tx, team.id)
     await deleteTeamPrompts(tx, team.id)

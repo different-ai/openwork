@@ -22,14 +22,14 @@ When a tool needs a yes, the run doesn't use it. A card in the chat names the to
 ![A request in the chat to let Bug watcher use Create issue in Linear, with Deny, Always allow and Allow once](/images/agents/tool-request.png)
 
 - **Deny** refuses the request.
-- **Allow once** lets the person who asked use the tool on their next run of this agent.
+- **Allow once** covers the tool for the whole of the requester's next run of this agent that calls it. A run that doesn't call the tool leaves the approval for the next one. An unused approval expires after 7 days. A block always wins, even after approval.
 - **Always allow** lets the agent use the tool on future runs. A lasting change to tool access needs the owner's approval. This option isn't offered when the organization requires approval for each run.
 
 Approval doesn't resume the run that asked. The app requests another run if you approve your own request. If someone else approves it, you can run the agent again yourself.
 
 ## Change a setting
 
-Click the agent's name to open its panel. Go to **Settings**, then **What it can use**. Find the connection and choose **Allow**, **Ask**, or **Block**. A manager's change waits for the owner's approval. Saved changes apply to newly requested runs. Organization tool rules are checked when the agent tries to use a tool.
+Click the agent's name to open its panel. Go to **Settings**, then **What it can use**. Find the connection and choose **Allow**, **Ask**, or **Block**. A manager's change waits for the owner's approval. Tool settings are separate from the brief. A saved change applies the next time the agent tries to use a tool, even in a run that's already going. The agent also follows [organization tool rules](/agents/tool-permissions).
 
 ![Settings for Bug watcher: each Linear tool set to Allow, Ask or Block](/images/agents/what-it-can-use.png)
 

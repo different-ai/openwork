@@ -9,7 +9,7 @@ Agents are in private alpha. OpenWork does not officially support this feature y
 
 ## Approvals and connected apps
 
-- **A yes doesn't resume the run that asked.** **Allow once** applies to the requester's next run of that agent. The new run starts the job from the beginning.
+- **A yes doesn't resume the run that asked.** **Allow once** applies to the requester's next run of that agent that calls the tool. The new run starts the job from the beginning.
 - **Built-in connections are read-only for agents.** For example, an agent can read from Google Workspace but can't make changes there. These tools can't ask for permission.
 - **There are no separate notifications.** Look for **Needs your attention** in the sidebar and open the agent's chat to check for requests or results.
 - **Access can change during a run.** OpenWork refuses a tool call if the person the run acts for has lost access, or if the agent has been paused or archived. This doesn't undo anything the agent already did.
@@ -25,7 +25,9 @@ Agents are in private alpha. OpenWork does not officially support this feature y
 - **Recent results appear below the chat messages.** For a shared agent, you'll see answers from scheduled runs since you got access. Full run details, chats, and other people's manual runs stay private.
 - **A local chat doesn't move to another computer.** Signing in on another computer lets you see the agent, its routines, and the results you have access to. It doesn't copy the local conversation there.
 
+[Agent memory](/agents/memory) is shared with everyone who has access to the agent. It does not share anyone's private chat.
+
 ## Organization controls
 
-- **Teams can't set their own tool rules.** Admin tool rules apply across the organization.
-- **Turning off Agents hides the feature but doesn't stop existing routines.** To stop them, ask an admin to pause or archive the agents before turning the feature off.
+- Admins can set rules for a team when [tool permissions](/agents/tool-permissions) are on for the organization.
+- Turning off Agents hides agents and stops their routines from starting. It doesn't delete their data.

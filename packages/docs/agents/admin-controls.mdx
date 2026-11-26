@@ -15,14 +15,14 @@ In the [OpenWork Cloud dashboard](https://app.openworklabs.com), open **Agents**
 
 | Column | What it shows |
 | --- | --- |
-| **Agent** | The agent's name and whether an admin paused it. |
-| **Owner** | The member who owns it. |
+| **Agent** | Name and whether it's paused. |
+| **Owner** | Who owns it. |
 | **Access** | Who can use it. **Not shared** means it's private. |
-| **Can change things** | Counts the agent's own tool settings and any connections it blocks. It doesn't count defaults or organization rules. |
-| **This month** | What the agent has spent this month and its budget, if set. |
-| **Last run** | When the latest run was created and its current status. |
+| **Can change things** | Counts the agent's own tool settings and blocked connections, not defaults or organization rules. |
+| **This month** | Spend and budget, if set. |
+| **Last run** | When it was requested and its status. |
 
-The dashboard doesn't show the brief, routine instructions, or chats. A new owner can read the brief and routine instructions after a transfer. The previous owner's private chats do not transfer.
+The dashboard doesn't show briefs, routine instructions, or chats.
 
 ## Manage one agent
 
@@ -31,7 +31,7 @@ Open the actions menu in the agent's row:
 - **Pause** stops new runs from doing work. If a run is in progress, OpenWork refuses further tool calls while the agent is paused. **Resume** lets the agent run again.
 - **Set budget…** sets a monthly limit for this agent.
 - **Change access…** gives teams or the whole organization collaborator access to an already-shared agent. Use **Add to their sidebar** to put it in those members' sidebars. People with individual access keep it.
-- **Move to another owner…** transfers the agent and its routines. The previous owner loses owner rights but may still have access through a team or organization share. Runs waiting for the previous owner don't start.
+- **Move to another owner…** transfers the agent and its routines, not private chats. The new owner can read the brief and routine instructions. Runs waiting for the previous owner don't start.
 - **Archive…** archives the agent and its routines. Waiting runs don't start. Run history is kept.
 
 ## Set rules for every agent
@@ -40,13 +40,18 @@ Under **For every agent**:
 
 - **Who can share agents**: **Everyone** lets owners and managers share within their roles. **Admins only** also requires them to be admins. Existing access stays in place. An agent whose owner isn't an admin can't be shared for the first time unless the setting changes or an admin becomes its owner.
 - **Shared logins**: Off by default. Turning it off removes saved loans. Turning it back on doesn't restore them. See [Whose accounts it uses](/agents/share-an-agent#whose-accounts-it-uses).
-- **Rules every agent follows**: Choose **Edit…** to write instructions for runs. Use tool rules to enforce access.
 - **Most an agent may spend in a month**: Set a limit that applies to each agent.
 
-Under **Tool rules for every agent**, choose **Add a tool rule…**:
+If [tool permissions](/agents/tool-permissions) are on for your organization, the tool rules and written rules move from **Agents** to **Connectors**. They apply across the organization, not just to agents. See [what's covered](/agents/tool-permissions).
+
+Otherwise, under **Rules every agent follows**, choose **Edit…** to write instructions for agent runs. To enforce access, go to **Tool rules for every agent** and choose **Add a tool rule…**:
 
 - **Blocked** stops the tool, even after a one-run approval.
 - **Ask first** requires approval even if the agent is set to **Allow**.
 - **Allow automatically** lets a tool run without asking unless the agent is set to **Ask** or **Block**.
 
 These rules don't cover built-in connections. **Who changed what** shows who made changes and when, without showing briefs or what was sent to a tool.
+
+## If Agents is turned off
+
+Agents are hidden and their routines stop starting. OpenWork keeps the agent data.

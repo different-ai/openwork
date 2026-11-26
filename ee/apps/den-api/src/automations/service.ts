@@ -4,6 +4,7 @@ import {
   AUTOMATION_MANUAL_CLAIM_WINDOW_MS,
   calendarTriggerPrompt,
   desktopRunnerConnected,
+  organizationToolRuleInstructions,
   personalAgentRunInstructions,
 } from "@openwork/automations"
 import { AUTOMATION_RUNNER_WORK_RUN_LIMIT, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY, isAutomationCloudDefaultModel } from "@openwork/types/automations"
@@ -47,7 +48,10 @@ import { personalAgentRepository } from "../personal-agents/repository.js"
 import { HTTPException } from "hono/http-exception"
 import { admitPersonalAgentRun } from "../personal-agents/run-admission.js"
 import { readPersonalAgentRunMemory, savePersonalAgentRoutineState } from "../personal-agents/memory.js"
-import { organizationFeatureEnabled } from "../features.js"
+import { cachedOrganizationFeatureEnabled, organizationFeatureEnabled } from "../features.js"
+import { automationRunScope } from "../mcp/workbot-turn-limits.js"
+import { readOrganizationWrittenToolRules } from "../tool-permissions/rules.js"
+import { markFeaturesUsed } from "../feature-usage.js"
 import {
   getOpenWorkWebRuntimeAccess,
   OPENWORK_WEB_ACCESS_REQUIRED_CODE,
@@ -461,9 +465,8 @@ export class AutomationService {
   }
 
   async deactivate(scope: OwnerScope, automationId: string, tx?: PersonalAgentTransaction) {
-    const current = await automationRepository.get({ ...scope, automationId, tx })
-    if (current) await requireRoutineAgentActive(scope, current.automation)
-    return automationRepository.setState({ ...scope, automationId, state: "inactive", now: Date.now(), tx })
+    return automationRepository.setState({ ...scope, automationId, state: "inactive", now: Date.now(), tx,
+      beforeAgentStateChange: (automation) => requireRoutineAgentActive(scope, automation) })
   }
 
   archive(scope: OwnerScope, automationId: string) {
@@ -1106,21 +1109,26 @@ export class AutomationService {
       const memory = agentId && await organizationFeatureEnabled(organizationId, "personalAgents")
         ? await readPersonalAgentRunMemory({ organizationId, agentId, routineId: claimed.automation.id })
         : undefined
+      const toolPermissions = !agentId && await cachedOrganizationFeatureEnabled(organizationId, "toolPermissions")
+      const preamble = toolPermissions ? organizationToolRuleInstructions(await readOrganizationWrittenToolRules(organizationId)) : []
       const runAction = agentRun ? { ...taskAction, instructions: personalAgentRunInstructions({
         agentName: agentRun.agentName, brief: agentRun.brief, instructions: taskAction.instructions,
         organizationRules: agentRun.organizationRules, memory,
-      }) } : taskAction
+      }) } : preamble.length ? { ...taskAction, instructions: [...preamble, taskAction.instructions].join("\n") } : taskAction
+      const mcpScopes = agentRun?.mcpScopes ?? (toolPermissions ? [automationRunScope(claimed.run.id)] : [])
       const state = await automationRepository.cloudRunState(claimed.run.id)
+      const memberId = claimed.actingMemberId ?? claimed.automation.ownerMemberId
+      if (agentRun) markFeaturesUsed({ organizationId, memberId, keys: ["personalAgents"] })
       result = await executor({
-        organizationId: claimed.automation.organizationId,
-        ownerMemberId: claimed.actingMemberId ?? claimed.automation.ownerMemberId,
+        organizationId,
+        ownerMemberId: memberId,
         automationRunId: claimed.run.id,
         automationName: claimed.automation.name,
         action: runAction,
         maximumRuntimeMs: claimed.revision.maximumRuntimeMs,
         previousReceipt: state?.receipt ?? null,
         workspaceId: runWorkspaceId(claimed.revision, "cloud"),
-        ...(agentRun?.mcpScopes.length ? { mcpScopes: agentRun.mcpScopes } : {}),
+        ...(mcpScopes.length ? { mcpScopes } : {}),
         signal: controller.signal,
         ...(agentRun ? { forAgent: true, onModelResolved: (model: Parameters<typeof automationRepository.setCloudRunModel>[0]["model"]) => automationRepository.setCloudRunModel({ runId: claimed.run.id, leaseOwner, model }) } : {}),
         onAdmitted: async (receipt) => automationRepository.setCloudExecution({

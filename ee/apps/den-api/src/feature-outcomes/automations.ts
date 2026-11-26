@@ -1,4 +1,4 @@
-import { and, count, eq, gte, lt, max, sql } from "@openwork-ee/den-db/drizzle"
+import { and, count, eq, gte, isNotNull, lt, max, sql } from "@openwork-ee/den-db/drizzle"
 import { AutomationRevisionTable, AutomationRunTable, AutomationTable } from "@openwork-ee/den-db/schema"
 import type { AutomationScheduleKind } from "@openwork/types/automations"
 import { db } from "../db.js"
@@ -23,11 +23,11 @@ function reasonOf(status: RunStatus, code: string | null): string | null {
   return null
 }
 
-export function automationRunOutcomes(kind: Extract<AutomationScheduleKind, "interval" | "calendar">, unit: FeatureOutcomeUnit): FeatureOutcomeReader {
+export function automationRunOutcomes(kind: Extract<AutomationScheduleKind, "interval" | "calendar"> | "personal_agent", unit: FeatureOutcomeUnit): FeatureOutcomeReader {
   return async (range) => {
     const day = sql<string>`date_format(${AutomationRunTable.created_at}, '%Y-%m-%d')`
     const code = sql<string | null>`json_unquote(json_extract(${AutomationRunTable.error}, '$.code'))`
-    const rows = await db
+    const runs = db
       .select({
         organizationId: AutomationTable.organization_id,
         day,
@@ -42,9 +42,11 @@ export function automationRunOutcomes(kind: Extract<AutomationScheduleKind, "int
         gte(AutomationRunTable.created_at, range.from),
         lt(AutomationRunTable.created_at, range.to),
       ), { forceIndex: "automation_run_history" })
-      .innerJoin(AutomationRevisionTable, eq(AutomationRevisionTable.id, AutomationRunTable.revision_id))
-      .where(eq(AutomationRevisionTable.schedule_kind, kind))
-      .groupBy(AutomationTable.organization_id, day, AutomationRunTable.status, code)
+    const filtered = kind === "personal_agent"
+      ? runs.where(isNotNull(AutomationTable.agent_id))
+      : runs.innerJoin(AutomationRevisionTable, eq(AutomationRevisionTable.id, AutomationRunTable.revision_id))
+        .where(eq(AutomationRevisionTable.schedule_kind, kind))
+    const rows = await filtered.groupBy(AutomationTable.organization_id, day, AutomationRunTable.status, code)
     return {
       unit,
       limited: null,

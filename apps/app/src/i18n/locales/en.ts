@@ -2698,7 +2698,7 @@ export default {
   "agents.permissions_budget": "Monthly budget",
   "agents.permissions_no_budget": "No budget",
   "agents.permissions_admin_budget": "Your admin limits this agent to {amount} a month.",
-  "agents.permissions_next_run": "Changes apply from its next run.",
+  "agents.permissions_next_run": "Changes apply right away.",
   "agents.permission_ask_title": "Let {agent} use {tool} in {connection}?",
   "agents.permission_ask_accounts": "The agent uses the account set for this connection.",
   "agents.permission_ask_waiting": "Waiting for {owner} to answer: {tool} in {connection}",

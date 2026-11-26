@@ -10,4 +10,5 @@ export default defineFeature({
   docs: "docs/features/personal-agents/README.md",
   deployments: ["cloud"],
   default: false,
+  outcomes: true,
 })

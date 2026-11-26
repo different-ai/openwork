@@ -16,10 +16,23 @@ export function personalAgentRunId(scopes: ReadonlySet<string>): string | undefi
   }
 }
 
+const AUTOMATION_RUN_SCOPE_PREFIX = "openwork:automation-run:"
+
+export function automationRunScope(runId: string): string {
+  return `${AUTOMATION_RUN_SCOPE_PREFIX}${runId}`
+}
+
+export function automationRunId(scopes: ReadonlySet<string>): string | undefined {
+  for (const scope of scopes) {
+    if (scope.startsWith(AUTOMATION_RUN_SCOPE_PREFIX)) return scope.slice(AUTOMATION_RUN_SCOPE_PREFIX.length)
+  }
+}
+
 export function isWorkbotTurnLimitScope(scope: string): boolean {
   return scope.startsWith(WITHOUT_CONNECTION_SCOPE_PREFIX)
     || scope.startsWith(WITHOUT_TOOL_SCOPE_PREFIX)
     || scope.startsWith(AGENT_RUN_SCOPE_PREFIX)
+    || scope.startsWith(AUTOMATION_RUN_SCOPE_PREFIX)
     || scope.startsWith(AGENT_TOOL_CHOICE_PREFIX)
     || scope === LIMITED_AGENT_RUN_SCOPE
 }

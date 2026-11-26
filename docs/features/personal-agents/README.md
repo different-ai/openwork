@@ -16,14 +16,17 @@ watches or does, how it decides, and how it reports.
 
 An agent works through routines. A routine is a Cloud Automation that belongs
 to the agent, so it has a schedule, a run history and a Run now like any other
-Automation. Every run starts from the agent's brief, followed by what that
-routine does.
+Automation. Every run starts with the organization's written rules, followed by the
+agent's brief, the routine's task, and its memory as data.
 
 The owner can keep an agent away from a connector, or from single tools of a
 connector. A run of that agent is not offered those tools and cannot call
 them. The owner's own chat and their other Automations are not affected.
 
-Only the owner sees or changes their agents.
+Agents start private. The owner can share access and the agent's memory
+without sharing their chat.
+
+![An agent and its panel in the OpenWork app](./agents.png)
 
 ## In the app
 
@@ -33,21 +36,21 @@ message, and one card asks "Start like this?". Saying yes creates the agent,
 its first routine and the first run. The run's result appears in the same
 chat. Each agent is listed once and keeps one conversation; its name in the
 header opens a small panel with an on/off switch, the next run, its routines,
-Run now, Share and Settings.
+Run now, Share, Memory and Settings.
 
 ## Sharing
 
-The owner shares an agent with people in the organization as Manager or
-Collaborator, and, where the organization lets them, with a team or the whole
-organization (always as collaborators). A collaborator can use it and run it,
+Owners can add managers and collaborators. Managers can add or remove
+collaborators when sharing is allowed. Organization admins can add team or
+organization collaborator access to an already-shared agent. A collaborator can use it and run it,
 and asks for a change instead of making it. A manager can also rename it and
 add or remove collaborators, but a manager's change to the brief, the tool
 settings or a routine is not applied: it becomes a request, and only the owner
 approves it, in the agent's chat, after seeing the whole change.
 
-A run someone starts with Run now uses that person's own connections and model
-access, and only they can read its result. A routine's scheduled runs act for
-the owner. Everyone the agent is shared with can read the answers of scheduled
+A run someone starts with Run now uses that person's model access and, unless
+a shared login applies, their own connections. Only they can read its result.
+A routine's scheduled runs act for the owner. Everyone the agent is shared with can read the answers of scheduled
 runs made after they got access, never earlier ones; full receipts stay with
 the person the run acted for. The Share window says so, because those answers
 can contain information from the owner's accounts.
@@ -58,21 +61,42 @@ if its routine was archived or, for a scheduled run, if the agent has a new
 owner. A tool call is refused mid-run when the person the run acts for lost
 access, or the agent was paused or archived.
 
+## Memory
+
+Runs start fresh rather than reusing a conversation. Every run reads the
+agent's notes and this routine's last progress for the owner. Memory is data,
+not instructions: organization rules and the brief take precedence. Never
+put passwords in it. Everyone with access can read it, including people
+who got access after a checkpoint was saved.
+
+Owners and managers can edit the notes in Memory, or ask in chat to add a
+note. A collaborator's chat note becomes a change request for the owner.
+Only runs for the owner can append notes or save progress directly. A run
+for anyone else can request a note but cannot save progress. On successful
+owner runs with no explicit progress note, Den stores the bounded run answer
+as the checkpoint. Failed or cancelled runs do not get this fallback.
+
 ## Allow, Ask, Block
 
 Each tool of a connector is Allow, Ask or Block for the agent. A tool that
 only reads is allowed; a tool that can change something asks first. Asking
 means the run is refused the tool, the connector is never called, and a card
-waits in the chat: Deny, Allow once, Always allow. A yes applies to the next
-run. Something the person said the agent must never do ("never post in Slack")
+waits in the chat: Deny, Allow once, and Always allow when the owner can
+make a lasting change. A block always wins over an approval. Allow once is
+claimed on the first matching tool call, not when the run starts. Later
+calls of that tool in the same run reuse it. A run that never calls the tool
+doesn't spend the approval; an unused approval expires after seven days.
+Approval does not resume the run that asked. Tool permissions are separate
+from the brief revision and saved rules are checked at dispatch, including
+for a run already in progress. Something the person said the agent must never do ("never post in Slack")
 is stored as a Block. Built-in connectors such as Google Workspace, and
 OpenWork's own actions that change something, are refused to an agent's run
 because they cannot ask yet.
 
-The organization's tool rules sit on top: Blocked wins over everything, Ask
-first wins over an agent's Allow (and removes Always allow), and Allow
-automatically lets a tool run unless the agent says Ask or Block. A run with
-nobody watching still refuses a tool that has to ask.
+Agent runs always check organization and agent rules. With `toolPermissions`
+on, the acting member's team and individual rules also apply. Block wins,
+then Ask, then Allow. An organization Ask also removes Always allow. A run
+with nobody watching still refuses a tool that has to ask.
 
 ## Shared logins
 
@@ -99,19 +123,28 @@ instructions). For every agent they choose who can share agents (everyone, or
 admins only; existing shares stay), allow shared logins, write rules every run
 is told to follow first, set tool rules (Ask first, Allow automatically,
 Blocked), set the most any agent may spend in a month, and read who changed
-what. A pause or an organization rule applies at once, also to a run that is
-already going.
+what. A pause or a tool rule applies to tool calls in an active run too.
+With [`toolPermissions`](../tool-permissions/README.md) on, organization tool
+rules and written rules move to Connectors and are no longer agent-only.
+
+## Turning it off
+
+The `personalAgents` kill switch hides agents, makes the feature's routes
+return 404, and stops routines from starting, including waiting runs at
+admission. Agent data, routines, memory, and history are kept.
 
 ## What is built so far
 
+Built: sharing by person, team, or organization; per-agent tool rules and
+approvals; memory and per-routine progress; team and member tool rules when
+`toolPermissions` is on.
+
 Not built yet:
 
-- team-level tool rules: only the organization sets them
-- binding Allow once to one routine and one account: it covers the requester's
-  next run of the agent
+- binding Allow once to one routine and one account: it covers the next
+  matching tool call in a run of that agent for the requester
 - paging the app's agent list past 50 agents
-
-- resuming the run that asked: a yes starts a new run
+- resuming the run that asked: a yes lets a new run use the tool
 - asking for built-in connectors
 - telling people when something waits for them or a run finishes
 - daily budgets, and choosing whether the member or the organization pays
@@ -134,11 +167,12 @@ flowchart TB
   Run["Run (fresh runner conversation)"]
   Share["Shared with: people, teams, the organization"]
   Rules["Tool permissions: Allow, Ask, Block<br/>organization, team, member, agent"]
-  Approval["Approval: Deny or Allow once"]
+  Approval["Approval: Deny, Allow once, or owner Always allow when allowed"]
   Admin["Admin: pause, budget, who can share, written rules"]
   Agent -->|has| Routine
   Routine -->|starts| Run
-  Run -->|reads and writes| Memory
+  Run -->|reads next-run context| Memory
+  Run -->|writes only when acting for owner| Memory
   Run -->|every connector tool call| Rules
   Rules -->|Ask| Approval
   Share -->|can run and chat| Agent
@@ -158,19 +192,31 @@ sequenceDiagram
   D->>D: admit: feature on, agent not paused, budget, the person still has access
   D->>R: organization rules, brief, task, memory
   R->>D: use a tool
-  D->>D: tool permissions: a block wins, then ask, then allow
-  alt allowed
-    D->>C: call with the account of the person the run acts for
+  D->>D: check current tool rules: block wins, then ask, then allow
+  alt blocked
+    D-->>R: refused, even with an approval
+  else asks and has no approval
+    D-->>R: refused, finish what you can
+    D->>P: show an approval card in the agent chat
+  else allowed or approval claimed
+    D->>C: call with the acting member's or lent account
     C-->>R: result
-  else ask
-    D-->>R: refused, a person has to say yes
-    D->>P: approval card: Deny or Allow once
-  else blocked
-    D-->>R: refused
   end
-  R->>D: remember a note, note progress
+  opt run asks to remember a note
+    R->>D: remember a note
+    alt acting for the owner
+      D->>D: append the note
+    else acting for someone else
+      D->>P: ask the owner to approve the note
+    end
+  end
+  opt run for the owner writes progress
+    R->>D: save this routine's progress
+  end
   R-->>D: answer
-  D->>D: save the answer and what this routine did
+  opt successful owner run with no saved progress
+    D->>D: use the answer as the routine's progress
+  end
 ```
 
 ### Whose account
@@ -189,7 +235,8 @@ flowchart LR
 
 - `personal_agent` holds the agent; `personal_agent_revision` holds each
   version of its definition: the brief (encrypted like Automation
-  instructions), the tool policy, the default placement and the monthly budget.
+  instructions), the default placement and the monthly budget. Tool settings
+  alone do not create a revision.
 - `automation.agent_id` marks an Automation as a routine.
   `automation_revision.agent_revision_id` pins the agent version that revision
   runs with. Changing the agent's definition makes the next version and gives
@@ -198,26 +245,31 @@ flowchart LR
 - `/v1/personal-agents` creates, lists, reads, changes and archives agents,
   creates and lists routines, and runs an agent now. Each route is also an
   OpenWork Connect capability.
-- With the feature off for an organization the routes answer 404 and the
-  capabilities are not listed. Routines that already exist keep their brief and
-  tool limits.
-- A run adds the pinned brief in front of the routine's instructions. Blocked
-  connections and tools become scopes on the run's credential, the same way an
-  admin keeps a connection from Workbot, so search, direct calls and Code Mode
-  all leave them out. A run that cannot be limited this way does not start.
+- Each run uses a fresh conversation. The pinned brief and routine task
+  are followed by notes and the routine's progress. Owner runs use
+  `agent_remember` and `agent_note_progress` to save them. Notes and progress
+  are encrypted in `personal_agent_memory` (versioned, per agent) and
+  `personal_agent_routine_state` (per Automation).
+- Block scopes on the run credential hide blocked tools from search. The
+  shared evaluator in `ee/apps/den-api/src/tool-permissions/` reads rules
+  and claims approvals at tool dispatch, not at run admission.
 
 - In the app, a chat that belongs to an agent is an ordinary session. The chat
   model offers the agent through `agent.propose`, which only draws the card;
   the app calls `/v1/personal-agents` when the member says yes. The app code
   is `apps/app/src/react-app/domains/agents/`.
 
-- Sharing is `personal_agent_share`; requests are `personal_agent_request`;
-  team and organization access is `personal_agent_audience`; a lent
-  account is `personal_agent_shared_login`; the admin's rules (who can share,
-  shared logins, written rules, tool rules, budget) are
-  `personal_agent_org_policy`; who changed what is
-  `personal_agent_event`. `automation_run.acting_member_id` is the person a
-  run acts for. A run's cost comes from the gateway model's rates.
+- Sharing is `personal_agent_share`; team and organization access is
+  `personal_agent_audience`; a lent account is `personal_agent_shared_login`.
+  The admin's sharing settings, shared login setting, and budget stay in
+  `personal_agent_org_policy`. Organization written rules move to
+  `tool_permission_org_policy`; organization and agent tool rules move to
+  `tool_permission_rule`. `tool_approval` stores tool requests and approvals;
+  `personal_agent_request` stores change requests only, including notes that
+  wait for owner approval. `personal_agent_event` stores who changed what,
+  including memory changes but not the note text.
+  `automation_run.acting_member_id` is the person a run acts for. A run's cost
+  comes from the gateway model's rates.
 
 ## Verify
 
@@ -230,5 +282,9 @@ organization access, the sidebar and who can share;
 `personal-agent-org-rules.api.test.ts` covers organization rules, tool rules
 and shared logins; `personal-agent-concurrency.api.test.ts` covers the run
 queue, scheduled runs acting for the owner and waiting work that must not
-start. Run them one file at a time. `apps/app/tests/personal-agent-*.test.ts` cover what
-saying yes does and the app's own rules.
+start. `personal-agent-memory.api.test.ts` covers notes, role checks, and
+routine state. `tool-permissions.api.test.ts` covers the shared evaluator and
+approvals. `self-hosted-flags-off.api.test.ts` covers deployment gating. Run
+the API specs under `ee/apps/den-api/test/api/` one file at a time.
+`apps/app/tests/personal-agent-*.test.ts` cover what saying yes does and the
+app's own rules.

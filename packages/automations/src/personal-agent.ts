@@ -11,15 +11,8 @@ export function personalAgentRunInstructions(input: {
   organizationRules?: string
   memory?: { notes: string; routineState?: { name: string; state: string } }
 }): string {
-  const rules = input.organizationRules?.trim()
   return [
-    ...(rules ? [
-      "These rules come from your organization. Follow them first if they conflict with the agent's brief or the task.",
-      "<organization_rules>",
-      rules,
-      "</organization_rules>",
-      "",
-    ] : []),
+    ...organizationToolRuleInstructions(input.organizationRules),
     `You are "${input.agentName}", one of this person's own agents. They wrote the brief below. It says who you are and how you work; follow it for everything in this run.`,
     "",
     "<agent_brief>",
@@ -32,6 +25,18 @@ export function personalAgentRunInstructions(input: {
     ...(input.memory ? personalAgentMemoryInstructions(input.memory) : []),
     "Your reply is posted in this person's chat with you. Make it at most two short plain sentences, about 40 words: what you found and what you did, naming each thing you created by its id or title only. No headings, tables, lists or explanations of how you decided. If there was nothing to do, say so in one sentence.",
   ].join("\n")
+}
+
+/** The shared organization-rules preamble, or no lines when no rules were written. */
+export function organizationToolRuleInstructions(writtenRules?: string): string[] {
+  const rules = writtenRules?.trim()
+  return rules ? [
+    "These rules come from your organization. Follow them first if they conflict with the agent's brief or the task.",
+    "<organization_rules>",
+    rules,
+    "</organization_rules>",
+    "",
+  ] : []
 }
 
 function memoryData(text: string): string {
