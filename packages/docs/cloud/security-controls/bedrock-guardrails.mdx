@@ -1,0 +1,182 @@
+---
+title: "Bedrock guardrails (Preview)"
+description: "Configure and validate an administrator-selected Amazon Bedrock guardrail for requests routed through OpenWork AI Gateway."
+---
+
+<Warning>
+**Preview — not a generally available security control.** This page describes the `bedrockGuardrails` rollout. It is off by default on OpenWork Cloud and self-hosted deployments. Confirm availability and complete the validation below on your installed version before depending on it. Saving a guardrail reference is not proof that AWS applied it.
+</Warning>
+
+## What this controls
+
+An organization administrator selects an AWS guardrail on an **Amazon Bedrock** AI Gateway provider. In the Preview implementation, Gateway attaches that reference to the final Bedrock Runtime request, before AWS signing or bearer authentication. AWS, not OpenWork, evaluates the guardrail's configured policies.
+
+This is a provider setting, not a prompt that members can remove. It applies only to inference sent through that Gateway provider. It does not inspect local files, MCP tool execution, another provider, or a desktop engine's direct connection to AWS.
+
+| Preview coverage when the feature is on and a guardrail is configured | AWS request |
+| --- | --- |
+| Native Bedrock Runtime requests | Converse, ConverseStream, InvokeModel and InvokeModelWithResponseStream |
+| Smart/Auto routing that selects this Bedrock provider | Translated Converse or ConverseStream |
+| Cursor, Claude Code and Codex using this provider through AI Gateway | Translated Converse or ConverseStream |
+| Provider **Test connection** | A short Converse request with the same guardrail |
+| **Amazon Bedrock (OpenAI)** / Mantle | Not supported; a configured guardrail is refused rather than silently omitted |
+
+Connecting a client's **MCP** integration alone does not route its model requests through AI Gateway. Use that client's [AI Gateway setup](/ai-gateway/third-party-tools) and verify which provider answered.
+
+<Warning>
+**Turning the feature off does not keep injecting the saved guardrail.** The Preview leaves the pre-feature request bytes unchanged when the flag is off, or when no guardrail is configured. Do not treat a saved setting or the rollout switch as an AWS enforcement boundary. Use an IAM deny policy if unguarded requests must fail.
+</Warning>
+
+## Before you begin
+
+1. Set up an [Amazon Bedrock provider](/ai-gateway/amazon-bedrock), with a region, an enabled model and either shared credentials or per-member IAM Identity Center sign-in.
+2. Create and test a guardrail in AWS. Publish a numbered version for a stable deployment; `DRAFT` is mutable and is better suited to evaluation.
+3. Confirm the guardrail's region and account access work with the actual credentials that Gateway will use. Start with the same region as the Runtime provider. Cross-account sharing and cross-region inference require additional AWS setup; do not infer support from a valid ARN alone.
+4. Have your OpenWork deployment administrator enable the Preview for your evaluation organization. Self-hosted operators must configure the same rollout state on Den API and Gateway.
+
+## Find the guardrail ID and version in AWS
+
+1. Sign in to the [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/) with an identity allowed to view the guardrail. Use the console's region selector to choose the **same AWS region** as the OpenWork Runtime provider.
+2. In the left navigation, open **Safeguards → Guardrails** (AWS documentation may show this simply as **Guardrails**), then select the guardrail's name.
+3. In **Guardrail overview** / **Overview**, copy the **Guardrail ID** or **Guardrail ARN**. This is the value for OpenWork's **Guardrail ID or ARN**; a guardrail ARN itself has no version suffix.
+4. In **Versions**, select the numbered version you intend to deploy and copy its number, such as `1`, into **Guardrail version**. If you have only a working draft, publish a snapshot: choose **Create** in **Versions**, or open **Working draft → Create version**, optionally add a description, then choose **Create version**. After creation completes, select the new numbered version.
+5. For an evaluation of the mutable working draft instead, select **Working draft** and enter the literal uppercase value `DRAFT` in OpenWork. Do not enter `Working draft`, omit the version, or assume later edits change an already-published numbered version.
+
+AWS's [view guardrail information](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-view.html), [create a version](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-versions-create.html) and [deploy a guardrail](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-deploy.html) guides describe these console controls and the distinction between a version snapshot and the working draft. Publishing a new version does not automatically update the version saved in OpenWork.
+
+## Preview provider settings
+
+The Preview uses these non-secret settings on the Runtime provider:
+
+```json
+{
+  "region": "us-east-1",
+  "guardrailIdentifier": "arn:aws:bedrock:us-east-1:123456789012:guardrail/abc123def456",
+  "guardrailVersion": "1"
+}
+```
+
+The account and guardrail above are fictitious. Use your guardrail ID or ARN and its separate version field. Supply **both** fields; do not append the version to `guardrailIdentifier`. Use a numbered version for change control. The settings do not create, publish or edit a guardrail in AWS.
+
+In an enabled evaluation organization, open **AI Gateway → AI Providers**, choose **Amazon Bedrock**, enter **Guardrail ID or ARN** and **Guardrail version**, then test and save the provider. The exact editor availability depends on your rollout; if those fields are absent, do not put them into a member's prompt or custom headers instead.
+
+Gateway rejects caller-selected Bedrock guardrail resource references and selective `guardContent` configuration before client translation. Keep selection under provider administration: members should not supply their own `guardrailConfig`, identifier/version, native `amazon-bedrock-guardrailConfig`, or guardrail/trace headers to Gateway. Runtime policy uses the organization's effective feature setting; a member override does not disable it.
+
+## What people see
+
+When AWS reports an intervention on a request to which Gateway applied the organization guardrail, Gateway uses this message:
+
+> Your organization’s guardrail blocked this prompt or response. Contact your administrator if you need help.
+
+| Client or operation | Blocked result |
+| --- | --- |
+| Native Converse, JSON | The assistant text is replaced by this message; `stopReason` remains `guardrail_intervened`. |
+| Native ConverseStream | The message appears as text events with the intervention stop reason. Buffered tool-call content is discarded. |
+| Native InvokeModel | HTTP **403**, with this message in the JSON error body. |
+| Native InvokeModelWithResponseStream | A `modelStreamErrorException` event carrying this message, rather than a completed model answer. |
+| Smart/Auto, Cursor, Claude Code and Codex translated Bedrock requests | The message is returned as assistant text in the client's protocol. |
+| Provider **Test connection** | The test fails with code `bedrock_guardrail_intervened` and this message if its short prompt is blocked. |
+
+A Bedrock guardrail intervention can arrive with **HTTP 200**; status alone is not a pass. Check the response content, stop reason and any stream exception. AWS authentication failures, malformed responses and limit errors are separate failures, not a guardrail block confirmation. Gateway normalizes these intervention results only when it actually applied the organization guardrail.
+
+### Buffering and limitations
+
+- **Guarded Invoke streams are buffered until the upstream stream ends.** Members do not receive normal incremental Invoke model chunks while Gateway waits to establish the result. This adds visible latency; if an intervention is detected, Gateway discards buffered output and returns the stream exception.
+- Guarded non-streaming JSON responses have a **16 MiB** limit. Guarded stream-frame buffers and held stream/tool content also have **16 MiB** limits. Exceeding a limit fails closed with an error rather than releasing unchecked buffered content. Malformed guarded JSON/event streams also fail closed.
+- Converse text can already have streamed before the final intervention stop reason arrives. **Gateway cannot retract text already delivered.** Holding tool-call content is not the same as buffering every Converse text token.
+- Attaching the guardrail and handling an intervention do **not** prove that AWS assessed every input segment, media type or policy category. Review AWS's selective-input behavior and your policy's supported content. Do not treat this as an all-input assessment or device-wide data-loss-prevention guarantee.
+
+## Enforce the reference in AWS IAM
+
+OpenWork configuration attaches a reference; IAM can independently deny invocations that omit it or use another version. Apply this to the principal behind a shared credential, or to the permission set/role used by **each member**. A deny attached to an unrelated admin role has no effect on Gateway's calls.
+
+This example follows [AWS's guardrail enforcement policy](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-permissions-id.html): it allows model invocation only with guardrail version `1`, explicitly denies invocation without that exact reference, and allows applying the guardrail. AWS authorizes Converse with `bedrock:InvokeModel`, and ConverseStream with `bedrock:InvokeModelWithResponseStream`; there are no separate IAM actions named `bedrock:Converse` or `bedrock:ConverseStream`.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowApprovedModelWithGuardrail",
+      "Effect": "Allow",
+      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+      "Resource": "arn:aws:bedrock:us-east-1::foundation-model/*",
+      "Condition": {
+        "StringEquals": {
+          "bedrock:GuardrailIdentifier": "arn:aws:bedrock:us-east-1:123456789012:guardrail/abc123def456:1"
+        }
+      }
+    },
+    {
+      "Sid": "DenyMissingOrDifferentGuardrail",
+      "Effect": "Deny",
+      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "bedrock:GuardrailIdentifier": "arn:aws:bedrock:us-east-1:123456789012:guardrail/abc123def456:1"
+        }
+      }
+    },
+    {
+      "Sid": "AllowApplyApprovedGuardrail",
+      "Effect": "Allow",
+      "Action": "bedrock:ApplyGuardrail",
+      "Resource": "arn:aws:bedrock:us-east-1:123456789012:guardrail/abc123def456"
+    }
+  ]
+}
+```
+
+Replace the fictitious account, guardrail, region and model resources before use. Narrow the allow to your approved models. Inference profiles and cross-region inference need the appropriate profile and destination-model permissions as well. The deny uses `Resource: "*"` so another model allow does not accidentally create an unguarded path. This is an example, not a policy to attach unchanged to a production role.
+
+For a numbered version, the **IAM condition value** includes `:1`, while the **ApplyGuardrail resource** does not. AWS documents different condition values for `DRAFT`; do not remove the version suffix from the condition while expecting to pin a numbered version.
+
+<Note>
+Requiring a guardrail reference does not prove every input block was evaluated. AWS supports selective input evaluation (including guardrail input tags); review the guardrail policy, request content and AWS limitations. A guardrail is not a replacement for model access control, tool permissions or data-loss prevention across every channel.
+</Note>
+
+## Validate before relying on it
+
+Use an isolated AWS evaluation account and non-sensitive prompts. These are **manual validation steps**, not a claim that OpenWork has run them against your AWS account. Inference and guardrail checks can incur AWS charges.
+
+1. Record the OpenWork version, effective organization rollout state, AWS region, model ID, guardrail ARN and numbered version. Use the same AWS principal as the provider, including its permission set if members sign in separately.
+2. Test a harmless prompt and a synthetic prompt deliberately matched by your guardrail's configured denied word/topic. Do not assume a generic unsafe prompt matches your policy.
+3. In AWS, invoke the model with the correct guardrail, without a guardrail, and with a different guardrail/version. With the deny above, only the correct reference should reach inference. A policy simulator result is not a substitute for these live calls.
+4. Through Gateway, exercise **all four native Runtime operations**, streaming and non-streaming; confirm allowed content works and the policy-matching input produces AWS's configured intervention. For Invoke requests, use the model's own JSON schema.
+5. Repeat through Smart/Auto (confirm it selected Bedrock), Cursor, Claude Code and Codex. Confirm the actual upstream model, streaming completion and a tool-call round trip; do not count a request that chose another provider as Bedrock proof.
+6. Run **Test connection**. If the guardrail blocks its short Converse prompt, the test fails with `bedrock_guardrail_intervened`; an HTTP 200 intervention is not a successful connection test. A successful test proves only that this prompt was accepted, not that every guardrail rule or client path works. General diagnostics may only validate AWS credentials with STS.
+7. Try a caller-selected guardrail reference: Gateway should refuse it. Configure a guardrail on Mantle in an isolated test: the enabled Preview should refuse it before contacting AWS.
+8. In the isolated environment, switch the feature off and repeat a request while leaving the saved guardrail in place. Gateway should stop attaching it; AWS IAM should then deny the call. Repeat with the feature on and no guardrail configured. **Do not disable production IAM enforcement to make these calls succeed.**
+
+Keep the AWS request IDs, status/error codes, intervention outcome and Gateway request IDs with your evidence. Avoid storing prompts, response traces or credentials in public reports. If a check fails, leave the rollout disabled and investigate; do not retry without the guardrail.
+
+## Direct desktop Bedrock connections are separate
+
+A locally configured **amazon-bedrock** provider can call AWS directly through the desktop's OpenCode engine. It does not pass through this Gateway provider setting or its feature flag. The current [OpenCode Bedrock configuration](https://opencode.ai/docs/providers/#bedrock) documents the AWS credential chain and a V2 `opencode.jsonc` configuration such as:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "providers": {
+    "amazon-bedrock": {
+      "settings": {
+        "profile": "work",
+        "region": "us-east-1"
+      }
+    }
+  }
+}
+```
+
+This selects the direct connection's profile and region; **it does not attach a guardrail**. See [OpenCode provider request body settings](https://opencode.ai/docs/providers/#requests) for engine-level request customization. Confirm the installed engine's supported guardrail request format before configuring it; the Gateway `settings.guardrailIdentifier` field is not a desktop-engine configuration contract. Older engine versions may use another configuration shape; follow the documentation for the installed engine rather than copying V2 fields into an older configuration.
+
+For centrally controlled routing, distribute the approved Gateway provider and review [desktop policies](/cloud/share-with-your-team/desktop-policies) for locally added providers. Enforce the AWS principal's IAM policy independently of whether the desktop is managed.
+
+## Related controls
+
+- [Amazon Bedrock credentials and member sign-in](/ai-gateway/amazon-bedrock)
+- [Users, teams and model access](/ai-gateway/users-and-teams)
+- [Desktop policies](/cloud/share-with-your-team/desktop-policies)
+- [Agent permissions](/cloud/share-with-your-team/agent-permissions)
+- [Security and operations](/cloud/security-and-operations)

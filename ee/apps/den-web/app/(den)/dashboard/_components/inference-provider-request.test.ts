@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { GatewayAccessGrantWrite, GatewayCredentialSet, GatewayModelGroup } from "@openwork/types/den/gateway";
-import { filterSupportedGatewayCatalogModels, readSavedGatewayResourceId, syncInferenceProviderMatrix, type GatewayResourceWrite } from "./inference-provider-request";
+import { bedrockGuardrailPatch, filterSupportedGatewayCatalogModels, readSavedGatewayResourceId, syncInferenceProviderMatrix, type GatewayResourceWrite } from "./inference-provider-request";
+
+test("guardrail edits send paired values, explicit clears, and no settings while disabled or unchanged", () => {
+  const saved = { guardrailIdentifier: "fixture123", guardrailVersion: "1" };
+  assert.equal(bedrockGuardrailPatch(saved, saved, true), undefined);
+  assert.equal(bedrockGuardrailPatch({ ...saved, guardrailVersion: "2" }, saved, false), undefined);
+  assert.deepEqual(bedrockGuardrailPatch({ ...saved, guardrailVersion: " 2 " }, saved, true), { ...saved, guardrailVersion: "2" });
+  assert.deepEqual(bedrockGuardrailPatch({}, saved, true), { guardrailIdentifier: "", guardrailVersion: "" });
+  assert.deepEqual(bedrockGuardrailPatch(saved, {}, true), saved);
+});
 
 test("catalog filtering keeps only models the gateway can route through the provider", () => {
   const npm = "@ai-sdk/google-vertex";

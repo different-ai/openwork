@@ -91,7 +91,7 @@ export function microsoftFoundrySettingsError(settings: JsonRecord, allowedOrigi
 }
 
 export function publicProviderSettings(settings: JsonRecord): JsonRecord {
-  return Object.fromEntries(["project", "location", "resourceName", "apiVersion", "region", "upstreamBaseUrl"]
+  return Object.fromEntries(["project", "location", "resourceName", "apiVersion", "region", "upstreamBaseUrl", "guardrailIdentifier", "guardrailVersion"]
     .filter((key) => settings[key] !== undefined).map((key) => [key, settings[key]]))
 }
 

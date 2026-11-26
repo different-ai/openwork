@@ -1,5 +1,5 @@
 import { isSupportedGatewayNpm, MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/gateway-catalog";
-import { gatewayMemberSignInMethod, gatewayModelConfigurationError } from "@openwork/types/den/inference";
+import { bedrockGuardrailSettingsError, gatewayMemberSignInMethod, gatewayModelConfigurationError } from "@openwork/types/den/inference";
 import type {
   GatewayAwsSsoSettings,
   GatewayMemberSignInMethod,
@@ -502,6 +502,14 @@ export type InferenceProviderRequestBody = {
   teamIds: string[];
 };
 
+export function bedrockGuardrailPatch(settings: Record<string, string>, previous: Record<string, string>, enabled: boolean): { guardrailIdentifier: string; guardrailVersion: string } | undefined {
+  if (!enabled) return undefined;
+  const guardrailIdentifier = (settings.guardrailIdentifier ?? "").trim();
+  const guardrailVersion = (settings.guardrailVersion ?? "").trim();
+  if (guardrailIdentifier === (previous.guardrailIdentifier ?? "") && guardrailVersion === (previous.guardrailVersion ?? "")) return undefined;
+  return { guardrailIdentifier, guardrailVersion };
+}
+
 function trimmedSettings(settings: Record<string, string>) {
   return Object.fromEntries(
     Object.entries(settings).flatMap(([key, value]) => {
@@ -686,6 +694,8 @@ export function validateInferenceProviderForm(input: {
   if (isAmazonBedrockNpm(input.npm) && !isAwsRegion((input.settings.region ?? "").trim())) {
     return "Enter an AWS region code such as us-east-1.";
   }
+  const guardrailError = bedrockGuardrailSettingsError(input.providerId, trimmedSettings(input.settings));
+  if (guardrailError) return guardrailError;
   const awsKeysError = input.awsKeys ? getAwsKeysError(input.awsKeys) : null;
   if (awsKeysError) return awsKeysError;
   if (input.credentialMode === "member") {

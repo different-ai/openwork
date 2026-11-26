@@ -24,4 +24,26 @@ package name (`@openwork-ee/gateway-upstreams/egress`), and use only syntax Node
 (no enums, namespaces or constructor parameter properties; `scripts/check-node-source-imports.mjs`).
 `build` only emits the type declarations other packages typecheck against.
 
+## Bedrock guardrails (Preview)
+
+`bedrock-guardrail.ts` supplies shared, pure request attachment (`applyBedrockGuardrail`)
+and original-client override detection, used by Gateway runtime forwarding and provider
+tests for the off-by-default `bedrockGuardrails` rollout. Gateway/Den resolve the
+organization-owned feature; this package does not read the database or independently
+resolve a member's rollout. The non-secret settings are `guardrailIdentifier` and
+`guardrailVersion`, supplied together.
+
+Attach to the final request before auth: `guardrailConfig` in Converse/ConverseStream
+JSON, and `X-Amzn-Bedrock-GuardrailIdentifier` / `X-Amzn-Bedrock-GuardrailVersion` headers
+for InvokeModel/InvokeModelWithResponseStream. Preserve the model-native Invoke body.
+Do not infer coverage from `bedrock_converse` alone (Invoke is passthrough). Ensure
+runtime retries that recreate headers retain the same settings and sign the final bytes.
+With the feature on, a configured guardrail on Mantle must be refused. With the flag
+off or no guardrail configured, leave the pre-feature bytes unchanged; an AWS IAM deny,
+not an ignored saved setting, must enforce omission failures.
+
+See [internal rollout and manual AWS validation](../../../docs/features/bedrock-guardrails/README.md).
+This off-by-default Preview still requires real-product evidence and AWS validation;
+source coverage is not a live AWS validation claim.
+
 Test: `pnpm --filter @openwork-ee/gateway-upstreams test`.

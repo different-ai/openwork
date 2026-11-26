@@ -35,12 +35,16 @@ export async function readOrganizationForAuthorization(organizationId: string) {
 
 export async function getOrganizationFeatures(organizationId: string, options: ReadOptions = {}): Promise<FeatureMap> {
   if (options.database || options.lock) {
-    return readFeatures(options.database ?? db, organizationId, env.features, { lock: options.lock, userId: options.userId })
+    const features = await readFeatures(options.database ?? db, organizationId, env.features, { lock: options.lock, userId: options.userId })
+    if (!options.userId) return features
+    const organization = await readFeatures(options.database ?? db, organizationId, env.features, { lock: options.lock })
+    return { ...features, bedrockGuardrails: organization.bedrockGuardrails }
   }
   const id = normalizeDenTypeId("organization", organizationId)
   const userId = options.userId ? normalizeDenTypeId("user", options.userId) : undefined
   const { rollouts, overrides, memberOverrides } = await cache.features.state(id, userId)
-  return resolveFeatures({ ...env.features, rollouts, overrides, memberOverrides })
+  const organization = resolveFeatures({ ...env.features, rollouts, overrides })
+  return { ...resolveFeatures({ ...env.features, rollouts, overrides, memberOverrides }), bedrockGuardrails: organization.bedrockGuardrails }
 }
 
 export async function organizationFeatureEnabled(organizationId: string, key: FeatureKey, options: ReadOptions = {}): Promise<boolean> {
@@ -58,7 +62,7 @@ export async function getOrganizationFeaturesByMember(organizationId: string): P
     organization,
     forMember(memberId) {
       const own = memberOverrides.get(normalizeDenTypeId("member", memberId))
-      return own ? resolveFeatures({ ...env.features, rollouts, overrides, memberOverrides: own }) : organization
+      return own ? { ...resolveFeatures({ ...env.features, rollouts, overrides, memberOverrides: own }), bedrockGuardrails: organization.bedrockGuardrails } : organization
     },
   }
 }

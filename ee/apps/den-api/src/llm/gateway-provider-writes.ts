@@ -5,7 +5,9 @@ import { isLiteLlmProviderId, isTrueFoundryProviderId } from "@openwork-ee/gatew
 import { GATEWAY_PROVIDER_STATUSES } from "@openwork/types/den/gateway"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import type { GatewayProviderRemovalLimitChoice } from "@openwork/types/den/gateway-usage-limits"
-import { z } from "zod"
+import type { z } from "zod"
+import { gatewayProviderSettingsSchema } from "@openwork/types/den/inference"
+import { organizationFeatureEnabled } from "../features.js"
 import { GatewayWriteError, resolveGatewayCatalog, validateGatewaySettings, writeGatewayModels, type GatewayProvider, type GatewayTx } from "./gateway-matrix.js"
 import { publicProviderSettings, readProviderConfigNpm } from "./inference-provider-config.js"
 import { deleteLiteLlmIssuedKeys, pruneLiteLlmIssuedKeys } from "./litellm-issued.js"
@@ -16,7 +18,22 @@ import type { ModelsDevProvider } from "./models-dev.js"
 type GatewayCredential = typeof GatewayProviderCredentialTable.$inferSelect
 type GatewayModelRowId = typeof GatewayProviderModelTable.$inferSelect["id"]
 
-export const gatewayProviderSettingsSchema = z.object({ project: z.string().trim().max(255).optional(), location: z.string().trim().max(63).optional(), resourceName: z.string().trim().max(63).optional(), apiVersion: z.string().trim().max(64).optional(), region: z.string().trim().max(63).optional(), upstreamBaseUrl: z.string().trim().max(2048).optional() }).strict()
+export { gatewayProviderSettingsSchema } from "@openwork/types/den/inference"
+
+export function normalizedBedrockGuardrailSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  if (settings.guardrailIdentifier !== "" || settings.guardrailVersion !== "") return settings
+  const cleared = { ...settings }
+  delete cleared.guardrailIdentifier
+  delete cleared.guardrailVersion
+  return cleared
+}
+
+export async function requireBedrockGuardrailWrite(organizationId: string, settings: Record<string, unknown> | undefined, tx?: GatewayTx): Promise<void> {
+  if (settings?.guardrailIdentifier === undefined && settings?.guardrailVersion === undefined) return
+  if (!await organizationFeatureEnabled(organizationId, "bedrockGuardrails", tx ? { database: tx, lock: "share" } : {})) {
+    throw new GatewayWriteError(403, "feature_disabled", "Bedrock guardrails are not enabled for this organization.")
+  }
+}
 
 export function readProviderConfigName(config: Record<string, unknown>): string | null {
   return typeof config.name === "string" ? config.name : null
@@ -34,10 +51,13 @@ export async function patchGatewayProvider(tx: GatewayTx, existing: GatewayProvi
   if (input.providerId !== undefined && input.providerId !== existing.provider_id) throw new GatewayWriteError(409, "provider_identity_immutable", "Create a separate provider rather than moving existing groups and credentials to another catalog provider.")
   if (!trusted || trusted.id !== existing.provider_id || trusted.npm !== readProviderConfigNpm(existing.provider_config)) throw new GatewayWriteError(400, "provider_requires_configuration")
   const config = existing.provider_config
+  let settings = existing.settings
   if (input.settings !== undefined) {
     const persisted: Record<string, unknown> = gatewayProviderSettingsSchema.parse(publicProviderSettings(existing.settings))
-    validateGatewaySettings(config, { ...persisted, ...input.settings })
-    if (Object.entries(input.settings).some(([key, value]) => value !== persisted[key])) {
+    await requireBedrockGuardrailWrite(existing.organization_id, input.settings, tx)
+    settings = normalizedBedrockGuardrailSettings({ ...existing.settings, ...input.settings })
+    validateGatewaySettings(config, settings)
+    if (Object.entries(input.settings).some(([key, value]) => key !== "guardrailIdentifier" && key !== "guardrailVersion" && value !== persisted[key])) {
       throw isGatewayCustomProviderId(existing.provider_id)
         ? new GatewayWriteError(409, "provider_destination_immutable", "Change a custom provider's API address with PATCH /v1/inference-providers/{inferenceProviderId}/custom (the custom provider edit), which also asks for the key again for another host.")
         : new GatewayWriteError(409, "provider_destination_immutable", "Create a separate provider to change the upstream account or destination. Existing credentials cannot be relocated.")
@@ -48,9 +68,9 @@ export async function patchGatewayProvider(tx: GatewayTx, existing: GatewayProvi
   if (input.status === "disabled" && existing.status === "active") await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, existing.id))
   const name = input.name ?? existing.name
   const providerConfig = isGatewayCustomProviderId(existing.provider_id) && name !== readProviderConfigName(config) ? { ...config, name } : config
-  const provider: GatewayProvider = { ...existing, name, provider_config: providerConfig, model_ids: modelIds, status: input.status ?? existing.status, updated_at: new Date() }
+  const provider: GatewayProvider = { ...existing, name, settings, provider_config: providerConfig, model_ids: modelIds, status: input.status ?? existing.status, updated_at: new Date() }
   if (options.syncModels !== false || input.modelIds !== undefined) await writeGatewayModels(tx, provider, catalog.models, { createIds: options.createModelIds })
-  await tx.update(GatewayProviderTable).set({ name: provider.name, ...(providerConfig === config ? {} : { provider_config: providerConfig }), model_ids: modelIds, status: provider.status, updated_at: provider.updated_at }).where(eq(GatewayProviderTable.id, provider.id))
+  await tx.update(GatewayProviderTable).set({ name: provider.name, ...(settings === existing.settings ? {} : { settings }), ...(providerConfig === config ? {} : { provider_config: providerConfig }), model_ids: modelIds, status: provider.status, updated_at: provider.updated_at }).where(eq(GatewayProviderTable.id, provider.id))
   return provider
 }
 

@@ -19,13 +19,13 @@ import { DenSkeleton } from "../../_components/ui/skeleton";
 import { GatewayModelScopePicker } from "./gateway-model-scope-picker";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
-import { gatewayMemberSignInMethod } from "@openwork/types/den/inference";
+import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { bedrockGuardrailSettingsError, gatewayMemberSignInMethod } from "@openwork/types/den/inference";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConfirmDialog } from "./item-list";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, saveInferenceProvider, testInferenceProvider, useInferenceProvider, useOrgInferenceProviders } from "./inference-provider-data";
 import {
-  accessFromGrants, buildInferenceProviderRequestBody, EMPTY_AWS_SSO, filterSupportedGatewayCatalogModels, getAwsKeysError, getAwsSsoError, getMemberSignInBrand, getMemberSignInMethod, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
+  accessFromGrants, bedrockGuardrailPatch, buildInferenceProviderRequestBody, EMPTY_AWS_SSO, filterSupportedGatewayCatalogModels, getAwsKeysError, getAwsSsoError, getMemberSignInBrand, getMemberSignInMethod, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
   isAmazonBedrockNpm, isAwsRegion, isGoogleVertexNpm, isMicrosoftTenantId, isSupportedGatewayNpm, MEMBER_SIGN_IN_DOC_URLS, syncInferenceProviderMatrix, trimAwsSso, type AwsKeysInput, type AwsSsoInput, type InferenceProviderFormInput,
 } from "./inference-provider-request";
 import { LITELLM_PROVIDER_ID } from "./litellm-provider-data";
@@ -145,6 +145,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const npm = detail ? getProviderNpmPackage(detail.config) : null;
   const vertex = isGoogleVertexNpm(npm);
   const bedrock = isAmazonBedrockNpm(npm);
+  const guardrailsEnabled = providerId === "amazon-bedrock" && orgFeatureEnabled(orgContext, "bedrockGuardrails");
   const reusableKeyProviders = !inferenceProviderId && bedrock ? getReusableAwsKeyProviders(inferenceProviders) : [];
   const reuseSource = reusableKeyProviders.find((entry) => entry.id === reuseKeysFrom) ?? null;
   const envNames = detail ? getProviderEnvNames(detail.config) : [];
@@ -216,6 +217,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     if (!allowAllModels && !modelIds.length) return "Pick at least one model, or choose all models.";
     for (const key of getRequiredSettingKeys(npm, providerId)) if (!settings[key]?.trim()) return `${getSettingLabel(key, providerId)} is required.`;
     if (bedrock && !isAwsRegion(settings.region?.trim() ?? "")) return "Enter an AWS region code such as us-east-1.";
+    const guardrailError = guardrailsEnabled ? bedrockGuardrailSettingsError(providerId, settings) : null;
+    if (guardrailError) return guardrailError;
     return bedrock && !reuseSource ? getAwsKeysError(awsKeys) : null;
   }
 
@@ -274,7 +277,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         if (!provider) {
           await saveInferenceProvider({ inferenceProviderId: null, body: buildInferenceProviderRequestBody({ ...formInput, name: name.trim() || displayName }), auditContext });
         } else {
-          await saveInferenceProvider({ inferenceProviderId: provider.id, body: { name: name.trim() || provider.name, modelIds: allowAllModels ? [] : modelIds, status: "active" }, auditContext });
+          await saveInferenceProvider({ inferenceProviderId: provider.id, body: { name: name.trim() || provider.name, modelIds: allowAllModels ? [] : modelIds, status: "active", settings: bedrockGuardrailPatch(settings, provider.settings, guardrailsEnabled) }, auditContext });
           await syncAccessAndCredential(auditContext);
           await reload();
         }
@@ -329,8 +332,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     <div className={embedded ? "pb-28" : "mx-auto max-w-[860px] px-6 py-6 pb-28"}>
       <nav className="text-[12px] text-gray-500" aria-label="Breadcrumb">
         <Link href={getAiGatewayProvidersRoute(orgSlug)} className="hover:text-gray-900">AI Providers</Link>
-        {!provider ? <><span className="mx-1.5 text-gray-300">/</span><Link href={getNewAiGatewayProviderRoute(orgSlug)} className="hover:text-gray-900">Add a provider</Link></> : null}
-        <span className="mx-1.5 text-gray-300">/</span><span className="text-gray-900">{displayName}</span>
+        {!provider ? <><span className="mx-1.5 text-[var(--dls-text-secondary)]">/</span><Link href={getNewAiGatewayProviderRoute(orgSlug)} className="hover:text-gray-900">Add a provider</Link></> : null}
+        <span className="mx-1.5 text-[var(--dls-text-secondary)]">/</span><span className="text-gray-900">{displayName}</span>
       </nav>
       <div className="mt-3 flex items-center gap-3">
         <DenBrandMark name={displayName} simpleIconSlug={getProviderIconSlug(providerId)} serviceUrl={detail?.doc ?? (provider ? getProviderDocUrl(provider.providerConfig) : null)} className="h-8 w-8 rounded-[8px]" imageClassName="h-4 w-4" />
@@ -354,6 +357,21 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
               onChange={(event) => setSettings((current) => ({ ...current, [key]: key === "resourceName" ? normalizeAzureResourceNameInput(event.target.value) : event.target.value }))} />
           </label>
         ))}
+        {guardrailsEnabled ? <div className="mt-4 border-t border-[var(--dls-border)] pt-3" data-testid="gateway-bedrock-guardrails">
+          <h3 className="text-sm font-medium">Bedrock guardrail</h3>
+          <label className={LABEL}>Guardrail ID or ARN
+            <DenInput className={`mt-1.5 ${MONO_INPUT}`} value={settings.guardrailIdentifier ?? ""} autoComplete="off" placeholder="abc123def456" data-testid="gateway-setting-guardrailIdentifier" onChange={(event) => setSettings((current) => ({ ...current, guardrailIdentifier: event.target.value }))} />
+          </label>
+          <label className={LABEL}>Guardrail version
+            <DenInput className={`mt-1.5 ${MONO_INPUT}`} value={settings.guardrailVersion ?? ""} autoComplete="off" placeholder="1 or DRAFT" data-testid="gateway-setting-guardrailVersion" onChange={(event) => setSettings((current) => ({ ...current, guardrailVersion: event.target.value }))} />
+          </label>
+          <p className="mt-3 text-xs text-[var(--dls-text-secondary)]">Filters prompts and replies. Find the ID in <Link href="https://console.aws.amazon.com/bedrock/home#/guardrails" target="_blank" rel="noopener noreferrer" className="underline">AWS Bedrock → Guardrails</Link>; leave both fields empty for no guardrail.</p>
+          <details className="mt-3 text-xs text-[var(--dls-text-secondary)]">
+            <summary className="cursor-pointer">Guardrail setup</summary>
+            <p className="mt-2">AWS credentials need permission to apply the guardrail.</p>
+            <p className="mt-2">The guardrail applies to supported Bedrock calls. Models that use Mantle are detected automatically; Mantle and other unsupported calls are refused when a guardrail is set.</p>
+          </details>
+        </div> : null}
         {invalidatesCredentials ? <label className="mt-3 flex items-center gap-3"><DenSwitch checked={rotationAcknowledged} onChange={setRotationAcknowledged} aria-label="Confirm credential invalidation" /><span>Revoke this set’s credentials and pending sign-ins on save; members must reconnect.</span></label> : null}
         {credentialMode === "member" && signInMethod === "aws_sso" ? (
           <>

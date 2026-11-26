@@ -390,6 +390,45 @@ export const inferenceApiKeyMapSecretSchema = z
   });
 export type InferenceApiKeyMapSecret = z.infer<typeof inferenceApiKeyMapSecretSchema>;
 
+export const bedrockGuardrailIdentifierSchema = z.string().trim().max(2048).regex(/^(?:[a-z0-9]{1,64}|arn:aws(?:-[a-z0-9-]+)?:bedrock:[a-z0-9-]{1,20}:[0-9]{12}:guardrail\/[a-z0-9]{1,64})$/, "Enter a Bedrock guardrail ID or ARN.");
+export const bedrockGuardrailVersionSchema = z.string().trim().regex(/^(?:DRAFT|[1-9][0-9]{0,7})$/, "Enter DRAFT or a positive guardrail version with up to 8 digits.");
+
+export function bedrockGuardrailSettingsPaired(settings: { guardrailIdentifier?: string; guardrailVersion?: string }): boolean {
+  return (settings.guardrailIdentifier === undefined && settings.guardrailVersion === undefined)
+    || (settings.guardrailIdentifier !== undefined && settings.guardrailVersion !== undefined
+      && Boolean(settings.guardrailIdentifier) === Boolean(settings.guardrailVersion));
+}
+
+export const bedrockGuardrailSettingsSchema = z.object({
+  guardrailIdentifier: z.union([bedrockGuardrailIdentifierSchema, z.literal("")]).optional(),
+  guardrailVersion: z.union([bedrockGuardrailVersionSchema, z.literal("")]).optional(),
+}).refine(bedrockGuardrailSettingsPaired, {
+  message: "Enter both the guardrail ID or ARN and its version, or leave both empty.",
+  path: ["guardrailVersion"],
+});
+export type BedrockGuardrailSettings = z.infer<typeof bedrockGuardrailSettingsSchema>;
+
+export const gatewayProviderSettingsSchema = z.object({
+  project: z.string().trim().max(255).optional(),
+  location: z.string().trim().max(63).optional(),
+  resourceName: z.string().trim().max(63).optional(),
+  apiVersion: z.string().trim().max(64).optional(),
+  region: z.string().trim().max(63).optional(),
+  upstreamBaseUrl: z.string().trim().max(2048).optional(),
+  ...bedrockGuardrailSettingsSchema.shape,
+}).strict().refine(bedrockGuardrailSettingsPaired, {
+  message: "Enter both the guardrail ID or ARN and its version, or leave both empty.",
+  path: ["guardrailVersion"],
+});
+export type GatewayProviderSettings = z.infer<typeof gatewayProviderSettingsSchema>;
+
+export function bedrockGuardrailSettingsError(providerId: string, settings: Record<string, unknown>): string | null {
+  if (settings.guardrailIdentifier === undefined && settings.guardrailVersion === undefined) return null;
+  if (providerId !== "amazon-bedrock") return "Guardrails are only supported for Amazon Bedrock providers.";
+  const parsed = bedrockGuardrailSettingsSchema.safeParse(settings);
+  return parsed.success ? null : parsed.error.issues[0]?.message ?? "Invalid Bedrock guardrail settings.";
+}
+
 export const inferenceAwsKeysSecretSchema = z.object({
   accessKeyId: z.string().min(1),
   secretAccessKey: z.string().min(1),
