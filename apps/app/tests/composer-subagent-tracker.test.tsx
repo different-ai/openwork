@@ -4,6 +4,8 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act } from "react"
 import type { Root } from "react-dom/client"
 import type { UIMessage } from "ai"
+import type { RemoteSessionThreadStatus } from "@openwork/types/automations"
+import type { RemoteThreadEntry } from "../src/react-app/domains/session/remote-threads/remote-thread-store"
 
 type TrackerModule = typeof import("../src/react-app/domains/session/surface/composer/composer-subagent-tracker")
 type StoreModule = typeof import("../src/react-app/domains/session/status/session-activity-store")
@@ -11,6 +13,7 @@ type StoreModule = typeof import("../src/react-app/domains/session/status/sessio
 let createRoot: typeof import("react-dom/client")["createRoot"]
 let tracker: TrackerModule
 let store: StoreModule["useSessionActivityStore"]
+let remoteStore: typeof import("../src/react-app/domains/session/remote-threads/remote-thread-store")["useRemoteThreadStore"]
 const ownedDom = !GlobalRegistrator.isRegistered && typeof document === "undefined"
 beforeAll(async () => {
   if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" })
@@ -18,12 +21,14 @@ beforeAll(async () => {
   createRoot = (await import("react-dom/client")).createRoot
   tracker = await import("../src/react-app/domains/session/surface/composer/composer-subagent-tracker")
   store = (await import("../src/react-app/domains/session/status/session-activity-store")).useSessionActivityStore
+  remoteStore = (await import("../src/react-app/domains/session/remote-threads/remote-thread-store")).useRemoteThreadStore
 })
 afterAll(async () => { if (ownedDom) await GlobalRegistrator.unregister() })
 let root: Root | null = null
 afterEach(async () => {
   if (root) await act(async () => root?.unmount())
   root = null
+  remoteStore.setState({ threads: {} })
   document.body.innerHTML = ""
 })
 
@@ -54,7 +59,12 @@ function turn(parts: UIMessage["parts"], earlier: UIMessage["parts"] = []): UIMe
   ]
 }
 
-async function render(messages: UIMessage[], options: { parentActive?: boolean; onOpen?: (id: string) => void; onStop?: (id: string) => void } = {}) {
+async function render(messages: UIMessage[], options: {
+  parentActive?: boolean
+  onOpen?: (id: string) => void
+  onStop?: (id: string) => void
+  remote?: Parameters<TrackerModule["ComposerSubagentTracker"]>[0]["remote"]
+} = {}) {
   const container = document.createElement("div")
   document.body.append(container)
   root = createRoot(container)
@@ -67,6 +77,7 @@ async function render(messages: UIMessage[], options: { parentActive?: boolean; 
         syncDegraded={false}
         onOpenSubagentSession={options.onOpen}
         onStopSubagentSession={options.onStop}
+        remote={options.remote}
       />,
     )
   })
@@ -75,6 +86,78 @@ async function render(messages: UIMessage[], options: { parentActive?: boolean; 
 
 const rowKinds = (container: HTMLElement) => [...container.querySelectorAll("[data-subagent-tracker-row]")]
   .map((row) => row.getAttribute("data-subagent-tracker-kind"))
+
+const owner = { workspaceId: WORKSPACE, sessionId: "parent" }
+
+function remoteEntry(id: string, state: RemoteSessionThreadStatus["state"], overrides?: Partial<RemoteSessionThreadStatus>): RemoteThreadEntry {
+  const now = Date.now()
+  const title = "Prepare the release checklist from the current documentation"
+  const start: RemoteThreadEntry["start"] = {
+    key: `command:${id}`, ref: { commandId: id }, toolCallId: `call_${id}`, title, prompt: title,
+    target: "desktop", sessionId: state === "starting" ? null : id, workspaceId: "remote_ws", computerId: "computer",
+  }
+  return {
+    start, organizationId: "org_test", version: "v1", stale: false, checkedAt: now,
+    activeSince: now - 65_000, firstSeenAt: now - 65_000, followedUpAt: null,
+    owners: { [`${WORKSPACE}:${owner.sessionId}`]: owner }, viewers: 0, lastViewedAt: now,
+    status: {
+      ref: id, changed: true, version: "v1", target: "desktop", state, waitingFor: null, title,
+      computerId: "computer", computerLabel: "Office Mac Studio with a long device name", sessionId: start.sessionId,
+      workspaceId: start.workspaceId, messageCount: 0, preview: null, latestStep: null, error: null, observedAt: now,
+      ...overrides,
+    },
+  }
+}
+
+test("remote and local tasks share one tracker; remote state, elapsed, and actions use the same row anatomy", async () => {
+  const entries = [
+    remoteEntry("starting", "starting"),
+    remoteEntry("running", "running"),
+    remoteEntry("permission", "waiting", { waitingFor: "permission" }),
+    remoteEntry("question", "waiting", { waitingFor: "question" }),
+    remoteEntry("done", "idle"),
+    remoteEntry("failed", "error", { error: { code: "failed", message: "Task failed" } }),
+    remoteEntry("stopped", "error", { error: { code: "aborted", message: "Task aborted" } }),
+    { ...remoteEntry("stale", "running"), stale: true },
+  ]
+  remoteStore.setState({ threads: Object.fromEntries(entries.map((entry) => [entry.start.key, entry])) })
+  const opened: string[] = []
+  const container = await render(turn([taskPart("local", "general", "Review the draft", "working", "ses_local")]), {
+    remote: { owner, tasks: entries.map((entry) => ({ start: entry.start, startedAt: entry.activeSince })), onOpen: (start) => opened.push(start.key) },
+  })
+  const rows = [...container.querySelectorAll("[data-subagent-tracker-remote]")]
+  const words = rows.map((row) => row.querySelector("[data-subagent-tracker-status]")?.textContent)
+  expect(words).toEqual(["Starting", "Working", "Needs permission", "Waiting for your answer", "Done", "Failed", "Stopped", "Reconnecting"])
+  expect(rowKinds(container)).toEqual(["working", "working", "working", "attention", "attention", "done", "error", "stopped", "working"])
+  expect(rows[1]?.querySelector("[data-subagent-tracker-agent]")?.textContent).toBe(entries[1]?.status?.computerLabel)
+  expect(rows[1]?.querySelector("[data-subagent-tracker-task]")?.textContent).toBe(entries[1]?.start.title)
+  for (const row of rows) {
+    const elapsed = row.querySelector("[data-subagent-tracker-elapsed]")
+    expect(elapsed?.textContent).toBe("1m 5s")
+    expect(elapsed?.parentElement?.classList.contains("whitespace-nowrap")).toBe(true)
+  }
+  expect(rows[7]?.querySelector(".ow-text-shimmer")).toBeNull()
+  expect(rows[0]?.querySelector("[data-subagent-tracker-stop]")).toBeNull()
+  expect(rows[1]?.querySelector("[data-subagent-tracker-stop]")?.textContent).toBe("Stop")
+  await act(async () => rows[2]?.querySelector<HTMLButtonElement>("[data-subagent-tracker-review]")?.click())
+  expect(opened).toEqual(["command:permission"])
+  const toggle = container.querySelector<HTMLButtonElement>("[data-testid='subagent-tracker-toggle']")
+  expect(toggle?.getAttribute("aria-expanded")).toBe("true")
+  await act(async () => toggle?.click())
+  expect(toggle?.getAttribute("aria-expanded")).toBe("false")
+  await act(async () => toggle?.click())
+  expect(toggle?.getAttribute("aria-expanded")).toBe("true")
+})
+
+test("a bound task can retain its terminal row during the active parent turn without listing unrelated tasks", () => {
+  const done = remoteEntry("done", "idle")
+  const old = remoteEntry("old", "error")
+  const threads = { [done.start.key]: done, [old.start.key]: old }
+  const tasks = { earlier: [], current: [], followUps: [] }
+  expect(tracker.selectComposerRemoteTasks(tasks, threads, "org_test", Date.now(), owner)).toEqual([])
+  expect(tracker.selectComposerRemoteTasks(tasks, threads, "org_test", Date.now(), owner, new Set([done.start.key])).map((task) => task.start.key))
+    .toEqual([done.start.key])
+})
 
 test("only the current turn's sub-agents are tracked", () => {
   const messages = turn(

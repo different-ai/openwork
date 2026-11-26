@@ -219,9 +219,11 @@ export function selectComposerRemoteTasks(
   organizationId: string | null,
   now: number,
   owner?: RemoteThreadOwner,
+  retained?: ReadonlySet<string>,
 ): RemoteTrackerTask[] {
   const listable = (entry: RemoteThreadEntry | undefined): entry is RemoteThreadEntry =>
-    Boolean(entry && organizationId && entry.organizationId === organizationId && remoteEntryListed(entry, tasks.followUps, now))
+    Boolean(entry && organizationId && entry.organizationId === organizationId
+      && (retained?.has(entry.start.key) || remoteEntryListed(entry, tasks.followUps, now)))
   const listed = tasks.earlier.filter((task) => listable(threads[task.start.key]))
   const known = new Set([...tasks.earlier, ...tasks.current].map((task) => task.start.key))
   const owned = !owner ? [] : Object.values(threads)
@@ -236,7 +238,7 @@ export function selectComposerRemoteTasks(
 const NO_FOLLOW_UPS: readonly RemoteThreadFollowUp[] = []
 const EMPTY_REMOTE_TASKS: ConversationRemoteTasks = { current: [], earlier: [], followUps: [] }
 
-export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: RemoteThreadOwner): RemoteTrackerTask[] {
+export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: RemoteThreadOwner, parentActive: boolean): RemoteTrackerTask[] {
   const liveSyncEnabled = useDesktopFeature("remoteSessionLiveSync")
   const tasks = useMemo<ConversationRemoteTasks>(
     () => (liveSyncEnabled ? EMPTY_REMOTE_TASKS : conversationRemoteTasks(messages)),
@@ -263,15 +265,21 @@ export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: Re
   useEffect(() => {
     if (!liveSyncEnabled && followUps.length > 0) reviveRemoteThreads(followUps)
   }, [liveSyncEnabled, followUps, matchSignature])
+  const scope = JSON.stringify([organizationId, workspaceId, sessionId, currentTurnKey(messages), liveSyncEnabled])
+  const kept = useRef({ scope, ids: new Set<string>() })
   const listedSignature = useRemoteThreadStore((state) =>
-    selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner).map((task) => task.start.key).join("\n"))
-  return useMemo(() => {
+    selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner,
+      parentActive && kept.current.scope === scope ? kept.current.ids : undefined,
+    ).map((task) => task.start.key).join("\n"))
+  const listed = useMemo(() => {
     if (!listedSignature) return []
     const keys = new Set(listedSignature.split("\n"))
     const threads = useRemoteThreadStore.getState().threads
-    return selectComposerRemoteTasks(tasks, threads, organizationId, Date.now(), { workspaceId, sessionId })
+    return selectComposerRemoteTasks(tasks, threads, organizationId, Date.now(), { workspaceId, sessionId }, keys)
       .filter((task) => keys.has(task.start.key))
   }, [tasks, listedSignature, organizationId, workspaceId, sessionId])
+  kept.current = { scope, ids: new Set(listed.map((task) => task.start.key)) }
+  return listed
 }
 
 export function subagentTrackerSummary(kinds: readonly SubagentTrackerKind[]): { kind: SubagentTrackerKind; text: string }[] {

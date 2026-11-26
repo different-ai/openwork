@@ -455,6 +455,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
                   key={`${opt.label}:${idx}`}
                   type="button"
                   disabled={props.busy}
+                  aria-pressed={isSelected}
                   className={`flex w-full items-start justify-between gap-3 rounded-xl border px-3 py-2.5 text-left text-sm transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60
                         ${
                           isSelected

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -6,9 +6,7 @@ import { t } from "@/i18n"
 import { cn } from "@/lib/utils"
 import { useLocal } from "@/react-app/kernel/local-provider"
 import type { RemoteThreadPanelTab } from "../panel/panel-tab-store"
-import { answerRemoteThread } from "./remote-thread-actions"
-import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature"
-import { RemoteThreadAnswerCard } from "./remote-thread-answer-card"
+import { RemoteThreadAnswerSlot } from "./remote-thread-answer-card"
 import { useFollowRemoteThread, useRemoteThread, type RemoteThreadEntry } from "./remote-thread-store"
 import { REMOTE_THREAD_PAGE_MAX, REMOTE_THREAD_PAGE_SIZE, useRemoteThreadConversation } from "./use-remote-thread-conversation"
 import { RemoteFollowUpComposer } from "./remote-follow-up-composer"
@@ -24,9 +22,8 @@ export function RemoteThreadPanel({ tab }: { tab: RemoteThreadPanelTab }) {
 }
 
 function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
-  const questionMinimizeEnabled = useDesktopFeature("questionMinimize")
   const conversation = useRemoteThreadConversation(entry)
-  const { view, stopping, page } = conversation
+  const { view, stopping } = conversation
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-remote-thread-panel={entry.start.key} data-remote-thread-state={view.state}>
@@ -52,13 +49,7 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
         className="[&_.md\:px-10]:md:px-3 [&_.md\:px-8]:md:px-2"
       />
 
-      {view.waitingFor && page?.pending?.kind === view.waitingFor ? (
-        <RemoteThreadAnswerCard pending={page.pending} computer={view.computer} collapsible={questionMinimizeEnabled} onAnswer={(answer) => answerRemoteThread(entry, answer)} />
-      ) : view.waitingFor ? (
-        <div className="shrink-0 border-t border-border px-4 py-2 text-xs text-amber-11" data-remote-thread-waiting={view.waitingFor}>
-          {t("session.remote_task_answer_there", { computer: view.computer })}
-        </div>
-      ) : null}
+      <RemoteThreadAnswerSlot entry={entry} conversation={conversation} />
 
       <RemoteFollowUpComposer
         draft={conversation.draft}
@@ -76,11 +67,10 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
   )
 }
 
-export function RemoteThreadTranscriptBody({ entry, conversation, className, children }: {
+export function RemoteThreadTranscriptBody({ entry, conversation, className }: {
   entry: RemoteThreadEntry
   conversation: ReturnType<typeof useRemoteThreadConversation>
   className?: string
-  children?: ReactNode
 }) {
   const local = useLocal()
   const [developerMode] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("openwork.developerMode") === "1")
@@ -94,7 +84,6 @@ export function RemoteThreadTranscriptBody({ entry, conversation, className, chi
       onScroll={(event) => conversation.onScroll(event.currentTarget)}
     >
       <div className="flex flex-col gap-3">
-        {children}
         {page && transcript.length >= limit && limit < REMOTE_THREAD_PAGE_MAX ? (
           <Button variant="ghost" size="xs" className="self-center" onClick={() => setLimit((current) => Math.min(REMOTE_THREAD_PAGE_MAX, current + REMOTE_THREAD_PAGE_SIZE))}>
             {t("session.remote_task_earlier")}
@@ -104,6 +93,7 @@ export function RemoteThreadTranscriptBody({ entry, conversation, className, chi
           threadKey={entry.start.key}
           messages={messages}
           running={running && page !== null}
+          waiting={Boolean(view.waitingFor)}
           showThinking={local.prefs.showThinking}
           developerMode={developerMode}
         />

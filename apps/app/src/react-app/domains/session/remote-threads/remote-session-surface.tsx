@@ -1,11 +1,8 @@
 import { useEffect, useState } from "react"
-import { ChevronRight } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { t } from "@/i18n"
-import { cn } from "@/lib/utils"
 import { childOrigin, prepareChildReturn } from "@/lib/child-navigation"
 import { remoteSessionRouteId } from "@/lib/remote-session-route"
 import { openRemoteThreadPanel } from "@/components/chat/remote-thread-run-line"
@@ -14,9 +11,9 @@ import { remoteHelperOrigin, type RemoteHelperOrigin } from "./remote-helper-nav
 import { useRemoteHelperScope } from "./use-remote-helper-scope"
 import { RemoteFollowUpComposer } from "./remote-follow-up-composer"
 import { RemoteThreadTranscriptBody } from "./remote-thread-panel"
-import { answerRemoteThread, stopRemoteThread } from "./remote-thread-actions"
+import { stopRemoteThread } from "./remote-thread-actions"
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature"
-import { RemoteThreadAnswerCard } from "./remote-thread-answer-card"
+import { RemoteThreadAnswerSlot } from "./remote-thread-answer-card"
 import {
   fetchBoundRemoteSessions,
   useFollowRemoteThread,
@@ -145,13 +142,10 @@ export function RemoteSessionSurface({ threadKey, navigation }: { threadKey: str
 }
 
 function RemoteSessionConversation({ entry, origin, navigation }: { entry: RemoteThreadEntry; origin: RemoteHelperOrigin; navigation: RemoteHelperNavigation }) {
-  const questionMinimizeEnabled = useDesktopFeature("questionMinimize")
   const threadKey = entry.start.key
-  const conversation = useRemoteThreadConversation(entry, { foldTask: true })
+  const conversation = useRemoteThreadConversation(entry)
   const { view } = conversation
   const returnToParent = useReturnToParent(threadKey, origin, navigation)
-  const brief = entry.start.prompt?.trim() ?? ""
-  const [briefOpen, setBriefOpen] = useState(false)
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -170,27 +164,8 @@ function RemoteSessionConversation({ entry, origin, navigation }: { entry: Remot
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-remote-session-surface={threadKey} data-remote-thread-state={view.state}>
-      <RemoteThreadTranscriptBody entry={entry} conversation={conversation}>
-        {brief ? (
-          <Collapsible open={briefOpen} onOpenChange={setBriefOpen} className="mx-auto w-full max-w-3xl px-2 text-sm text-muted-foreground md:px-10" data-remote-session-brief="">
-            <CollapsibleTrigger className="flex max-w-full min-w-0 cursor-pointer items-center gap-1 text-start hover:text-foreground">
-              <span className="min-w-0 truncate">{t("session.remote_task_brief", { brief })}</span>
-              <ChevronRight aria-hidden="true" className={cn("size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ease-out motion-reduce:transition-none", briefOpen && "rotate-90")} />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="pt-2 whitespace-pre-wrap text-foreground">{brief}</CollapsibleContent>
-          </Collapsible>
-        ) : null}
-      </RemoteThreadTranscriptBody>
-
-      {view.waitingFor && conversation.page?.pending?.kind === view.waitingFor ? (
-        <div className="mx-auto w-full max-w-3xl shrink-0 px-3" data-remote-session-question-slot="">
-          <RemoteThreadAnswerCard pending={conversation.page.pending} computer={view.computer} collapsible={questionMinimizeEnabled} onAnswer={(answer) => answerRemoteThread(entry, answer)} />
-        </div>
-      ) : view.waitingFor ? (
-        <div className="mx-auto w-full max-w-3xl shrink-0 px-5 py-2 text-xs text-amber-11" data-remote-thread-waiting={view.waitingFor}>
-          {t("session.remote_task_answer_there", { computer: view.computer })}
-        </div>
-      ) : null}
+      <RemoteThreadTranscriptBody entry={entry} conversation={conversation} />
+      <RemoteThreadAnswerSlot entry={entry} conversation={conversation} />
 
       <div className="mx-auto w-full max-w-3xl">
         <RemoteFollowUpComposer

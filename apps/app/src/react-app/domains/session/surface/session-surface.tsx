@@ -2188,6 +2188,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const remoteTrackerTasks = useComposerRemoteTasks(
     visibleMessages,
     remoteTrackerOwner,
+    subagentTrackerParentActive,
   );
   const subagentTrackerShown = subagentTrackerToolCallIds.size > 0 || remoteTrackerTasks.length > 0;
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
