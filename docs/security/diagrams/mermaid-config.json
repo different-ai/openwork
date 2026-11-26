@@ -1,0 +1,25 @@
+{
+  "theme": "base",
+  "layout": "elk",
+  "deterministicIds": true,
+  "deterministicIDSeed": "openwork-security-architecture",
+  "themeVariables": {
+    "fontFamily": "Arial, Helvetica, sans-serif",
+    "fontSize": "18px",
+    "primaryColor": "#edf4ff",
+    "primaryTextColor": "#14243a",
+    "primaryBorderColor": "#536c8a",
+    "lineColor": "#536174",
+    "clusterBkg": "#f8fafc",
+    "clusterBorder": "#8795a6",
+    "edgeLabelBackground": "#ffffff"
+  },
+  "flowchart": {
+    "htmlLabels": false,
+    "curve": "linear",
+    "nodeSpacing": 35,
+    "rankSpacing": 65,
+    "padding": 20,
+    "wrappingWidth": 280
+  }
+}

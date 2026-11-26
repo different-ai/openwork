@@ -1,0 +1,34 @@
+flowchart TB
+  subgraph PC["USER PC · logged-in user · NOT a VM"]
+    DESK["Desktop app + local agent\nElectron embeds OpenWork API; OpenCode child\nLocal files / history; harness rules ≠ OS jail"]
+  end
+
+  subgraph CLOUD["OPENWORK CLOUD · proposed hosted services · live configuration UNVERIFIED"]
+    DEN["Den web / Den API\nSSO / SCIM · RBAC · policy / provisioning\nSQL identity / config / audit / secrets"]
+    HEAD["Optional headless runner\nOwn model / tool loop · Node or cells\nPersistent SQLite history / scratch + blobs"]
+    AI["AI Gateway · separate service\nBearer auth · model grants / cost limits\nPrompt / output transit; usage metadata stored"]
+    MCP["MCP Gateway · INSIDE Den API\nMember / org / connection grants\nTool data transit; encrypted token columns"]
+  end
+
+  subgraph IDP["CUSTOMER IdP"]
+    ENTRA["Microsoft Entra ID\nSSO assertions / SCIM users + groups"]
+  end
+  subgraph MODEL["MODEL PROVIDER"]
+    BED["AWS Bedrock · native or Mantle\nReceives prompts + selected context\nReturns model output"]
+  end
+  subgraph SAAS["MCP SERVERS / SaaS"]
+    TOOLS["External MCP / Microsoft 365\nTool arguments / results · delegated access\nProvider-side permissions and retention"]
+  end
+
+  DESK <-->|"F2 / F11 · identity, policy, usage / diagnostics\nHTTPS · member session / bearer"| DEN
+  DESK <-->|"F5 · prompts, file / tool context, output\nHTTPS · gateway bearer"| AI
+  DESK <-->|"F7 · MCP tool calls / results\nHTTPS · member-scoped bearer"| MCP
+  DEN <-->|"F3 / F4 · SSO / SCIM identity\nHTTPS · SAML / OIDC / SCIM bearer"| ENTRA
+  AI <-->|"F6 · inference body / response stream\nHTTPS · SigV4 / Bedrock API bearer"| BED
+  MCP <-->|"F8 · tool data / OAuth exchange\nHTTPS MCP / Graph · delegated / configured auth"| TOOLS
+  DEN <-.->|"F10 · prompt, grants, result / index\nHTTPS · service / scoped tokens"| HEAD
+  HEAD -.->|"F10 · inference context / output\nHTTPS · scoped model bearer"| AI
+  HEAD -.->|"F10 · tool arguments / results\nHTTPS · scoped MCP token"| MCP
+
+  classDef optional fill:#fff5dc,stroke:#a66b00,color:#513700;
+  class HEAD optional;
