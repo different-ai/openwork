@@ -218,6 +218,58 @@ test("remoteSessionLiveSync is gated off by default, binds parent sessions, enfo
   assert.equal(afterSignOutTail.status, 200, summary(afterSignOutTail))
   assert.ok(remoteSessionTailResponseSchema.parse(afterSignOutTail.body).tail !== null)
 
+  const legacyCreated = await den.callMcpTool(mcpToken, "execute_capability", {
+    name: "remote-session:create",
+    body: {
+      target: "registered",
+      computerId: studio.computerId,
+      workspaceId: WORKSPACE,
+      title: "Legacy unbound task",
+      prompt: "Start before binding existed.",
+    },
+  })
+  assert.equal(legacyCreated.isError, false, legacyCreated.text)
+  const legacyCommandId = text(field(legacyCreated.body, "commandId"), "legacy commandId")
+  const legacyClaim = await studio.call("POST", `/v1/remote-session-commands/${legacyCommandId}/claim`, {})
+  assert.equal(legacyClaim.status, 200, summary(legacyClaim))
+  const legacyComplete = await studio.call("POST", `/v1/remote-session-commands/${legacyCommandId}/complete`, {
+    status: "delivered",
+    sessionId: "ses_remote_legacy",
+    workspaceId: WORKSPACE,
+  })
+  assert.equal(legacyComplete.status, 200, summary(legacyComplete))
+  const beforeBackfill = await asOwner("GET", "/v1/remote-sessions/bound?parentSessionId=ses_parent_backfill")
+  assert.equal(boundRemoteSessionsResponseSchema.parse(beforeBackfill.body).sessions.length, 0)
+  const backfillSendPromise = den.callMcpTool(mcpToken, "execute_capability", {
+    name: "remote-session:send",
+    body: {
+      sessionId: "ses_remote_legacy",
+      workspaceId: WORKSPACE,
+      prompt: "Follow up from an existing chat",
+      originSessionId: "ses_parent_backfill",
+      originWorkspaceId: "ws_parent_backfill",
+    },
+  })
+  let reqId: string | null = null
+  for (let attempt = 0; attempt < 40 && !reqId; attempt += 1) {
+    const pendingReqs = await studio.call("GET", "/v1/remote-session-requests/pending")
+    const items = list(field(pendingReqs.body, "items"), "items")
+    if (items[0]) reqId = text(field(items[0], "requestId"), "requestId")
+    else await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  assert.ok(reqId, "expected pending send request")
+  await studio.call("POST", `/v1/remote-session-requests/${reqId}/claim`, {})
+  await studio.call("POST", `/v1/remote-session-requests/${reqId}/complete`, {
+    status: "done",
+    outcome: { action: "send", result: { messageId: "msg_backfill1", alreadyPresent: false } },
+  })
+  await backfillSendPromise
+  const afterBackfill = await asOwner("GET", "/v1/remote-sessions/bound?parentSessionId=ses_parent_backfill")
+  const parsedBackfill = boundRemoteSessionsResponseSchema.parse(afterBackfill.body)
+  assert.equal(parsedBackfill.sessions.length, 1)
+  assert.equal(parsedBackfill.sessions[0]?.commandId, legacyCommandId)
+  assert.equal(parsedBackfill.sessions[0]?.parentWorkspaceId, "ws_parent_backfill")
+
   await db.update(RemoteSessionTailTable)
     .set({ expires_at: new Date(Date.now() - 1_000) })
     .where(eq(RemoteSessionTailTable.thread_key, threadKey))
