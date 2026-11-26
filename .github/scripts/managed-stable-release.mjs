@@ -217,9 +217,9 @@ export function renderClient(serviceId, token, fetchImpl = fetch) {
 // Render has no server-side compare-and-swap. The workflow serializes with the
 // existing den-api-env lock, and re-reads this exact selected key before PUT.
 // Dashboard/API writers must respect that lock operationally; no bulk env PUT.
-export async function promote({ candidate, expected, client, latest, publish, provider = "aws", qualified = false }) {
+export async function promote({ candidate, expected, client, latest, publish, provider = "aws", approved = false }) {
   if (provider !== "aws") throw new Error("GCP publication remains an explicit operator action; do not enable an unconfigured provider.");
-  if (!qualified) throw new Error("A reviewed real-cloud fresh install and approved Update are required.");
+  if (!approved) throw new Error("A protected GitHub environment approval is required.");
   assertReleaseImages(provider, candidate.images);
   const current = parseCurrent(provider, expected);
   assertSameLatest(candidate, await latest());
@@ -249,17 +249,12 @@ export async function main(command = process.argv[2], env = process.env) {
   assertTrustedEvent(event, env.GITHUB_EVENT_NAME, repository, env.GITHUB_REF);
   const directory = resolve(env.RELEASE_DIRECTORY ?? "dist/managed-stable");
   const githubLatest = () => latestStable(repository, env.GH_TOKEN);
-  if (command === "check-promotion-policy") {
-    if (env.GITHUB_EVENT_NAME !== "workflow_dispatch") throw new Error("Promotion policy check requires explicit dispatch.");
-    await checkPromotionPolicy(repository, env.GH_TOKEN);
-    return;
-  }
   if (command === "plan") {
     const candidate = await githubLatest();
     const prepare = shouldPrepare(event, env.GITHUB_EVENT_NAME, candidate);
     mkdirSync(directory, { recursive: true });
     writeFileSync(resolve(directory, "plan.json"), JSON.stringify(candidate) + "\n");
-    if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `prepare=${prepare}\n`);
+    if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `prepare=${prepare}\nrelease_commit=${candidate.commit}\n`);
     if (!prepare) summary("Unrelated publisher completion: its source is not the latest stable release commit. Skipped Terraform, Docker, packaging and publication.");
     return;
   }
@@ -276,35 +271,39 @@ export async function main(command = process.argv[2], env = process.env) {
     mkdirSync(directory, { recursive: true });
     const pins = resolve(directory, "image-pins.json");
     writeFileSync(pins, JSON.stringify(images) + "\n");
-    execFileSync(process.execPath, releaseBuildArguments(provider, candidate.version, directory, pins), { stdio: "inherit" });
+    const source = resolve(env.RELEASE_SOURCE ?? ".");
+    const revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: source, encoding: "utf8" }).trim();
+    if (revision !== candidate.commit) throw new Error("Installer source checkout does not match the published release commit.");
+    execFileSync(process.execPath, releaseBuildArguments(provider, candidate.version, directory, pins), { cwd: source, stdio: "inherit" });
     const manifestBytes = readFileSync(resolve(directory, "manifest.json"));
     const manifest = JSON.parse(manifestBytes);
     writeFileSync(resolve(directory, "candidate.json"), JSON.stringify({ ...candidate, provider, images, bundleSha256: manifest.bundleSha256, manifestSha256: hash(manifestBytes) }, null, 2) + "\n");
     summary(`### Prepared ${provider} stable installer ${candidate.version}\nRelease source: \`${candidate.commit}\`\n\nReviewed manifest SHA-256: \`${hash(manifestBytes)}\`\n\nNative checks and exact-digest OCI/platform verification are **not** real-cloud fresh-install/Update qualification. No publication, customer update or production activation occurred.`);
     return;
   }
-  if (command !== "promote") throw new Error("Use plan, prepare, check-promotion-policy or promote.");
-  if (env.GITHUB_EVENT_NAME !== "workflow_dispatch" || env.PROMOTION_ENABLED !== "true"
-    || !HASH.test(env.REVIEWED_MANIFEST_SHA256 ?? "")) throw new Error("Promotion requires explicit dispatch, provider opt-in and reviewed manifest digest.");
-  let evidence;
-  try { evidence = new URL(env.QUALIFICATION_URL); } catch { throw new Error("Supply the trusted real-cloud qualification review URL."); }
-  if (evidence.origin !== "https://github.com" || !evidence.pathname.startsWith(`/${repository}/`)
-    || !/^\/(?:[^/]+\/){2}(?:actions\/runs\/\d+|issues\/\d+|pull\/\d+)(?:\/|$)/.test(evidence.pathname)
-    || evidence.username || evidence.password || evidence.search) throw new Error("Qualification evidence must be a review in this trusted repository.");
-  const candidate = JSON.parse(readFileSync(resolve(directory, "candidate.json"), "utf8"));
-  if (candidate.provider !== "aws" || candidate.manifestSha256 !== env.REVIEWED_MANIFEST_SHA256
-    || hash(readFileSync(resolve(directory, "manifest.json"))) !== candidate.manifestSha256
-    || hash(readFileSync(resolve(directory, "bundle.tar.gz"))) !== candidate.bundleSha256) throw new Error("Candidate bytes differ from the reviewed real-cloud qualification.");
-  // Re-read after environment approval/OIDC setup as well, so accidentally
-  // removing the policy while the job was waiting cannot authorize publication.
+  if (command === "publish") {
+    const candidate = JSON.parse(readFileSync(resolve(directory, "candidate.json"), "utf8"));
+    assertSameLatest(candidate, await githubLatest());
+    if (candidate.provider !== "aws" || !HASH.test(candidate.manifestSha256 ?? "")
+      || hash(readFileSync(resolve(directory, "manifest.json"))) !== candidate.manifestSha256
+      || hash(readFileSync(resolve(directory, "bundle.tar.gz"))) !== candidate.bundleSha256) throw new Error("Candidate bytes differ from the checked installer.");
+    assertReleaseImages("aws", candidate.images);
+    const output = execFileSync(process.execPath, ["infra/managed-deployments/tools/publish-release.mjs", directory, env.RELEASE_BUCKET, env.RELEASE_ACCOUNT_ID, env.AWS_REGION], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const coordinates = publisherConfig(JSON.parse(output));
+    if (coordinates.version !== candidate.version || coordinates.bundleSha256 !== candidate.bundleSha256) throw new Error("Published installer does not match the candidate.");
+    writeFileSync(resolve(directory, "published.json"), JSON.stringify({ candidate, coordinates }) + "\n");
+    summary(`Published AWS installer ${candidate.version}. The default has not changed.`);
+    return;
+  }
+  if (command !== "promote" || env.GITHUB_EVENT_NAME !== "workflow_dispatch" || event.inputs?.promote !== "true") {
+    throw new Error("Promotion requires explicit workflow dispatch.");
+  }
   await checkPromotionPolicy(repository, env.GH_TOKEN);
+  const { candidate, coordinates } = JSON.parse(readFileSync(resolve(directory, "published.json"), "utf8"));
   const client = renderClient(env.RENDER_SERVICE_ID, env.RENDER_API_KEY);
   const expected = await client.snapshot("aws");
-  const result = await promote({ candidate, expected, client, latest: githubLatest, qualified: true, publish: async () => {
-    const output = execFileSync(process.execPath, ["infra/managed-deployments/tools/publish-release.mjs", directory, env.RELEASE_BUCKET, env.RELEASE_ACCOUNT_ID, env.AWS_REGION], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    const published = JSON.parse(output);
-    return publisherConfig(published);
-  } });
+  const result = await promote({ candidate, expected, client, latest: githubLatest, approved: true,
+    publish: async () => releaseConfig("aws", coordinates) });
   if (result.status === "deploy-requested") {
     let live = false;
     for (let attempt = 0; attempt < 90; attempt++) {
@@ -315,7 +314,7 @@ export async function main(command = process.argv[2], env = process.env) {
     }
     if (!live) throw new Error("Render deploy did not become live within 15 minutes; inspect before retrying.");
   }
-  summary(`### AWS installer ${candidate.version}: ${result.status === "already-current" ? "already current (no deploy)" : "Den deploy live"}\nOperator attested fresh-install/approved-Update review: ${evidence.href}\n\nOnly the new-install default changed; existing customer installations were not updated.`);
+  summary(`### AWS installer ${candidate.version}: ${result.status === "already-current" ? "already current (no deploy)" : "Den deploy live"}\nApproved in the protected GitHub environment.\n\nOnly the new-install default changed; existing customer installations were not updated.`);
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch(() => {

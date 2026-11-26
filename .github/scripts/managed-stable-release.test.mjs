@@ -31,7 +31,7 @@ function fixture(options = {}) {
     deploy: async () => { calls.push("deploy"); return { id: "dep-123abc" }; },
   };
   const args = {
-    candidate, expected: old, client, qualified: true,
+    candidate, expected: old, client, approved: true,
     latest: async () => { calls.push("latest"); return candidate; },
     publish: async () => { calls.push("publish"); return config; },
   };
@@ -229,7 +229,7 @@ test("existing publisher's public four-field receipt becomes exactly one atomic 
   assert.throws(() => publisherConfig({ ...receipt, DEN_MANAGED_DEPLOYMENT_AWS_RELEASE: "bad" }));
 });
 
-test("qualified promotion writes ONE selected JSON key then ONE deploy", async () => {
+test("approved promotion writes ONE selected JSON key then ONE deploy", async () => {
   const { calls, args } = fixture();
   assert.deepEqual(await promote(args), { status: "deploy-requested", deploymentId: "dep-123abc" });
   assert.deepEqual(calls, ["latest", "publish", "latest", "read-current", ["put", "aws", config], "deploy"]);
@@ -246,9 +246,9 @@ test("already-current exact config rerun is a no-op, same-version bytes/config c
   await assert.rejects(promote(args), /different configuration/);
 });
 
-test("failed/unqualified/stale candidate never changes production", async () => {
+test("failed/unapproved/stale candidate never changes production", async () => {
   const cases = [
-    { qualified: false },
+    { approved: false },
     { provider: "gcp" },
     { expected: snapshot({ ...config, version: "1.3.0" }) },
     { expected: { atomic: "malformed", legacy: [config.version, config.templateUrl, config.bundleUrl, config.bundleSha256] } },
@@ -291,7 +291,7 @@ test("atomic invalid blocks legacy fallback; absent atomic alone reads four lega
   });
   const expected = await client.snapshot("aws");
   assert.equal(seen.length, 5);
-  await promote({ candidate, expected, client, latest: async () => candidate, publish: async () => config, qualified: true });
+  await promote({ candidate, expected, client, latest: async () => candidate, publish: async () => config, approved: true });
   const writes = seen.filter(([, method]) => method !== "GET");
   assert.deepEqual(writes, [
     ["/v1/services/srv-test123/env-vars/DEN_MANAGED_DEPLOYMENT_AWS_RELEASE", "PUT", JSON.stringify({ value: JSON.stringify(config) })],
@@ -341,7 +341,7 @@ export async function withMockRender(run) {
 test("loopback HTTP proof: one atomic env PUT then one deploy; expected-current race means zero writes", async () => {
   await withMockRender(async ({ client, requests }) => {
     const expected = await client.snapshot("aws");
-    await promote({ candidate, expected, client, latest: async () => candidate, publish: async () => config, qualified: true });
+    await promote({ candidate, expected, client, latest: async () => candidate, publish: async () => config, approved: true });
     const writes = requests.filter(({ method }) => method !== "GET");
     assert.deepEqual(writes, [
       { method: "PUT", path: "/v1/services/srv-test123/env-vars/DEN_MANAGED_DEPLOYMENT_AWS_RELEASE", body: { value: JSON.stringify(config) } },
@@ -352,7 +352,7 @@ test("loopback HTTP proof: one atomic env PUT then one deploy; expected-current 
   });
   await withMockRender(async ({ client, requests, changeCurrent }) => {
     const expected = await client.snapshot("aws");
-    await assert.rejects(promote({ candidate, expected, client, latest: async () => candidate, qualified: true,
+    await assert.rejects(promote({ candidate, expected, client, latest: async () => candidate, approved: true,
       publish: async () => { changeCurrent({ ...config, version: "1.3.0" }); return config; },
     }), /changed during preparation/);
     assert.deepEqual(requests.map(({ method }) => method), ["GET", "GET"]);
@@ -385,21 +385,22 @@ test("workflow keeps cheap checks independent; trusted code, review and serializ
   assert.match(promotionJob, /name: managed-installer-production/);
   assert.ok(promotionJob.includes(`name: ${PROMOTION_ENVIRONMENT}`));
   assert.doesNotMatch(promotionJob, /deployment: false|name: den-production/);
-  assert.match(promotionJob, /actions: read/);
-  assert.ok(promotionJob.indexOf("managed-stable-release.mjs check-promotion-policy") < promotionJob.indexOf("uses: aws-actions/configure-aws-credentials@"));
-  assert.ok(promotionJob.indexOf("managed-stable-release.mjs check-promotion-policy") < promotionJob.indexOf("managed-stable-release.mjs promote"));
-  assert.match(workflow, /MANAGED_DEPLOYMENT_AWS_PROMOTION_ENABLED/);
-  assert.doesNotMatch(workflow, /AUTO_RELEASE/);
-  assert.match(workflow, /test "\$PROMOTION_ENABLED" = true/);
+  const publicationJob = workflow.split("\n  publish:\n")[1].split("\n  promote:\n")[0];
+  assert.match(publicationJob, /environment: managed-installer-publish/);
+  assert.match(publicationJob, /id-token: write/);
+  assert.match(publicationJob, /managed-stable-release.mjs publish/);
+  assert.doesNotMatch(publicationJob, /RENDER_/);
+  assert.match(promotionJob, /needs: \[prepare, publish\]/);
+  assert.match(promotionJob, /managed-stable-aws-published/);
+  assert.doesNotMatch(promotionJob, /id-token: write|configure-aws-credentials/);
   assert.ok(workflow.indexOf("managed-stable-release.mjs plan") < workflow.indexOf("Install verified Terraform"));
-  assert.equal((workflow.match(/if: steps.plan.outputs.prepare == 'true'/g) ?? []).length, 5,
-    "Terraform, native checks, image packaging, container smoke and upload are all gated by the cheap plan");
+  assert.equal((workflow.match(/if: steps.plan.outputs.prepare == 'true'/g) ?? []).length, 6,
+    "Terraform, native checks, stable checkout, image packaging, container smoke and upload are all gated by the cheap plan");
   for (const path of ["infra/managed-deployments/**", "infra/terraform/modules/openwork-aws-ecs/**", "infra/terraform/modules/openwork-gcp-cloud-run/**", "packages/managed-deployments/**"]) {
     assert.ok(workflow.includes(`      - ${path}`));
   }
   assert.match(workflow, /if: github.event_name == 'workflow_dispatch' && inputs.promote/);
-  assert.match(workflow, /reviewed_manifest_sha256:/);
-  assert.match(workflow, /qualification_url:/);
+  assert.doesNotMatch(workflow, /reviewed_manifest_sha256:|qualification_url:/);
   const script = readFileSync(new URL("managed-stable-release.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(script, /\/api\/.*(?:organizations|deployments)|slack|send.*mail/);
   assert.match(script, /only.*new-install default changed/i);
