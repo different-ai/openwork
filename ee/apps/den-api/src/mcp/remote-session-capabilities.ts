@@ -150,6 +150,8 @@ const sendBodySchema = z.object({
   workspaceId: desktopWorkspaceSchema,
   prompt: z.string().min(1).max(100_000),
   model: modelSchema.optional(),
+  originSessionId: z.string().trim().min(1).max(240).optional(),
+  originWorkspaceId: z.string().trim().min(1).max(240).optional(),
 })
 
 const readBodySchema = z.object({
@@ -174,6 +176,8 @@ const readBodySchema = z.object({
 const answerBodySchema = z.object({
   sessionId: z.string().trim().min(1),
   workspaceId: desktopWorkspaceSchema,
+  originSessionId: z.string().trim().min(1).max(240).optional(),
+  originWorkspaceId: z.string().trim().min(1).max(240).optional(),
 }).and(remoteSessionAnswerInputSchema)
 
 export {
@@ -1028,7 +1032,7 @@ async function findDesktopSession(
 
 function desktopRequestInput(action: "read" | "send" | "stop" | "answer", body: unknown): RemoteSessionRequestInput {
   if (action === "answer") {
-    const { sessionId: _sessionId, workspaceId: _workspaceId, ...answer } = answerBodySchema.parse(body)
+    const { sessionId: _sessionId, workspaceId: _workspaceId, originSessionId: _originSessionId, originWorkspaceId: _originWorkspaceId, ...answer } = answerBodySchema.parse(body)
     return { action: "answer", input: remoteSessionAnswerInputSchema.parse(answer) }
   }
   if (action === "read") {
@@ -1093,6 +1097,24 @@ async function executeDesktopSessionAction(
       message: "The client that runs this session is not connected. Start OpenWork or the opted-in OpenCode client on that computer and try again.",
       retryable: true,
     })
+  }
+  if ((input.action === "send" || input.action === "answer") && deps.commandStore.bindParentIfUnbound) {
+    const parsedOrigin = isRecord(body) ? body : null
+    const originSessionId = (typeof parsedOrigin?.originSessionId === "string" && parsedOrigin.originSessionId.trim())
+      || input.originSessionId?.trim()
+      || null
+    const originWorkspaceId = (typeof parsedOrigin?.originWorkspaceId === "string" && parsedOrigin.originWorkspaceId.trim())
+      || input.originWorkspaceId?.trim()
+      || null
+    if (originSessionId) {
+      await deps.commandStore.bindParentIfUnbound({
+        organizationId: input.organizationId,
+        createdByUserId: input.userId,
+        commandId: session.commandId,
+        parentSessionId: originSessionId,
+        parentWorkspaceId: originWorkspaceId,
+      }).catch(() => undefined)
+    }
   }
   const request = await deps.requestStore.enqueue({
     ...desktopRequestInput(input.action, body),
@@ -1760,7 +1782,7 @@ async function executeRemoteSession(
   }
 
   if (input.action === "answer") {
-    const { sessionId, workspaceId: _workspaceId, ...answer } = answerBodySchema.parse(parsedBody.data)
+    const { sessionId, workspaceId: _workspaceId, originSessionId: _originSessionId, originWorkspaceId: _originWorkspaceId, ...answer } = answerBodySchema.parse(parsedBody.data)
     if (!client.answerThread) return errorResult({ error: "answer_unsupported", retryable: false })
     try {
       await client.answerThread(sessionId, remoteSessionAnswerInputSchema.parse(answer))

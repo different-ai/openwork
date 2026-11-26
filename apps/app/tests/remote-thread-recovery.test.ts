@@ -10,7 +10,7 @@ import {
 } from "../src/react-app/domains/session/remote-threads/remote-thread-store"
 import { remoteSessionRouteId } from "../src/lib/remote-session-route"
 import { mergeRemoteThreadStart, remoteThreadActivitiesFromToolPart } from "../src/lib/remote-session-thread"
-import { conversationRemoteTasks } from "../src/react-app/domains/session/surface/composer/composer-subagent-tracker"
+import { conversationRemoteTasks, selectComposerRemoteTasks } from "../src/react-app/domains/session/surface/composer/composer-subagent-tracker"
 import {
   clearRemoteFollowUpDraftMessageId,
   remoteFollowUpDraftMessageId,
@@ -248,5 +248,38 @@ test("a fresh draft store reopens a remote follow-up for the same member only an
   expect(bound?.status?.computerLabel).toBe("Studio computer")
   expect(bound?.owners["ws_parent_1:ses_parent_1"]).toEqual({ workspaceId: "ws_parent_1", sessionId: "ses_parent_1" })
   expect(useRemoteThreadStore.getState().tailsByKey["command:rsc_bound"]?.messages[0]?.text).toBe("Ready")
+
+  const settledEntry = makeEntry({
+    id: "rsc_settled_bound",
+    organizationId: "org_1",
+    owners: { "ws_parent_1:ses_parent_1": { workspaceId: "ws_parent_1", sessionId: "ses_parent_1" } },
+    status: {
+      ref: "rsc_settled_bound",
+      changed: true,
+      version: "v_done",
+      target: "desktop",
+      state: "idle",
+      waitingFor: null,
+      title: "Completed remote task",
+      computerId: "cmp_1",
+      computerLabel: "Studio computer",
+      sessionId: "ses_remote_done",
+      workspaceId: "ws_remote_done",
+      messageCount: 4,
+      preview: "Done",
+      latestStep: null,
+      error: null,
+      observedAt: 2000,
+      pending: null,
+    },
+  })
+  const emptyTasks = { current: [], earlier: [], followUps: [] }
+  expect(
+    selectComposerRemoteTasks(emptyTasks, { [settledEntry.start.key]: settledEntry }, "org_1", 5000, { workspaceId: "ws_parent_1", sessionId: "ses_parent_1" }, { includeSettled: true })
+      .map((task) => task.start.key),
+  ).toEqual(["command:rsc_settled_bound"])
+  expect(
+    selectComposerRemoteTasks(emptyTasks, { [settledEntry.start.key]: settledEntry }, "org_1", 5000, { workspaceId: "ws_parent_1", sessionId: "ses_parent_1" }, { includeSettled: false }),
+  ).toEqual([])
   useRemoteThreadStore.getState().clearAll()
 })
