@@ -36,7 +36,7 @@ export function registerPersonalAgentMemoryRoutes<T extends { Variables: RouteVa
     })
 
   app.put("/v1/personal-agents/:id/memory",
-    describe({ operationId: "setPersonalAgentMemory", summary: "Replace an agent's memory notes",
+    describe({ operationId: "setPersonalAgentMemory", summary: "Replace an agent's memory notes", description: "Replaces all of the agent's memory notes at once. Only the owner or a manager can do this. Send the version you read as expectedVersion; a 409 means someone changed the notes since, so read them again.",
       responses: { 200: memoryResponse, 403: forbiddenResponse, 404: missingResponse,
         409: jsonResponse(PERSONAL_AGENT_MEMORY_ERRORS.personal_agent_memory_conflict, notFoundSchema) } }),
     orgMemberRoute(), gate, paramValidator(agentParams), jsonValidator(setPersonalAgentMemorySchema), async (c) => {

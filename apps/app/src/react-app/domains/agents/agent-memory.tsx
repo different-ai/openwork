@@ -22,7 +22,7 @@ export function useAgentMemory(runtime: AgentsRuntime, agentId: string) {
 
 export function agentMemoryUpdatedLine(memory: Pick<PersonalAgentMemory, "updatedAt" | "updatedBy">, now: number): string | null {
   if (memory.updatedAt === null) return null;
-  const minutes = Math.floor(Math.max(0, now - memory.updatedAt) / 60_000);
+  const minutes = Math.floor(Math.max(0, now - Date.parse(memory.updatedAt)) / 60_000);
   const time = new Intl.RelativeTimeFormat(currentLocale(), { numeric: "auto" });
   const when = minutes < 1 ? time.format(0, "second") : minutes < 60 ? time.format(-minutes, "minute")
     : minutes < 1440 ? time.format(-Math.floor(minutes / 60), "hour") : time.format(-Math.floor(minutes / 1440), "day");

@@ -53,7 +53,7 @@ function failure(error: unknown) {
 
 export function registerPersonalAgentPermissionsRoutes<T extends { Variables: RouteVariables }>(app: Hono<T>, gate: MiddlewareHandler): void {
   app.get("/v1/personal-agents/:id/requests", describe({
-    operationId: "listPersonalAgentRequests", "x-mcp": true, summary: "List requests for an agent",
+    operationId: "listPersonalAgentRequests", "x-mcp": true, summary: "List requests for an agent", description: "Returns pending requests and those decided in the last 7 days, newest first, at most 50.",
     responses: { 200: jsonResponse("Requests, newest first.", personalAgentRequestListSchema), 404: jsonResponse("Agent not found.", notFoundSchema) },
   }), orgMemberRoute(), gate, paramValidator(agent), async (c) => {
     const member = caller(c)
@@ -80,7 +80,7 @@ export function registerPersonalAgentPermissionsRoutes<T extends { Variables: Ro
   })
 
   app.post("/v1/personal-agents/:id/requests/:requestId/decision", describe({
-    operationId: "decidePersonalAgentRequest", summary: "Decide a request for an agent",
+    operationId: "decidePersonalAgentRequest", summary: "Decide a request for an agent", description: "Approves or denies a pending request. Needs a person signed in, not an API key. A 409 means the request was already decided or no longer matches the agent.",
     responses: { 200: jsonResponse("Request decided.", personalAgentRequestSchema), 403: jsonResponse("You cannot make this decision.", errorSchema), 404: jsonResponse("Agent or request not found.", notFoundSchema), 409: jsonResponse("Someone already decided this request.", errorSchema) },
   }), orgMemberRoute(), gate, paramValidator(request), jsonValidator(decidePersonalAgentRequestSchema), async (c) => {
     if (!c.get("signInSessionId")) return c.json(forbidden, 403)
@@ -99,7 +99,7 @@ export function registerPersonalAgentPermissionsRoutes<T extends { Variables: Ro
   })
 
   app.get("/v1/personal-agents/:id/tools", describe({
-    operationId: "listPersonalAgentTools", "x-mcp": true, summary: "List tools and permissions for an agent",
+    operationId: "listPersonalAgentTools", "x-mcp": true, summary: "List tools and permissions for an agent", description: "Returns each connection the agent can reach, its tools, and whether each tool is allowed, needs approval, or is blocked, including whose login the agent uses.",
     responses: { 200: jsonResponse("Tools and their permissions.", personalAgentToolCatalogSchema), 404: jsonResponse("Agent not found.", notFoundSchema) },
   }), orgMemberRoute(), gate, paramValidator(agent), async (c) => {
     const member = caller(c)
@@ -111,7 +111,7 @@ export function registerPersonalAgentPermissionsRoutes<T extends { Variables: Ro
   })
 
   app.put("/v1/personal-agents/:id/shared-logins/:connectionId", describe({
-    operationId: "setPersonalAgentSharedLogin", summary: "Share or take back your login for an agent",
+    operationId: "setPersonalAgentSharedLogin", summary: "Share or take back your login for an agent", description: "Lends your own login on this connection to the agent, or takes it back. It only changes your login and needs a person signed in. Returns the updated tools.",
     responses: { 200: jsonResponse("Tools and their permissions.", personalAgentToolCatalogSchema), 403: jsonResponse("You cannot change this shared login.", errorSchema), 404: jsonResponse("Agent not found.", notFoundSchema) },
   }), orgMemberRoute(), gate, paramValidator(sharedLogin), jsonValidator(setPersonalAgentSharedLoginSchema), async (c) => {
     if (!c.get("signInSessionId")) return c.json(forbidden, 403)

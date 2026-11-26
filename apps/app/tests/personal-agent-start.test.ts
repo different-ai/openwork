@@ -82,7 +82,7 @@ test("a pending routine request does not save a routine or start a run", async (
       requestedBy: { memberId: "sam", name: "Sam Okafor" }, requestedByCaller: true,
       runId: null, connectionId: null, connectionName: null, toolName: null, toolTitle: null,
       summary: "Add the bug check", change: { newRoutine: proposal.routine }, decidedBy: null, decidedAt: null,
-      createdAt: 1, canDecide: [],
+      createdAt: "1970-01-01T00:00:00.001Z", canDecide: [],
     },
   }
   api.createRoutine = async () => pendingChange

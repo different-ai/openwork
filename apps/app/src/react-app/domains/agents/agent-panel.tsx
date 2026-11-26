@@ -38,7 +38,7 @@ function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: Per
   const canManage = agent.role !== "collaborator";
   const routines = agent.routines.filter((routine) => routine.state !== "archived");
   const on = routines.some((routine) => routine.state === "active");
-  const nextDueAt = routines.flatMap((routine) => routine.state === "active" && routine.nextDueAt !== null ? [routine.nextDueAt] : []).sort((a, b) => a - b)[0];
+  const nextDueAt = routines.flatMap((routine) => routine.state === "active" && routine.nextDueAt !== null ? [Date.parse(routine.nextDueAt)] : []).sort((a, b) => a - b)[0];
   const firstRoutine = routines[0];
   const runQueueMessage = agentRunQueueMessage(actions.runNow.error);
 

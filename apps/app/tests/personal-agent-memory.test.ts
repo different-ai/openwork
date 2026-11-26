@@ -18,14 +18,14 @@ test("memory is isolated by agent, server, organization, and caller", () => {
 
 test("memory distinguishes a person, the agent, and no prior writer", () => {
   const now = 2 * 60 * 60 * 1000;
-  expect(agentMemoryUpdatedLine({ updatedAt: 0, updatedBy: { memberId: "dana", name: "Dana Reyes" } }, now)).toBe("Updated by Dana Reyes, 2 hours ago");
-  expect(agentMemoryUpdatedLine({ updatedAt: 0, updatedBy: null }, now)).toBe("Updated by the agent, 2 hours ago");
+  expect(agentMemoryUpdatedLine({ updatedAt: "1970-01-01T00:00:00.000Z", updatedBy: { memberId: "dana", name: "Dana Reyes" } }, now)).toBe("Updated by Dana Reyes, 2 hours ago");
+  expect(agentMemoryUpdatedLine({ updatedAt: "1970-01-01T00:00:00.000Z", updatedBy: null }, now)).toBe("Updated by the agent, 2 hours ago");
   expect(agentMemoryUpdatedLine({ updatedAt: null, updatedBy: null }, now)).toBeNull();
 });
 
 test("routine history is absent when there is no progress and labels saved progress private", () => {
   expect(renderToStaticMarkup(createElement(AgentRoutineHistory, { routines: [] }))).toBe("");
-  const routines = [{ routineId: "one", name: "Check bugs", state: "Reviewed five reports.", updatedAt: 42 }];
+  const routines = [{ routineId: "one", name: "Check bugs", state: "Reviewed five reports.", updatedAt: "1970-01-01T00:00:00.042Z" }];
   const markup = renderToStaticMarkup(createElement(AgentRoutineHistory, { routines }));
   expect(markup).toContain("What each routine did last</h3><p");
   expect(markup).toContain("Only you can see this. It helps the next run pick up where the last one stopped.");

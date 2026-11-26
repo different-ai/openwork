@@ -72,7 +72,7 @@ export function registerPersonalAgentSharingRoutes<T extends { Variables: RouteV
   }
 
   app.get("/v1/personal-agents/:id/shares",
-    describe({ operationId: "listPersonalAgentShares", "x-mcp": true, summary: "See who can use an agent",
+    describe({ operationId: "listPersonalAgentShares", "x-mcp": true, summary: "See who can use an agent", description: "Returns the owner and every person the agent is shared with, oldest share first, with each person's role. Anyone who can use the agent can read it.",
       responses: { 200: jsonResponse("People with access to the agent.", personalAgentShareListSchema), 404: missingResponse } }),
     orgMemberRoute(), gate, paramValidator(agentParams), async (c) => {
       const access = await personalAgentAccess(personalAgentCaller(c), c.req.valid("param").id)
@@ -104,7 +104,7 @@ export function registerPersonalAgentSharingRoutes<T extends { Variables: RouteV
     })
 
   app.get("/v1/personal-agents/:id/chat",
-    describe({ operationId: "getPersonalAgentChat", summary: "Find your chat with this agent in a workspace",
+    describe({ operationId: "getPersonalAgentChat", summary: "Find your chat with this agent in a workspace", description: "Returns the chat you saved with this agent in the given workspace, or null when you have none. Each person keeps their own chat per workspace.",
       responses: { 200: jsonResponse("Your chat, if you have one.", personalAgentChatResponseSchema), 404: missingResponse } }),
     orgMemberRoute(), gate, paramValidator(agentParams), queryValidator(chatQuery), async (c) => {
       const caller = personalAgentCaller(c)
@@ -115,7 +115,7 @@ export function registerPersonalAgentSharingRoutes<T extends { Variables: RouteV
     })
 
   app.put("/v1/personal-agents/:id/chat",
-    describe({ operationId: "setPersonalAgentChat", summary: "Remember your chat with this agent in a workspace",
+    describe({ operationId: "setPersonalAgentChat", summary: "Remember your chat with this agent in a workspace", description: "Saves which session in this workspace is your chat with the agent, so it can be reopened later. It only changes your own chat.",
       responses: { 200: jsonResponse("Your saved chat.", personalAgentChatResponseSchema), 404: missingResponse } }),
     orgMemberRoute(), gate, paramValidator(agentParams), jsonValidator(setPersonalAgentChatSchema), async (c) => {
       const caller = personalAgentCaller(c)
@@ -126,7 +126,7 @@ export function registerPersonalAgentSharingRoutes<T extends { Variables: RouteV
     })
 
   app.patch("/v1/personal-agents/:id/routines/:routineId",
-    describe({ operationId: "updatePersonalAgentRoutine", "x-mcp": true, summary: "Change or pause an agent's routine",
+    describe({ operationId: "updatePersonalAgentRoutine", "x-mcp": true, summary: "Change or pause an agent's routine", description: "Send only the fields that change: name, instructions, schedule, or active to pause or resume. The owner's change applies at once. A manager's change becomes a request the owner must approve, answered with 202.",
       responses: { 200: jsonResponse("Routine updated.", automationDetailSchema), 202: jsonResponse("Change requested and waiting for the owner.", personalAgentPendingChangeSchema), 400: jsonResponse("Invalid request.", invalidRequestSchema), 403: forbiddenResponse, 404: missingResponse, 409: jsonResponse("The routine cannot be updated right now.", invalidRequestSchema) } }),
     orgMemberRoute(), gate, paramValidator(routineParams), jsonValidator(updatePersonalAgentRoutineSchema), async (c) => {
       const caller = personalAgentCaller(c)
@@ -156,7 +156,7 @@ export function registerPersonalAgentSharingRoutes<T extends { Variables: RouteV
     })
 
   app.get("/v1/personal-agents/:id/runs",
-    describe({ operationId: "listPersonalAgentRuns", summary: "List your runs and scheduled runs of this agent",
+    describe({ operationId: "listPersonalAgentRuns", summary: "List your runs and scheduled runs of this agent", description: "Returns the newest runs, newest first: 10 by default and at most 50. You see the runs you started; the owner also sees the agent's scheduled runs.",
       responses: { 200: jsonResponse("Your runs and scheduled run summaries, newest first.", personalAgentRunListSchema), 404: missingResponse } }),
     orgMemberRoute(), gate, paramValidator(agentParams), queryValidator(runQuery), async (c) => {
       const caller = personalAgentCaller(c)
@@ -168,7 +168,7 @@ export function registerPersonalAgentSharingRoutes<T extends { Variables: RouteV
     })
 
   app.get("/v1/personal-agents/:id/runs/:runId",
-    describe({ operationId: "getPersonalAgentRun", summary: "Read one of your runs of this agent",
+    describe({ operationId: "getPersonalAgentRun", summary: "Read one of your runs of this agent", description: "Returns one run and its events. You can read runs you started; the owner can also read the agent's scheduled runs.",
       responses: { 200: jsonResponse("Your run and its events.", automationRunReceiptSchema), 404: missingResponse } }),
     orgMemberRoute(), gate, paramValidator(runParams), async (c) => {
       const caller = personalAgentCaller(c)

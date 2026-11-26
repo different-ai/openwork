@@ -3,6 +3,7 @@ import { PersonalAgentEventTable, PersonalAgentTable } from "@openwork-ee/den-db
 import { createDenTypeId, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { PersonalAgentChange, PersonalAgentEvent, PersonalAgentEventDetail } from "@openwork/types/den/personal-agents"
 import { db } from "../db.js"
+import { keysetAfter, keysetPage, type KeysetCursor } from "../list-pagination.js"
 import { personalAgentPeople, personOrUnknown, type PersonalAgentTransaction } from "./access.js"
 
 export type PersonalAgentEventAction =
@@ -48,27 +49,31 @@ export async function recordPersonalAgentEvent(input: {
   })
 }
 
-export async function listPersonalAgentEvents(input: { organizationId: string; agentId?: string; limit: number }): Promise<PersonalAgentEvent[]> {
+export async function listPersonalAgentEvents(input: { organizationId: string; agentId?: string; limit: number; cursor?: KeysetCursor }): Promise<{ items: PersonalAgentEvent[]; nextCursor: string | null }> {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
-  const rows = await db.$primary.select().from(PersonalAgentEventTable).where(and(
+  const found = await db.$primary.select().from(PersonalAgentEventTable).where(and(
     eq(PersonalAgentEventTable.organization_id, organizationId),
     input.agentId && isDenTypeId("personalAgent", input.agentId)
       ? eq(PersonalAgentEventTable.agent_id, normalizeDenTypeId("personalAgent", input.agentId))
       : undefined,
-  )).orderBy(desc(PersonalAgentEventTable.created_at), desc(PersonalAgentEventTable.id)).limit(input.limit)
+    input.cursor ? keysetAfter({ at: PersonalAgentEventTable.created_at, id: PersonalAgentEventTable.id }, input.cursor) : undefined,
+  )).orderBy(desc(PersonalAgentEventTable.created_at), desc(PersonalAgentEventTable.id)).limit(input.limit + 1)
+  const page = keysetPage(found, input.limit, (row) => ({ at: row.created_at, id: row.id }))
+  const rows = page.items
   const agentIds = [...new Set(rows.flatMap((row) => row.agent_id ? [row.agent_id] : []))]
   const agents = agentIds.length
     ? await db.$primary.select({ id: PersonalAgentTable.id, name: PersonalAgentTable.name }).from(PersonalAgentTable).where(inArray(PersonalAgentTable.id, agentIds))
     : []
   const names = new Map(agents.map((agent) => [agent.id, agent.name]))
   const people = await personalAgentPeople(input.organizationId, rows.map((row) => row.actor_member_id))
-  return rows.map((row) => ({
+  const items = rows.map((row) => ({
     id: row.id,
     agentId: row.agent_id,
     agentName: row.agent_id ? names.get(row.agent_id) ?? null : null,
     actor: personOrUnknown(people, row.actor_member_id),
     action: row.action,
     detail: row.detail,
-    createdAt: row.created_at.getTime(),
+    createdAt: row.created_at.toISOString(),
   }))
+  return { items, nextCursor: page.nextCursor }
 }

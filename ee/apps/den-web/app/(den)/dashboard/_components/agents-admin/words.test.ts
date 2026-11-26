@@ -57,9 +57,9 @@ for (const [action, detail, expected] of cases) {
 
 const noAudience: PersonalAgentAudience = { organization: false, autoAddOrganization: false, teams: [] };
 const people: PersonalAgentShare[] = [
-  { memberId: "sam", name: "Sam Okafor", role: "manager", createdAt: 0 },
-  { memberId: "priya", name: "Priya Nair", role: "collaborator", createdAt: 0 },
-  { memberId: "lee", name: "Lee Park", role: "collaborator", createdAt: 0 },
+  { memberId: "sam", name: "Sam Okafor", role: "manager", createdAt: "1970-01-01T00:00:00.000Z" },
+  { memberId: "priya", name: "Priya Nair", role: "collaborator", createdAt: "1970-01-01T00:00:00.000Z" },
+  { memberId: "lee", name: "Lee Park", role: "collaborator", createdAt: "1970-01-01T00:00:00.000Z" },
 ];
 const teams = [{ teamId: "support", name: "Support", autoAdd: true }, { teamId: "design", name: "Design", autoAdd: false }];
 
@@ -85,7 +85,7 @@ test("access names teams and people with roles", () => {
 
 test("access collapses more than three entries to counts", () => {
   assert.equal(access({ ...noAudience, teams }, people).text, "2 teams, 3 people");
-  assert.equal(access(noAudience, [...people, { memberId: "dana", name: "Dana Reyes", role: "manager", createdAt: 0 }]).text, "4 people");
+  assert.equal(access(noAudience, [...people, { memberId: "dana", name: "Dana Reyes", role: "manager", createdAt: "1970-01-01T00:00:00.000Z" }]).text, "4 people");
 });
 
 test("write access shows the default or each count", () => {

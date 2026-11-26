@@ -6,7 +6,7 @@ import { approvalRestartOptions, approvalRows, approvalRunGroup, automationAppro
 const chat: ToolApproval = {
   id: "chat-approval", context: { kind: "chat", id: null, label: null }, runId: null,
   connectionId: "connection", connectionName: "Slack", toolName: "send", toolTitle: "Send a message",
-  status: "pending", createdAt: 1,
+  status: "pending", createdAt: "1970-01-01T00:00:00.001Z",
 };
 const automation: ToolApproval = {
   ...chat, id: "automation-approval", context: { kind: "automation", id: "automation", label: "Daily digest" },
@@ -98,7 +98,7 @@ test("each run starts at most once, after the last decision, only if at least on
 });
 
 test("only a local decision keeps its row when polling removes an approval", () => {
-  const pending = { ...automation, id: "new", createdAt: 2 };
+  const pending = { ...automation, id: "new", createdAt: "1970-01-01T00:00:00.002Z" };
   const decided = { approval: automation, result: "local" };
   expect(approvalRows([pending, automation], [decided])).toEqual([{ approval: pending }, decided]);
   expect(approvalRows([], [decided])).toEqual([decided]);

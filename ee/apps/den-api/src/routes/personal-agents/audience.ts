@@ -17,7 +17,7 @@ const forbidden = { error: "personal_agent_forbidden", message: "Only the owner 
 
 export function registerPersonalAgentAudienceRoutes<T extends { Variables: RouteVariables }>(app: Hono<T>, gate: MiddlewareHandler): void {
   app.put("/v1/personal-agents/:id/audience",
-    describeRoute({ tags: ["Agents"], operationId: "setPersonalAgentAudience", summary: "Share an agent with teams or the organization",
+    describeRoute({ tags: ["Agents"], operationId: "setPersonalAgentAudience", summary: "Share an agent with teams or the organization", description: "Replaces which teams, or whether the whole organization, can use the agent. Only the owner or a manager can change it, and the organization's policy can limit sharing to admins.",
       responses: {
         200: jsonResponse("Updated agent.", personalAgentDetailSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
