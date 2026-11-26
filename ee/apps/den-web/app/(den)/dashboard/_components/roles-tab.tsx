@@ -13,30 +13,28 @@ import {
   permissionLockReason,
 } from "../../_lib/den-org";
 import { permissionCountLabel, roleHeldByLabel, roleList, type BuiltInRoleId } from "../../_lib/role-catalog";
-import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IconTile } from "./access-rows";
 import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { usePermissionSets } from "./permissions-data";
 
-export function RolesTab({ action, showIntro = false, headerOwnsAction = false }: { action?: ReactNode; showIntro?: boolean; headerOwnsAction?: boolean }) {
+export function RolesTab({ action, headerOwnsAction = false }: { action?: ReactNode; headerOwnsAction?: boolean }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   if (!orgContext) return null;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
 
-  return <RolesTabContent orgId={orgId} orgSlug={orgSlug} canViewSets={access.canViewPermissions} action={action} showIntro={showIntro} headerOwnsAction={headerOwnsAction} />;
+  return <RolesTabContent orgId={orgId} orgSlug={orgSlug} canViewSets={access.canViewPermissions} action={action} headerOwnsAction={headerOwnsAction} />;
 }
 
 export function canCreateRole(input: { canManageTeams: boolean; canManagePermissions: boolean }): boolean {
   return input.canManageTeams && input.canManagePermissions;
 }
 
-function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro, headerOwnsAction }: {
+function RolesTabContent({ orgId, orgSlug, canViewSets, action, headerOwnsAction }: {
   orgId: string | null;
   orgSlug: string | null;
   canViewSets: boolean;
   action?: ReactNode;
-  showIntro: boolean;
   headerOwnsAction: boolean;
 }) {
   const { orgContext } = useOrgDashboard();
@@ -49,7 +47,6 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro, heade
   const roles = roleList({ sets });
   const builtInRoles = roles.flatMap((role) => role.kind === "built_in" && matches(role.label) ? [role] : []);
   const customRoles = roles.flatMap((role) => role.kind === "custom" && matches(role.label) ? [role] : []);
-  const customRoleCount = canViewSets && setsQuery.data && !filter.trim() ? roles.filter((role) => role.kind === "custom").length : null;
 
   const owner = orgContext.members.find((member) => member.isOwner);
   const directAdmins = orgContext.members.filter((member) => !member.isOwner && member.userId !== null && member.role === "admin").length;
@@ -91,7 +88,6 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro, heade
         </ItemPanel>
       </ItemSection>
 
-      <RolesIntroGate enabled={showIntro} customRoles={customRoleCount}>
       <ItemSection title="Custom roles" testId="roles-custom">
         {!canViewSets ? (
           <DenNotice tone="neutral" icon={LockKeyhole} message={permissionLockReason("permissions.view")} />
@@ -119,19 +115,7 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro, heade
           </ItemPanel>
         )}
       </ItemSection>
-      </RolesIntroGate>
       </div>
     </div>
   );
-}
-
-function RolesIntroGate({ enabled, customRoles, children }: { enabled: boolean; customRoles: number | null; children: ReactNode }) {
-  if (!enabled) return <>{children}</>;
-  return <RolesIntro customRoles={customRoles}>{children}</RolesIntro>;
-}
-
-function RolesIntro({ customRoles, children }: { customRoles: number | null; children: ReactNode }) {
-  const intro = useFeatureIntro("members.roles", customRoles === null ? null : { customRoles });
-  if (intro.size === "box") return <div className="-mt-6">{intro.element}</div>;
-  return <>{children}</>;
 }

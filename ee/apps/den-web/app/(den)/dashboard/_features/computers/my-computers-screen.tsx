@@ -10,7 +10,6 @@ import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { getComputersRoute, getOrgAccessFlags } from "../../../_lib/den-org";
 import { useDenToast } from "../../_components/den-toast";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
-import { FeatureIntroGate } from "../feature-intros/feature-intro-gate";
 import { AddComputerDialog, ComputerMenu, type ComputerActionSet } from "./computer-action-controls";
 import { disconnectOwnConfirm, disconnectedLine, myComputerActions, removeConfirm } from "./computer-actions";
 import { StatusDot, TimeAgo, focusRing, hairline, secondaryText } from "./computer-parts";
@@ -141,17 +140,15 @@ export function MyComputersScreen() {
       refreshing={query.isFetching} onRefresh={() => void query.refetch()} onAdd={() => setAdding(true)} />
     <AddComputerDialog open={adding} onClose={() => setAdding(false)} />
     {query.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-[13px]"><p>{query.error.message}{query.data ? " Showing the last known list." : ""}</p><DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Try again</DenButton></div> : null}
-    <FeatureIntroGate introKey="my-computers" facts={query.data ? { computers: query.data.length } : null}>
-      <div className="min-w-0">
-        {!query.data ? query.isPending ? <RowListSkeleton rows={3} /> : null
-          : devices.length ? <MyComputerRows devices={devices} now={now} openId={openId} onToggle={(id) => setOpenId((current) => current === id ? "" : id)}
-              action={(device) => <ComputerMenu set={actionsFor(device)} idPrefix="my-computer" id={device.id} />}
-              detail={(device) => <OpenComputer orgId={orgId} memberId={memberId} device={device} />} />
-            : <p className={`border-y ${hairline} py-6 text-[13px] ${secondaryText}`}>No computers yet. Sign in to OpenWork on a computer with this organization and it appears here.</p>}
-      </div>
-      {access.canViewComputers ? <p className={`mt-4 text-[12px] leading-4 ${secondaryText}`}>
-        Your whole team&apos;s computers are in <Link href={getComputersRoute(activeOrg?.slug)} className={`underline underline-offset-2 ${focusRing}`}>Manage &gt; Computers</Link>.
-      </p> : null}
-    </FeatureIntroGate>
+    <div className="min-w-0">
+      {!query.data ? query.isPending ? <RowListSkeleton rows={3} /> : null
+        : devices.length ? <MyComputerRows devices={devices} now={now} openId={openId} onToggle={(id) => setOpenId((current) => current === id ? "" : id)}
+            action={(device) => <ComputerMenu set={actionsFor(device)} idPrefix="my-computer" id={device.id} />}
+            detail={(device) => <OpenComputer orgId={orgId} memberId={memberId} device={device} />} />
+          : <p className={`border-y ${hairline} py-6 text-[13px] ${secondaryText}`}>No computers yet. Sign in to OpenWork on a computer with this organization and it appears here.</p>}
+    </div>
+    {access.canViewComputers ? <p className={`mt-4 text-[12px] leading-4 ${secondaryText}`}>
+      Your whole team&apos;s computers are in <Link href={getComputersRoute(activeOrg?.slug)} className={`underline underline-offset-2 ${focusRing}`}>Manage &gt; Computers</Link>.
+    </p> : null}
   </section>;
 }

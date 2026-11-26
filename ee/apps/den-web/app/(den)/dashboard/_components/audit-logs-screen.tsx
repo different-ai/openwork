@@ -17,8 +17,6 @@ import { getOrgAccessFlags, type DenOrgContext, type DenOrgMember } from "../../
 import { auditFiltersFromDraft, auditLocalDate, pendingAuditSearch } from "./page-consistency-state";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
-import { auditLogsIntroFacts } from "./audit-logs-intro-facts";
-import { useFeatureIntro } from "../_features/feature-intros";
 import { auditQueryKey, isAuditAccessError, useAuditEventTypes, useAuditOperations, type AuditFilters, type AuditReadError, type AuditScope } from "./audit-logs-data";
 import {
   AuditChevron, AuditLocked, AuditReadFailure, AuditSkeleton, AuditTimeline, AuditUsage,
@@ -55,7 +53,7 @@ export function AuditLogsScreen() {
   if (access === "unavailable") return <AuditPage><AuditLocked unavailable /></AuditPage>;
   if (access === "locked" || !dashboard.orgContext || !dashboard.orgId) return <AuditPage><AuditLocked /></AuditPage>;
   const member = dashboard.orgContext.currentMember;
-  return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} captureIncluded={dashboard.orgContext.entitlements.auditLogs} />;
+  return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} />;
 }
 
 const PERIODS = [
@@ -195,10 +193,7 @@ function AuditCompactOperations({ operations, scope, members, expanded, onExpand
   </RowList>;
 }
 
-export function AuditLogsContent({ scope, members, captureIncluded }: {
-  scope: AuditScope; members: readonly DenOrgMember[];
-  captureIncluded: boolean;
-}) {
+export function AuditLogsContent({ scope, members }: { scope: AuditScope; members: readonly DenOrgMember[] }) {
   const client = useQueryClient();
   const [filters, setFilters] = useState<AuditFilters>({});
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -212,16 +207,13 @@ export function AuditLogsContent({ scope, members, captureIncluded }: {
   const applyFilters = useCallback((next: AuditFilters) => {
     setExpanded(null); setFilters(next);
   }, []);
-  const intro = useFeatureIntro("audit-logs", auditLogsIntroFacts({ included: captureIncluded, filters, operations: query.data ? operations : undefined }));
   if (accessError) return <AuditPage><AuditLocked error={accessError}>
     <DenButton variant="secondary" disabled={refreshing} onClick={() => {
       setExpanded(null); setUsageOpen(false);
       void Promise.all([query.refetch(), eventTypes.refetch()]).then((results) => { if (results.every((result) => !result.error)) setDetailAccessError(null); });
     }}>Retry access check</DenButton>
   </AuditLocked></AuditPage>;
-  if (intro.size === "fullscreen") return intro.element;
   return <AuditPage state={query.data ? auditStateLine(operations.length, Boolean(query.hasNextPage), Object.values(filters).some(Boolean)) : undefined} action={<RefreshButton refreshing={refreshing} onRefresh={() => void client.invalidateQueries({ queryKey: auditQueryKey(scope) })} />}>
-    {intro.size === "banner" ? intro.element : null}
     <AuditToolbar key={JSON.stringify([scope.orgId, scope.memberId])} filters={filters} members={members} operations={operations} eventTypes={eventTypes.data?.eventTypes ?? []} eventTypesPending={eventTypes.isPending} onApply={applyFilters} />
     {eventTypes.isError ? <div className="flex flex-wrap items-center gap-3">
       <DenNotice tone="error" message={eventTypes.data ? "Could not refresh event types. Showing the last verified catalog." : "Could not load event types. Try again."} />

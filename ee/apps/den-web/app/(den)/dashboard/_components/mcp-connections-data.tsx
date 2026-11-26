@@ -110,7 +110,6 @@ export type ExternalMcpConnection = {
   connectedAt: string | null;
   createdByName?: string | null;
   createdByYou?: boolean;
-  createdByOrgMembershipId?: string | null;
   canRemove?: boolean;
   updatedAt: string | null;
   connectedForMe: boolean;

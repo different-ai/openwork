@@ -78,7 +78,6 @@ import { UserProfileDialog } from "./user-profile-dialog";
 import { DownloadOpenWorkButton } from "./download-openwork-button";
 import { useWorkbotEntry } from "./workbot-entry-dialog";
 import { BUILT_IN_ROLES } from "../../_lib/role-catalog";
-import { FeatureIntroHelpButton, FeatureIntroNavDot } from "../_features/feature-intros/feature-intro-help-button";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
@@ -759,7 +758,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                               <LockKeyhole className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden />
                             </span>
                           ) : null}
-                          {item.attention ? null : <FeatureIntroNavDot href={item.href} />}
                           {item.attention ? (
                             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" role="img" aria-label={item.attention} title={item.attention} data-testid="nav-attention" />
                           ) : null}
@@ -790,7 +788,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                             >
                               <span className="min-w-0 truncate">{child.label}</span>
                               <span className="flex shrink-0 items-center gap-1.5">
-                                <FeatureIntroNavDot href={child.href} />
                                 {child.badge ? (
                                   <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[11px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                                     {child.badge}
@@ -883,7 +880,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                   <span className="hidden sm:inline">Docs</span>
                 </a>
                 <Suspense fallback={null}>
-                  <FeatureIntroHelpButton />
                 </Suspense>
                 <DownloadOpenWorkButton
                   key={`${activeOrg?.id}:${pathname}`}

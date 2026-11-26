@@ -2,7 +2,6 @@
 
 import { getMarketplaceRoute } from "../../_lib/den-org";
 import { DenNotice } from "../../_components/ui/notice";
-import { FeatureIntroGate } from "../_features/feature-intros";
 import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton } from "./item-list";
 import { PluginLogo } from "./item-logo";
 import { type TeamPluginAccessItem, useRevokeTeamPluginAccess, useTeamPluginAccess } from "./team-access-data";
@@ -20,9 +19,7 @@ export function TeamPluginAccessPanel({ teamId, teamName, orgSlug, canRevoke }: 
   const source = (item: TeamPluginAccessItem) => item.edge === "direct_team" ? "This team"
     : item.edge === "org_wide" ? "Everyone" : `Through ${item.marketplace?.name}`;
 
-  const introFacts = access.data && !access.error ? { plugins: items.length } : null;
-
-  return <FeatureIntroGate introKey="team-detail.access" facts={introFacts}><section aria-label="Plugins & connections" data-testid="team-plugin-access">
+  return <section aria-label="Plugins & connections" data-testid="team-plugin-access">
     <h2 className="mb-2 text-[13px] font-medium text-gray-700">Plugins & connections</h2>
     {access.error ? <DenNotice tone="error" message={access.data ? "Could not refresh team access. Showing the last loaded access; reload to try again." : "Could not load team access. Reload to try again."} /> : null}
     {!access.error || access.data ? <ItemPanel>
@@ -51,5 +48,5 @@ export function TeamPluginAccessPanel({ teamId, teamName, orgSlug, canRevoke }: 
         />;
       }) : <p className="px-5 py-4 text-[13px] text-gray-500">No plugin access yet. An organization admin can share a plugin with this team.</p>}
     </ItemPanel> : null}
-  </section></FeatureIntroGate>;
+  </section>;
 }

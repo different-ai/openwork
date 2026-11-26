@@ -20,7 +20,6 @@ import {
   parseStripeWebBilling,
   type StripeWebBilling,
 } from "../_lib/stripe-web-billing";
-import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 export type WebPageAccessState = "loading" | "not-found" | "error" | "unsubscribed" | "confirming" | "eligible";
@@ -121,7 +120,6 @@ function clearStripeReturnParameters() {
 export default function WebPage() {
   const { orgContext, orgBusy, activeOrg, runReauthableAction } = useOrgDashboard();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
-  useFeatureIntro("web", orgContext ? {} : null);
   const orgId = orgContext?.organization.id ?? null;
   const webAvailable = runtimeConfigLoaded
     && orgContext?.capabilities.openworkWeb === true;

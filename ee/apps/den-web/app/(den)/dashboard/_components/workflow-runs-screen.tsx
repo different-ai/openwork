@@ -12,8 +12,6 @@ import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsPageHeader, analytic
 import { WorkflowFlowDiagram } from "./workflow-flow-diagram";
 import { ListRow, RowLane, RowLaneLabel, RowList, RowListHeader, RowListSkeleton, StatusLane } from "../_features/computers/computer-rows";
 import { focusRing, secondaryText } from "../_features/computers/computer-parts";
-import { workflowRunsIntroFacts } from "./analytics-intro-facts";
-import { useFeatureIntro } from "../_features/feature-intros";
 import {
   getWorkflowRuns,
   getErrorMessage,
@@ -83,7 +81,6 @@ export function WorkflowRunsScreen() {
       return getWorkflowRuns(payload);
     },
   });
-  const intro = useFeatureIntro("analytics.workflow-runs", entitled ? workflowRunsIntroFacts(runs) : null);
 
   return <div className={analyticsPageClass}>
     <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="workflows" title="Workflow Runs"
@@ -91,7 +88,6 @@ export function WorkflowRunsScreen() {
     {!entitled ? <EnterprisePlanNotice feature="Workflow run history" detail="Run history is unavailable on this plan." /> : <>
       {isError ? !runs ? <AnalyticsErrorState title="Couldn't load workflow runs" onRetry={() => void refetch()} retrying={isFetching} /> : <DenNotice tone="neutral" presentation="inline" message="Couldn't refresh. Showing the last runs." action={<DenButton variant="secondary" size="sm" disabled={isFetching} onClick={() => void refetch()}>Retry</DenButton>} /> : null}
       {isPending ? <div role="status" aria-label="Loading workflow runs"><RowListSkeleton rows={4} /></div>
-        : intro.size === "box" || intro.size === "fullscreen" ? intro.element
         : runs?.length === 0 ? <div className={analyticsSurfaceClass}>
           <AnalyticsEmptyState title="No workflow runs yet">Run a saved workflow or a one-off task to see its activity here.</AnalyticsEmptyState>
         </div> : runs ? <RowList label="Workflow runs" header={<RowListHeader lead="Run" menu>

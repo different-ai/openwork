@@ -16,10 +16,6 @@ import { EVERYONE_SCOPE } from "./team-scope";
 import { TeamPageFrame, TeamSections } from "./team-sections";
 import { WorkbotPanel, workbotTabVisible } from "./team-workbot-panel";
 import { usePermissionSets } from "./permissions-data";
-import { useFeatureIntroRuntime, useFeatureIntroUnseen } from "../_features/feature-intros";
-import type { TeamDetailFacts } from "../_features/feature-intros/intros/team-detail";
-import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
-import { TEAM_DETAIL_TAB_INTROS, TeamTabIntro } from "./team-detail-screen";
 
 export type EveryoneTab = "role" | "agents" | "browser" | "models" | "workbot" | "prompts" | "desktop";
 
@@ -49,10 +45,6 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
       : chosenTab === "prompts" && showPrompts ? "prompts"
         : chosenTab === "desktop" && showDesktop ? "desktop" : "role";
   const memberCount = orgContext?.members.length ?? 0;
-  const introUnseen = useFeatureIntroUnseen();
-  const introsEnabled = useFeatureIntroRuntime().enabled;
-  const introFacts: TeamDetailFacts | null = orgContext ? {} : null;
-  const modelsFacts = useAiGatewayIntroFacts(introsEnabled && activeTab === "models");
   const canViewSets = Boolean(orgContext && access?.canViewPermissions);
   const setsQuery = usePermissionSets(orgId, canViewSets);
   const memberSet = setsQuery.data?.find((set) => set.kind === "member_default");
@@ -68,10 +60,9 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
 
   return (
     <TeamPageFrame title="Everyone" memberCount={memberCount} backHref={getMembersTeamsRoute(orgSlug)} testId="everyone-screen">
-      <TeamSections tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(TEAM_DETAIL_TAB_INTROS[item.value]) }))} activeTab={activeTab} onChange={chooseTab}>
-        {activeTab === "desktop" ? (<div role="tabpanel" aria-label="Desktop"><TeamTabIntro tab="desktop" facts={introFacts}><DesktopSuggestionsPanel team={null} /></TeamTabIntro></div>) : activeTab === "role" ? (
+      <TeamSections tabs={tabs} activeTab={activeTab} onChange={chooseTab}>
+        {activeTab === "desktop" ? (<div role="tabpanel" aria-label="Desktop"><DesktopSuggestionsPanel team={null} /></div>) : activeTab === "role" ? (
           <div role="tabpanel" aria-label="Role">
-            <TeamTabIntro tab="role" facts={introFacts}>
             <ItemPanel>
               <ItemRow
                 logo={<IconTile icon={ShieldCheck} />}
@@ -82,21 +73,18 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
                 testId="everyone-role-member"
               />
             </ItemPanel>
-            </TeamTabIntro>
           </div>
         ) : activeTab === "browser" ? (
           <div role="tabpanel" aria-label="Browser">
-            <TeamTabIntro tab="browser" facts={introFacts}><AgentsPanel team={null} area="browser" /></TeamTabIntro>
+            <AgentsPanel team={null} area="browser" />
           </div>
         ) : activeTab === "models" ? (
           <div role="tabpanel" aria-label="Models">
-            <TeamTabIntro tab="models" facts={modelsFacts ? { providers: modelsFacts.providers, openworkModels: modelsFacts.openworkModels } : null}>
-              <ModelsPanel team={null} />
-            </TeamTabIntro>
+            <ModelsPanel team={null} />
           </div>
         ) : activeTab === "workbot" ? (
           <div role="tabpanel" aria-label="Workbot">
-            <TeamTabIntro tab="workbot" facts={introFacts}><WorkbotPanel scope={EVERYONE_SCOPE} /></TeamTabIntro>
+            <WorkbotPanel scope={EVERYONE_SCOPE} />
           </div>
         ) : activeTab === "prompts" ? (
           <div role="tabpanel" aria-label="Prompts">
@@ -104,7 +92,7 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
           </div>
         ) : (
           <div role="tabpanel" aria-label="Agents">
-            <TeamTabIntro tab="agents" facts={introFacts}><AgentsPanel team={null} area="agents" /></TeamTabIntro>
+            <AgentsPanel team={null} area="agents" />
           </div>
         )}
       </TeamSections>

@@ -12,7 +12,6 @@ import { orgFeatureEnabled } from "../../_lib/den-org";
 import { markFeatureUsed } from "../../_lib/feature-usage";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { FeatureIntroGate } from "../_features/feature-intros";
 import { StatusDot } from "../_features/computers/computer-parts";
 import { WorkflowArtifactResult } from "./workflow-artifact-result";
 import {
@@ -109,36 +108,34 @@ export function AutomationsScreen() {
     const items = listQuery.data?.items.filter((item) => archiveRestoreEnabled || item.automation.state !== "archived") ?? [];
     const groups = groupItems(items);
     return (
-      <FeatureIntroGate introKey="automations" facts={listQuery.data ? { automations: items.length } : null}>
-        <div className={DASHBOARD_PAGE_CLASS} data-automations-monitor>
-          <DenPageHeader size="compact" title="My Automations" state={`${items.length} Automations`} />
-          {items.length === 0 ? (
-            <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-8 text-center text-[13px] text-[var(--dls-text-secondary)]">No Automations yet. Create one in OpenWork Web or in the desktop app; it will show up here once Den is scheduling it.</div>
-          ) : groups.map((group) => (
-            <section key={group.title} className="mt-6">
-              <h2 className={SECTION_TITLE_CLASS}>{group.title}</h2>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                {group.items.map((item) => (
-                  <button key={item.automation.id} type="button" onClick={() => setQuery(item.automation.id)} className={`${AUTOMATION_CARD_CLASS} p-4 text-left transition-colors hover:border-[var(--dls-border)] hover:bg-[var(--dls-hover)]`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className={CARD_TITLE_CLASS}>{item.automation.name}</h3>
-                        <p className="mt-1 line-clamp-2 text-[12px] text-[var(--dls-text-secondary)]">{item.revision.action?.kind === "saved_script" ? `Exact Workflow version ${item.revision.action.script.configObjectVersionId.slice(0, 8)}` : item.revision.instructions}</p>
-                      </div>
-                      <AutomationStatus status={item.automation.state} />
+      <div className={DASHBOARD_PAGE_CLASS} data-automations-monitor>
+        <DenPageHeader size="compact" title="My Automations" state={`${items.length} Automations`} />
+        {items.length === 0 ? (
+          <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-8 text-center text-[13px] text-[var(--dls-text-secondary)]">No Automations yet. Create one in OpenWork Web or in the desktop app; it will show up here once Den is scheduling it.</div>
+        ) : groups.map((group) => (
+          <section key={group.title} className="mt-6">
+            <h2 className={SECTION_TITLE_CLASS}>{group.title}</h2>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              {group.items.map((item) => (
+                <button key={item.automation.id} type="button" onClick={() => setQuery(item.automation.id)} className={`${AUTOMATION_CARD_CLASS} p-4 text-left transition-colors hover:border-[var(--dls-border)] hover:bg-[var(--dls-hover)]`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className={CARD_TITLE_CLASS}>{item.automation.name}</h3>
+                      <p className="mt-1 line-clamp-2 text-[12px] text-[var(--dls-text-secondary)]">{item.revision.action?.kind === "saved_script" ? `Exact Workflow version ${item.revision.action.script.configObjectVersionId.slice(0, 8)}` : item.revision.instructions}</p>
                     </div>
-                    <p className="mt-3 text-[11px] text-[var(--dls-text-secondary)]">{formatAutomationSchedule(item.revision.schedule)}</p>
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-[var(--dls-text-secondary)]">
-                      <span>{item.latestRun ? `Last run ${item.latestRun.status}` : item.automation.nextDueAt ? `Next ${new Date(item.automation.nextDueAt).toLocaleString()}` : "Not run yet"}</span>
-                      <span className="flex items-center gap-1"><PlacementIcon executionTarget={item.revision.executionTarget} />{placementLabel(item.revision.executionTarget)}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      </FeatureIntroGate>
+                    <AutomationStatus status={item.automation.state} />
+                  </div>
+                  <p className="mt-3 text-[11px] text-[var(--dls-text-secondary)]">{formatAutomationSchedule(item.revision.schedule)}</p>
+                  <div className="mt-2 flex items-center justify-between text-[11px] text-[var(--dls-text-secondary)]">
+                    <span>{item.latestRun ? `Last run ${item.latestRun.status}` : item.automation.nextDueAt ? `Next ${new Date(item.automation.nextDueAt).toLocaleString()}` : "Not run yet"}</span>
+                    <span className="flex items-center gap-1"><PlacementIcon executionTarget={item.revision.executionTarget} />{placementLabel(item.revision.executionTarget)}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
     );
   }
 

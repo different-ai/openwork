@@ -6,12 +6,11 @@ import {
   type AwsAssistants, type AwsRuntimeProfile, type AwsSignIn, type DeploymentLaunchKind, type ManagedDeployment,
 } from "@openwork/types/den/managed-deployments";
 import { CheckCircle2, ChevronRight, CircleDashed, Copy, ExternalLink, LockKeyhole, X, XCircle } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { getDeploymentsRoute, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
-import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { BackLink, ItemHeader, ItemPage, SectionTitle } from "./item-header";
 import { DetailRows, DisclosureGroup, DisclosureSection, ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, type ItemMenuEntry } from "./item-list";
@@ -143,36 +142,17 @@ export function GuidedDeploymentsList() {
   const { orgSlug } = useOrgDashboard();
   const router = useRouter();
   const {
-    enabled, access, deployments, configuration, loading, loadedAt, error, setActionError, assistantsAvailable, available, runReauthableAction, replace, saveAwsSignIn,
+    enabled, access, deployments, configuration, loading, loadedAt, error, assistantsAvailable, available, runReauthableAction, replace, saveAwsSignIn,
   } = useManagedDeployments();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [signInOpen, setSignInOpen] = useState(false);
   const signIn = configuration?.awsSignIn ?? null;
   const route = getDeploymentsRoute(orgSlug);
 
-  const intro = useFeatureIntro(
-    "deployments",
-    enabled && access.canViewDeployments && !loading && !error && configuration ? { deployments: deployments.length, cloudReady: available } : null,
-  );
-
-  const searchParams = useSearchParams();
-  const newRequested = searchParams.get("new") === "1";
-  useEffect(() => {
-    if (!newRequested || loading) return;
-    if (enabled && access.canManageDeployments && available) { setActionError(null); setDialogOpen(true); }
-    const url = new URL(window.location.href);
-    url.searchParams.delete("new");
-    window.history.replaceState(null, "", url);
-  }, [newRequested, loading, enabled, access.canManageDeployments, available, setActionError]);
-
   const createDialog = (
     <CreateDeploymentDialog open={dialogOpen} onOpenChange={setDialogOpen} configuration={configuration} assistantsAvailable={assistantsAvailable} runReauthableAction={runReauthableAction}
       onCreated={(item) => { replace(item); setDialogOpen(false); router.push(`${route}/${item.id}`); }} />
   );
-
-  if (intro.size === "fullscreen") {
-    return <ItemPage wide testId="managed-deployments-screen">{intro.element}{createDialog}</ItemPage>;
-  }
 
   const locked = !enabled ? LOCKED : !access.canViewDeployments ? permissionLockReason("deployments.view") : null;
   const canCreate = Boolean(!locked && available && access.canManageDeployments);

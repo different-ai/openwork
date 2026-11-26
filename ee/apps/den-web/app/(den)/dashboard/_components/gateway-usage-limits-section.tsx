@@ -13,7 +13,6 @@ import { DenCombobox } from "../../_components/ui/combobox";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenTable } from "../../_components/ui/table";
 import { getAiGatewayLimitRoute, getAiGatewayLimitsRoute, getAiGatewayPersonRoute, getNewAiGatewayLimitRoute, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
-import { FeatureIntroGate } from "../_features/feature-intros";
 import { RowLane, RowLaneLabel, RowList, RowListHeader, RowTile } from "../_features/computers/computer-rows";
 import { GATEWAY_LANE, GatewayRow } from "./gateway-rows";
 import { useGatewayAccessProviders } from "./gateway-subject-access-data";
@@ -324,20 +323,18 @@ export function GatewayUsageLimitsSection({ orgId, orgSlug, teams, members }: { 
       {deleted ? <DeletedLimitNote orgId={orgId} orgSlug={orgSlug} policy={deleted} /> : null}
       <GatewayLimitsQueryFeedback query={policies} label="limits" />
       {!policies.isError && policies.data && active.length === 0 ? (
-        <FeatureIntroGate introKey="ai-gateway.limits" facts={{ policies: 0 }}>
-          <div className={`${AUTOMATION_CARD_CLASS} flex flex-col items-center gap-4 p-4 py-16 text-center`} data-testid="gateway-limits-empty">
-            <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[var(--dls-hover)] text-[color:var(--dls-text-secondary)]"><Gauge size={18} strokeWidth={1.5} aria-hidden="true" /></span>
-            <span className="flex flex-col gap-1">
-              <h2 id="gateway-usage-limits-heading" className={CARD_TITLE_CLASS}>No spend limits yet</h2>
-              <span className="text-[13px] text-[color:var(--dls-text-secondary)]">Set a daily, weekly or monthly amount for everyone, a team or one person.</span>
-            </span>
-            <Link href={getNewAiGatewayLimitRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-limit-new">New limit</Link>
-            <span className="text-[12px] text-[color:var(--dls-text-secondary)]">OpenWork Models has its own included usage.</span>
-          </div>
-        </FeatureIntroGate>
+        <div className={`${AUTOMATION_CARD_CLASS} flex flex-col items-center gap-4 p-4 py-16 text-center`} data-testid="gateway-limits-empty">
+          <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[var(--dls-hover)] text-[color:var(--dls-text-secondary)]"><Gauge size={18} strokeWidth={1.5} aria-hidden="true" /></span>
+          <span className="flex flex-col gap-1">
+            <h2 id="gateway-usage-limits-heading" className={CARD_TITLE_CLASS}>No spend limits yet</h2>
+            <span className="text-[13px] text-[color:var(--dls-text-secondary)]">Set a daily, weekly or monthly amount for everyone, a team or one person.</span>
+          </span>
+          <Link href={getNewAiGatewayLimitRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-limit-new">New limit</Link>
+          <span className="text-[12px] text-[color:var(--dls-text-secondary)]">OpenWork Models has its own included usage.</span>
+        </div>
       ) : null}
       {!policies.isError && active.length > 0 ? (
-        <FeatureIntroGate introKey="ai-gateway.limits" facts={{ policies: active.length }}>
+        <>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 id="gateway-usage-limits-heading" className={SECTION_TITLE_CLASS}>Limits</h2>
             <Link href={getNewAiGatewayLimitRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-limit-new">New limit</Link>
@@ -348,7 +345,7 @@ export function GatewayUsageLimitsSection({ orgId, orgSlug, teams, members }: { 
             ))}
           </GatewayLimitRows>
           <PersonLookup orgId={orgId} orgSlug={orgSlug} />
-        </FeatureIntroGate>
+        </>
       ) : null}
     </section>
   );

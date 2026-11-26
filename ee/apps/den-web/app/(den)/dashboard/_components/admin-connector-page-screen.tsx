@@ -7,7 +7,6 @@ import { DenButton } from "../../_components/ui/button";
 import { getLibraryConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, getToolTesterRoute, permissionLockReason } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { useFeatureIntro, useFeatureIntroRuntime } from "../_features/feature-intros";
 import { type AccessDraft, accessAddedToast } from "./access-summary";
 import { signInSentence } from "./admin-connectors";
 import { connectorAccountReady } from "./connector-detail";
@@ -16,7 +15,6 @@ import { ChatButton, WhatYourAiCanDo } from "./connector-page-screen";
 import { GOOGLE_WORKSPACE_QUICK_ADD_ID, isNativeProviderCatalogId, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
 import { useMemberSignIn } from "./connector-setup";
 import { ConnectorSettingsForm } from "./connector-settings";
-import { connectorSharedBeyondCreator, useConnectorsIntroFacts } from "./connectors-intro-facts";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
 import { ConfirmDialog, DetailRows, DisclosureGroup, DisclosureSection, ItemMenu, removeEntry, ItemPanel, LinkButton } from "./item-list";
@@ -141,13 +139,6 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
     ? { orgWide: connection.access.orgWide, memberIds: connection.access.memberIds, teamIds: connection.access.teamIds }
     : { orgWide: false, memberIds: [], teamIds: [] };
   const addedBy = connection.createdByName?.trim();
-  const connectorsFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
-  const accessIntro = useFeatureIntro("connectors.access", connectorsFacts ? {
-    ...connectorsFacts,
-    connectors: Math.max(1, connectorsFacts.connectors ?? 0),
-    sharedBeyondCreator: connectorSharedBeyondCreator(connection, viewerId),
-    canEditAccess: memberAccess?.canManageConnections === true || connection.createdByYou === true,
-  } : null);
 
   async function changeAccess(next: AccessDraft) {
     if (!orgContext) return;
@@ -254,8 +245,6 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
           </ItemPanel>
         </section>
       ) : null}
-
-      {accessIntro.size === "banner" ? accessIntro.element : null}
 
       {orgContext && connection.access ? (
         <section id="who-can-use-it" className="flex scroll-mt-6 flex-col gap-2.5">

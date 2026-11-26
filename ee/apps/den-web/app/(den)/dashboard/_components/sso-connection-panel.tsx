@@ -56,7 +56,6 @@ export function SsoConnectionPanel({
 }: SsoConnectionPanelProps) {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [connection, setConnectionState] = useState<DenOrgSsoConnection | null>(null);
-  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -142,7 +141,6 @@ export function SsoConnectionPanel({
     if (!orgId || !access.canViewSso || !endpoints.load) {
       if (isCurrent()) {
         setConnection(null);
-        setLoaded(true);
       }
       return;
     }
@@ -161,7 +159,6 @@ export function SsoConnectionPanel({
       const parsed = parseOrgSsoPayload(payload);
       if (isCurrent()) {
         setConnection(parsed.connection);
-        setLoaded(true);
         if (!quiet) {
           syncFormFromConnection(parsed.connection);
           setEditing(false);
@@ -700,7 +697,7 @@ export function SsoConnectionPanel({
           ) : null}
 
           {!connection ? null : (
-          <div id="sso-connection" className="scroll-mt-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+          <div className="rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">{connection.displayName}</p>
@@ -725,7 +722,7 @@ export function SsoConnectionPanel({
             {connection ? (
               <div className="mt-5 space-y-4">
                 {!connection.domainVerified ? (
-                  <section id="sso-domain-verification" data-testid="sso-domain-verification" className="scroll-mt-6 overflow-hidden rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[14px] text-[var(--dls-text-primary)]">
+                  <section data-testid="sso-domain-verification" className="overflow-hidden rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[14px] text-[var(--dls-text-primary)]">
                     <div className="flex flex-col gap-4 border-b border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex items-start gap-3">
                         <span className="mt-0.5 rounded-full bg-amber-900 p-2 text-amber-50"><ShieldAlert size={18} aria-hidden="true" /></span>

@@ -12,10 +12,7 @@ import {
   parseOrgScimPayload,
   permissionLockReason,
 } from "../../_lib/den-org";
-import { FeatureIntroGate } from "../_features/feature-intros";
-import type { AuthSecurityFacts } from "../_features/feature-intros/intros/auth-security";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { scimIntroState } from "./auth-security-intro-facts";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 function formatDateTime(value: string | null) {
@@ -31,14 +28,8 @@ function formatDateTime(value: string | null) {
   return date.toLocaleString();
 }
 
-export type ScimScreenProps = {
-  setupMode?: boolean;
-  onIntroFacts?: (facts: AuthSecurityFacts) => void;
-};
-
-export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps = {}) {
+export function ScimScreen() {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
-  const [loaded, setLoaded] = useState(false);
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
   const [ssoReady, setSsoReady] = useState(false);
   const [connection, setConnection] = useState<DenOrgScimConnection | null>(null);
@@ -106,7 +97,6 @@ export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps 
         setSsoReady(parsed.ssoReady);
         setConnection(parsed.connection);
         setHealth(parsed.health);
-        setLoaded(true);
       }
     } catch (nextError) {
       if (isReauthRequiredError(nextError)) {
@@ -329,16 +319,6 @@ export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps 
     }
   }
 
-  const introState = loaded ? scimIntroState(connection, health) : null;
-  const scimIncluded = orgContext?.entitlements.scim;
-  useEffect(() => {
-    if (!introState || scimIncluded === undefined) return;
-    onIntroFacts?.({ scim: introState, scimIncluded, ssoReady });
-  }, [introState, scimIncluded, ssoReady, onIntroFacts]);
-  const introFacts = introState && scimIncluded !== undefined && !(setupMode && introState === "none")
-    ? { scim: introState, scimIncluded, ssoReady }
-    : null;
-
   if (!orgContext) {
     return (
       <div data-testid="scim-tab-content">
@@ -356,7 +336,7 @@ export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps 
           {permissionLockReason("scim.view")}
         </div>
       ) : (
-        <FeatureIntroGate introKey="auth-security.scim" facts={introFacts}>
+        <>
           {!orgContext.entitlements.scim ? (
             <EnterprisePlanNotice feature="SCIM provisioning" />
           ) : null}
@@ -411,7 +391,7 @@ export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps 
             </div>
           ) : null}
 
-          <div id="scim-base-url" className="mb-6 scroll-mt-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+          <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">
@@ -561,7 +541,7 @@ export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps 
               </div>
             ) : null}
           </div>
-        </FeatureIntroGate>
+        </>
       )}
     </div>
   );

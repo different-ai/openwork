@@ -1,7 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
-import { type ReactNode, useEffect, useState } from "react";
+import { useState } from "react";
 import { Laptop, Compass, KeyRound, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
 import type { TabItem } from "../../_components/ui/tabs";
 import { getMembersRoute, getMembersTeamsRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
@@ -11,9 +10,7 @@ import { DesktopSuggestionsPanel } from "./desktop-suggestions-panel";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { AgentsPanel, agentsTabVisible } from "./agent-permissions-editor";
 import { TeamPluginAccessPanel } from "./team-plugin-access-panel";
-import { ModelsPanel, modelsTabVisible, teamModelsAccess } from "./team-models-panel";
-import { directoryAccess } from "./gateway-directory-data";
-import { useGatewayAccessProviders } from "./gateway-subject-access-data";
+import { ModelsPanel, modelsTabVisible } from "./team-models-panel";
 import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
 import { teamScopeOf } from "./team-scope";
 import { TeamPageFrame, TeamSections } from "./team-sections";
@@ -25,36 +22,13 @@ import { LinkButton } from "./item-list";
 import { SharedTeamRolePanel } from "./shared-team-role-panel";
 import { MemberTeamRoles } from "./member-team-roles";
 import { useOrganizationRoles } from "./permissions-data";
-import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
-import type { TeamDetailFacts } from "../_features/feature-intros/intros/team-detail";
-import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
 
 const TEAM_MEMBER_ROLE_LANE = "flex w-40 @2xl:w-56";
 
 export type TeamDetailTab = "role" | "overview" | "access" | "agents" | "browser" | "models" | "workbot" | "prompts" | "desktop";
 
-export const TEAM_DETAIL_TAB_INTROS: Record<TeamDetailTab, FeatureIntroKey> = {
-  role: "team-detail.role",
-  overview: "team-detail.members",
-  access: "team-detail.access",
-  agents: "team-detail.agents",
-  browser: "team-detail.browser",
-  models: "team-detail.models",
-  workbot: "team-detail.workbot",
-  prompts: "team-detail.prompts",
-  desktop: "team-detail.desktop",
-};
-
-export function TeamTabIntro({ tab, facts, children }: { tab: TeamDetailTab; facts: TeamDetailFacts | null; children: ReactNode }) {
-  return <FeatureIntroGate introKey={TEAM_DETAIL_TAB_INTROS[tab]} facts={facts}>{children}</FeatureIntroGate>;
-}
-
 export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string; initialTab?: TeamDetailTab | null }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const introUnseen = useFeatureIntroUnseen();
-  const introsEnabled = useFeatureIntroRuntime().enabled;
   const viewerAccess = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
     : null;
@@ -98,17 +72,6 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
     : team?.grantsOrganizationAdmin && !viewerAccess?.canManageAdminTeams
       ? permissionLockReason("teams.manage_admin")
       : permissionLockReason("teams.manage");
-  const teamFacts: TeamDetailFacts | null = team && orgContext
-    ? { teamMembers: team.memberIds.length, managedByScim: team.managedByScim, adminTeam: team.grantsOrganizationAdmin }
-    : null;
-  const modelsFacts = useAiGatewayIntroFacts(introsEnabled && activeTab === "models");
-  const providerAccess = useGatewayAccessProviders(orgId ?? "", introsEnabled && activeTab === "models" && Boolean(orgId) && Boolean(teamModelsAccess(orgContext ?? null)?.providers));
-  const sharedProviders = providerAccess.data ? directoryAccess(providerAccess.data, { type: "team", teamId }).length : undefined;
-
-  const addPeopleRequested = searchParams.get("addPeople") === "1";
-  useEffect(() => {
-    if (addPeopleRequested) router.replace(`${getMembersRoute(orgSlug)}?tab=teams&editTeam=${encodeURIComponent(teamId)}`);
-  }, [addPeopleRequested, router, orgSlug, teamId]);
   const agentsTab: readonly TabItem<TeamDetailTab>[] = [
     ...(showAgents ? [{ value: "agents" as const, label: "Agents", icon: SquareTerminal }] : []),
     ...(showBrowser ? [{ value: "browser" as const, label: "Browser", icon: Compass }] : []),
@@ -131,19 +94,18 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
         : <span className="flex flex-col items-end gap-1"><DenButton size="sm" variant="secondary" disabled title={editTeamLockedReason} data-testid="team-edit-locked">Edit team</DenButton><span className="max-w-72 text-right text-[12px] text-[var(--dls-text-secondary)]">{editTeamLockedReason}</span></span>
         : undefined}>
       <TeamSections
-        tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(TEAM_DETAIL_TAB_INTROS[item.value]) }))}
+        tabs={tabs}
         activeTab={activeTab}
         onChange={setActiveTab}
       >
         {activeTab === "role" && team ? (
           <div role="tabpanel" aria-label="Role">
-            <TeamTabIntro tab="role" facts={teamFacts}><SharedTeamRolePanel team={team} /></TeamTabIntro>
+            <SharedTeamRolePanel team={team} />
           </div>
         ) : null}
 
         {activeTab === "overview" ? (
           <div role="tabpanel" aria-label="Members">
-            <TeamTabIntro tab="overview" facts={teamFacts}>
             {teamMembers.length === 0 ? (
               <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">This team has no members yet.</p>
             ) : (
@@ -166,7 +128,6 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
                 })}
               </RowList>
             )}
-            </TeamTabIntro>
           </div>
         ) : null}
 
@@ -178,17 +139,17 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
 
         {activeTab === "agents" && team ? (
           <div role="tabpanel" aria-label="Agents">
-            <TeamTabIntro tab="agents" facts={teamFacts}><AgentsPanel team={{ id: team.id, name: team.name }} area="agents" /></TeamTabIntro>
+            <AgentsPanel team={{ id: team.id, name: team.name }} area="agents" />
           </div>
         ) : null}
 
         {activeTab === "browser" && team ? (
           <div role="tabpanel" aria-label="Browser">
-            <TeamTabIntro tab="browser" facts={teamFacts}><AgentsPanel team={{ id: team.id, name: team.name }} area="browser" /></TeamTabIntro>
+            <AgentsPanel team={{ id: team.id, name: team.name }} area="browser" />
           </div>
         ) : null}
 
-        {activeTab === "desktop" && team ? (<div role="tabpanel" aria-label="Desktop"><TeamTabIntro tab="desktop" facts={teamFacts}><DesktopSuggestionsPanel team={{ id: team.id, name: team.name }} /></TeamTabIntro></div>) : null}
+        {activeTab === "desktop" && team ? (<div role="tabpanel" aria-label="Desktop"><DesktopSuggestionsPanel team={{ id: team.id, name: team.name }} /></div>) : null}
 
         {activeTab === "prompts" && team ? (
           <div role="tabpanel" aria-label="Prompts">
@@ -198,15 +159,13 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
 
         {activeTab === "workbot" && team ? (
           <div role="tabpanel" aria-label="Workbot">
-            <TeamTabIntro tab="workbot" facts={teamFacts}><WorkbotPanel scope={teamScopeOf(team)} /></TeamTabIntro>
+            <WorkbotPanel scope={teamScopeOf(team)} />
           </div>
         ) : null}
 
         {activeTab === "models" && team ? (
           <div role="tabpanel" aria-label="Models">
-            <TeamTabIntro tab="models" facts={teamFacts && modelsFacts ? { ...teamFacts, providers: modelsFacts.providers, openworkModels: modelsFacts.openworkModels, sharedProviders } : null}>
-              <ModelsPanel team={{ id: team.id, name: team.name }} />
-            </TeamTabIntro>
+            <ModelsPanel team={{ id: team.id, name: team.name }} />
           </div>
         ) : null}
       </TeamSections>

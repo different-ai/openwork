@@ -19,7 +19,6 @@ import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { getGatewayDashboardAccess } from "../_lib/gateway-dashboard-access";
 import { UsageLimitsCard } from "../_features/analytics/usage-limits-card";
-import { useFeatureIntro } from "../_features/feature-intros";
 
 const MODEL_DETAILS: Record<string, { bestFor: string; monogram: string } | undefined> = {
   "moonshotai/kimi-k3": { bestFor: "Research & synthesis", monogram: "MS" },
@@ -243,7 +242,6 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
   }
 
   const enabled = status?.enabled === true;
-  useFeatureIntro("ai-gateway.openwork-models", embedded && status ? { openworkModels: status.enabled } : null);
   const subscribed = status?.subscribed === true;
   const notSold = !subscribed && (status?.billingConfigured === false || checkoutNotSold);
   const showGettingStarted = !loading && status !== null && !subscribed && !notSold;

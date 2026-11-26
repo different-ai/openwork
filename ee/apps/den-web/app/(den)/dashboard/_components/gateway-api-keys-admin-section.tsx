@@ -9,7 +9,6 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSwitch } from "../../_components/ui/switch";
 import { isReauthRequiredError } from "../../_lib/den-flow";
 import { permissionLockReason } from "../../_lib/den-org";
-import { FeatureIntroGate } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemMenu } from "./item-list";
 import { ListRow, RowLane, RowLaneLabel, RowList, RowListHeader, RowListSkeleton } from "../_features/computers/computer-rows";
@@ -52,7 +51,6 @@ export function GatewayApiKeysAdminSection({ canManageKeys, canManageSettings }:
 
   const { apiKeys } = keys.data;
   const enabled = save.isPending && save.variables?.memberApiKeys !== undefined ? save.variables.memberApiKeys : keys.data.enabled;
-  const facts = { memberApiKeys: enabled, apiKeys: apiKeys.length };
 
   const keyMenu = (row: OrganizationGatewayApiKey) => (
     <ItemMenu
@@ -99,40 +97,36 @@ export function GatewayApiKeysAdminSection({ canManageKeys, canManageSettings }:
             />
           ) : null}
           {!canManageKeys ? <p className="text-[13px] text-[color:var(--dls-text-secondary)]">{`Read only. ${permissionLockReason("gateway_providers.manage")}`}</p> : null}
-          <FeatureIntroGate introKey="ai-gateway.api-keys" facts={facts}>
-            <RowList label="API keys" header={<RowListHeader lead="Key" menu>
-              <RowLaneLabel lane={GATEWAY_LANE.keyMember}>Member</RowLaneLabel>
-              <RowLaneLabel lane={GATEWAY_LANE.keyDate}>Created</RowLaneLabel>
-              <RowLaneLabel lane={GATEWAY_LANE.keyDate}>Expires</RowLaneLabel>
-              <RowLaneLabel lane={GATEWAY_LANE.keyDate}>Last used</RowLaneLabel>
-            </RowListHeader>}>
-              {apiKeys.map((row) => (
-                <ListRow
-                  key={row.id}
-                  icon={KeyRound}
-                  name={row.name}
-                  secondLine={<span className="font-mono">{row.prefix}…</span>}
-                  lanes={<>
-                    <RowLane lane={`${GATEWAY_LANE.keyMember} flex-col justify-center`} title={row.member.email}>
-                      <span className="truncate">{row.member.name}</span>
-                      <span className="truncate text-[12px] leading-4 text-[color:var(--dls-text-secondary)]">{row.member.email}</span>
-                    </RowLane>
-                    <RowLane lane={`${GATEWAY_LANE.keyDate} truncate text-[color:var(--dls-text-secondary)]`}>{formatCreated(row.createdAt).replace(/^Created /, "")}</RowLane>
-                    <RowLane lane={`${GATEWAY_LANE.keyDate} truncate ${gatewayApiKeyExpired(row.expiresAt) ? "font-medium text-[var(--ow-danger)]" : "text-[color:var(--dls-text-secondary)]"}`}>
-                      {row.expiresAt === null ? "Never" : formatExpiry(row.expiresAt).replace(/^Expires /, "")}
-                    </RowLane>
-                    <RowLane lane={`${GATEWAY_LANE.keyDate} truncate text-[color:var(--dls-text-secondary)]`}>{formatLastUsed(row.lastUsedAt).replace(/^Used /, "")}</RowLane>
-                  </>}
-                  action={keyMenu(row)}
-                />
-              ))}
-            </RowList>
-          </FeatureIntroGate>
+          <RowList label="API keys" header={<RowListHeader lead="Key" menu>
+            <RowLaneLabel lane={GATEWAY_LANE.keyMember}>Member</RowLaneLabel>
+            <RowLaneLabel lane={GATEWAY_LANE.keyDate}>Created</RowLaneLabel>
+            <RowLaneLabel lane={GATEWAY_LANE.keyDate}>Expires</RowLaneLabel>
+            <RowLaneLabel lane={GATEWAY_LANE.keyDate}>Last used</RowLaneLabel>
+          </RowListHeader>}>
+            {apiKeys.map((row) => (
+              <ListRow
+                key={row.id}
+                icon={KeyRound}
+                name={row.name}
+                secondLine={<span className="font-mono">{row.prefix}…</span>}
+                lanes={<>
+                  <RowLane lane={`${GATEWAY_LANE.keyMember} flex-col justify-center`} title={row.member.email}>
+                    <span className="truncate">{row.member.name}</span>
+                    <span className="truncate text-[12px] leading-4 text-[color:var(--dls-text-secondary)]">{row.member.email}</span>
+                  </RowLane>
+                  <RowLane lane={`${GATEWAY_LANE.keyDate} truncate text-[color:var(--dls-text-secondary)]`}>{formatCreated(row.createdAt).replace(/^Created /, "")}</RowLane>
+                  <RowLane lane={`${GATEWAY_LANE.keyDate} truncate ${gatewayApiKeyExpired(row.expiresAt) ? "font-medium text-[var(--ow-danger)]" : "text-[color:var(--dls-text-secondary)]"}`}>
+                    {row.expiresAt === null ? "Never" : formatExpiry(row.expiresAt).replace(/^Expires /, "")}
+                  </RowLane>
+                  <RowLane lane={`${GATEWAY_LANE.keyDate} truncate text-[color:var(--dls-text-secondary)]`}>{formatLastUsed(row.lastUsedAt).replace(/^Used /, "")}</RowLane>
+                </>}
+                action={keyMenu(row)}
+              />
+            ))}
+          </RowList>
         </>
       ) : (
-        <FeatureIntroGate introKey="ai-gateway.api-keys" facts={facts}>
-          <ApiKeysInfoPanel enabled={enabled} href={createOwnGatewayApiKeyRoute(orgSlug)} />
-        </FeatureIntroGate>
+        <ApiKeysInfoPanel enabled={enabled} href={createOwnGatewayApiKeyRoute(orgSlug)} />
       )}
     </div>
   );
