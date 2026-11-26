@@ -1135,7 +1135,7 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
   const SkillSharingProvider = props.skillSharingProvider ?? NoCreatedSkillSharing;
   const extensions = useSessionExtensions();
   const extensionOwnsSession = extensions.ownedSessionIds.has(props.sessionId);
-  const approvalsEnabled = !extensionOwnsSession && extensions.renderChatApprovals !== undefined;
+  const approvalsEnabled = !extensionOwnsSession && extensions.renderChatApprovalDock !== undefined;
   const completedAt = useSessionActivityStore((state) => {
     if (!approvalsEnabled) return 0;
     const record = state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId];
@@ -3959,7 +3959,6 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
       </div>
 
       <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2 max-lg:pb-0">
-        {approvalsEnabled && !archived && extensions.renderChatApprovals?.(completedAt)}
         <GatewayUsageApprovalNotice />
         {gatewayNotice && gatewayScope ? <GatewayUsageNotice key={`${gatewayUsage.scopeKey}:${sessionOwner}:${gatewayCloudProviderId ?? ""}`} state={gatewayNotice} status={gatewayScope.status} stale={gatewayUsage.query.isError}
           providerName={gatewayScope.providerName} canSwitchProvider={gatewayCanSwitchProvider} sessionId={props.sessionId} messageSaved={hideGatewayError || hideDirectGatewayError} /> : null}
@@ -4098,7 +4097,7 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
         onRemovePastedText={handleRemovePastedText}
           compactTopSpacing={Boolean(dockedQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown)}
           topAccessory={
-            dockedQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown ? (
+            (approvalsEnabled && !archived) || dockedQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown ? (
               <div>
                 {queuedItems.length > 0 ? (
                   <QueuedMessagesPanel
@@ -4168,6 +4167,7 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
                   />
                   </div>
                 ) : null}
+                {approvalsEnabled && !archived && extensions.renderChatApprovalDock?.(completedAt)}
               </div>
             ) : null
           }

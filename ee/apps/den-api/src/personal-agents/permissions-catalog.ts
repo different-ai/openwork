@@ -73,7 +73,7 @@ export async function personalAgentToolCatalog(caller: PersonalAgentCaller, poli
           const access = evaluateToolPermission([
             personalAgentConnectorState(agent, policy, connection.id) !== "on" ? "block" : personalAgentToolRule(policy, connection.id, tool.name), lockedByOrganization ? "block" : rule,
             ...callerPolicies.map((callerPolicy) => personalAgentToolRule(callerPolicy, connection.id, tool.name)),
-          ], !tool.write)
+          ], { kind: "agent", readOnly: !tool.write })
           return { ...tool, chosen, lockedByOrganization, access, organizationRule: rule === "block" ? null : rule }
         }),
       }

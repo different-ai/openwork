@@ -14,8 +14,7 @@ const automation: ToolApproval = {
 
 test("chat and Automation display different time scopes for Allow once", () => {
   expect(approvalWords(chat)).toEqual({
-    title: "Let OpenWork use Send a message in Slack?",
-    line: "Asked from a chat. Allow once lets the next try go through.",
+    title: "Not run: Send a message in Slack. Allow once covers the next use of this tool in your chats.",
   });
   expect(approvalWords(automation)).toEqual({
     title: "Let Daily digest use Send a message in Slack?",
@@ -36,6 +35,8 @@ test("a surface only displays pending approvals for its own context, never for a
 test("missing names fall back to plain words rather than internal IDs", () => {
   const unnamed = { ...automation, context: { ...automation.context, label: " " }, toolTitle: "", connectionName: "" };
   expect(approvalWords(unnamed).title).toBe("Let this Automation use a tool in a connected app?");
+  const unnamedChat = { ...chat, toolTitle: " ", connectionName: " " };
+  expect(approvalWords(unnamedChat).title).toBe("Not run: a tool in a connected app. Allow once covers the next use of this tool in your chats.");
 });
 
 test("an approval appears only on its own Automation and run", () => {

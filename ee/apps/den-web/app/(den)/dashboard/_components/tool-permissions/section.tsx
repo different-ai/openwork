@@ -9,7 +9,7 @@ import { toolTitle } from "../connector-setup";
 import type { ExternalMcpTool, useMcpConnectionTools } from "../mcp-connections-data";
 import { AudiencePicker, everyone } from "./audience-picker";
 import { useSetToolRule, useToolPermissions } from "./data";
-import { accessChoices, accessLabels, defaultToolAccess, rulesForSubject, toolActivityLabel, toolRowAccess, withPendingRule } from "./model";
+import { accessChoices, accessLabels, rulesForSubject, toolActivityLabel, toolRowAccess, withPendingRule } from "./model";
 
 const muted = "text-[13px] text-[var(--dls-text-secondary)]";
 const errorText = "text-[13px] text-[var(--ow-danger)]";
@@ -50,7 +50,7 @@ function ToolRow({ access, name, tool, busy, connectionBlockId, save }: {
       <span className={textLine} title={notice}>{notice}</span>
     </div> : null}
     control={<div role="group" aria-label={`Access for ${title}`} aria-describedby={connectionBlockId ?? (lockedByEveryone ? reasonId : undefined)}
-      className="grid w-full grid-cols-[minmax(6rem,1fr)_repeat(3,minmax(0,1fr))] rounded-lg bg-[var(--dls-hover)] p-0.5">
+      className="grid w-full grid-cols-[minmax(7rem,1.55fr)_repeat(3,minmax(0,1fr))] rounded-lg bg-[var(--dls-hover)] p-0.5">
       {accessChoices.map((choice) => <DenButton key={choice} size="inline" data-tool-access={choice} data-tool-default={choice === "default" ? "" : undefined}
         aria-pressed={pressed === choice} variant={pressed === choice ? "plain" : "ghost"}
         className="aria-pressed:bg-[var(--dls-surface)] focus-visible:z-10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--dls-accent)] motion-reduce:transition-none"
@@ -134,7 +134,7 @@ export function ToolPermissionsSection({ org, connectionId, signedIn, catalog, o
 
   return <section data-tool-permissions="" aria-labelledby={headingId} className="space-y-2">
     <h2 id={headingId} className="text-base font-semibold">Tool permissions</h2>
-    <p className={muted}>A block always wins. Then Ask, then Allow. With no rule, tools that only read are allowed and tools that change something ask first.</p>
+    <p className={muted}>A block always wins. Then Ask, then Allow. With no rule, tools are allowed in ordinary chats.</p>
     <p className={muted}>Applies to chats, Automations, Workbot and agents.</p>
     <AudiencePicker org={org} subject={subject} disabled={mutation.isPending} onChange={(next) => {
       if (saving.current) return;
@@ -169,7 +169,7 @@ export function ToolPermissionsSection({ org, connectionId, signedIn, catalog, o
     {loading ? <ToolRowsSkeleton everyoneSelected={everyoneSelected} /> : permissions.data && names.length > 0 ? <ul className={listClass}>
       {names.map((name) => {
         const tool = toolsByName.get(name);
-        const access = toolRowAccess({ toolName: name, fallback: tool ? defaultToolAccess(tool.annotations) : null,
+        const access = toolRowAccess({ toolName: name,
           ownRules, orgRules, memberTeams, everyoneSelected });
         return <ToolRow key={name} name={name} tool={tool} access={access} busy={busy}
           connectionBlockId={connectionBlocked ? connectionBlockId : undefined} save={(rule) => save(name, rule)} />;
