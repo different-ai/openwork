@@ -50,6 +50,17 @@ export function workspacePackages(root = ROOT) {
   return packages;
 }
 
+/**
+ * Packages that build TypeScript but have no typecheck script, so a type error
+ * in them is found only when their image or bundle is built after merge.
+ */
+export function packagesWithoutTypecheck(packages = workspacePackages(), root = ROOT) {
+  return [...packages.values()]
+    .filter((pkg) => !SKIP.has(pkg.name) && pkg.scripts.build && !pkg.scripts.typecheck)
+    .filter((pkg) => readdirSync(join(root, pkg.dir)).some((file) => /^tsconfig[^/]*\.json$/.test(file)))
+    .map((pkg) => pkg.name);
+}
+
 /** Packages to typecheck for a list of changed paths; null means unknown, so all. */
 export function selectPackages(files, packages = workspacePackages()) {
   const all = new Set(packages.keys());

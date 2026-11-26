@@ -29,7 +29,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup --config tsup.config.react.ts"
+    "build": "tsup --config tsup.config.react.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.react.json"
   },
   "dependencies": {
     "@paper-design/shaders": "0.0.72",

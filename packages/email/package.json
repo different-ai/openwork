@@ -27,6 +27,7 @@
   ],
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "dev": "email dev --dir emails"
   },
   "dependencies": {

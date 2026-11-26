@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { isTestFile, selectPackages, typecheckPlan, workspacePackages } from "./typecheck-shipped.mjs";
+import { isTestFile, packagesWithoutTypecheck, selectPackages, typecheckPlan, workspacePackages } from "./typecheck-shipped.mjs";
 
 const packages = workspacePackages();
+
+test("every package that builds TypeScript has a typecheck script", () => {
+  assert.deepEqual(packagesWithoutTypecheck(packages), [], "Add a `typecheck` script (tsc --noEmit -p <tsconfig>) so `pnpm check` and Quick check cover it.");
+});
 
 test("test sources are left out; shipped sources are not", () => {
   for (const path of [
