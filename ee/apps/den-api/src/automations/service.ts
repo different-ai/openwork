@@ -1122,7 +1122,7 @@ export class AutomationService {
         workspaceId: runWorkspaceId(claimed.revision, "cloud"),
         ...(agentRun?.mcpScopes.length ? { mcpScopes: agentRun.mcpScopes } : {}),
         signal: controller.signal,
-        ...(agentRun ? { forAgent: true, onModelResolved: (model: AgentAction["model"]) => automationRepository.setCloudRunModel({ runId: claimed.run.id, leaseOwner, model }) } : {}),
+        ...(agentRun ? { forAgent: true, onModelResolved: (model: Parameters<typeof automationRepository.setCloudRunModel>[0]["model"]) => automationRepository.setCloudRunModel({ runId: claimed.run.id, leaseOwner, model }) } : {}),
         onAdmitted: async (receipt) => automationRepository.setCloudExecution({
           runId: claimed.run.id,
           leaseOwner,
