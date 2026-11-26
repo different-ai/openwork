@@ -16,12 +16,11 @@ import { attributeAuditRequest, auditChangeCapture, auditServiceAttribution, typ
 import { db } from "../../db.js"
 import { organizationFeatureEnabled, requireFeature, type FeatureKey } from "../../features.js"
 import { markFeaturesUsed } from "../../feature-usage.js"
-import { managedDeploymentApiOrigin } from "../../managed-deployments/config.js"
+import { awsRelease, managedDeploymentApiOrigin } from "../../managed-deployments/config.js"
 import {
   approvalClaimed, canonicalJson, configurationBasis, configurationChangeRecord, configurationRevision, recordedConfiguration, withdrawConfigurationChange,
   type ConfigurationChangeRecord, type DeploymentRow, type RunRow,
 } from "../../managed-deployments/configuration.js"
-import { effectiveInstallerRelease } from "../../managed-deployments/releases.js"
 import { jsonValidator, orgPermissionRoute, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { RUN_LIFETIME_MS, awsSignInFor, deploymentParam, launchDetails, oneView, operation, runParam } from "./managed-deployments.js"
@@ -68,7 +67,7 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const id = c.req.valid("param").deploymentId
       const body = c.req.valid("json")
-      const published = await effectiveInstallerRelease("aws")
+      const published = awsRelease()
       const apiOrigin = managedDeploymentApiOrigin()
       const capture = auditChangeCapture(c)
       const now = new Date()

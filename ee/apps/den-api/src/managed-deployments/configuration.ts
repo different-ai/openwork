@@ -7,8 +7,7 @@ import {
 } from "@openwork/managed-deployments/schema"
 import { z } from "zod"
 import type { db } from "../db.js"
-import type { ManagedDeploymentRelease } from "./config.js"
-import { immutableInstallerUrl } from "./release-verifier.js"
+import { isReusableAwsInstallerUrl, type ManagedDeploymentRelease } from "./config.js"
 
 export type DeploymentRow = typeof ManagedDeploymentTable.$inferSelect
 export type RunRow = typeof ManagedDeploymentRunTable.$inferSelect
@@ -76,7 +75,7 @@ export function configurationBasis(row: DeploymentRow, runs: RunRow[], published
   const base = runs.filter((run) => run.state === "ready").sort((left, right) => right.created_at.getTime() - left.created_at.getTime())[0]
   if (!base || base.version !== row.installed_version) return { lock: "installer_unknown" }
   if (runs.some((run) => run.kind !== "configure" && run.created_at > base.created_at)) return { lock: "unfinished_run" }
-  if (!immutableInstallerUrl("aws", base.template_url) || !immutableInstallerUrl("aws", base.bundle_url)) return { lock: "installer_unavailable" }
+  if (!isReusableAwsInstallerUrl(base.template_url) || !isReusableAwsInstallerUrl(base.bundle_url)) return { lock: "installer_unavailable" }
   const gatewayAvailable = sameCoordinates(base, published)
   const unapproved = active && active.kind === "configure" && !reachedCloud(active) ? active : null
   return {
