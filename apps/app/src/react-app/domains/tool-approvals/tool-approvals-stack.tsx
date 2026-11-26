@@ -57,6 +57,7 @@ function PendingApproval({ scope, approval }: { scope: ToolApprovalsScope; appro
         return;
       }
       void scope.client.runAutomationNow(scope.organizationId, id).then((run) => {
+        void queryClient.invalidateQueries({ queryKey: ["den", "automations", scope.organizationId] });
         toast.success(t(run.status === "skipped" ? "tool_approvals.automation_next_run" : "tool_approvals.automation_started", { name }));
       }).catch((error: unknown) => {
         toast.error(t("tool_approvals.run_failed", { name }), { description: error instanceof DenApiError ? error.message : undefined });
