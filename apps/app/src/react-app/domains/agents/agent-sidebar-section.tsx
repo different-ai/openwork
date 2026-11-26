@@ -52,7 +52,7 @@ export function AgentSidebarSection() {
           sessionState: (id) => runtime.sessionState(workspaceId, id),
           createSession: () => runtime.createSession(workspaceId),
         });
-        if (!sessionId) throw new Error(t("agents.open_failed"));
+        if (!sessionId) return;
         store.open({ denBaseUrl, organizationId, principal, workspaceId, sessionId, agentId, agentName: row.name });
         if (source === "new") {
           store.save(runtime, sessionId, { chatLinkPending: true });
@@ -75,10 +75,10 @@ export function AgentSidebarSection() {
         if (row) return;
       }
       const sessionId = await runtime.createSession(workspaceId);
-      if (!sessionId) throw new Error(t("agents.open_failed"));
+      if (!sessionId) return;
       store.open({ denBaseUrl, organizationId, principal, workspaceId, sessionId });
     },
-    onError: () => toast.error(t("agents.open_failed")),
+    onError: () => toast.error(t("agents.open_failed"), { id: "agent-chat-link" }),
   });
   if (!runtime) return null;
 
