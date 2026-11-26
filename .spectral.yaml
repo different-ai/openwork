@@ -301,3 +301,17 @@ overrides:
       - "**/*.json#/components/schemas/RemoteSessionStatusResult/properties/threads/items/oneOf/0/properties/observedAt"
     rules:
       ow-timestamps-date-time: "off"
+  # Bound remote sessions and their stored tails carry the same desktop
+  # protocol status and transcript, so their times are Unix milliseconds too.
+  - files:
+      - "**/*.json#/components/schemas/BoundRemoteSession"
+      - "**/*.json#/components/schemas/RemoteSessionTailResponse"
+    rules:
+      ow-timestamps-date-time: "off"
+  # The bound-session list is one snapshot of the member's active sessions,
+  # at most 100, read whole by the desktop to seed its live stream; it is not
+  # a paged collection.
+  - files:
+      - "**/*.json#/paths/~1v1~1remote-sessions~1bound"
+    rules:
+      ow-list-pagination: "off"
