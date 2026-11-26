@@ -123,7 +123,9 @@ function sanitizeNode(value: unknown, root: JsonObject, depth: number): JsonObje
   }
 
   const out: JsonObject = {}
+  const arrayItems = () => sanitizeNode(Array.isArray(schema.items) ? schema.items[0] : schema.items, root, depth + 1)
   let type: unknown = schema.type
+  let typeUnion = false
   if (Array.isArray(type)) {
     const types = type.filter((item): item is string => typeof item === "string")
     if (types.includes("null")) out.nullable = true
@@ -131,7 +133,10 @@ function sanitizeNode(value: unknown, root: JsonObject, depth: number): JsonObje
     if (rest.length === 1) type = rest[0]
     else {
       type = undefined
-      if (rest.length > 1) out.anyOf = rest.map((item) => ({ type: item }))
+      if (rest.length > 1) {
+        typeUnion = true
+        out.anyOf = rest.map((item) => item === "array" ? { type: item, items: arrayItems() } : { type: item })
+      }
     }
   }
   if (typeof type === "string" && type !== "null") out.type = type
@@ -165,10 +170,9 @@ function sanitizeNode(value: unknown, root: JsonObject, depth: number): JsonObje
       if (required.length) out.required = required
     }
   }
-  if (schema.items !== undefined) {
-    const items = Array.isArray(schema.items) ? schema.items[0] : schema.items
-    out.items = sanitizeNode(items, root, depth + 1)
-    if (out.type === undefined) out.type = "array"
+  if (schema.items !== undefined && !typeUnion && (out.type === undefined || out.type === "array")) {
+    out.items = arrayItems()
+    out.type = "array"
   } else if (out.type === "array") {
     out.items = {}
   }
