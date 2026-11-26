@@ -1937,7 +1937,7 @@
       "file": "apps/app/src/react-app/domains/settings/pages/cloud-providers-view.tsx",
       "rule": "cross-domain",
       "target": "apps/app/src/react-app/domains/connections/provider-auth/cloud-provider-config",
-      "count": 2
+      "count": 1
     },
     {
       "file": "apps/app/src/react-app/domains/settings/pages/cloud-providers-view.tsx",

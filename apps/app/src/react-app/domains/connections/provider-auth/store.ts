@@ -314,6 +314,7 @@ export type ProviderAuthStoreSnapshot = {
   importedCloudProviders: Record<string, CloudImportedProvider>;
   cloudProviderServerSync: CloudProviderServerSyncState | null;
   liveGatewayProviders: DenOrgUsableGatewayProvider[] | null;
+  liveGatewaySyncedAt: number | null;
   lastSyncError: Record<string, CloudProviderSyncError>;
 };
 
@@ -356,6 +357,7 @@ type MutableState = {
   importedCloudProviders: Record<string, CloudImportedProvider>;
   cloudProviderServerSync: CloudProviderServerSyncState | null;
   liveGatewayProviders: DenOrgUsableGatewayProvider[] | null;
+  liveGatewaySyncedAt: number | null;
   lastSyncError: Record<string, CloudProviderSyncError>;
 };
 
@@ -454,6 +456,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     importedCloudProviders: {},
     cloudProviderServerSync: null,
     liveGatewayProviders: null,
+    liveGatewaySyncedAt: null,
     lastSyncError: {},
   };
 
@@ -596,12 +599,21 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     cloudProviderSyncContextKey = "";
   };
 
+  let liveGatewayScope = readGatewayUsageScope();
   const syncDenSessionDelivery = () => {
     const key = getDenSessionDeliveryKey();
-    if (key !== (denSessionDelivery?.key ?? "")) {
+    const scope = readGatewayUsageScope();
+    if (key !== (denSessionDelivery?.key ?? "") || scope !== liveGatewayScope) {
+      liveGatewayScope = scope;
       invalidateDenSessionDelivery();
       verifiedGatewayUsageContext = "";
-      mutateState((current) => ({ ...current, cloudProviderServerSync: null, gatewayUsageProviderScope: null }));
+      mutateState((current) => ({
+        ...current,
+        cloudProviderServerSync: null,
+        gatewayUsageProviderScope: null,
+        liveGatewayProviders: null,
+        liveGatewaySyncedAt: null,
+      }));
       if (key && !disposed) {
         denSessionDelivery = { key, controller: new AbortController() };
       }
@@ -691,6 +703,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       importedCloudProviders: state.importedCloudProviders,
       cloudProviderServerSync: state.cloudProviderServerSync,
       liveGatewayProviders: state.liveGatewayProviders,
+      liveGatewaySyncedAt: state.liveGatewaySyncedAt,
       lastSyncError: state.lastSyncError,
     };
   };
@@ -1394,12 +1407,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!token || !orgId) {
-      setStateField("liveGatewayProviders", []);
+      if (isCurrent()) mutateState((current) => ({ ...current, liveGatewayProviders: [], liveGatewaySyncedAt: null }));
       return;
     }
     try {
       const providers = await createDenClient({ baseUrl: settings.baseUrl, token }).listOrgUsableGatewayProviders(orgId);
-      if (isCurrent()) setStateField("liveGatewayProviders", providers);
+      if (isCurrent()) mutateState((current) => ({ ...current, liveGatewayProviders: providers, liveGatewaySyncedAt: Date.now() }));
     } catch (error) {
       console.warn("[cloud-provider-sync] Could not read AI Gateway providers for Settings.", error);
       if (isCurrent() && state.liveGatewayProviders === null) setStateField("liveGatewayProviders", []);
@@ -2441,7 +2454,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       options.selectedWorkspaceDisplay().workspaceType,
       options.selectedWorkspaceRoot().trim(),
       options.runtimeWorkspaceId() ?? "",
-      options.client() ? "connected" : "disconnected",
+      options.client() ? options.providerBaseUrl().trim() || "connected" : "disconnected",
       getDenSessionDeliveryKey(),
     ].join("::");
   };
@@ -2773,6 +2786,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (getOpenworkGatewayOrigin()) {
       await refreshUsageOnly();
       if (!isCurrent()) return;
+      await refreshLiveGatewayProviders(isCurrent);
+      if (!isCurrent()) return;
       if (!loggedGatewayCloudProviderSyncSkip) {
         loggedGatewayCloudProviderSyncSkip = true;
         console.info(
@@ -2836,7 +2851,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           if (!isCurrent()) return;
           return { outcome: "handled_live" };
         }
-        if (state.liveGatewayProviders !== null) setStateField("liveGatewayProviders", null);
+        if (state.liveGatewayProviders !== null || state.liveGatewaySyncedAt !== null) {
+          mutateState((current) => ({ ...current, liveGatewayProviders: null, liveGatewaySyncedAt: null }));
+        }
         if (result.status === "failed" || result.status === "no_session") {
           verifiedGatewayUsageContext = "";
           setStateField("gatewayUsageProviderScope", null);
@@ -3148,6 +3165,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             providerAuthError: null,
             cloudProviderServerSync: null,
             liveGatewayProviders: null,
+            liveGatewaySyncedAt: null,
             lastSyncError: {},
           }));
           void refreshCloudOrgProviders({ force: true }).catch(() => undefined);
@@ -3178,6 +3196,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             providerAuthError: null,
             cloudProviderServerSync: null,
             liveGatewayProviders: null,
+            liveGatewaySyncedAt: null,
             lastSyncError: {},
           }));
           if (serverHandlesProviderSync()) {
@@ -3236,6 +3255,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
               importedCloudProviders: {},
               cloudProviderServerSync: null,
               liveGatewayProviders: null,
+              liveGatewaySyncedAt: null,
               lastSyncError: {},
             }));
             refreshSnapshot();
@@ -3306,6 +3326,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             importedCloudProviders: {},
             cloudProviderServerSync: null,
             liveGatewayProviders: null,
+            liveGatewaySyncedAt: null,
           }));
           refreshSnapshot();
           emitChange();

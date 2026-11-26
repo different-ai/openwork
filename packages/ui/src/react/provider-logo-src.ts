@@ -18,6 +18,9 @@ const SIMPLE_ICON_MISSES = new Set([
   "openai",
   "azure",
   "microsoftazure",
+  "azure-openai",
+  "litellm",
+  "truefoundry",
   "groq",
   "cohere",
   "together",
@@ -37,6 +40,9 @@ const PROVIDER_DOMAINS: Record<string, string> = {
   "google-vertex": "cloud.google.com",
   "google-vertex-anthropic": "cloud.google.com",
   azure: "azure.microsoft.com",
+  "azure-openai": "azure.microsoft.com",
+  litellm: "litellm.ai",
+  truefoundry: "truefoundry.com",
   bedrock: "aws.amazon.com",
   "amazon-bedrock": "aws.amazon.com",
   groq: "groq.com",
@@ -73,6 +79,10 @@ function faviconUrl(domain: string) {
   return `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}`;
 }
 
+export function isOpaqueProviderId(normalizedId: string) {
+  return !normalizedId || /^(lpr|ipr)_/i.test(normalizedId) || /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(normalizedId);
+}
+
 /**
  * Ordered logo URLs for a provider. An id that already looks like a domain
  * ("302.ai") or a configured base URL both resolve through the favicon step,
@@ -85,7 +95,7 @@ export function providerLogoCandidates(input: {
   const id = input.providerId?.trim().toLowerCase() ?? "";
   const candidates: string[] = [];
 
-  if (id) {
+  if (!isOpaqueProviderId(id)) {
     const slug = SIMPLE_ICON_SLUGS[id] ?? id;
     if (!SIMPLE_ICON_MISSES.has(slug) && /^[a-z0-9]+$/.test(slug)) {
       candidates.push(`https://cdn.simpleicons.org/${slug}`);

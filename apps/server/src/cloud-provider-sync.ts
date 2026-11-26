@@ -84,6 +84,7 @@ export type CloudProviderSyncStatusProvider = {
 export type CloudProviderSyncSkippedProvider = {
   cloudProviderId: string;
   providerId: string;
+  sourceProviderId?: string;
   name: string;
   reason: "missing_credentials" | "needs_key" | "member_auth_required" | "org_credential_missing" | "no_accessible_models";
   credentialSetId?: string;
@@ -719,9 +720,15 @@ function prepareMaterialization(
   const skipped: CloudProviderSyncSkippedProvider[] = [];
   const availableLocalEnvNames = [...localEnvNames];
   for (const provider of providers) {
+    const sourceProviderId = provider.providerId.trim();
+    const skippedProvider = {
+      cloudProviderId: provider.id,
+      providerId: runtimeProviderId(provider),
+      ...(sourceProviderId ? { sourceProviderId } : {}),
+    };
     for (const request of provider.authorizationRequests ?? []) {
       skipped.push({
-        cloudProviderId: provider.id, providerId: runtimeProviderId(provider),
+        ...skippedProvider,
         credentialSetId: request.credentialSetId, name: `${provider.name} / ${request.name}`,
         reason: "member_auth_required",
         ...(request.models === undefined ? {} : { models: request.models }),
@@ -729,8 +736,7 @@ function prepareMaterialization(
     }
     if (provider.memberCredentialState && provider.memberCredentialState !== "active") {
       skipped.push({
-        cloudProviderId: provider.id,
-        providerId: runtimeProviderId(provider),
+        ...skippedProvider,
         name: provider.name,
         reason: "needs_key",
       });
@@ -738,8 +744,7 @@ function prepareMaterialization(
     }
     if (provider.source === gatewayProviderSource && provider.models.length === 0) {
       if (!provider.authorizationRequests?.length) skipped.push({
-        cloudProviderId: provider.id,
-        providerId: runtimeProviderId(provider),
+        ...skippedProvider,
         name: provider.name,
         reason: provider.credentialStatus === "member_auth_required" ? "member_auth_required" : provider.credentialStatus === "org_credential_missing" ? "org_credential_missing" : "no_accessible_models",
       });
@@ -755,8 +760,7 @@ function prepareMaterialization(
         );
     if (envNames.length > 0 && !primaryCredentialName) {
       skipped.push({
-        cloudProviderId: provider.id,
-        providerId: runtimeProviderId(provider),
+        ...skippedProvider,
         name: provider.name,
         reason: "missing_credentials",
       });

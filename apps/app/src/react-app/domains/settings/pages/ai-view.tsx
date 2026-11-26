@@ -15,7 +15,7 @@ import { LayoutStack } from "../settings-layout";
 import { SettingsPanel, SettingsPanelDescription, SettingsPanelHeading, SettingsPanelTitle } from "../shell/panel";
 import { getSettingsTabLabel } from "../shell/settings-page";
 import { OLLAMA_PROVIDER_CONFIG } from "../openai-image-extension";
-import { CredentialHealthStatus, LocalProviderStatus, ProviderList, ProviderMeta, ProviderRow, ProviderStatus, ProviderTile } from "./provider-rows";
+import { cleanProviderSlug, CredentialHealthStatus, formatGatewayModelPreview, LocalProviderStatus, ProviderList, ProviderMeta, ProviderRow, ProviderStatus, ProviderTile } from "./provider-rows";
 import type { DeviceProviderShareRow } from "../provider-share/device-provider-share";
 
 export type ConnectedProvider = {
@@ -86,16 +86,22 @@ export function GatewayConnectRow({ provider, busy, onConnect, onCancel }: {
   onConnect?: (provider: GatewayConnectProvider) => void | Promise<void>;
   onCancel?: () => void;
 }) {
+  const modelCount = provider.models?.length ?? 0;
   return (
     <ProviderRow
       scope="organization"
-      tile={<ProviderTile providerId={provider.providerId} name={provider.name} />}
+      tile={<ProviderTile providerId={provider.sourceProviderId || provider.providerId} name={provider.name} />}
       name={provider.name}
       status={<ProviderStatus tone="attention">Needs your sign-in</ProviderStatus>}
-      meta={<ProviderMeta id={provider.cloudProviderId} parts={["OpenWork Gateway", "Each member signs in"]} />}
+      meta={<ProviderMeta id={cleanProviderSlug(provider.sourceProviderId ?? provider.providerId)} parts={[
+        "AI Gateway",
+        "Each member signs in",
+        formatGatewayModelPreview((provider.models ?? []).map((model) => model.name)),
+      ]} />}
+      aside={modelCount > 0 ? <span className="tabular-nums">{modelCount === 1 ? "1 model" : `${modelCount} models`}</span> : null}
       actions={<>
-        <Button disabled={busy || !onConnect} onClick={() => void onConnect?.(provider)}>{busy ? "Waiting for sign-in…" : `Sign in to ${provider.name}`}</Button>
-        {busy && onCancel ? <Button variant="ghost" onClick={onCancel}>Stop waiting</Button> : null}
+        <Button variant="outline" size="sm" disabled={busy || !onConnect} aria-label={busy ? undefined : `Sign in to ${provider.name}`} onClick={() => void onConnect?.(provider)}>{busy ? "Waiting for sign-in…" : "Sign in"}</Button>
+        {busy && onCancel ? <Button variant="ghost" size="sm" onClick={onCancel}>Stop waiting</Button> : null}
       </>}
     />
   );
@@ -214,7 +220,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           tile={<ProviderTile providerId={provider.id} name={provider.name} />}
           name={provider.name}
           status={<LocalProviderStatus state={props.localProviderStates?.get(provider.id)} organizationName={props.organizationName} credentialHealth={providerHealth(provider.id)} />}
-          meta={<ProviderMeta id={provider.id} parts={[deviceSourceLabel(provider.source), shareState(provider.id) === "shared" ? `also available from ${organizationLabel}` : props.organizationProviderIds?.has(provider.id) ? `also available from ${organizationLabel}` : null, needsCredentialRecovery(provider.id) && provider.source === "env" ? "Update the environment credential, then restart the workspace." : null]} />}
+          meta={<ProviderMeta id={cleanProviderSlug(provider.id)} parts={[deviceSourceLabel(provider.source), shareState(provider.id) === "shared" ? `also available from ${organizationLabel}` : props.organizationProviderIds?.has(provider.id) ? `also available from ${organizationLabel}` : null, needsCredentialRecovery(provider.id) && provider.source === "env" ? "Update the environment credential, then restart the workspace." : null]} />}
           actions={needsCredentialRecovery(provider.id) && provider.source === "env"
             ? <span className="text-xs text-muted-foreground" title="Update the environment credential, then restart the workspace.">Update environment</span>
             : needsCredentialRecovery(provider.id)
@@ -232,7 +238,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           tile={<ProviderTile providerId={provider.id} name={provider.name} />}
           name={provider.name}
           status={<ProviderStatus tone="neutral">{t("settings.provider_disabled_badge")}</ProviderStatus>}
-          meta={<ProviderMeta id={provider.id} parts={[t("settings.provider_disabled_hint")]} />}
+          meta={<ProviderMeta id={cleanProviderSlug(provider.id)} parts={[t("settings.provider_disabled_hint")]} />}
           actions={isOllama(provider.id)
             ? configureOllamaButton
             : <Button variant="ghost" disabled={rowsBusy || (props.enablingProviderId ?? null) !== null} onClick={() => void props.onEnableProvider?.(provider.id)}>{props.enablingProviderId === provider.id ? t("settings.enabling_provider") : t("settings.enable_provider")}</Button>}
@@ -261,7 +267,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
         {props.onOpenDen ? <Button variant="ghost" onClick={props.onOpenDen}>Open in Den</Button> : null}
       </div>
       <ProviderList>
-        {organization.map((provider) => <ProviderRow key={provider.id} scope="organization" tile={<ProviderTile providerId={provider.id} name={provider.name} />} name={provider.name} status={<CredentialHealthStatus health={providerHealth(provider.id)} />} meta={<ProviderMeta id={provider.id} parts={["Managed in Den"]} />} actions={providerHealth(provider.id) === "rejected" ? <span className="text-xs text-muted-foreground">Contact your admin</span> : null} />)}
+        {organization.map((provider) => <ProviderRow key={provider.id} scope="organization" tile={<ProviderTile providerId={provider.id} name={provider.name} />} name={provider.name} status={<CredentialHealthStatus health={providerHealth(provider.id)} />} meta={<ProviderMeta id={cleanProviderSlug(provider.id)} parts={["Managed in Den"]} />} actions={providerHealth(provider.id) === "rejected" ? <span className="text-xs text-muted-foreground">Contact your admin</span> : null} />)}
         {props.gatewayConnectProviders?.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={props.connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={props.onConnectGatewayProvider} onCancel={props.onCancelGatewayConnect} />)}
       </ProviderList>
     </section> : null)}
