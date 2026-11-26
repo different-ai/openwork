@@ -13,7 +13,7 @@ import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
 import { catalogOperationAvailableToCapabilities, filterGmailThreadRead, filterPersonalAgents } from "./catalog-availability.js"
-import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
+import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentMayUseBuiltInConnectors, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
 import { isLimitedAgentRun, LIMITED_AGENT_RUN_MESSAGE, personalAgentRunId } from "./workbot-turn-limits.js"
 import type { McpToolOperation } from "./catalog.js"
 import {
@@ -542,7 +542,7 @@ const nativeSource: CapabilitySource = {
     return parsed ? { kind: "native", name, ...parsed } : null
   },
   search: async (ctx, query, limit) => {
-    if (!ctx.sourceFilter.api) return []
+    if (!ctx.sourceFilter.api || !await personalAgentMayUseBuiltInConnectors(ctx.principal.scopes, ctx.organizationId)) return []
     return searchNativeCapabilities({
       organizationId: ctx.organizationId,
       member: ctx.member,
@@ -553,10 +553,8 @@ const nativeSource: CapabilitySource = {
       scopes: ctx.principal.scopes,
     })
   },
-  enumerate: async (ctx) => leavesFromBuilt(await buildNativeProviderToolTree({
-    ...ctx,
-    namespaceContext: await ctx.resolveNamespaceContext(),
-  })),
+  enumerate: async (ctx) => await personalAgentMayUseBuiltInConnectors(ctx.principal.scopes, ctx.organizationId)
+    ? leavesFromBuilt(await buildNativeProviderToolTree({ ...ctx, namespaceContext: await ctx.resolveNamespaceContext() })) : [],
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "native")) return unknownCapabilityResult(input.name)
     const result = await executeNativeCapability({

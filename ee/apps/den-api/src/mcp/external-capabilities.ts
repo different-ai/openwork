@@ -1,3 +1,4 @@
+import { personalAgentConnectorAccess } from "../personal-agents/connector-access.js"
 import type { CapabilityUsageSource } from "@openwork-ee/den-db/schema"
 import { recordConnectorCall, toolCallFailed } from "../capability-usage.js"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
@@ -745,6 +746,7 @@ async function probeExternalMcpConnection(input: {
   limit: number
   deadline: ExternalMcpLifecycleDeadline
   scriptNamespace?: string
+  toolVisible?: (toolName: string) => boolean
   agent?: AgentReadAllowlist | null
   scopes?: ReadonlySet<string>
 }): Promise<ExternalCapabilityMatch[]> {
@@ -860,7 +862,7 @@ async function probeExternalMcpConnection(input: {
   }
 
   for (const tool of tools) {
-    if (isToolDisabled(connection.toolPolicy, tool.name)) continue
+    if (isToolDisabled(connection.toolPolicy, tool.name) || input.toolVisible?.(tool.name) === false) continue
     if (externalMcpToolWithheld(input.member, connection.id, tool.name)) continue
     if (input.agent && !agentMayUseExternalTool(input.agent, connection, tool)) continue
     const summary = tool.description ?? tool.title ?? tool.name
@@ -916,7 +918,19 @@ export async function searchExternalCapabilities(input: {
     teamIds: input.member.teamIds,
     withheldConnectionIds: input.member.withheldConnectionIds,
   })
-  const connections = agent ? usable.filter((connection) => agent.connectionIds.has(connection.id)) : usable
+  const access = await personalAgentConnectorAccess({ scopes: input.scopes ?? input.member.personalAgentScopes, organizationId: input.organizationId, memberId: input.member.orgMembershipId })
+  const once = new Map<string, Set<string>>()
+  const connections = (await Promise.all(usable.map(async (connection) => {
+    if (agent && !agent.connectionIds.has(connection.id)) return null
+    const state = access?.state(connection.id)
+    if (state === "blocked") return null
+    if (state === "off" && access) {
+      const tools = await access.tools(connection.id)
+      if (!tools.size) return null
+      once.set(connection.id, tools)
+    }
+    return connection
+  }))).filter((connection) => connection !== null)
   const scriptNamespaces = namespaceContext?.namespaces.externalMcp
   const member = input.member
   const selectedConnections = selectExternalMcpSearchConnections(connections, queryTokens, EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT,
@@ -940,6 +954,7 @@ export async function searchExternalCapabilities(input: {
       limit,
       deadline: sharedDeadline,
       scriptNamespace: scriptNamespaces?.get(connection.id),
+      toolVisible: (name) => !access?.toolBlocked(connection.id, name) && (once.get(connection.id)?.has(name) ?? true),
       agent,
     }),
   })
@@ -1117,6 +1132,8 @@ export async function probeExternalConnectionStatus(input: {
   if (!canUse) {
     return { ok: false, error: "forbidden", message: `You have not been granted access to "${connection.name}".` }
   }
+  const access = await personalAgentConnectorAccess({ scopes: input.member.personalAgentScopes, organizationId: input.organizationId, memberId: input.member.orgMembershipId })
+  if (access && access.state(connection.id) !== "on") return { ok: false, error: "forbidden", message: "This connector is not on for this agent." }
   const credentialMemberId = await personalAgentCredentialMember({
     scopes: input.member.personalAgentScopes, connection, actingMemberId: input.member.orgMembershipId,
   })
@@ -1226,6 +1243,14 @@ async function prepareExternalCapability(input: {
       message: `${input.toolName} ${AGENT_TOOL_WITHHELD_MESSAGE}`,
       sameArgumentsRetryable: false,
       retry: { action: "search_capabilities", searchRequired: true },
+    }
+  }
+
+  const access = await personalAgentConnectorAccess({ scopes: input.scopes ?? input.member.personalAgentScopes, organizationId: input.organizationId, memberId: input.member.orgMembershipId })
+  if (access) {
+    const state = access.state(connection.id)
+    if (state === "blocked" || access.toolBlocked(connection.id, input.toolName) || (state === "off" && !(await access.tools(connection.id)).has(input.toolName))) {
+      return { ok: false, error: "policy_blocked", message: `${input.toolName} ${AGENT_TOOL_WITHHELD_MESSAGE}`, sameArgumentsRetryable: false }
     }
   }
 

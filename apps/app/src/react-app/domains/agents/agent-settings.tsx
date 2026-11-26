@@ -5,6 +5,7 @@ import { useId, useState } from "react";
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -24,16 +25,15 @@ const NO_BUDGET = "none";
 type ToolRowProps = {
   tool: PersonalAgentTool;
   lockReason: string | null;
-  connectionBlocked: boolean;
   saving: boolean;
   sentMessage?: string;
   onChange: (access: PersonalAgentAccess) => void;
 };
 
-function ToolRow({ tool, lockReason, connectionBlocked, saving, sentMessage, onChange }: ToolRowProps) {
+function ToolRow({ tool, lockReason, saving, sentMessage, onChange }: ToolRowProps) {
   const titleId = useId();
   const reasonId = useId();
-  const control = toolControlState(tool, connectionBlocked);
+  const control = toolControlState(tool);
   const reason = [lockReason, control.hint].filter(Boolean).join(" ");
   return (
     <li data-agent-tool={tool.name} className="border-t border-dls-border py-1.5">
@@ -67,43 +67,59 @@ function ToolRow({ tool, lockReason, connectionBlocked, saving, sentMessage, onC
   );
 }
 
-function ConnectionRow({ connection, collaboratorReason, sentTool, saving, memberId, onShare, onChange }: {
+function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnection, saving, memberId, onShare, onConnectionChange, onChange }: {
   connection: PersonalAgentConnectionTools;
   collaboratorReason: string | null;
   sentTool: { name: string; message: string } | null;
+  sentConnection: string | null;
   memberId: string | null;
   onShare: (shared: boolean) => void;
+  onConnectionChange: (enabled: boolean) => void;
   saving: boolean;
   onChange: (toolName: string, access: PersonalAgentAccess) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const toolsId = useId();
+  const titleId = useId();
+  const statusId = useId();
+  const reasonId = useId();
   const sharedLabelId = useId();
+  const enabled = !connection.blocked && !connection.lockedByOrganization;
+  const canExpand = enabled && connection.tools.length > 0;
   const summary = (
     <span className="min-w-0 flex-1">
-      <span className="block wrap-anywhere text-[13px] font-medium text-dls-text">{connection.name}</span>
-      <span className="block text-xs text-dls-secondary">{connection.sharedLogin
+      <span id={titleId} className="block truncate text-[13px] font-medium text-dls-text">{connection.name}</span>
+      <span className="block truncate text-xs text-dls-secondary">{connection.sharedLogin
         ? t("agents.permissions_shared_account", { name: firstName(connection.sharedLogin.name) })
         : t("agents.permissions_own_accounts")}</span>
-      <span className="block text-xs text-dls-secondary">{toolAccessSummary(connection)}</span>
+      <span id={statusId} data-agent-connection-status className="block truncate text-xs text-dls-secondary">{toolAccessSummary(connection)}</span>
     </span>
   );
 
   return (
-    <div data-agent-connection={connection.name} className="border-t border-dls-border">
-      {connection.tools.length > 0 ? (
-        <button
-          type="button"
-          data-agent-connection-toggle
-          aria-expanded={expanded}
-          aria-controls={toolsId}
-          onClick={() => setExpanded((value) => !value)}
-          className="group flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-sm py-1.5 text-start focus-visible:outline-2 focus-visible:outline-ring"
-        >
-          {summary}
-          <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-dls-secondary transition-transform group-aria-expanded:rotate-90" />
-        </button>
-      ) : <div className="flex min-h-11 items-center py-1.5">{summary}</div>}
+    <Collapsible data-agent-connection={connection.name} className="border-t border-dls-border">
+      <div data-agent-connection-header className="flex min-h-11 items-center gap-4 py-1.5 pe-2">
+        {canExpand ? (
+          <CollapsibleTrigger
+            render={<Button variant="ghost" />}
+            data-agent-connection-toggle
+            className="group h-auto min-w-0 flex-1 justify-start gap-2 rounded-sm border-0 p-0 text-start font-normal"
+          >
+            {summary}
+            <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-dls-secondary transition-transform group-aria-expanded:rotate-90" />
+          </CollapsibleTrigger>
+        ) : <div className="flex min-w-0 flex-1 items-center gap-2">{summary}<span aria-hidden="true" className="size-4 shrink-0" /></div>}
+        <Switch
+          size="sm"
+          data-agent-connection-switch={connection.name}
+          aria-labelledby={titleId}
+          aria-describedby={collaboratorReason ? `${statusId} ${reasonId}` : statusId}
+          checked={enabled}
+          disabled={Boolean(collaboratorReason) || connection.lockedByOrganization}
+          aria-disabled={saving || undefined}
+          onCheckedChange={(checked) => { if (!saving) onConnectionChange(checked); }}
+        />
+      </div>
+      {collaboratorReason && <p id={reasonId} className="pb-1 text-xs text-dls-secondary">{collaboratorReason}</p>}
+      {sentConnection && <p role="status" className="pb-1 text-xs text-dls-secondary">{sentConnection}</p>}
       {connection.canShareLogin && (
         <div className="flex min-h-10 items-center justify-between gap-3 pb-1 pe-2">
           <span id={sharedLabelId} className="text-xs">{t("agents.permissions_share_login")}</span>
@@ -113,8 +129,8 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, saving, membe
             onCheckedChange={onShare} />
         </div>
       )}
-      <div id={toolsId} hidden={!expanded}>
-        {expanded && [false, true].map((write) => {
+      {canExpand && <CollapsibleContent>
+        {[false, true].map((write) => {
           const tools = connection.tools.filter((tool) => tool.write === write);
           if (!tools.length) return null;
           return (
@@ -125,10 +141,7 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, saving, membe
                   <ToolRow
                     key={tool.name}
                     tool={tool}
-                    lockReason={tool.lockedByOrganization || connection.lockedByOrganization
-                      ? t("agents.permissions_admin_blocked")
-                      : collaboratorReason ?? (connection.blocked ? t("agents.permissions_connection_blocked") : null)}
-                    connectionBlocked={connection.blocked || connection.lockedByOrganization}
+                    lockReason={tool.lockedByOrganization ? t("agents.permissions_admin_blocked") : collaboratorReason}
                     saving={saving}
                     sentMessage={sentTool?.name === tool.name ? sentTool.message : undefined}
                     onChange={(access) => onChange(tool.name, access)}
@@ -138,8 +151,8 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, saving, membe
             </div>
           );
         })}
-      </div>
-    </div>
+      </CollapsibleContent>}
+    </Collapsible>
   );
 }
 
@@ -217,7 +230,9 @@ export function AgentSettings({ runtime, agent, onBack }: { runtime: AgentsRunti
     ? t("agents.permissions_collaborator", { owner: agentOwnerFirstName(agent.owner) })
     : null;
   const budget = save.isPending && "monthlyBudgetMicros" in save.variables ? save.variables.monthlyBudgetMicros : agent.revision.monthlyBudgetMicros;
-  const sentTool = save.data && "request" in save.data && save.variables && "tool" in save.variables ? save.variables.tool : null;
+  const submitted = save.data && "request" in save.data ? save.variables : undefined;
+  const sentTool = submitted && "tool" in submitted ? submitted.tool : null;
+  const sentConnection = submitted && "connection" in submitted ? submitted.connection : null;
   const ownerName = firstName(agent.owner?.name);
 
   return (
@@ -249,6 +264,8 @@ export function AgentSettings({ runtime, agent, onBack }: { runtime: AgentsRunti
               connection={connection}
               collaboratorReason={collaboratorReason}
               sentTool={sentTool?.connectionId === connection.connectionId ? { name: sentTool.toolName, message: pendingRoutineMessage(agent.owner) } : null}
+              sentConnection={sentConnection?.connectionId === connection.connectionId ? pendingRoutineMessage(agent.owner) : null}
+              onConnectionChange={(enabled) => save.mutate({ connection: { connectionId: connection.connectionId, enabled } })}
               saving={save.isPending || share.isPending}
               memberId={memberId}
               onShare={(shared) => {

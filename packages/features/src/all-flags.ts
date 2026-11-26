@@ -27,6 +27,7 @@ export { default as managedGoogleCloudDeployments } from "@openwork/features/fla
 export { default as mcpThreads } from "@openwork/features/flags/mcp-threads"
 export { default as officeOutlinePreview } from "@openwork/features/flags/office-outline-preview"
 export { default as opencodeV2Only } from "@openwork/features/flags/opencode-v2-only"
+export { default as personalAgentConnectorControls } from "@openwork/features/flags/personal-agent-connector-controls"
 export { default as personalAgents } from "@openwork/features/flags/personal-agents"
 export { default as privateValues } from "@openwork/features/flags/private-values"
 export { default as providerFilterSyncFix } from "@openwork/features/flags/provider-filter-sync-fix"

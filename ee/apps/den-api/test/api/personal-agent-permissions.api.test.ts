@@ -62,16 +62,16 @@ for (const [member, role] of [[priya, "collaborator"], [sam, "manager"]] as cons
   assert.equal(share.status, 200, summary(share))
 }
 
-async function run(as = asPriya, hold = false) {
+async function run(as = asPriya, hold = false, agentPath = path) {
   const release = releaseRun
   releaseRun = undefined
   await release?.()
   const before = turns.length
   holdRun = hold
-  const started = await as("POST", `${path}/run`, {})
+  const started = await as("POST", `${agentPath}/run`, {})
   assert.equal(started.status, 202, summary(started))
   const result = personalAgentRunResponseSchema.parse(started.body)
-  const receiptPath = `${path}/runs/${result.run.id}`
+  const receiptPath = `${agentPath}/runs/${result.run.id}`
   async function wait(active: boolean) {
     for (let attempt = 0; attempt < 100; attempt += 1) {
       const read = await as("GET", receiptPath)
@@ -87,8 +87,8 @@ async function run(as = asPriya, hold = false) {
   return { ...result, receipt, token: turns[before]?.token }
 }
 
-async function admitted(as = asPriya) {
-  const result = await run(as, true)
+async function admitted(as = asPriya, agentPath = path) {
+  const result = await run(as, true, agentPath)
   assert.equal(result.receipt.run.status, "running", JSON.stringify(result.receipt.run.error))
   assert.ok(result.token)
   return { ...result, token: result.token }
@@ -426,4 +426,108 @@ test("Priya's live run loses tool and discovery access after share removal or ar
   assert.equal(archived.isError, true, archived.raw)
   assert.match(archived.raw, /no longer has access/)
   holdRun = false
+})
+
+
+test("connector enrollment defaults off; exact named connectors permit reads and still ask for writes", async () => {
+  assert.equal((await den.setFeature(orgId, "personalAgentConnectorControls", true)).status, 200)
+  const catalog = async (agentPath: string) => {
+    const result = await asDana("GET", `${agentPath}/tools`)
+    assert.equal(result.status, 200, summary(result))
+    return personalAgentToolCatalogSchema.parse(result.body).connections.find((connection) => connection.connectionId === connectionId)
+  }
+  const create = async (input: object) => {
+    const result = await asDana("POST", "/v1/personal-agents", { name: "Enrollment fixture", brief: "Check for new issues.", ...input })
+    assert.equal(result.status, 201, summary(result))
+    return `/v1/personal-agents/${personalAgentDetailSchema.parse(result.body).agent.id}`
+  }
+  const addRoutine = async (agentPath: string) => {
+    const receipt = await asDana("POST", `${agentPath}/routines`, { name: "Check", instructions: "Read issues.", schedule })
+    assert.equal(receipt.status, 201, summary(receipt))
+  }
+  const empty = await create({ toolPolicy: { connections: { [connectionId]: "allow" }, tools: { [connectionId]: { create_issue: "allow" } } } })
+  assert.equal((await catalog(empty))?.blocked, true)
+  assert.equal((await catalog(await create({ connectorNames: ["tracker"] })))?.blocked, true)
+  assert.equal((await catalog(await create({ connectorNames: ["Bug tracker"], never: [{ app: "Bug tracker" }] })))?.blocked, true)
+  await addRoutine(empty)
+  const off = await admitted(asDana, empty)
+  const before = providerCalls()
+  const search = await den.callMcpTool(off.token, "search_capabilities", { query: "bug tracker", type: "mcp" })
+  assert.ok(!list(field(search.body, "matches")).some((row) => String(row.name).startsWith(`mcp:${connectionId}:`)), search.raw)
+  assert.equal(field((await execute(off.token, "list_issues")).body, "error"), "policy_blocked")
+  const direct = await den.request(off.token, "POST", `/mcp/agent/connections/${connectionId}`, {
+    headers: { accept: "application/json, text/event-stream" }, body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+  })
+  assert.equal(direct.status, 403, summary(direct))
+  assert.equal(providerCalls(), before)
+
+  const named = await create({ connectorNames: ["  BUG   TRACKER  "] })
+  assert.equal((await catalog(named))?.blocked, false)
+  await addRoutine(named)
+  const on = await admitted(asDana, named)
+  assert.equal((await execute(on.token, "list_issues")).isError, false)
+  await asks(on.token)
+  assert.equal(providerCalls(), before + 1)
+
+  assert.equal((await asDana("PATCH", named, { toolPolicy: { connections: { [connectionId]: "block" } } })).status, 200)
+  assert.equal(field((await execute(on.token, "list_issues")).body, "error"), "policy_blocked")
+  assert.equal((await asDana("PUT", `${named}/shares/${sam.memberId}`, { role: "manager" })).status, 200)
+  assert.equal((await asSam("PATCH", named, { toolPolicy: { connections: { [connectionId]: "allow" } } })).status, 202)
+  assert.equal((await catalog(named))?.blocked, true)
+  const changes = personalAgentRequestListSchema.parse((await asDana("GET", `${named}/requests`)).body).items
+  const pending = changes.find((row) => row.kind === "change" && row.status === "pending")
+  assert.ok(pending)
+  assert.equal((await asDana("POST", `${named}/requests/${pending.id}/decision`, { decision: "approve" })).status, 200)
+  assert.equal((await catalog(named))?.blocked, false)
+  assert.equal((await execute(on.token, "list_issues")).isError, false)
+  await releaseRun?.()
+  releaseRun = undefined
+})
+
+test("a run requests an off connector, grants an exact tool once, then a manager asks the owner to turn it on", async () => {
+  assert.equal((await den.setFeature(orgId, "personalAgentConnectorControls", true)).status, 200)
+  const created = await asDana("POST", "/v1/personal-agents", { name: "Access fixture", brief: "Read issues." })
+  assert.equal(created.status, 201, summary(created))
+  const agent = `/v1/personal-agents/${personalAgentDetailSchema.parse(created.body).agent.id}`
+  assert.equal((await asDana("POST", `${agent}/routines`, { name: "Check", instructions: "Read issues.", schedule })).status, 201)
+  assert.equal((await asDana("PUT", `${agent}/shares/${sam.memberId}`, { role: "manager" })).status, 200)
+  const request = async (token: string, action?: string) => {
+    const result = await den.callMcpTool(token, "request_agent_connector_access", { connectionName: "Bug tracker", action })
+    assert.equal(result.isError, false, result.raw)
+    assert.equal(field(result.body, "status"), "pending", result.raw)
+    return text(field(result.body, "requestId"), "request id")
+  }
+  const first = await admitted(asSam, agent)
+  const exactId = await request(first.token, "list_issues")
+  assert.equal(await request(first.token, "list_issues"), exactId)
+  const once = await asSam("POST", `${agent}/requests/${exactId}/decision`, { decision: "allow_once" })
+  assert.equal(once.status, 200, summary(once))
+  assert.equal(field(once.body, "status"), "allowed_once")
+  assert.equal(field((await execute(first.token, "list_issues")).body, "error"), "policy_blocked")
+  const other = await admitted(asDana, agent)
+  assert.equal(field((await execute(other.token, "list_issues")).body, "error"), "policy_blocked")
+  const next = await admitted(asSam, agent)
+  assert.equal((await execute(next.token, "list_issues")).isError, false)
+  assert.equal(field((await execute(next.token, "create_issue")).body, "error"), "policy_blocked")
+  const connectorId = await request(next.token)
+  const read = personalAgentRequestListSchema.parse((await asSam("GET", `${agent}/requests`)).body)
+  const connector = read.items.find((row) => row.id === connectorId)
+  assert.equal(connector?.connectorAccess, true)
+  assert.equal(connector?.toolName, null)
+  assert.deepEqual(connector?.canDecide, ["deny", "turn_on"])
+  assert.equal((await asSam("POST", `${agent}/requests/${connectorId}/decision`, { decision: "allow_once" })).status, 403)
+  const escalated = await asSam("POST", `${agent}/requests/${connectorId}/decision`, { decision: "turn_on" })
+  assert.equal(escalated.status, 200, summary(escalated))
+  assert.equal(field(escalated.body, "id"), connectorId)
+  assert.equal(field(escalated.body, "status"), "awaiting_owner")
+  const finalRun = await admitted(asSam, agent)
+  assert.equal(field((await execute(finalRun.token, "list_issues")).body, "error"), "policy_blocked")
+  const approved = await asDana("POST", `${agent}/requests/${connectorId}/decision`, { decision: "turn_on" })
+  assert.equal(approved.status, 200, summary(approved))
+  assert.equal(field(approved.body, "status"), "always_allowed")
+  const on = await admitted(asSam, agent)
+  assert.equal((await execute(on.token, "list_issues")).isError, false)
+  await asks(on.token)
+  await releaseRun?.()
+  releaseRun = undefined
 })

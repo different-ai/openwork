@@ -23,7 +23,7 @@ export type SessionExtensions = {
   TranscriptFrame: ComponentType<{ sessionId: string; children: ReactNode }>;
   TranscriptFooter: ComponentType<{ sessionId: string }>;
   renderChatApprovals?: (completedAt: number) => ReactNode;
-  Panel: ComponentType<{ sessionId: string | null }>;
+  Panel: ComponentType<{ sessionId: string | null; compact?: boolean }>;
   proposalCards: boolean;
   ownedSessionIds: ReadonlySet<string>;
   hiddenSidebarSessionIds: ReadonlySet<string>;

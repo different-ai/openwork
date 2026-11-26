@@ -1626,10 +1626,11 @@ function proposeAutomation(rawArgs: unknown, context: OpenCodeContext): object {
 }
 
 function proposePersonalAgent(rawArgs: unknown): object {
+  const proposal = personalAgentProposalSchema.parse(withNumberedWeekdays(rawArgs));
   return {
     ok: true,
     kind: "agent-proposal",
-    proposal: personalAgentProposalSchema.parse(withNumberedWeekdays(rawArgs)),
+    proposal: { ...proposal, connectorNames: proposal.connectorNames ?? [] },
     created: false,
     limitation: "Nothing exists yet. The card now on screen asks the person \"Start like this?\"; the agent, its routine and its first run start only when they say yes there. Do not describe the card or what happens next, and do not create the agent yourself.",
   };

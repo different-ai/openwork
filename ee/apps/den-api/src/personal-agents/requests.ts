@@ -1,36 +1,65 @@
-import { and, count, desc, eq, gte, inArray, ne, or } from "@openwork-ee/den-db/drizzle"
-import { AutomationTable, PersonalAgentRequestTable, PersonalAgentShareTable, PersonalAgentTable, ToolApprovalTable } from "@openwork-ee/den-db/schema"
+import { and, count, desc, eq, gte, inArray, isNull, ne, or } from "@openwork-ee/den-db/drizzle"
+import { AutomationTable, ExternalMcpConnectionTable, MemberTable, PersonalAgentRequestTable, PersonalAgentShareTable, PersonalAgentTable, ToolApprovalTable } from "@openwork-ee/den-db/schema"
+import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.js"
 import { createDenTypeId, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { PersonalAgentChange, PersonalAgentRequest, PersonalAgentRequestDecision } from "@openwork/types/den/personal-agents"
 import { automationService } from "../automations/service.js"
 import { db } from "../db.js"
 import { canManagePersonalAgent, personalAgentOwnerScope, personalAgentPeople, personOrUnknown, type PersonalAgentAccess, type PersonalAgentCaller } from "./access.js"
 import { personalAgentRequestEventDetail, recordPersonalAgentEvent } from "./events.js"
-import { decideToolApproval, listAgentToolApprovals, pendingToolApprovalCutoff, toolApprovalRequiresAsk, type ToolApprovalRow } from "../tool-permissions/approvals.js"
+import { CONNECTOR_ONLY_TOOL_NAME, decideToolApproval, listAgentToolApprovals, pendingToolApprovalCutoff, toolApprovalRequiresAsk, toolApprovalRules, type ToolApprovalRow } from "../tool-permissions/approvals.js"
+import { organizationFeatureEnabled } from "../features.js"
+import { personalAgentConnectorState } from "./connector-access.js"
+import { readSubjectToolPolicy } from "../tool-permissions/rules.js"
 import { appendPersonalAgentMemoryNote } from "./memory.js"
 import { personalAgentService } from "./service.js"
 
 type ChangeRow = typeof PersonalAgentRequestTable.$inferSelect
 type RequestRow = (ChangeRow & { kind: "change" }) | (ToolApprovalRow & { kind: "tool" })
 
-function decisions(access: PersonalAgentAccess, memberId: string, row: RequestRow, requiresAsk = false): PersonalAgentRequestDecision[] {
+function decisions(access: PersonalAgentAccess, memberId: string, row: RequestRow, requiresAsk = false, connectorApprovals = false): PersonalAgentRequestDecision[] {
   if (row.status !== "pending" || access.state !== "active") return []
   if (row.kind === "change") return access.role === "owner" ? ["deny", "approve"] : []
+  if (row.connector_access) {
+    if (row.owner_requested_at && access.role !== "owner") return []
+    const choices: PersonalAgentRequestDecision[] = []
+    if (access.role === "owner" || row.requested_by_member_id === memberId) {
+      choices.push("deny")
+      if (connectorApprovals && !row.owner_requested_at && row.tool_name !== CONNECTOR_ONLY_TOOL_NAME) choices.push("allow_once")
+    }
+    if (connectorApprovals && canManagePersonalAgent(access.role)) choices.push("turn_on")
+    return choices
+  }
   if (access.role === "owner") return requiresAsk ? ["deny", "allow_once"] : ["deny", "allow_once", "always_allow"]
   return row.requested_by_member_id === memberId ? ["deny", "allow_once"] : []
 }
 
 async function requestViews(access: PersonalAgentAccess, memberId: string, rows: RequestRow[]): Promise<PersonalAgentRequest[]> {
   const people = await personalAgentPeople(access.organizationId, rows.flatMap((row) => [row.requested_by_member_id, ...(row.decided_by_member_id ? [row.decided_by_member_id] : [])]))
+  const connectorActors = [...new Set(rows.flatMap((row) => row.kind === "tool" && row.connector_access && row.status === "pending" ? [row.requested_by_member_id] : []))]
+  const approvalsEnabledFor = new Set<string>()
+  if (connectorActors.length) {
+    const members = await db.$primary.select({ id: MemberTable.id, userId: MemberTable.userId }).from(MemberTable).where(and(
+      eq(MemberTable.organizationId, normalizeDenTypeId("organization", access.organizationId)),
+      inArray(MemberTable.id, connectorActors), isNull(MemberTable.removedAt),
+    ))
+    await Promise.all(members.map(async ({ id, userId }) => {
+      if (userId && await organizationFeatureEnabled(access.organizationId, "personalAgentConnectorControls", { userId })) approvalsEnabledFor.add(id)
+    }))
+  }
   return Promise.all(rows.map(async (row) => ({
-    id: row.id, agentId: access.agentId, kind: row.kind, status: row.status, requestedBy: personOrUnknown(people, row.requested_by_member_id),
+    id: row.id, agentId: access.agentId, kind: row.kind,
+    status: row.kind === "tool" && row.status === "pending" && row.owner_requested_at ? "awaiting_owner" : row.status,
+    requestedBy: personOrUnknown(people, row.requested_by_member_id),
     requestedByCaller: row.requested_by_member_id === memberId,
     runId: row.kind === "tool" ? row.run_id : null, connectionId: row.kind === "tool" ? row.connection_id : null,
-    connectionName: row.kind === "tool" ? row.connection_name : null, toolName: row.kind === "tool" ? row.tool_name : null,
-    toolTitle: row.kind === "tool" ? row.tool_title : null, summary: row.kind === "change" ? row.summary : null,
+    connectionName: row.kind === "tool" ? row.connection_name : null,
+    ...(row.kind === "tool" && row.connector_access ? { connectorAccess: true } : {}),
+    toolName: row.kind === "tool" && (!row.connector_access || row.tool_name !== CONNECTOR_ONLY_TOOL_NAME) ? row.tool_name : null,
+    toolTitle: row.kind === "tool" && row.tool_title ? row.tool_title : null, summary: row.kind === "change" ? row.summary : null,
     change: row.kind === "change" ? row.change : null, decidedBy: row.decided_by_member_id ? personOrUnknown(people, row.decided_by_member_id) : null,
     decidedAt: row.decided_at?.toISOString() ?? null, createdAt: row.created_at.toISOString(),
-    canDecide: decisions(access, memberId, row, row.kind === "tool" && row.status === "pending" && access.role === "owner" && await toolApprovalRequiresAsk(row)),
+    canDecide: decisions(access, memberId, row, row.kind === "tool" && !row.connector_access && row.status === "pending" && access.role === "owner" && await toolApprovalRequiresAsk(row), approvalsEnabledFor.has(row.requested_by_member_id)),
   })))
 }
 
@@ -111,7 +140,25 @@ export async function createPersonalAgentChangeRequest(access: PersonalAgentAcce
 async function decidePersonalAgentToolRequest(access: PersonalAgentAccess, memberId: string, approvalId: string, decision: PersonalAgentRequestDecision) {
   if (decision === "approve" || access.state !== "active") throw new Error("personal_agent_forbidden")
   const row = await decideToolApproval({ organizationId: access.organizationId, memberId, approvalId, decision,
-    agent: { id: access.agentId, onAlwaysAllow: (tx) => recordPersonalAgentEvent({
+    agent: { id: access.agentId, connectorState: async (tx, approval, agent) => {
+      if (agent.paused_at) return "blocked"
+      const [member] = await tx.select({ userId: MemberTable.userId }).from(MemberTable).where(and(
+        eq(MemberTable.organizationId, approval.organization_id), eq(MemberTable.id, approval.requested_by_member_id), isNull(MemberTable.removedAt),
+      )).limit(1).for("share")
+      if (!member?.userId || !await organizationFeatureEnabled(access.organizationId, "personalAgentConnectorControls", {
+        userId: member.userId, database: tx, lock: "share",
+      })) return "disabled"
+      if (!isDenTypeId("externalMcpConnection", approval.connection_id)) return "blocked"
+      const [connection] = await tx.select({ toolPolicy: ExternalMcpConnectionTable.toolPolicy }).from(ExternalMcpConnectionTable).where(and(
+        eq(ExternalMcpConnectionTable.organizationId, approval.organization_id), eq(ExternalMcpConnectionTable.id, approval.connection_id),
+        eq(ExternalMcpConnectionTable.kind, "external_mcp"),
+      )).limit(1).for("share")
+      if (!connection || isToolDisabled(connection.toolPolicy, approval.tool_name)) return "blocked"
+      const rules = await toolApprovalRules(approval, tx, agent.id)
+      if (rules.some(({ kind, toolName, rule }) => rule === "block" && (kind !== "agent" || toolName !== CONNECTOR_ONLY_TOOL_NAME))) return "blocked"
+      const policy = await readSubjectToolPolicy({ organizationId: access.organizationId, kind: "agent", id: agent.id }, tx)
+      return personalAgentConnectorState({ legacyConnectorAccess: agent.legacy_connector_access, neverConnectionIds: agent.never_connection_ids ?? [] }, policy, approval.connection_id)
+    }, onAlwaysAllow: (tx) => recordPersonalAgentEvent({
       organizationId: access.organizationId, agentId: access.agentId, actorMemberId: memberId,
       action: "agent.updated", detail: { name: false, brief: false, tools: true, budget: false },
     }, tx) } }).catch((error: unknown) => {
@@ -122,7 +169,8 @@ async function decidePersonalAgentToolRequest(access: PersonalAgentAccess, membe
   if (!row) return null
   const [view] = await requestViews(access, memberId, [asTool(row)])
   await recordPersonalAgentEvent({ organizationId: access.organizationId, agentId: access.agentId, actorMemberId: memberId,
-    action: `request.${row.status}`, detail: personalAgentRequestEventDetail({ requester: view.requestedBy.name, kind: "tool", tool: row.tool_title, connection: row.connection_name }),
+    action: row.status === "pending" ? "request.awaiting_owner" : `request.${row.status}`,
+    detail: personalAgentRequestEventDetail({ requester: view.requestedBy.name, kind: "tool", tool: row.tool_title || null, connection: row.connection_name }),
   })
   return view
 }
@@ -208,7 +256,9 @@ export async function openPersonalAgentRequestCounts(caller: PersonalAgentCaller
       .innerJoin(PersonalAgentTable, eq(PersonalAgentTable.id, ToolApprovalTable.context_id))
       .leftJoin(PersonalAgentShareTable, share).where(and(eq(ToolApprovalTable.organization_id, organizationId),
         eq(ToolApprovalTable.context_kind, "agent"), inArray(PersonalAgentTable.id, ids), eq(ToolApprovalTable.status, "pending"), gte(ToolApprovalTable.created_at, pendingToolApprovalCutoff()),
-        eq(PersonalAgentTable.state, "active"), or(eq(PersonalAgentTable.owner_member_id, memberId), eq(ToolApprovalTable.requested_by_member_id, memberId)),
+        eq(PersonalAgentTable.state, "active"), or(eq(PersonalAgentTable.owner_member_id, memberId),
+          and(isNull(ToolApprovalTable.owner_requested_at), or(eq(ToolApprovalTable.requested_by_member_id, memberId),
+            and(eq(ToolApprovalTable.connector_access, true), eq(PersonalAgentShareTable.role, "manager"))))),
       )).groupBy(PersonalAgentTable.id),
   ])
   const totals = new Map<string, number>()

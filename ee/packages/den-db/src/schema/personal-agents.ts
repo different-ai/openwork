@@ -23,6 +23,8 @@ export const PersonalAgentTable = mysqlTable(
     admin_monthly_budget_micros: bigint("admin_monthly_budget_micros", { mode: "number", unsigned: true }),
     created_by_member_id: denTypeIdColumn("member", "created_by_member_id"),
     idempotency_key: varchar("idempotency_key", { length: 128 }),
+    legacy_connector_access: boolean("legacy_connector_access").notNull().default(true),
+    never_connection_ids: compatJsonColumn<string[]>("never_connection_ids"),
     ...timestamps,
   },
   (table) => [

@@ -23,14 +23,16 @@ type StoredAgentChat = Omit<AgentChat, "denBaseUrl" | "principal"> & Partial<Pic
 
 export type AgentChatProgress = Partial<Pick<AgentChat, "agentId" | "agentName" | "proposalId" | "routineId" | "routineName" | "firstRunId" | "chatLinkPending">>;
 
+export type AgentPanelView = "overview" | "settings" | "memory";
+
 type AgentChatStore = {
   chats: Record<string, StoredAgentChat>;
-  panelChatKey: string | null;
+  panel: { chatKey: string; view: AgentPanelView } | null;
   open: (chat: AgentScope & Pick<AgentChat, "workspaceId" | "sessionId"> & AgentChatProgress) => void;
   save: (scope: AgentScope, sessionId: string, progress: AgentChatProgress) => void;
   markAsked: (scope: AgentScope, sessionId: string) => void;
   forget: (scope: AgentScope, sessionId: string) => void;
-  setPanel: (chatKey: string | null) => void;
+  setPanel: (chatKey: string | null, view?: AgentPanelView) => void;
 };
 
 export function agentChatKey(scope: AgentScope, sessionId: string): string {
@@ -48,7 +50,7 @@ export function agentChatsInScope(chats: Record<string, StoredAgentChat>, scope:
 
 export const useAgentChatStore = create<AgentChatStore>()(persist((set) => ({
   chats: {},
-  panelChatKey: null,
+  panel: null,
   open: (chat) => set((state) => {
     const key = agentChatKey(chat, chat.sessionId);
     const existing = agentChatFor(state.chats, chat, chat.sessionId) ?? {
@@ -74,9 +76,9 @@ export const useAgentChatStore = create<AgentChatStore>()(persist((set) => ({
   forget: (scope, sessionId) => set((state) => {
     const key = agentChatKey(scope, sessionId);
     const { [key]: _removed, ...chats } = state.chats;
-    return { chats, panelChatKey: state.panelChatKey === key ? null : state.panelChatKey };
+    return { chats, panel: state.panel?.chatKey === key ? null : state.panel };
   }),
-  setPanel: (panelChatKey) => set({ panelChatKey }),
+  setPanel: (chatKey, view = "overview") => set({ panel: chatKey === null ? null : { chatKey, view } }),
 }), {
   name: PERSISTED_AGENT_CHAT_STORE_KEY,
   storage: createJSONStorage(() => localStorage),

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { PersonalAgentTool } from "@openwork/types/den/personal-agents";
+import type { PersonalAgentTool, PersonalAgentToolPolicy } from "@openwork/types/den/personal-agents";
 
 import { DenApiError } from "../src/app/lib/den";
 import { agentChangeDetails, isStaleChange } from "../src/react-app/domains/agents/agent-change-request";
@@ -53,7 +53,7 @@ test("one request shows every proposed routine field and the full new brief", ()
     ["instructions", "Group messages by sender"],
     ["brief", brief],
   ]);
-  expect(tools?.map(({ text }) => text)).toEqual(["Unknown app: Block"]);
+  expect(tools?.map(({ text }) => text)).toEqual(["Unknown app: Off"]);
   expect(agentChangeDetails({ active: true }).rows.map(({ text }) => text)).toEqual(["Edit an existing routine", "Turn it on"]);
   expect(agentChangeDetails(null)).toEqual({ rows: [], tools: null });
 });
@@ -80,6 +80,9 @@ test("tool changes name the app and tool, skip unchanged settings, and show remo
     "Slack · Post a message: Allow", "Slack · read: Allow", "Slack · delete: Block",
   ]);
   expect(agentChangeDetails(change, { toolPolicy: change.toolPolicy }).tools).toEqual([]);
+  const enable: PersonalAgentToolPolicy = { ...toolPolicy, connections: { slack: "allow" } };
+  expect(agentChangeDetails({ toolPolicy: enable }, { toolPolicy, catalog }).tools?.map(({ text }) => text)).toEqual(["Slack: On"]);
+  expect(agentChangeDetails({ toolPolicy }, { toolPolicy: enable, catalog }).tools?.map(({ text }) => text)).toEqual(["Slack: Off"]);
 });
 
 const tool: Pick<PersonalAgentTool, "access" | "chosen" | "lockedByOrganization" | "organizationRule"> = {

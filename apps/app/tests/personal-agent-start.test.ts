@@ -45,6 +45,11 @@ function fakeApi(options: { failRuns?: number } = {}) {
 
 test("saying yes creates the agent, then its routine, then starts the first run", async () => {
   const { api, calls } = fakeApi()
+  const create = api.createAgent
+  api.createAgent = (input) => {
+    expect(input.connectorNames).toEqual([])
+    return create(input)
+  }
   const saved: Array<Partial<AgentStartProgress>> = []
   expect(calls).toEqual([])
   const progress = await startAgentFromProposal({ api, proposal, saved: nothing, save: (next) => saved.push(next) })
@@ -57,18 +62,20 @@ test("saying yes creates the agent, then its routine, then starts the first run"
   ])
 })
 
-test("starting forwards the never rules and proposal key, and links the chat before creating the routine", async () => {
+test("starting forwards the connections, never rules and proposal key, and links the chat before creating the routine", async () => {
   const { api, calls } = fakeApi()
   const create = api.createAgent
   const never = [{ app: "Slack", action: "post message" }]
+  const connectorNames = ["Slack", "Linear"]
   const idempotencyKey = "proposal-key"
   api.createAgent = (input) => {
+    expect(input.connectorNames).toEqual(connectorNames)
     expect(input.never).toEqual(never)
     expect(input.idempotencyKey).toBe(idempotencyKey)
     return create(input)
   }
   await startAgentFromProposal({
-    api, proposal: { ...proposal, never }, idempotencyKey, saved: nothing, save: () => undefined,
+    api, proposal: { ...proposal, never, connectorNames }, idempotencyKey, saved: nothing, save: () => undefined,
     linkChat: async (agentId) => { calls.push(`chat:${agentId}`) },
   })
   expect(calls).toEqual(["agent:Bug watcher", "chat:pag_1", "routine:pag_1:Check #bugs", "run:pag_1:aut_1"])

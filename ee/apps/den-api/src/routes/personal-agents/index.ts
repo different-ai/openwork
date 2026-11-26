@@ -14,7 +14,7 @@ import {
   updatePersonalAgentSchema,
 } from "@openwork/types/den/personal-agents"
 import { addAuditRequestResource } from "../../audit/request-capture.js"
-import { requireFeature } from "../../features.js"
+import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -141,7 +141,9 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
     orgMemberRoute(), gate, jsonValidator(createPersonalAgentSchema),
     async (c) => {
       try {
-        const created = await service.create(scope(c), c.req.valid("json"))
+        const context = c.get("organizationContext")
+        const connectorControls = await organizationFeatureEnabled(context.organization.id, "personalAgentConnectorControls", { userId: context.currentMember.userId })
+        const created = await service.create(scope(c), c.req.valid("json"), connectorControls)
         addAuditRequestResource(c, { type: "personal_agent", id: created.agent.id })
         return c.json(created, 201)
       } catch (error) {

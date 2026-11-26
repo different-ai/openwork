@@ -15,7 +15,7 @@ export const PERSONAL_AGENT_UNAPPROVABLE_WRITE = "This tool cannot ask first yet
 export async function personalAgentDispatchContext(runId: string, organizationId: string, actingMemberId?: string) {
   if (!isDenTypeId("automationRun", runId) || !await cachedOrganizationFeatureEnabled(organizationId, "personalAgents")) return null
   const member = sql`coalesce(${AutomationRunTable.acting_member_id}, ${AutomationTable.owner_member_id})`
-  const [context] = await db.$primary.select({ agentId: PersonalAgentTable.id, agentName: PersonalAgentTable.name, memberId: MemberTable.id, paused: PersonalAgentTable.paused_at })
+  const [context] = await db.$primary.select({ agentId: PersonalAgentTable.id, agentName: PersonalAgentTable.name, memberId: MemberTable.id, userId: MemberTable.userId, paused: PersonalAgentTable.paused_at })
     .from(AutomationRunTable)
     .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
     .innerJoin(PersonalAgentTable, eq(PersonalAgentTable.id, AutomationTable.agent_id))
@@ -27,7 +27,7 @@ export async function personalAgentDispatchContext(runId: string, organizationId
       actingMemberId ? eq(MemberTable.id, normalizeDenTypeId("member", actingMemberId)) : undefined)).limit(1)
   if (!context) return null
   const access = await personalAgentAccess({ organizationId, memberId: context.memberId }, context.agentId, true)
-  return access?.state === "active" ? { ...context, paused: context.paused || access.pausedAt !== null } : null
+  return access?.state === "active" ? { ...context, paused: context.paused || access.pausedAt !== null, legacyConnectorAccess: access.legacyConnectorAccess, neverConnectionIds: access.neverConnectionIds } : null
 }
 
 export async function personalAgentRunDispatchRefusal(scopes: ReadonlySet<string>, organizationId: string) {
@@ -36,4 +36,11 @@ export async function personalAgentRunDispatchRefusal(scopes: ReadonlySet<string
   const context = await personalAgentDispatchContext(runId, organizationId)
   if (!context) return personalAgentPolicyRefusal("This run is no longer active or no longer has access to this agent.")
   return context.paused ? personalAgentPolicyRefusal("An admin paused this agent.") : null
+}
+
+export async function personalAgentMayUseBuiltInConnectors(scopes: ReadonlySet<string>, organizationId: string) {
+  const runId = personalAgentRunId(scopes)
+  if (runId === undefined) return true
+  const context = await personalAgentDispatchContext(runId, organizationId)
+  return Boolean(context && !context.paused && context.legacyConnectorAccess)
 }

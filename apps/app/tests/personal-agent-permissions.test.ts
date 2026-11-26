@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { PersonalAgentAccess, PersonalAgentTool, PersonalAgentToolPolicy } from "@openwork/types/den/personal-agents";
 
 import { agentOwnerFirstName, agentSpendLine, formatAgentMoney, requestToolTitle, shouldRerunAfterToolDecision, toolAccessSummary, toolRequestReceipt, toolRequestRerunLine, toolRequestWaitingLine } from "../src/react-app/domains/agents/agent-permission-words";
-import { nextAgentToolPolicy } from "../src/react-app/domains/agents/use-agent-permissions";
+import { nextAgentConnectionPolicy, nextAgentToolPolicy } from "../src/react-app/domains/agents/use-agent-permissions";
 
 const dana = { memberId: "member-dana", name: "Dana Reyes" };
 
@@ -28,12 +28,25 @@ describe("personal agent permissions", () => {
       .toEqual({ connections: {}, tools: { slack: { search: "allow" } } });
   });
 
-  test("summarizes effective access only for available connections", () => {
+  test("switching a connection overrides the default without changing per-tool choices", () => {
+    const before: PersonalAgentToolPolicy = {
+      connections: { "*": "block", gmail: "allow" },
+      tools: { slack: { search: "allow", post: "ask", delete: "block" } },
+    };
+    const on = nextAgentConnectionPolicy(before, { connectionId: "slack", enabled: true });
+    expect(on.connections).toEqual({ "*": "block", gmail: "allow", slack: "allow" });
+    const off = nextAgentConnectionPolicy(on, { connectionId: "slack", enabled: false });
+    expect(off.connections).toEqual({ "*": "block", gmail: "allow", slack: "block" });
+    expect(off.tools).toEqual(before.tools);
+  });
+
+  test("summarizes effective access only for enabled, available connections", () => {
     const tools = [tool("search", "allow"), tool("list", "allow"), tool("get", "allow"), tool("post", "ask"), tool("reply", "ask"), tool("delete", "block")];
-    expect(toolAccessSummary({ available: true, lockedByOrganization: false, tools })).toBe("3 allowed · 2 ask · 1 blocked");
-    expect(toolAccessSummary({ available: true, lockedByOrganization: false, tools: [] })).toBe("0 allowed · 0 ask · 0 blocked");
-    expect(toolAccessSummary({ available: false, lockedByOrganization: false, tools: [] })).toBe("Not connected");
-    expect(toolAccessSummary({ available: false, lockedByOrganization: true, tools: [] })).toBe("Blocked by your admin");
+    expect(toolAccessSummary({ available: true, blocked: false, lockedByOrganization: false, tools })).toBe("3 allowed · 2 ask · 1 blocked");
+    expect(toolAccessSummary({ available: true, blocked: false, lockedByOrganization: false, tools: [] })).toBe("0 allowed · 0 ask · 0 blocked");
+    expect(toolAccessSummary({ available: false, blocked: false, lockedByOrganization: false, tools: [] })).toBe("Not connected");
+    expect(toolAccessSummary({ available: true, blocked: true, lockedByOrganization: false, tools })).toBe("Off");
+    expect(toolAccessSummary({ available: false, blocked: true, lockedByOrganization: true, tools: [] })).toBe("Blocked by your admin");
   });
 
   test("names the decider and describes each tool request outcome", () => {

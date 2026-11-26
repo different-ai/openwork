@@ -1,5 +1,5 @@
 import type { Hono } from "hono"
-import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
+import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentMayUseBuiltInConnectors, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
 import { personalAgentRunId } from "./workbot-turn-limits.js"
 import { createInternalCapabilityConnectorHeader, createInternalMcpPrincipalHeader, INTERNAL_CAPABILITY_CONNECTOR_HEADER } from "../session.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
@@ -122,6 +122,8 @@ export async function invokeMcpOperation(input: {
 }): Promise<McpOperationResult> {
   if (personalAgentRunId(input.principal.scopes) !== undefined) {
     const refusal = await personalAgentRunDispatchRefusal(input.principal.scopes, input.principal.organizationId)
+      ?? (input.nativeConnectionId && !await personalAgentMayUseBuiltInConnectors(input.principal.scopes, input.principal.organizationId)
+        ? personalAgentPolicyRefusal("Built-in connectors are not available to this agent.") : null)
       ?? (input.operation.method === "GET" ? null : personalAgentPolicyRefusal(input.nativeConnectionId
         ? "Built-in connectors cannot ask first yet, so an agent can only read them."
         : PERSONAL_AGENT_UNAPPROVABLE_WRITE))

@@ -15,7 +15,15 @@ import type { AgentScope, AgentsRuntime } from "./agents-runtime";
 import { agentListKey, agentRequestsKey, agentsQueryRoot } from "./use-agents";
 
 type ToolChoice = { connectionId: string; toolName: string; access: PersonalAgentAccess };
-type SettingsChange = { tool: ToolChoice } | { monthlyBudgetMicros: number | null };
+type ConnectionChoice = { connectionId: string; enabled: boolean };
+type SettingsChange = { tool: ToolChoice } | { connection: ConnectionChoice } | { monthlyBudgetMicros: number | null };
+
+export function nextAgentConnectionPolicy(policy: PersonalAgentToolPolicy, { connectionId, enabled }: ConnectionChoice): PersonalAgentToolPolicy {
+  return {
+    ...policy,
+    connections: { ...policy.connections, [connectionId]: enabled ? "allow" : "block" },
+  };
+}
 
 export function nextAgentToolPolicy(policy: PersonalAgentToolPolicy, { connectionId, toolName, access }: ToolChoice): PersonalAgentToolPolicy {
   return {
@@ -63,10 +71,13 @@ export function useSaveAgentSettings(runtime: AgentsRuntime, agent: PersonalAgen
   return useMutation({
     mutationKey: [...toolsKey, "save"],
     mutationFn: (change: SettingsChange) => {
-      if (!("tool" in change)) return client.updatePersonalAgent(organizationId, agentId, change);
+      if ("monthlyBudgetMicros" in change) return client.updatePersonalAgent(organizationId, agentId, change);
       const latestAgent = queryClient.getQueryData<PersonalAgentDetail[]>(listKey)?.find((item) => item.agent.id === agentId);
+      const policy = (latestAgent ?? agent).revision.toolPolicy;
       return client.updatePersonalAgent(organizationId, agentId, {
-        toolPolicy: nextAgentToolPolicy((latestAgent ?? agent).revision.toolPolicy, change.tool),
+        toolPolicy: "connection" in change
+          ? nextAgentConnectionPolicy(policy, change.connection)
+          : nextAgentToolPolicy(policy, change.tool),
       });
     },
     onMutate: async (change) => {

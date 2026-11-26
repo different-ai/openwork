@@ -1,3 +1,4 @@
+import { personalAgentConnectorAccess } from "../personal-agents/connector-access.js"
 import { Tool, toolError } from "@openwork/codemode"
 import type { CapabilityUsageSource } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -309,10 +310,24 @@ export async function buildExternalMcpToolTree(input: {
     organizationId: input.organizationId,
     member: memberIdentity,
   })
-  const connections = connectionsRequiredBy(namespaceContext.codemodeExternalMcpConnections, input.required)
+  const access = await personalAgentConnectorAccess({ scopes: input.scopes, organizationId: input.organizationId, memberId: memberIdentity.orgMembershipId })
+  const once = new Map<string, Set<string>>()
+  const candidates = connectionsRequiredBy(namespaceContext.codemodeExternalMcpConnections, input.required)
+  const connections = (await Promise.all(candidates.map(async (connection) => {
+    const state = access?.state(connection.id)
+    if (state === "blocked") return null
+    if (state === "off" && access) {
+      const tools = await access.tools(connection.id)
+      if (!tools.size) return null
+      once.set(connection.id, tools)
+    }
+    return connection
+  }))).filter((connection) => connection !== null)
   const toolAvailable = (connection: ExternalMcpConnectionRow, tool: { name: string }) => (
     !isToolDisabled(connection.toolPolicy, tool.name)
     && !externalMcpToolWithheld(memberIdentity, connection.id, tool.name)
+    && !access?.toolBlocked(connection.id, tool.name)
+    && (once.get(connection.id)?.has(tool.name) ?? true)
   )
   const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   const listed = (await mapConcurrent(connections, EXTERNAL_MCP_SEARCH_CONCURRENCY, async (connection) => {

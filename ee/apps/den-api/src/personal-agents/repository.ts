@@ -181,7 +181,7 @@ export const personalAgentRepository = {
     return detail
   },
 
-  async create(input: Scope & { definition: CreatePersonalAgent; toolPolicy: PersonalAgentToolPolicy; now: number }): Promise<PersonalAgentDetail> {
+  async create(input: Scope & { definition: CreatePersonalAgent; toolPolicy: PersonalAgentToolPolicy; legacyConnectorAccess: boolean; neverConnectionIds: string[]; now: number }): Promise<PersonalAgentDetail> {
     const agentId = createDenTypeId("personalAgent")
     const revisionId = createDenTypeId("personalAgentRevision")
     const now = new Date(input.now)
@@ -208,6 +208,8 @@ export const personalAgentRepository = {
           owner_member_id: normalizeDenTypeId("member", input.ownerMemberId),
           created_by_member_id: normalizeDenTypeId("member", input.ownerMemberId),
           idempotency_key: input.definition.idempotencyKey ?? null,
+          legacy_connector_access: input.legacyConnectorAccess,
+          never_connection_ids: input.neverConnectionIds.length ? input.neverConnectionIds : null,
           name: input.definition.name,
           state: "active",
           current_revision_id: revisionId,

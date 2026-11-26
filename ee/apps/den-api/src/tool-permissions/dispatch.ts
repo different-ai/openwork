@@ -1,15 +1,16 @@
+import { personalAgentConnectorState } from "../personal-agents/connector-access.js"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { AutomationRunTable, AutomationTable } from "@openwork-ee/den-db/schema"
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
-import { cachedOrganizationFeatureEnabled } from "../features.js"
+import { cachedOrganizationFeatureEnabled, organizationFeatureEnabled } from "../features.js"
 import { listTeamsForMember } from "../member-teams.js"
 import { AGENT_TOOL_WITHHELD_MESSAGE, automationRunId, personalAgentRunId } from "../mcp/workbot-turn-limits.js"
 import { personalAgentPeople, personOrUnknown } from "../personal-agents/access.js"
 import { personalAgentRequestEventDetail, recordPersonalAgentEvent } from "../personal-agents/events.js"
 import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentDispatchContext, personalAgentPolicyRefusal } from "../personal-agents/permissions-dispatch.js"
 import { personalAgentToolIsReadOnly, personalAgentToolTitle } from "../personal-agents/permissions-policy.js"
-import { claimOrRequestToolApproval, type ToolApprovalKey } from "./approvals.js"
+import { claimAgentConnectorToolApproval, claimOrRequestToolApproval, type AgentConnectorApprovalKey, type ToolApprovalKey } from "./approvals.js"
 import { evaluateToolPermission, loadApplicableToolPermissionRules } from "./evaluate.js"
 
 export type ToolPermissionDispatchInput = {
@@ -74,12 +75,19 @@ export async function toolPermissionRefusal(input: ToolPermissionDispatchInput):
   const teamIds = teamAndMember ? input.teamIds ?? (await listTeamsForMember({ organizationId, memberId })).map(({ id }) => id) : undefined
   const rules = await loadApplicableToolPermissionRules({ organizationId, agentId: context.agentId,
     memberId: teamAndMember ? memberId : undefined, teamIds, connectionId: connection.id, toolName: tool.name })
-  const access = evaluateToolPermission(rules.map(({ rule }) => rule), personalAgentToolIsReadOnly(tool.annotations))
-  if (access === "block") return personalAgentPolicyRefusal(`${tool.name} ${AGENT_TOOL_WITHHELD_MESSAGE}`)
+  const wildcard = rules.find(({ kind, toolName }) => kind === "agent" && toolName === "*")?.rule
+  const state = personalAgentConnectorState(context, { connections: wildcard ? { [connection.id]: wildcard } : {} }, connection.id)
+  const access = evaluateToolPermission(rules.filter(({ kind, toolName }) => kind !== "agent" || toolName !== "*").map(({ rule }) => rule), personalAgentToolIsReadOnly(tool.annotations))
+  if (state === "blocked" || access === "block") return personalAgentPolicyRefusal(`${tool.name} ${AGENT_TOOL_WITHHELD_MESSAGE}`)
+  const key: AgentConnectorApprovalKey = { organizationId, memberId, context: { kind: "agent", id: context.agentId, label: context.agentName, runId },
+    connectionId: connection.id, toolName: tool.name }
+  if (state === "off") {
+    if (await organizationFeatureEnabled(organizationId, "personalAgentConnectorControls", { userId: context.userId ?? undefined })
+      && await claimAgentConnectorToolApproval(key)) return null
+    return personalAgentPolicyRefusal(`${connection.name} is off for this agent. Ask for access to use it.`)
+  }
   if (access === "allow") return null
   if (tool.name.length > 128 || tool.name === "*") return personalAgentPolicyRefusal(PERSONAL_AGENT_UNAPPROVABLE_WRITE)
-  const key: ToolApprovalKey = { organizationId, memberId, context: { kind: "agent", id: context.agentId, label: context.agentName, runId },
-    connectionId: connection.id, toolName: tool.name }
   const title = personalAgentToolTitle(tool)
   const approval = await claimOrRequestToolApproval({ ...key, connectionName: connection.name, toolTitle: title })
   if (approval === "claimed") return null

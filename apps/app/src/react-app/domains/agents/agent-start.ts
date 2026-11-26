@@ -55,7 +55,7 @@ export async function startAgentFromProposal(input: {
     save(next);
   };
   if (!progress.agentId) {
-    const created = await api.createAgent({ name: proposal.name, brief: proposal.brief, never: proposal.never, idempotencyKey: input.idempotencyKey });
+    const created = await api.createAgent({ name: proposal.name, brief: proposal.brief, never: proposal.never, connectorNames: proposal.connectorNames ?? [], idempotencyKey: input.idempotencyKey });
     keep({ agentId: created.agent.id, agentName: created.agent.name });
   }
   const agentId = progress.agentId;
