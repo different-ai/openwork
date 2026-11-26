@@ -205,11 +205,17 @@ export function conversationRemoteTasks(messages: readonly UIMessage[], now = Da
   return { current, earlier: candidates, followUps }
 }
 
-function remoteEntryListed(entry: RemoteThreadEntry, followUps: readonly RemoteThreadFollowUp[], now: number): boolean {
+function remoteEntryListed(
+  entry: RemoteThreadEntry,
+  followUps: readonly RemoteThreadFollowUp[],
+  now: number,
+  includeSettled = false,
+): boolean {
   if (!entry.status) return false
   if (followUps.some((followUp) => remoteFollowUpMatches(followUp, entry.start, entry.status?.sessionId ?? null))) return true
   if (remoteThreadAwaitingFollowUp(entry, now)) return true
   const state = entry.status?.state
+  if (includeSettled && state === "idle") return true
   return state !== undefined && state !== "idle" && state !== "error"
 }
 
@@ -219,11 +225,13 @@ export function selectComposerRemoteTasks(
   organizationId: string | null,
   now: number,
   owner?: RemoteThreadOwner,
-  retained?: ReadonlySet<string>,
+  options?: ReadonlySet<string> | { retained?: ReadonlySet<string>; includeSettled?: boolean },
 ): RemoteTrackerTask[] {
+  const retained = options ? ("has" in options ? options : options.retained) : undefined
+  const includeSettled = options && !("has" in options) ? options.includeSettled === true : false
   const listable = (entry: RemoteThreadEntry | undefined): entry is RemoteThreadEntry =>
     Boolean(entry && organizationId && entry.organizationId === organizationId
-      && (retained?.has(entry.start.key) || remoteEntryListed(entry, tasks.followUps, now)))
+      && (retained?.has(entry.start.key) || remoteEntryListed(entry, tasks.followUps, now, includeSettled)))
   const listed = tasks.earlier.filter((task) => listable(threads[task.start.key]))
   const known = new Set([...tasks.earlier, ...tasks.current].map((task) => task.start.key))
   const owned = !owner ? [] : Object.values(threads)
@@ -236,13 +244,12 @@ export function selectComposerRemoteTasks(
 }
 
 const NO_FOLLOW_UPS: readonly RemoteThreadFollowUp[] = []
-const EMPTY_REMOTE_TASKS: ConversationRemoteTasks = { current: [], earlier: [], followUps: [] }
 
 export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: RemoteThreadOwner, parentActive: boolean): RemoteTrackerTask[] {
   const liveSyncEnabled = useDesktopFeature("remoteSessionLiveSync")
   const tasks = useMemo<ConversationRemoteTasks>(
-    () => (liveSyncEnabled ? EMPTY_REMOTE_TASKS : conversationRemoteTasks(messages)),
-    [liveSyncEnabled, messages],
+    () => conversationRemoteTasks(messages),
+    [messages],
   )
   const organizationId = useRemoteThreadOrganization()
   const { workspaceId, sessionId } = owner
@@ -268,16 +275,19 @@ export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: Re
   const scope = JSON.stringify([organizationId, workspaceId, sessionId, currentTurnKey(messages), liveSyncEnabled])
   const kept = useRef({ scope, ids: new Set<string>() })
   const listedSignature = useRemoteThreadStore((state) =>
-    selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner,
-      parentActive && kept.current.scope === scope ? kept.current.ids : undefined,
-    ).map((task) => task.start.key).join("\n"))
+    selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner, {
+      retained: parentActive && kept.current.scope === scope ? kept.current.ids : undefined,
+      includeSettled: liveSyncEnabled,
+    }).map((task) => task.start.key).join("\n"))
   const listed = useMemo(() => {
     if (!listedSignature) return []
     const keys = new Set(listedSignature.split("\n"))
     const threads = useRemoteThreadStore.getState().threads
-    return selectComposerRemoteTasks(tasks, threads, organizationId, Date.now(), { workspaceId, sessionId }, keys)
-      .filter((task) => keys.has(task.start.key))
-  }, [tasks, listedSignature, organizationId, workspaceId, sessionId])
+    return selectComposerRemoteTasks(tasks, threads, organizationId, Date.now(), { workspaceId, sessionId }, {
+      retained: keys,
+      includeSettled: liveSyncEnabled,
+    }).filter((task) => keys.has(task.start.key))
+  }, [tasks, listedSignature, organizationId, workspaceId, sessionId, liveSyncEnabled])
   kept.current = { scope, ids: new Set(listed.map((task) => task.start.key)) }
   return listed
 }
@@ -337,10 +347,10 @@ export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
   const anyAttention = current.includes("attention")
   const settled = current.length === ids.length && current.every((kind) => kind === "done" || kind === "stopped" || kind === "error")
   const allQuiet = current.length === ids.length && current.every((kind) => kind === "done" || kind === "stopped")
-  const expanded = manualExpanded ?? (anyAttention || (!allQuiet && ids.length <= 3))
+  const expanded = manualExpanded ?? (anyAttention || ((!allQuiet || remoteTasks.length > 0) && ids.length <= 3))
   const summary = subagentTrackerSummary(current)
 
-  if (ids.length === 0 || (!props.parentActive && settled)) return null
+  if (ids.length === 0 || (!props.parentActive && settled && remoteTasks.length === 0)) return null
   const unresolved = !props.parentActive && current.length < ids.length
 
   return (

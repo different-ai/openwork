@@ -763,7 +763,7 @@ const remoteSessionSource: CapabilitySource = {
       })
     }
     const run = async () => {
-      const hostedThread = (parsed.action === "create" || parsed.action === "attach")
+      const hostedThread = (parsed.action === "create" || parsed.action === "attach" || parsed.action === "send" || parsed.action === "answer")
         ? await eventThreadForPrincipal(ctx.principal).catch(() => null)
         : null
       return followRemoteSession({
