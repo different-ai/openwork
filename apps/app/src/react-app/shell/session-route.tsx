@@ -104,6 +104,7 @@ import {
   withTransientEngineRetry,
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
+import { taskCreateBlocker } from "@/react-app/shell/task-create-readiness";
 import { reloadEngineWithDesktopFallback } from "@/react-app/shell/engine-reload-escalation";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
@@ -2626,24 +2627,29 @@ export function SessionRoute() {
   const handleCreateTaskInWorkspaceWithOpenMode = useCallback(async (
     workspaceId: string,
     openAs: "primary" | "split",
-    source: "new_task" | "new_split" = openAs === "split" ? "new_split" : "new_task",
+    source: "new_task" | "new_split" | "agent_chat" = openAs === "split" ? "new_split" : "new_task",
   ): Promise<string | null> => {
     const agent = newTaskAgent;
     const sideChatOwner = openAs === "split" ? useWorkbenchStore.getState().primary : null;
     if (openAs === "split" && !sideChatOwner) return null;
     const workspace = workspaces.find((item) => item.id === workspaceId);
-    if (
-      !workspace ||
-      loading ||
-      retryingWorkspaceIds.includes(workspaceId)
-    ) {
-      return null;
-    }
-    const endpoint = endpointForWorkspace(workspace);
-    if (!endpoint || !endpoint.token) {
-      return null;
-    }
+    const endpoint = workspace ? endpointForWorkspace(workspace) : null;
     const toastId = taskCreateUnavailableToastId(workspaceId);
+    const blocker = taskCreateBlocker({
+      agentChat: source === "agent_chat",
+      hasWorkspace: Boolean(workspace),
+      hasEndpointToken: Boolean(endpoint?.token),
+      refreshingWorkspaces: loading,
+      loadingSessionList: retryingWorkspaceIds.includes(workspaceId),
+    });
+    if (blocker || !workspace || !endpoint) {
+      if (source === "agent_chat" && blocker) {
+        const message = blocker === "loading" ? t("agents.workspace_loading")
+          : blocker === "missing_workspace" ? t("agents.workspace_missing") : t("agents.workspace_disconnected");
+        toast.error(message, { id: toastId });
+      }
+      return null;
+    }
     const attempts = TASK_CREATE_RETRY_DELAYS_MS.length + 1;
     try {
       setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
@@ -2778,7 +2784,7 @@ export function SessionRoute() {
       client: agentsDen.client,
       workspaceId: selectedWorkspaceId,
       selectedSessionId: selectedSessionId ?? null,
-      createSession: (workspaceId) => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, "primary"),
+      createSession: (workspaceId) => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, "primary", "agent_chat"),
       openSession: (workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId),
       renameSession: (workspaceId, sessionId, title) => void renameSessionTitle(sessionId, title, workspaceId).catch(() => undefined),
       sessionState: async (workspaceId, sessionId) => {

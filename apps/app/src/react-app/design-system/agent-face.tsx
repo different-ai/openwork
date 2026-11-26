@@ -25,7 +25,7 @@ export function agentFaceColor(name: string | null) {
 }
 
 export function agentFaceLetter(name: string | null): string {
-  return name?.trim().charAt(0).toUpperCase() || "+";
+  return name?.trim().charAt(0).toUpperCase() ?? "";
 }
 
 export function AgentFace(props: { name: string | null; size?: "sm" | "md" | "lg"; className?: string }) {
