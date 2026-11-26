@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useMemo, useState } from "react"
+import { useId, useMemo, useState } from "react"
 import { createPortal } from "react-dom"
 import { featureAnalytics } from "@/app/lib/analytics"
 import { useQuery } from "@tanstack/react-query"
@@ -182,6 +182,7 @@ export function AutomationsPage(props: {
   const navigate = useNavigate()
   const openProviderSettings = () => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai"))
   const [searchParams, setSearchParams] = useSearchParams()
+  const searchInputId = useId()
   const [query, setQuery] = useState("")
   const [editing, setEditing] = useState(false)
   const [repairingModel, setRepairingModel] = useState(false)
@@ -753,6 +754,7 @@ export function AutomationsPage(props: {
     )
   }
 
+  const searchLabel = "Search Automations"
   const newAutomation = <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8">
@@ -761,8 +763,15 @@ export function AutomationsPage(props: {
         : props.headerActionsTarget === undefined ? <div className="flex justify-end">{newAutomation}</div> : null}
       <div className="flex max-w-md items-center gap-2">
         <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-          <Input className="pl-9" value={query} placeholder="Search Automations" onChange={(event) => setQuery(event.currentTarget.value)} />
+          <label htmlFor={searchInputId} className="sr-only">{searchLabel}</label>
+          <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
+          <Input
+            id={searchInputId}
+            className="pl-9"
+            value={query}
+            placeholder={searchLabel}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+          />
         </div>
         {archiveRestoreEnabled ? (
           <Button variant={showArchived ? "secondary" : "outline"} aria-pressed={showArchived} onClick={() => setArchivedFilter(!showArchived)}>
