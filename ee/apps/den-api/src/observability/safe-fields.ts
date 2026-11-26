@@ -11,9 +11,14 @@ class SanitizedTelemetryError extends Error {
   code?: string
   errno?: number
   sqlState?: string
+  /** HTTP status of a PlanetScale DatabaseError. Not named `status` so it never changes the response status. */
+  httpStatus?: number
+  /** PlanetScale/Vitess error code from DatabaseError.body.code, e.g. UNAVAILABLE or RESOURCE_EXHAUSTED. */
+  providerCode?: string
 }
 
 type SanitizedErrorMetadata = Pick<SanitizedTelemetryError, "code" | "errno" | "sqlState">
+type PlanetScaleErrorMetadata = Pick<SanitizedTelemetryError, "httpStatus" | "providerCode">
 
 function truncate(value: string) {
   return value.length > MAX_STRING_LENGTH
@@ -73,6 +78,22 @@ function sanitizedErrorMetadata(error: unknown): SanitizedErrorMetadata {
   }
 }
 
+/**
+ * PlanetScale's serverless driver throws DatabaseError with the HTTP status and
+ * the Vitess error code on `status`/`body.code`. Without them a failed query
+ * only reads "Failed query: …", hiding whether it was a timeout, throttling or
+ * an unavailable backend.
+ */
+function planetScaleErrorMetadata(error: unknown): PlanetScaleErrorMetadata {
+  if (!(error instanceof Error) || error.name !== "DatabaseError" || !isRecord(error)) return {}
+  const status = (error as { status?: unknown }).status
+  const body = (error as { body?: unknown }).body
+  return {
+    httpStatus: typeof status === "number" && Number.isInteger(status) ? status : undefined,
+    providerCode: isRecord(body) && typeof body.code === "string" ? sanitizeText(body.code) : undefined,
+  }
+}
+
 function sanitizedTelemetryError(error: unknown, depth: number): Error {
   const serialized = serializeError(error)
   const metadata = sanitizedErrorMetadata(error)
@@ -81,14 +102,22 @@ function sanitizedTelemetryError(error: unknown, depth: number): Error {
     metadata.errno === undefined ? undefined : `errno ${metadata.errno}`,
     metadata.sqlState ? `SQLSTATE ${metadata.sqlState}` : undefined,
   ].filter((value) => value !== undefined).join(", ")
+  const planetScale = planetScaleErrorMetadata(error)
+  const providerDiagnostic = [
+    planetScale.providerCode,
+    planetScale.httpStatus === undefined ? undefined : `HTTP ${planetScale.httpStatus}`,
+  ].filter((value) => value !== undefined).join(", ")
+  const baseMessage = typeof serialized.message === "string" ? serialized.message : "unknown error"
   const message = diagnostic
     ? `Underlying error (${diagnostic})`
-    : typeof serialized.message === "string" ? serialized.message : "unknown error"
+    : providerDiagnostic ? `${baseMessage} (${providerDiagnostic})` : baseMessage
   const sanitized = new SanitizedTelemetryError(message)
   sanitized.name = typeof serialized.name === "string" ? serialized.name : "Error"
   sanitized.code = metadata.code
   sanitized.errno = metadata.errno
   sanitized.sqlState = metadata.sqlState
+  sanitized.httpStatus = planetScale.httpStatus
+  sanitized.providerCode = planetScale.providerCode
   if (diagnostic) {
     sanitized.stack = undefined
   } else if (typeof serialized.stack === "string") {
