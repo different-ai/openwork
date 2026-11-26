@@ -44,8 +44,12 @@ import {
   useSessionPanelState,
 } from "./panel-tab-store";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
-import type { OpenTarget } from "../artifacts/open-target";
+import { openTargetFromWorkspaceFile, type OpenTarget } from "../artifacts/open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
+
+const WorkspaceFileTree = React.lazy(() =>
+  import("../artifacts/workspace-file-tree").then((module) => ({ default: module.WorkspaceFileTree })),
+);
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
 import type { EmptyPanelView } from "./files-rail";
@@ -79,6 +83,10 @@ type SidePanelProps = {
   emptyView: EmptyPanelView;
   onShowEmptyChooser: () => void;
   onOpenFiles: () => void;
+  compactChrome?: boolean;
+  files?: OpenTarget[];
+  onOpenFile?: (target: OpenTarget) => void;
+  onOpenBrowser?: () => void;
   browserPresentation?: BrowserPresentationControls;
   browserShownElsewhere?: boolean;
   sideChat?: { content: React.ReactNode; onOpen: () => void };
@@ -621,6 +629,10 @@ export function SidePanel({
   browserPresentation,
   browserShownElsewhere = false,
   sideChat,
+  compactChrome = false,
+  files,
+  onOpenFile,
+  onOpenBrowser,
 }: SidePanelProps) {
   const { tabs } = useSessionPanelState(sessionId);
   const activeTab = useActivePanelTab(sessionId);
@@ -834,21 +846,24 @@ export function SidePanel({
               </PanelTabList>
             </div>
             {!activeTab ? <span className="sr-only">Panel destinations</span> : null}
-            {activeTab && isBrowserAvailable ? (
+            {activeTab && (isBrowserAvailable || compactChrome) ? (
               <Tooltip>
                 <TooltipTrigger
                   render={(
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      onClick={() => createTab()}
-                      aria-label="New tab"
+                      onClick={() => {
+                        if (compactChrome) usePanelTabStore.getState().selectTab(sessionId, null);
+                        else void createTab();
+                      }}
+                      aria-label={compactChrome ? "Choose panel destination" : "New tab"}
                     >
                       <Plus />
                     </Button>
                   )}
                 />
-                <TooltipContent>New tab</TooltipContent>
+                <TooltipContent>{compactChrome ? "Choose panel destination" : "New tab"}</TooltipContent>
               </Tooltip>
             ) : !activeTab ? (
               <Button
@@ -867,7 +882,25 @@ export function SidePanel({
             view={emptyView}
             onShowChooser={onShowEmptyChooser}
             onOpenFiles={onOpenFiles}
-            onOpenBrowser={isBrowserAvailable ? createTab : undefined}
+            compact={compactChrome}
+            files={files}
+            onOpenFile={onOpenFile}
+            workspaceTree={compactChrome && client && workspaceId && onOpenFile ? (
+              <React.Suspense fallback={<div className="h-80 rounded-xl border border-border bg-background" />}>
+                <WorkspaceFileTree
+                  client={client}
+                  workspaceId={workspaceId}
+                  workspaceName={workspaceRoot.split(/[/\\]/).filter(Boolean).pop() ?? "Workspace"}
+                  selectedPath=""
+                  className="h-80 w-full overflow-hidden rounded-xl border border-border bg-background"
+                  onOpenFile={(entry) => {
+                    const target = openTargetFromWorkspaceFile(entry.path, { size: entry.size, updatedAt: entry.mtimeMs });
+                    if (target) onOpenFile(target);
+                  }}
+                />
+              </React.Suspense>
+            ) : undefined}
+            onOpenBrowser={isBrowserAvailable ? onOpenBrowser ?? createTab : undefined}
             onOpenExtensions={onOpenExtensions}
             onOpenSideChat={sideChat?.onOpen}
           />

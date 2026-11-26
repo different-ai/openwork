@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useSessionExtensions } from "@/react-app/kernel/session-extensions";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, FileText, RefreshCw, Terminal, Zap } from "lucide-react";
@@ -61,6 +61,7 @@ import { useDesktopSpeechDictation } from "./desktop-speech-dictation";
 import { markFeatureUsed } from "@/app/lib/den";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import { NativeDictationControl } from "./native-dictation-control";
+import { APP_ACTION_EVENT, appActionFromEvent } from "@/react-app/kernel/app-actions";
 import { useSessionReferencesMaybe, type SessionReferenceCandidate } from "@/components/chat/session-reference-context";
 import { formatRelativeTime, isMacPlatform } from "@/app/utils";
 import { filterSessionReferenceCandidates } from "./session-reference-search";
@@ -1131,6 +1132,24 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     return () => cancelAnimationFrame(frame);
   }, [focusRequested, props.disabled, props.sessionId]);
 
+  const runComposerAppAction = useEffectEvent((event: Event) => {
+    const target = appActionFromEvent(event);
+    if (!target || props.disabled) return false;
+    if (target.type === "skill") {
+      const editor = editorRef.current;
+      if (editor) {
+        editor.insertSkillAtSelection(target.name);
+        return false;
+      }
+      const draft = draftRef.current;
+      const separator = draft.length > 0 && !/\s$/.test(draft) ? " " : "";
+      props.onDraftChange(`${draft}${separator}[skill ${target.name}] `);
+      return true;
+    }
+    if (target.actionId !== "dictation.toggle" || !dictation.available) return false;
+    void dictation.toggle();
+    return true;
+  });
   useEffect(() => {
     const handleFocus = () => {
       const root = rootRef.current;
@@ -1142,13 +1161,20 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     const handleFlush = () => {
       props.onDraftChange(draftRef.current);
     };
+    const handleAppAction = (event: Event) => {
+      const root = rootRef.current;
+      if (!root || (lastFocusedComposerRoot?.isConnected && lastFocusedComposerRoot !== root)) return;
+      if (runComposerAppAction(event)) handleFocus();
+    };
     window.addEventListener(FOCUS_PROMPT_EVENT, handleFocus);
     window.addEventListener(FLUSH_PROMPT_EVENT, handleFlush);
+    window.addEventListener(APP_ACTION_EVENT, handleAppAction);
     window.addEventListener("beforeunload", handleFlush);
     window.addEventListener("pagehide", handleFlush);
     return () => {
       window.removeEventListener(FOCUS_PROMPT_EVENT, handleFocus);
       window.removeEventListener(FLUSH_PROMPT_EVENT, handleFlush);
+      window.removeEventListener(APP_ACTION_EVENT, handleAppAction);
       window.removeEventListener("beforeunload", handleFlush);
       window.removeEventListener("pagehide", handleFlush);
     };

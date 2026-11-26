@@ -1,12 +1,15 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type * as React from "react";
-import { ChevronDown, Lock, Pencil, Plus, Trash2, Zap } from "lucide-react";
+import { ChevronDown, Lock, Pencil, Plus, RotateCcw, Trash2, X, Zap } from "lucide-react";
 import { FAST_DEFAULT_VARIANT, FAST_VARIANT_PREFIX } from "@openwork/types/cloud-model-fast";
 
 import type { Client, ModelOption, ModelRef } from "@/app/types";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+import { listCommands } from "@/app/lib/opencode-session";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "@/components/ui/sonner";
 import { Switch } from "@/components/ui/switch";
@@ -26,17 +29,28 @@ import { shortcutRowState, type ShortcutRowState } from "@/react-app/domains/sho
 import {
   chordFromEvent,
   chordProblem,
+  builtInChords,
   formatChord,
   nextFreeChord,
   resolveShortcutOs,
   type ShortcutOs,
 } from "@/react-app/domains/shortcuts/shortcut-keys";
 import { SHORTCUT_RECORDER_ATTRIBUTE } from "@/react-app/domains/shortcuts/use-model-shortcut-keys";
+import {
+  APP_ACTIONS,
+  actionChordProblem,
+  actionChordProblemMessage,
+  actionKeys,
+  createSkillShortcutId,
+  useActionShortcutsStore,
+  type AppActionDefinition,
+  type AppActionId,
+  type SkillShortcut,
+} from "@/react-app/kernel/app-actions";
 import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { favoriteModelShortcutLabel } from "@/react-app/shell/favorite-model-shortcut";
 import { fastModeShortcutLabel } from "@/react-app/shell/fast-mode-shortcut";
-import { ARCHIVE_SESSION_CHORD } from "@/react-app/shell/archive-session-shortcut";
 import { resolveThinkingModeShortcutOs, thinkingModeShortcutLabel } from "@/react-app/shell/thinking-mode-shortcut";
 
 import { LayoutSection, LayoutStack } from "../settings-layout";
@@ -138,6 +152,7 @@ function ShortcutEditor(props: {
   pickerOptions: readonly ModelOption[];
   savedKeys: Set<string>;
   shortcuts: Shortcut[];
+  actionChords: ReadonlyArray<{ chord: string; label: string }>;
   onCancel: () => void;
   onSave: (shortcut: Shortcut) => void;
 }) {
@@ -196,6 +211,11 @@ function ShortcutEditor(props: {
     }
     if (problem?.kind === "built_in") {
       setRecordError(`${formatChord(chord, os)} is used for ${problem.label.toLowerCase()}.`);
+      return;
+    }
+    const action = props.actionChords.find((entry) => entry.chord === chord);
+    if (action) {
+      setRecordError(`${formatChord(chord, os)} is used for ${action.label.toLowerCase()}.`);
       return;
     }
     setKeys(chord);
@@ -320,6 +340,273 @@ function ShortcutEditor(props: {
   );
 }
 
+type TakenChord = { chord: string; label: string };
+
+function KeyRecorder(props: {
+  keys: string | null;
+  os: ShortcutOs;
+  label: string;
+  autoRecord?: boolean;
+  onRecord: (chord: string) => string | null;
+  onCancel?: () => void;
+}) {
+  const [recording, setRecording] = useState(props.autoRecord ?? false);
+  const [error, setError] = useState<string | null>(null);
+
+  const stop = () => {
+    setRecording(false);
+    setError(null);
+  };
+
+  const handleKey = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!recording) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      stop();
+      props.onCancel?.();
+      return;
+    }
+    const chord = chordFromEvent(event.nativeEvent, props.os);
+    if (!chord) return;
+    const problem = props.onRecord(chord);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    stop();
+  };
+
+  return (
+    <span className="flex min-w-0 flex-1 items-center justify-end gap-2">
+      <span role="status" className="min-w-0 truncate text-xs text-dls-secondary">{recording ? error ?? "" : ""}</span>
+      <button
+        type="button"
+        autoFocus={props.autoRecord}
+        {...{ [SHORTCUT_RECORDER_ATTRIBUTE]: recording ? "recording" : "idle" }}
+        aria-label={recording ? `Press the new key for ${props.label}` : props.keys ? `${props.label}: ${formatChord(props.keys, props.os)}. Change key` : `Set a key for ${props.label}`}
+        className={cn(
+          "inline-flex h-7 min-w-20 shrink-0 items-center justify-center rounded-md border px-2 font-mono text-xs transition-colors",
+          recording
+            ? "border-dls-accent text-dls-secondary ring-2 ring-dls-accent/15"
+            : props.keys
+              ? "border-dls-border bg-dls-hover text-dls-text hover:bg-dls-surface"
+              : "border-dashed border-dls-border text-dls-secondary hover:bg-dls-hover",
+        )}
+        onClick={() => { setRecording(true); setError(null); }}
+        onKeyDown={handleKey}
+        onBlur={() => {
+          if (recording) props.onCancel?.();
+          stop();
+        }}
+      >
+        {recording ? "Press keys…" : props.keys ? formatChord(props.keys, props.os) : "Set key"}
+      </button>
+    </span>
+  );
+}
+
+function SkillPicker(props: { client: Client | null; directory: string; taken: Set<string>; onPick: (name: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const commandsQuery = useQuery({
+    queryKey: ["shortcut-skill-commands", props.directory],
+    queryFn: () => (props.client ? listCommands(props.client, props.directory || undefined) : Promise.resolve([])),
+    enabled: open && Boolean(props.client),
+  });
+  const needle = query.trim().toLowerCase();
+  const options = (commandsQuery.data ?? [])
+    .filter((command) => command.name && command.source !== "mcp" && !props.taken.has(command.name))
+    .filter((command) => !needle || command.name.toLowerCase().includes(needle) || command.description?.toLowerCase().includes(needle))
+    .sort((a, b) => Number(b.source === "skill") - Number(a.source === "skill") || a.name.localeCompare(b.name));
+
+  return (
+    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
+      <PopoverTrigger render={<Button size="sm" disabled={!props.client} />}>
+        <Plus data-icon="inline-start" />
+        Add skill shortcut
+      </PopoverTrigger>
+      <PopoverContent align="end" className="flex max-h-[min(var(--available-height),24rem)] w-80 flex-col gap-1 overflow-hidden rounded-xl p-1.5">
+        <Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search skills" aria-label="Search skills" className="h-8" />
+        <ul aria-label="Skills" className="flex min-h-0 flex-col overflow-y-auto">
+          {commandsQuery.isPending ? <li className="px-2 py-3 text-sm text-dls-secondary">Loading skills…</li> : null}
+          {!commandsQuery.isPending && options.length === 0 ? (
+            <li className="px-2 py-3 text-sm text-dls-secondary">{needle ? "No matching skills." : "No skills in this workspace yet."}</li>
+          ) : null}
+          {options.map((command) => (
+            <li key={command.id}>
+              <button
+                type="button"
+                className="flex w-full flex-col items-start rounded-md px-2 py-1.5 text-left hover:bg-dls-hover"
+                onClick={() => { setOpen(false); setQuery(""); props.onPick(command.name); }}
+              >
+                <span className="text-sm text-dls-text">/{command.name}</span>
+                {command.description ? <span className="line-clamp-1 text-xs text-dls-secondary">{command.description}</span> : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ActionShortcutsSection(props: {
+  os: ShortcutOs;
+  client: Client | null;
+  directory: string;
+  takenElsewhere: readonly TakenChord[];
+}) {
+  const { os } = props;
+  const overrides = useActionShortcutsStore((state) => state.overrides);
+  const skills = useActionShortcutsStore((state) => state.skills);
+  const setActionKeys = useActionShortcutsStore((state) => state.setActionKeys);
+  const resetAction = useActionShortcutsStore((state) => state.resetAction);
+  const saveSkill = useActionShortcutsStore((state) => state.saveSkill);
+  const removeSkill = useActionShortcutsStore((state) => state.removeSkill);
+  const [pendingSkill, setPendingSkill] = useState<string | null>(null);
+  const state = useMemo(() => ({ overrides, skills }), [overrides, skills]);
+
+  const problemFor = (chord: string, ignore: { actionId?: AppActionId; skillId?: string }) => {
+    const problem = actionChordProblem({ chord, state, takenElsewhere: props.takenElsewhere, ignore });
+    return problem ? actionChordProblemMessage(problem, os) : null;
+  };
+
+  const clearAction = (definition: AppActionDefinition, previous: string) => {
+    const wasOverridden = definition.id in overrides;
+    setActionKeys(definition.id, null);
+    toast(`Removed ${formatChord(previous, os)} from ${definition.label}`, {
+      action: { label: "Undo", onClick: () => (wasOverridden ? setActionKeys(definition.id, previous) : resetAction(definition.id)) },
+    });
+  };
+
+  const removeSkillShortcut = (skill: SkillShortcut) => {
+    removeSkill(skill.id);
+    toast(`Removed ${formatChord(skill.keys, os)} from /${skill.name}`, {
+      action: { label: "Undo", onClick: () => saveSkill(skill) },
+    });
+  };
+
+  return (
+    <>
+      <LayoutSection>
+        <div className="flex flex-col">
+          <h2 className="pb-1.5 text-sm font-semibold text-dls-text">Actions</h2>
+          <ul aria-label="Action shortcuts" className="flex flex-col border-t border-dls-border">
+            {APP_ACTIONS.map((definition) => {
+              const keys = actionKeys(state, definition.id);
+              const overridden = definition.id in overrides;
+              return (
+                <li key={definition.id} data-testid="action-shortcut-row" data-action={definition.id} className="flex min-h-11 items-center gap-3 border-b border-dls-border px-1">
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm text-dls-text">{definition.label}</span>
+                    {overridden && definition.defaultKeys ? (
+                      <span className="text-xs text-dls-secondary">Default {formatChord(definition.defaultKeys, os)}</span>
+                    ) : null}
+                  </span>
+                  {definition.fixedKeys ? (
+                    <span className="shrink-0 text-xs text-dls-secondary" title={`${definition.fixedKeys.source} key, always on`}>
+                      {formatChord(definition.fixedKeys.chord, os)} · {definition.fixedKeys.source}
+                    </span>
+                  ) : null}
+                  <KeyRecorder
+                    keys={keys}
+                    os={os}
+                    label={definition.label}
+                    onRecord={(chord) => {
+                      const problem = problemFor(chord, { actionId: definition.id });
+                      if (!problem) setActionKeys(definition.id, chord);
+                      return problem;
+                    }}
+                  />
+                  <span className="flex w-16 shrink-0 justify-end gap-1">
+                    {overridden && definition.defaultKeys ? (
+                      <Button variant="ghost" size="icon-xs" aria-label={`Reset ${definition.label} to ${formatChord(definition.defaultKeys, os)}`} title="Reset to default" onClick={() => resetAction(definition.id)}>
+                        <RotateCcw />
+                      </Button>
+                    ) : null}
+                    {keys ? (
+                      <Button variant="ghost" size="icon-xs" aria-label={`Clear key for ${definition.label}`} title="Clear key" onClick={() => clearAction(definition, keys)}>
+                        <X />
+                      </Button>
+                    ) : null}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </LayoutSection>
+
+      <LayoutSection>
+        <div className="flex flex-col">
+          <div className="flex min-h-9 items-center justify-between gap-3 pb-1.5">
+            <div className="flex items-baseline gap-2">
+              <h2 className="text-sm font-semibold text-dls-text">Skills</h2>
+              <span className="text-xs text-dls-secondary">Puts the skill in the message box</span>
+            </div>
+            <SkillPicker
+              client={props.client}
+              directory={props.directory}
+              taken={new Set(skills.map((skill) => skill.name))}
+              onPick={setPendingSkill}
+            />
+          </div>
+          <ul aria-label="Skill shortcuts" className="flex flex-col border-t border-dls-border">
+            {skills.length === 0 && !pendingSkill ? (
+              <li className="py-4 text-sm text-dls-secondary">No skill shortcuts yet. Add one to start a skill with a key.</li>
+            ) : null}
+            {skills.map((skill) => (
+              <li key={skill.id} data-testid="skill-shortcut-row" className="flex min-h-11 items-center gap-3 border-b border-dls-border px-1">
+                <span className="min-w-0 truncate text-sm text-dls-text">/{skill.name}</span>
+                <KeyRecorder
+                  keys={skill.keys}
+                  os={os}
+                  label={`/${skill.name}`}
+                  onRecord={(chord) => {
+                    const problem = problemFor(chord, { skillId: skill.id });
+                    if (!problem) saveSkill({ ...skill, keys: chord });
+                    return problem;
+                  }}
+                />
+                <span className="flex w-16 shrink-0 justify-end">
+                  <Button variant="ghost" size="icon-xs" aria-label={`Remove shortcut for /${skill.name}`} onClick={() => removeSkillShortcut(skill)}>
+                    <Trash2 />
+                  </Button>
+                </span>
+              </li>
+            ))}
+            {pendingSkill ? (
+              <li data-testid="skill-shortcut-row" data-state="pending" className="flex min-h-11 items-center gap-3 border-b border-dls-border px-1">
+                <span className="min-w-0 truncate text-sm text-dls-text">/{pendingSkill}</span>
+                <KeyRecorder
+                  keys={null}
+                  os={os}
+                  label={`/${pendingSkill}`}
+                  autoRecord
+                  onCancel={() => setPendingSkill(null)}
+                  onRecord={(chord) => {
+                    const problem = problemFor(chord, {});
+                    if (problem) return problem;
+                    saveSkill({ id: createSkillShortcutId(), name: pendingSkill, keys: chord });
+                    setPendingSkill(null);
+                    return null;
+                  }}
+                />
+                <span className="flex w-16 shrink-0 justify-end">
+                  <Button variant="ghost" size="icon-xs" aria-label="Cancel" onClick={() => setPendingSkill(null)}>
+                    <X />
+                  </Button>
+                </span>
+              </li>
+            ) : null}
+          </ul>
+        </div>
+      </LayoutSection>
+    </>
+  );
+}
+
 export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
   const platform = usePlatform();
   const navigatorPlatform = typeof navigator === "undefined" ? "" : navigator.platform;
@@ -331,6 +618,26 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
   const removeShortcut = useModelShortcutsStore((state) => state.remove);
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const [editor, setEditor] = useState<EditorTarget | null>(null);
+  const actionOverrides = useActionShortcutsStore((state) => state.overrides);
+  const skillShortcuts = useActionShortcutsStore((state) => state.skills);
+  const actionChords = useMemo(() => {
+    const state = { overrides: actionOverrides, skills: skillShortcuts };
+    return [
+      ...APP_ACTIONS.flatMap((definition) => {
+        const keys = actionKeys(state, definition.id);
+        return [
+          ...(keys && keys !== definition.defaultKeys ? [{ chord: keys, label: definition.label }] : []),
+          ...(definition.fixedKeys ? [{ chord: definition.fixedKeys.chord, label: definition.label }] : []),
+        ];
+      }),
+      ...skillShortcuts.map((skill) => ({ chord: skill.keys, label: `/${skill.name}` })),
+    ];
+  }, [actionOverrides, skillShortcuts]);
+  const actionDefaults = useMemo(() => new Set(APP_ACTIONS.flatMap((definition) => (definition.defaultKeys ? [definition.defaultKeys] : []))), []);
+  const takenByOthers = useMemo(() => [
+    ...builtInChords(os).filter((entry) => !actionDefaults.has(entry.chord)),
+    ...shortcuts.map((shortcut) => ({ chord: shortcut.keys, label: shortcut.action.modelTitle ?? shortcut.action.modelID })),
+  ], [actionDefaults, os, shortcuts]);
   const catalogQuery = useProviderListQuery({
     client: props.client,
     baseUrl: props.baseUrl,
@@ -365,9 +672,6 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
   };
 
   const chatShortcuts = [
-    { label: "New session", keys: formatChord("Mod+N", os) },
-    { label: "Command palette", keys: formatChord("Mod+K", os) },
-    { label: "Archive session", keys: formatChord(ARCHIVE_SESSION_CHORD, os) },
     { label: "Next saved model", keys: os === "macos" ? "⌃⇧M" : favoriteModelShortcutLabel },
     { label: "Cycle reasoning", keys: thinkingModeShortcutLabel(thinkingOs) },
     { label: "Toggle Fast", keys: fastModeShortcutLabel(thinkingOs) },
@@ -390,7 +694,7 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
 
           {editor && editor.shortcut === null && editor.model === null ? (
             <div className="pb-3">
-              <ShortcutEditor target={editor} os={os} models={models} pickerOptions={pickerOptions} savedKeys={savedKeys} shortcuts={shortcuts} onCancel={() => setEditor(null)} onSave={handleSave} />
+              <ShortcutEditor target={editor} os={os} models={models} pickerOptions={pickerOptions} savedKeys={savedKeys} shortcuts={shortcuts} actionChords={actionChords} onCancel={() => setEditor(null)} onSave={handleSave} />
             </div>
           ) : null}
 
@@ -415,7 +719,7 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
               if (editor?.shortcut?.id === shortcut.id) {
                 return (
                   <li key={shortcut.id} className="border-b border-dls-border py-2">
-                    <ShortcutEditor target={editor} os={os} models={models} pickerOptions={pickerOptions} savedKeys={savedKeys} shortcuts={shortcuts} onCancel={() => setEditor(null)} onSave={handleSave} />
+                    <ShortcutEditor target={editor} os={os} models={models} pickerOptions={pickerOptions} savedKeys={savedKeys} shortcuts={shortcuts} actionChords={actionChords} onCancel={() => setEditor(null)} onSave={handleSave} />
                   </li>
                 );
               }
@@ -455,7 +759,7 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
               if (editor && !editor.shortcut && editor.model && modelRefKey(editor.model) === modelRefKey(favorite)) {
                 return (
                   <li key={modelRefKey(favorite)} className="border-b border-dls-border py-2">
-                    <ShortcutEditor target={editor} os={os} models={models} pickerOptions={pickerOptions} savedKeys={savedKeys} shortcuts={shortcuts} onCancel={() => setEditor(null)} onSave={handleSave} />
+                    <ShortcutEditor target={editor} os={os} models={models} pickerOptions={pickerOptions} savedKeys={savedKeys} shortcuts={shortcuts} actionChords={actionChords} onCancel={() => setEditor(null)} onSave={handleSave} />
                   </li>
                 );
               }
@@ -477,6 +781,8 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
           </ul>
         </div>
       </LayoutSection>
+
+      <ActionShortcutsSection os={os} client={props.client} directory={props.directory} takenElsewhere={takenByOthers} />
 
       <LayoutSection>
         <div className="flex flex-col">

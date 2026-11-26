@@ -41,7 +41,7 @@ export type UseShellShortcutsInput = {
 export function useCommandPaletteShortcut(enabled = true) {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const handleCommandPaletteShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!enabled) return;
+    if (!enabled || event.defaultPrevented) return;
     const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
     const mod = isMac ? event.metaKey : event.ctrlKey;
     if (!mod || event.shiftKey || event.altKey || event.key?.toLowerCase() !== "k") return;

@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client"
 import type { ComputerPermission, ComputerStatus, PrivateValueSettings } from "@openwork/types/desktop-ipc"
-import { ComputerUseSettings } from "../src/react-app/domains/settings/pages/computer-use-view"
+import { ComputerUseSettings, RememberedFileSharing } from "../src/react-app/domains/settings/pages/computer-use-view"
 import { SettingsContent, SettingsPanel, SettingsPanelDescription, SettingsPanelHeading, SettingsPanelTitle } from "../src/react-app/domains/settings/shell/panel"
 import { Button } from "../src/components/ui/button"
 import { TooltipProvider } from "../src/components/ui/tooltip"
@@ -118,6 +118,7 @@ createRoot(root).render(
           </SettingsPanelHeading>
         </SettingsPanel>
         <ComputerUseSettings enabled={state !== "off"} />
+        <RememberedFileSharing />
       </SettingsContent>
     </div>
   </TooltipProvider>,

@@ -3,11 +3,9 @@ import type { PlatformCapabilities } from "@/app/lib/platform-capabilities";
 import { isSettingsTabAllowed, type DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
 import type { SettingsTab } from "@/app/types";
 import {
-  CLOUD_SETTINGS_TABS,
-  getGlobalSettingsTabs,
+  getSettingsNavGroups,
   getSettingsTabDescription,
   getSettingsTabLabel,
-  getWorkspaceSettingsTabs,
 } from "@/react-app/domains/settings/shell/settings-page";
 
 import { ADVANCED_SETTINGS_SECTIONS } from "@/react-app/domains/settings/advanced-sections";
@@ -18,7 +16,7 @@ const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
   ollama: ["local models", "llama", "offline", "on device"],
   ai: ["provider", "providers", "api key", "anthropic", "openai", "openrouter", "google", "gemini", "claude", "gpt", "connect model", "models"],
   preferences: ["default model", "reasoning", "thinking", "compaction", "effort"],
-  permissions: ["authorized folders", "folder access", "file access", "allow", "permission denied", "sandbox", "approvals"],
+  permissions: ["authorized folders", "folder access", "file access", "allow", "permission denied", "sandbox", "approvals", "file sharing", "uploads", "always allow", "drive", "gmail", "outlook"],
   extensions: ["library", "skills", "plugins", "mcp", "connections", "tools", "apps"],
   environment: ["env", "environment variables", "secrets", "tokens", "api keys"],
   advanced: ["advanced settings", "runtime", "developer", "connection", "server", "port", "reset", "fix", "repair", "clean up", "troubleshoot", "recovery"],
@@ -27,6 +25,8 @@ const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
   updates: ["version", "upgrade", "check for updates", "release"],
   debug: ["logs", "diagnostics", "developer mode"],
   usage: ["usage", "limit", "spend", "budget", "quota", "increase"],
+  computer: ["computer use", "control apps", "mouse", "keyboard", "screen", "accessibility", "screen recording", "automate mac"],
+  devices: ["devices", "remote", "cloud computers", "desktops", "other computers"],
   "cloud-account": ["sign in", "log in", "login", "account", "organization", "org", "den", "cloud", "openwork cloud"],
   general: ["settings", "preferences", "options", "configure"],
 };
@@ -48,13 +48,14 @@ export function buildCommandPaletteSettingsItems(input: {
   onOpenExtensions: (section?: string) => void;
 }): PaletteItem[] {
   const checkRestriction = input.checkRestriction ?? (() => false);
-  const tabs = ([
-    "general",
-    ...getWorkspaceSettingsTabs(),
-    ...getGlobalSettingsTabs(input.developerMode, input.capabilities),
-    "ollama",
-    ...CLOUD_SETTINGS_TABS,
-  ] satisfies SettingsTab[]).filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));
+  const nav = getSettingsNavGroups({ developerMode: input.developerMode, capabilities: input.capabilities, checkRestriction });
+  const tabs: SettingsTab[] = [
+    ...nav.hub,
+    ...nav.workspace,
+    ...nav.global,
+    ...(isSettingsTabAllowed({ tab: "ollama", checkRestriction }) ? ["ollama" as const] : []),
+    ...nav.cloud,
+  ];
 
   const tabItems = tabs.map((tab): PaletteItem => ({
     id: `settings:${tab}`,
