@@ -35,10 +35,13 @@ import {
   mcpMemberForToken,
   resolveMcpMemberIdentity,
 } from "./external-capabilities.js"
+import { personalAgentRunId, toolsWithheld } from "./workbot-turn-limits.js"
+import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal, personalAgentToolRefusal } from "../personal-agents/permissions-dispatch.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
 import { InventoryEventBus, type InventoryRevision } from "./inventory-event-bus.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, scoreText, SEARCH_CAPABILITIES_TOOL_NAME, tokenize } from "./search.js"
+import { personalAgentCredentialMember } from "../personal-agents/shared-logins.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 
 function toolArguments(value: unknown): Record<string, unknown> {
@@ -54,6 +57,7 @@ type ExternalMcpProxyOperation = ExternalMcpResourceOperation & {
   connection: ExternalMcpConnectionRow
   member: NonNullable<ExternalMcpResourceOperation["member"]>
   diagnosticReferenceId: string
+  actingMemberId?: NonNullable<ExternalMcpResourceOperation["member"]>["orgMembershipId"]
 }
 
 type ExternalMcpProxyDescriptor = Awaited<ReturnType<typeof describeExternalMcpServer>>
@@ -180,7 +184,7 @@ export function createExternalConnectionProxyServer(input: {
     ...tool,
     _meta: { ui: { visibility: ["app"] } },
   }))
-  const callTool = (tool: ExternalMcpProxyTool, args: Record<string, unknown>) => {
+  const callTool = async (tool: ExternalMcpProxyTool, args: Record<string, unknown>) => {
     const requiredScope = DEN_MCP_WRITE_SCOPE
     if (!input.scopes.has(requiredScope)) {
       return {
@@ -192,10 +196,12 @@ export function createExternalConnectionProxyServer(input: {
         }) }],
       }
     }
+    const refusal = await personalAgentToolRefusal({ scopes: input.scopes, connection, tool, actingMemberId: input.operation.actingMemberId ?? input.operation.member.orgMembershipId })
+    if (refusal) return { isError: true, content: [{ type: "text" as const, text: JSON.stringify(refusal) }] }
     const call = runtime.callTool({ ...input.operation, toolName: tool.name, args })
     recordConnectorCall(Promise.resolve(call), {
       organizationId: connection.organizationId,
-      orgMembershipId: input.operation.member.orgMembershipId,
+      orgMembershipId: input.operation.actingMemberId ?? input.operation.member.orgMembershipId,
       connectionId: connection.id,
       source: input.appHostClient === true ? "app" : "agent",
     }, toolCallFailed)
@@ -205,6 +211,7 @@ export function createExternalConnectionProxyServer(input: {
     && input.directExposureEnabled === true
     && input.appHostClient !== true
   const downstreamUi = input.descriptor.capabilities.extensions?.[EXTENSION_ID]
+  const withheldTools = toolsWithheld(input.scopes)?.get(connection.id)
   const listProviderTools = async () => {
     if (!input.descriptor.capabilities.tools) return []
     return (await runtime.listTools(
@@ -215,6 +222,7 @@ export function createExternalConnectionProxyServer(input: {
     )).filter((tool) => (
       !PROXY_GATEWAY_TOOL_NAMES.has(tool.name)
       && !evaluateToolPolicy(connection.toolPolicy, tool.name).blocked
+      && !withheldTools?.has(tool.name)
     ))
   }
   const listDirectTools = async () => (await listProviderTools()).filter(toolVisibleToModel)
@@ -513,6 +521,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
 
     const requestedId = c.req.param("connectionId")
     if (isMcpAppServerId(requestedId)) {
+      if (personalAgentRunId(principal.scopes) !== undefined) return c.json(personalAgentPolicyRefusal(PERSONAL_AGENT_UNAPPROVABLE_WRITE), 403)
       return handleMcpAppServerRequest({ app: app as unknown as Hono, context: c, principal, appId: requestedId })
     }
 
@@ -531,6 +540,8 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     })
     if (!resolvedMember) return unavailable()
     const member = mcpMemberForToken(resolvedMember, principal.scopes)
+    const runRefusal = await personalAgentRunDispatchRefusal(principal.scopes, organizationId)
+    if (runRefusal) return c.json(runRefusal, 403)
 
     const connection = await deps.connection({ organizationId, connectionId })
     const granted = connection && await deps.granted({
@@ -541,8 +552,9 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     if (!connection || !granted) return unavailable()
     const hold = externalMcpConnectionHold(connection, member)
     if (hold) return unavailable(hold.message)
+    const credentialMemberId = await personalAgentCredentialMember({ scopes: principal.scopes, connection, actingMemberId: member.orgMembershipId })
     if (usesMemberApiKey(connection)
-      && !await deps.memberKeyReady(connection, member.orgMembershipId)) {
+      && !await deps.memberKeyReady(connection, credentialMemberId)) {
       return unavailable("Connect your personal API key in Your Connections.")
     }
 
@@ -550,11 +562,12 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
 
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
     const redirectUri = `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connection.id)}/connect/callback`
-    const downstreamMember = { orgMembershipId: member.orgMembershipId }
+    const downstreamMember = { orgMembershipId: credentialMemberId }
     const operation = {
       connection,
       redirectUri,
       member: downstreamMember,
+      actingMemberId: member.orgMembershipId,
       diagnosticReferenceId: requestId,
     }
     return deps.proxy({

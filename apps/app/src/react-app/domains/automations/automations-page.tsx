@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 import { useNavigate, useSearchParams } from "react-router"
 import { globalSettingsRoute, workspaceSettingsRoute } from "@/react-app/shell/workspace-routes"
+import { AgentFace } from "@/react-app/design-system/agent-face"
 import type {
   AutomationDetail,
   AutomationRun,
@@ -173,6 +174,7 @@ function LoadingState() {
 
 export function AutomationsPage(props: {
   providerCatalog?: AutomationProviderCatalog
+  agentNames?: ReadonlyMap<string, string>
   workspaceId?: string | null
   headerActionsTarget?: HTMLElement | null
   onSignIn?: () => void
@@ -791,8 +793,9 @@ export function AutomationsPage(props: {
         </Empty>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
-          {filteredItems.map((item) => (
-            <button
+          {filteredItems.map((item) => {
+            const agentName = item.automation.agentId ? props.agentNames?.get(item.automation.agentId) : undefined;
+            return <button
               key={item.automation.id}
               type="button"
               data-automation-id={item.automation.id}
@@ -812,6 +815,7 @@ export function AutomationsPage(props: {
                 </div>
                 <Badge variant={stateVariant(item.automation.state)}>{stateLabel(item.automation.state)}</Badge>
               </div>
+              {agentName && <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground"><AgentFace name={agentName} /><span className="truncate">{agentName}</span></p>}
               <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground" data-automation-computer={item.revision.executionTarget ?? "desktop"}>
                 {item.revision.executionTarget === "cloud" ? <Cloud className="size-3.5" aria-hidden="true" /> : <Monitor className="size-3.5" aria-hidden="true" />}
                 <span>{item.revision.executionTarget === "cloud" ? "Cloud computer" : "Desktop computer"}</span>
@@ -821,7 +825,7 @@ export function AutomationsPage(props: {
                 <span>{item.latestRun ? `Last run: ${runStatusLabel(item.latestRun)}` : `Next: ${formatAutomationTime(item.automation.nextDueAt)}`}</span>
               </div>
             </button>
-          ))}
+          })}
         </div>
       )}
       {sharingEnabled && !showArchived ? (

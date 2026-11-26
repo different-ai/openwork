@@ -48,6 +48,7 @@ import {
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { useSessionExtensions } from "@/react-app/kernel/session-extensions";
 import { resolveExtensionIconSrc } from "../../../design-system/extension-icon-src";
 import { useBrandAppName, useBrandLogoUrl } from "../../cloud/brand-theme";
 import { canCreateWorkspaces } from "../../../../app/lib/workspace-creation-policy";
@@ -695,6 +696,7 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 
 export function AppSidebar(props: AppSidebarProps) {
   const { open, isMobile } = useSidebar();
+  const extensions = useSessionExtensions();
   const expandedWorkspaceIdList = useUiStateStore((state) => state.expandedWorkspaceIds);
   const expandWorkspace = useUiStateStore((state) => state.expandWorkspace);
   const toggleWorkspaceExpanded = useUiStateStore((state) => state.toggleWorkspaceExpanded);
@@ -926,6 +928,7 @@ export function AppSidebar(props: AppSidebarProps) {
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
             ) : null}
+            <extensions.SidebarSection />
             <div className={cn("group/workspaces-header flex h-6 shrink-0 items-center mt-4", SIDEBAR_SECTION_LANE)}>
               <SidebarViewSwitch
                 view={feedView ? "feed" : "workspaces"}

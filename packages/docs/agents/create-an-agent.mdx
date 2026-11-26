@@ -1,0 +1,41 @@
+---
+title: "Create an agent"
+sidebarTitle: "Create an agent"
+description: "Describe a job in the OpenWork app, review the plan, and request the first run."
+---
+<Warning>
+Agents are in private alpha. OpenWork does not officially support this feature yet, and how it works may change. To try it, ask your OpenWork contact to turn it on for your organization.
+</Warning>
+
+## Start an agent
+
+<Steps>
+  <Step title="Open a new agent chat">
+    In the OpenWork app sidebar, click **+** beside **Agents**. The agent opens a chat and asks what it should do.
+  </Step>
+  <Step title="Tell it the job">
+    Say what to check, how often to check, and what to report. For example:
+
+    > Call the agent Bug watcher and the routine Check #bugs. Every weekday at 9 AM, read #bugs in Slack and summarize new bug reports here. Never post in Slack.
+  </Step>
+  <Step title="Review the plan">
+    Read the plan and the **Start like this?** card. Pick **Yes, start** if the job and schedule look right. Pick **Change how often** to revise the schedule or **Something else** to describe a different job.
+
+    ![The agent's plan in chat, with the Start like this? card](/images/agents/start-like-this.png)
+  </Step>
+  <Step title="Read the first result">
+    **Yes, start** creates the agent and its first routine, then requests a run. You don't have to wait for the scheduled time. Look for the result below the chat messages.
+  </Step>
+</Steps>
+
+## Open the agent's panel
+
+Click the agent's name at the top of its chat. The panel shows:
+
+- **On** means at least one routine is on. **Off** means none are on. The panel shows the next run if one is scheduled. If an admin paused the agent, it shows **Paused by an admin** instead.
+- **Routines** lists what the agent runs and how often.
+- **Run now** requests a run of the first routine shown. If that routine is already running, the next run waits in line. Up to five runs can wait per routine. The app tells you if the line is full.
+- **Share** lets the owner or a manager [give teammates access](/agents/share-an-agent), if the organization allows them to share.
+- **Settings** shows [what the agent can use and what it has spent](/agents/permissions).
+
+To change the job, ask in the chat. Only the owner can approve a change to the brief, tool settings, or routines. To start a different job with its own conversation, click **+** beside **Agents** again.

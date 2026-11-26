@@ -134,6 +134,17 @@
             ]
           },
           {
+            "group": "Agents (private alpha)",
+            "pages": [
+              "agents/overview",
+              "agents/create-an-agent",
+              "agents/permissions",
+              "agents/share-an-agent",
+              "agents/admin-controls",
+              "agents/limits"
+            ]
+          },
+          {
             "group": "Maintenance",
             "pages": [
               "desktop-app/maintenance/back-up-conversation-history"

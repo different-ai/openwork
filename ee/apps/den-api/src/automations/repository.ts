@@ -22,6 +22,7 @@ import type {
   AutomationDesktopRunnerCapability,
   AutomationError,
   AutomationExecutionTarget,
+  AutomationModel,
   AutomationRevision,
   AutomationRun,
   AutomationRunEvent,
@@ -41,6 +42,11 @@ import {
   AutomationRunEventTable,
   AutomationRunTable,
   AutomationTable,
+  PersonalAgentTable,
+  PersonalAgentShareTable,
+  PersonalAgentAudienceTable,
+  TeamMemberTable,
+  TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
@@ -49,6 +55,7 @@ import { automationAffectedRows, automationUpdateChangedRows } from "./update-re
 import { cloudArtifactStateUpdate } from "./cloud-artifact-state.js"
 
 type AutomationRow = typeof AutomationTable.$inferSelect
+type AgentRow = typeof PersonalAgentTable.$inferSelect
 type RevisionRow = typeof AutomationRevisionTable.$inferSelect
 type RunRow = typeof AutomationRunTable.$inferSelect
 type EventRow = typeof AutomationRunEventTable.$inferSelect
@@ -107,6 +114,7 @@ function mapAutomation(row: AutomationRow): Automation {
     latestSuccessfulRunId: row.latest_successful_run_id,
     latestSuccessfulResult: row.latest_successful_result,
     needsAttentionReason: row.needs_attention_reason ?? null,
+    ...(row.agent_id ? { agentId: row.agent_id } : {}),
     createdAt: row.created_at.getTime(),
     updatedAt: row.updated_at.getTime(),
     archivedAt: ms(row.archived_at),
@@ -129,6 +137,7 @@ function mapRevision(row: RevisionRow): AutomationRevision {
     action,
     executionTarget: row.execution_target,
     workspaceId: row.workspace_id ?? null,
+    ...(row.agent_revision_id ? { agentRevisionId: row.agent_revision_id } : {}),
     maximumRuntimeMs: row.maximum_runtime_ms,
     digest: row.digest,
     createdAt: row.created_at.getTime(),
@@ -218,28 +227,66 @@ function mapEvent(row: EventRow): AutomationRunEvent {
   }
 }
 
-async function latestRun(automationId: AutomationRow["id"]): Promise<AutomationRun | null> {
+type RunAudience = { actingMemberId?: string | null; includeOwnerRuns?: boolean }
+
+function runActorFilter(audience: RunAudience = {}) {
+  const ownerRuns = isNull(AutomationRunTable.acting_member_id)
+  if (!audience.actingMemberId) return ownerRuns
+  const ownRuns = eq(AutomationRunTable.acting_member_id, normalizeMemberId(audience.actingMemberId))
+  return audience.includeOwnerRuns ? or(ownRuns, ownerRuns) : ownRuns
+}
+
+function personalAgentRunSummaryFilter(audience: RunAudience, agentId: AgentRow["id"]) {
+  const scheduled = ne(AutomationRunTable.trigger, "manual")
+  if (audience.includeOwnerRuns) return or(runActorFilter(audience), scheduled)
+  if (!audience.actingMemberId) return runActorFilter(audience)
+  const memberId = normalizeMemberId(audience.actingMemberId)
+  const shares = db.$primary.select({ id: PersonalAgentShareTable.id }).from(PersonalAgentShareTable).where(and(
+    eq(PersonalAgentShareTable.agent_id, agentId), eq(PersonalAgentShareTable.member_id, memberId),
+    lte(PersonalAgentShareTable.created_at, AutomationRunTable.created_at),
+  ))
+  const audiences = db.$primary.select({ id: PersonalAgentAudienceTable.id }).from(PersonalAgentAudienceTable)
+    .leftJoin(TeamTable, and(eq(TeamTable.id, PersonalAgentAudienceTable.team_id), eq(TeamTable.organizationId, PersonalAgentAudienceTable.organization_id)))
+    .leftJoin(TeamMemberTable, and(eq(TeamMemberTable.teamId, TeamTable.id), eq(TeamMemberTable.orgMembershipId, memberId)))
+    .where(and(eq(PersonalAgentAudienceTable.agent_id, agentId), lte(PersonalAgentAudienceTable.created_at, AutomationRunTable.created_at),
+      or(eq(PersonalAgentAudienceTable.audience_key, "organization"), lte(TeamMemberTable.createdAt, AutomationRunTable.created_at))))
+  return or(and(eq(AutomationRunTable.trigger, "manual"), runActorFilter(audience)), and(scheduled, or(sql`exists (${shares})`, sql`exists (${audiences})`)))
+}
+
+function mapPersonalAgentRunSummary(row: RunRow, audience: RunAudience): AutomationRun {
+  const ownRun = row.acting_member_id === null ? audience.includeOwnerRuns
+    : audience.actingMemberId && row.acting_member_id === normalizeMemberId(audience.actingMemberId)
+  const run = mapRun(row)
+  if (ownRun) return run
+  const { triggerContext, ...summary } = run
+  return { ...summary, executionThread: null, codemodeReceiptId: null, validatedResult: null, error: null, leaseOwner: null, leaseExpiresAt: null, heartbeatAt: null }
+}
+
+async function latestRun(automationId: AutomationRow["id"], audience: RunAudience, agentId?: AgentRow["id"]): Promise<AutomationRun | null> {
   const rows = await db.$primary.select().from(AutomationRunTable)
-    .where(eq(AutomationRunTable.automation_id, automationId))
+    .where(and(eq(AutomationRunTable.automation_id, automationId), agentId ? personalAgentRunSummaryFilter(audience, agentId) : runActorFilter(audience)))
     .orderBy(desc(AutomationRunTable.created_at), desc(AutomationRunTable.id)).limit(1)
-  return rows[0] ? mapRun(rows[0]) : null
+  const [run] = rows
+  if (!run) return null
+  return agentId ? mapPersonalAgentRunSummary(run, audience) : mapRun(run)
 }
 
 async function itemFromRows(automation: AutomationRow, revision: RevisionRow): Promise<AutomationListItem> {
-  return { automation: mapAutomation(automation), revision: mapRevision(revision), latestRun: await latestRun(automation.id) }
+  const run = await latestRun(automation.id, { actingMemberId: automation.owner_member_id, includeOwnerRuns: true })
+  return { automation: { ...mapAutomation(automation), latestRunAt: run?.createdAt ?? null }, revision: mapRevision(revision), latestRun: run }
 }
 
-async function itemsFromRows(automations: AutomationRow[]): Promise<AutomationListItem[]> {
+async function itemsFromRows(automations: AutomationRow[], memberId?: string): Promise<AutomationListItem[]> {
   if (automations.length === 0) return []
 
-  const latestRunConditions = automations.flatMap((automation) => automation.latest_run_at
+  const latestRunConditions = automations.flatMap((automation) => !automation.agent_id && automation.latest_run_at
     ? [and(
         eq(AutomationRunTable.automation_id, automation.id),
         eq(AutomationRunTable.created_at, automation.latest_run_at),
       )]
     : [])
   const [revisions, latestRuns] = await Promise.all([
-    db.select().from(AutomationRevisionTable).where(inArray(
+    db.$primary.select().from(AutomationRevisionTable).where(inArray(
       AutomationRevisionTable.id,
       automations.map((automation) => automation.current_revision_id),
     )),
@@ -257,16 +304,19 @@ async function itemsFromRows(automations: AutomationRow[]): Promise<AutomationLi
     }
   }
 
-  return automations.map((automation) => {
+  return Promise.all(automations.map(async (automation) => {
     const revision = revisionById.get(automation.current_revision_id)
     if (!revision) throw new Error("automation_revision_not_found")
-    const run = latestRunByAutomationId.get(automation.id)
+    const row = latestRunByAutomationId.get(automation.id)
+    const run = automation.agent_id
+      ? memberId ? await latestRun(automation.id, { actingMemberId: memberId, includeOwnerRuns: memberId === automation.owner_member_id }, automation.agent_id) : null
+      : row ? mapRun(row) : null
     return {
-      automation: mapAutomation(automation),
+      automation: { ...mapAutomation(automation), latestRunAt: run?.createdAt ?? null },
       revision: mapRevision(revision),
-      latestRun: run ? mapRun(run) : null,
+      latestRun: run,
     }
-  })
+  }))
 }
 
 function isLockConflict(error: unknown): boolean {
@@ -281,31 +331,50 @@ function nextDueForSubmittedSchedule(schedule: AutomationSchedule, now: number) 
   return schedule.at
 }
 
+function personalAgentQueueHead() {
+  return sql`not exists (
+    select 1 from ${AutomationRunTable} as sibling
+    where sibling.automation_id = ${AutomationRunTable.automation_id}
+      and (sibling.status in ('claimed', 'running')
+        or (sibling.status = 'queued' and (sibling.created_at, sibling.id) < (${AutomationRunTable.created_at}, ${AutomationRunTable.id})))
+  )`
+}
+
 export class DenAutomationRepository implements AutomationRepository {
   async listQueuedCloud(input: { limit: number }): Promise<string[]> {
-    const rows = await db.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(and(
-      eq(AutomationRunTable.status, "queued"),
-      eq(AutomationRunTable.execution_target, "cloud"),
-    )).orderBy(asc(AutomationRunTable.created_at), asc(AutomationRunTable.id)).limit(input.limit)
+    const rows = await db.$primary.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
+      .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
+      .where(and(
+        eq(AutomationRunTable.status, "queued"),
+        eq(AutomationRunTable.execution_target, "cloud"),
+        or(isNull(AutomationTable.agent_id), personalAgentQueueHead()),
+      )).orderBy(asc(AutomationRunTable.created_at), asc(AutomationRunTable.id)).limit(input.limit)
     return rows.map((row) => row.id)
   }
-  async create(input: Parameters<AutomationRepository["create"]>[0]): Promise<AutomationListItem> {
+  async create(input: Parameters<AutomationRepository["create"]>[0] & {
+    agent?: { agentId: string }
+    tx?: AutomationTransaction
+  }): Promise<AutomationListItem> {
     const definition = normalizedDefinition(input.definition)
     const now = new Date(input.now)
     const newAutomationId = createDenTypeId("automation")
     const newRevisionId = createDenTypeId("automationRevision")
     const maximumRuntimeMs = AUTOMATION_DEFAULT_MAXIMUM_RUNTIME_MS
-    const digest = automationRevisionDigest({
-      instructions: definition.instructions,
-      schedule: definition.schedule,
-      model: definition.model,
-      action: definition.action,
-      executionTarget: definition.executionTarget,
-      maximumRuntimeMs,
-      ...(definition.workspaceId ? { workspaceId: definition.workspaceId } : {}),
-    })
+    const organizationId = normalizeOrganizationId(input.organizationId)
+    const ownerMemberId = normalizeMemberId(input.ownerMemberId)
     const nextDueAt = nextDueForSubmittedSchedule(definition.schedule, input.now)
-    await db.transaction(async (tx) => {
+    const write = async (tx: AutomationTransaction) => {
+      let agent: { id: AgentRow["id"]; revisionId: AgentRow["current_revision_id"] } | null = null
+      if (input.agent) {
+        const [owned] = await tx.select().from(PersonalAgentTable).where(and(
+          eq(PersonalAgentTable.id, normalizeDenTypeId("personalAgent", input.agent.agentId)),
+          eq(PersonalAgentTable.organization_id, organizationId),
+          eq(PersonalAgentTable.owner_member_id, ownerMemberId),
+          eq(PersonalAgentTable.state, "active"),
+        )).limit(1).for("share")
+        if (!owned) throw new Error("personal_agent_not_found")
+        agent = { id: owned.id, revisionId: owned.current_revision_id }
+      }
       await tx.insert(AutomationRevisionTable).values({
         id: newRevisionId,
         automation_id: newAutomationId,
@@ -320,35 +389,48 @@ export class DenAutomationRepository implements AutomationRepository {
         action: definition.action,
         execution_target: definition.executionTarget,
         workspace_id: definition.workspaceId,
+        agent_revision_id: agent?.revisionId ?? null,
         maximum_runtime_ms: maximumRuntimeMs,
-        digest,
+        digest: automationRevisionDigest({
+          instructions: definition.instructions,
+          schedule: definition.schedule,
+          model: definition.model,
+          action: definition.action,
+          executionTarget: definition.executionTarget,
+          maximumRuntimeMs,
+          ...(definition.workspaceId ? { workspaceId: definition.workspaceId } : {}),
+          ...(agent ? { agentRevisionId: agent.revisionId } : {}),
+        }),
         created_at: now,
       })
       await tx.insert(AutomationTable).values({
         id: newAutomationId,
-        organization_id: normalizeOrganizationId(input.organizationId),
-        owner_member_id: normalizeMemberId(input.ownerMemberId),
+        organization_id: organizationId,
+        owner_member_id: ownerMemberId,
         name: definition.name,
         state: input.initialState ?? "active",
         current_revision_id: newRevisionId,
         next_due_at: input.initialState === "inactive" ? null : date(nextDueAt),
         needs_attention_reason: null,
+        agent_id: agent?.id ?? null,
         archived_at: null,
         created_at: now,
         updated_at: now,
       })
-    })
+    }
+    await (input.tx ? write(input.tx) : db.transaction(write))
     const created = await this.get({
       organizationId: input.organizationId,
       ownerMemberId: input.ownerMemberId,
       automationId: newAutomationId,
+      tx: input.tx,
     })
     if (!created) throw new Error("automation_create_not_durable")
     return created
   }
 
-  async update(input: Parameters<AutomationRepository["update"]>[0]): Promise<AutomationListItem> {
-    await db.transaction(async (tx) => {
+  async update(input: Parameters<AutomationRepository["update"]>[0] & { tx?: AutomationTransaction }): Promise<AutomationListItem> {
+    const write = async (tx: AutomationTransaction) => {
       const automationRows = await tx.select().from(AutomationTable).where(and(
         eq(AutomationTable.id, normalizeAutomationId(input.automationId)),
         eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
@@ -394,6 +476,7 @@ export class DenAutomationRepository implements AutomationRepository {
         executionTarget,
         maximumRuntimeMs: current.maximum_runtime_ms,
         ...(workspaceId ? { workspaceId } : {}),
+        ...(current.agent_revision_id ? { agentRevisionId: current.agent_revision_id } : {}),
       })
       if (digest === current.digest) {
         await tx.update(AutomationTable).set({
@@ -416,6 +499,7 @@ export class DenAutomationRepository implements AutomationRepository {
         action,
         execution_target: executionTarget,
         workspace_id: workspaceId,
+        agent_revision_id: current.agent_revision_id,
         maximum_runtime_ms: current.maximum_runtime_ms,
         digest,
         created_at: new Date(input.now),
@@ -428,7 +512,8 @@ export class DenAutomationRepository implements AutomationRepository {
         needs_attention_reason: null,
         updated_at: new Date(input.now),
       }).where(eq(AutomationTable.id, automation.id))
-    })
+    }
+    await (input.tx ? write(input.tx) : db.transaction(write))
     const updated = await this.get(input)
     if (!updated) throw new Error("automation_update_not_durable")
     return updated
@@ -450,24 +535,24 @@ export class DenAutomationRepository implements AutomationRepository {
     }
   }
 
-  async get(input: Parameters<AutomationRepository["get"]>[0]): Promise<AutomationListItem | null> {
-    const rows = await db.$primary.select().from(AutomationTable).where(and(
+  async get(input: Parameters<AutomationRepository["get"]>[0] & { tx?: AutomationTransaction }): Promise<AutomationListItem | null> {
+    const rows = await (input.tx ?? db.$primary).select().from(AutomationTable).where(and(
       eq(AutomationTable.id, normalizeAutomationId(input.automationId)),
       eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
     )).limit(1)
     if (!rows[0]) return null
-    const revisions = await db.$primary.select().from(AutomationRevisionTable)
+    const revisions = await (input.tx ?? db.$primary).select().from(AutomationRevisionTable)
       .where(eq(AutomationRevisionTable.id, rows[0].current_revision_id)).limit(1)
-    return revisions[0] ? itemFromRows(rows[0], revisions[0]) : null
+    return revisions[0] ? (input.tx ? { automation: mapAutomation(rows[0]), revision: mapRevision(revisions[0]), latestRun: null } : itemFromRows(rows[0], revisions[0])) : null
   }
 
-  async setState(input: Parameters<AutomationRepository["setState"]>[0]): Promise<AutomationListItem | null> {
+  async setState(input: Parameters<AutomationRepository["setState"]>[0] & { tx?: AutomationTransaction }): Promise<AutomationListItem | null> {
     const current = await this.get(input)
     if (!current) return null
     const same = current.automation.state === input.state
     if (!same) {
-      await db.update(AutomationTable).set({
+      await (input.tx ?? db).update(AutomationTable).set({
         state: input.state,
         next_due_at: input.state === "active"
           ? date(nextAutomationOccurrence(current.revision.schedule, input.now))
@@ -475,9 +560,17 @@ export class DenAutomationRepository implements AutomationRepository {
         archived_at: input.state === "archived" ? new Date(input.now) : null,
         needs_attention_reason: null,
         updated_at: new Date(input.now),
-      }).where(eq(AutomationTable.id, normalizeAutomationId(current.automation.id)))
+      }).where(and(
+        eq(AutomationTable.id, normalizeAutomationId(current.automation.id)),
+        current.automation.agentId && input.state !== "archived" ? and(
+          ne(AutomationTable.state, "archived"),
+          eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+        ) : undefined,
+      ))
     }
-    return this.get(input)
+    const updated = await this.get(input)
+    if (current.automation.agentId && input.state !== "archived" && updated?.automation.state === "archived") return null
+    return updated
   }
 
   async listActiveCalendarTriggers(input: { limit: number }): Promise<AutomationListItem[]> {
@@ -502,15 +595,23 @@ export class DenAutomationRepository implements AutomationRepository {
 
   async claim(input: Parameters<AutomationRepository["claim"]>[0] & {
     triggerContext?: AutomationRunTriggerContext | null
+    actingMemberId?: string
   }): Promise<AutomationClaimResult> {
     return db.transaction(async (tx) => {
       const locked = await tx.select().from(AutomationTable)
         .where(eq(AutomationTable.id, normalizeAutomationId(input.automation.id))).limit(1).for("update")
-      const currentState = locked[0]?.state
+      const [current] = locked
+      if (!current) throw new Error("automation_not_active")
+      const currentState = current.state
       const canRun = input.trigger === "manual"
         ? currentState === "active" || currentState === "inactive"
         : currentState === "active"
       if (!canRun) throw new Error("automation_not_active")
+      const repinned = locked[0]?.agent_id && locked[0].current_revision_id !== input.revision.id
+        ? await tx.select().from(AutomationRevisionTable)
+            .where(eq(AutomationRevisionTable.id, locked[0].current_revision_id)).limit(1)
+        : []
+      const revision = repinned[0] ? mapRevision(repinned[0]) : input.revision
       const identity = automationOccurrenceIdentity({
         automationId: input.automation.id,
         scheduledFor: input.scheduledFor,
@@ -519,16 +620,23 @@ export class DenAutomationRepository implements AutomationRepository {
       const duplicates = await tx.select().from(AutomationRunTable)
         .where(eq(AutomationRunTable.idempotency_key, identity.idempotencyKey)).limit(1)
       if (duplicates[0]) return { kind: "duplicate", run: mapRun(duplicates[0]) }
-      const active = await tx.select().from(AutomationRunTable).where(and(
-        eq(AutomationRunTable.automation_id, normalizeAutomationId(input.automation.id)),
+      const queueManual = current.agent_id !== null && input.trigger === "manual"
+      const queued = queueManual ? await tx.select({ createdAt: AutomationRunTable.created_at, trigger: AutomationRunTable.trigger })
+        .from(AutomationRunTable).where(and(
+          eq(AutomationRunTable.automation_id, current.id), eq(AutomationRunTable.status, "queued"),
+        )).orderBy(desc(AutomationRunTable.created_at), desc(AutomationRunTable.id)) : []
+      if (queued.filter((run) => run.trigger === "manual").length >= 5) throw new Error("personal_agent_run_queue_full")
+      const createdAt = new Date(Math.max(input.now, queued[0] ? queued[0].createdAt.getTime() + 1 : input.now))
+      const active = queueManual ? [] : await tx.select().from(AutomationRunTable).where(and(
+        eq(AutomationRunTable.automation_id, current.id),
         inArray(AutomationRunTable.status, ["queued", "claimed", "running"]),
       )).limit(1)
       const overlap = active.length > 0
       const newRunId = createDenTypeId("automationRun")
       const newCloudThreadId = createDenTypeId("automationThread")
       const nextDueAt = input.trigger === "manual"
-        ? input.automation.nextDueAt
-        : nextAutomationOccurrence(input.revision.schedule, input.scheduledFor ?? input.now)
+        ? ms(current.next_due_at)
+        : nextAutomationOccurrence(revision.schedule, input.scheduledFor ?? input.now)
       const claimDeadlineAt = computeAutomationClaimDeadline({
         trigger: input.trigger,
         now: input.now,
@@ -537,13 +645,16 @@ export class DenAutomationRepository implements AutomationRepository {
       })
       await tx.insert(AutomationRunTable).values({
         id: newRunId,
+        acting_member_id: current.agent_id
+          ? input.trigger === "manual" && input.actingMemberId ? normalizeMemberId(input.actingMemberId) : current.owner_member_id
+          : null,
         automation_id: normalizeAutomationId(input.automation.id),
-        revision_id: normalizeRevisionId(input.revision.id),
+        revision_id: normalizeRevisionId(revision.id),
         trigger: input.trigger,
         scheduled_for: date(input.scheduledFor),
         idempotency_key: identity.idempotencyKey,
         status: overlap ? "skipped" : "queued",
-        execution_target: input.revision.executionTarget ?? "desktop",
+        execution_target: revision.executionTarget ?? "desktop",
         claim_deadline_at: overlap ? null : new Date(claimDeadlineAt),
         lease_owner: null,
         lease_expires_at: null,
@@ -554,18 +665,18 @@ export class DenAutomationRepository implements AutomationRepository {
         engine_receipt: null,
         engine_sequence: 0,
         engine_admitted_at: null,
-        provider_id: input.revision.model.providerId,
-        model_id: input.revision.model.modelId,
-        model_variant: input.revision.model.variant ?? null,
+        provider_id: revision.model.providerId,
+        model_id: revision.model.modelId,
+        model_variant: revision.model.variant ?? null,
         finished_at: overlap ? new Date(input.now) : null,
         error: null,
         result_summary: overlap ? "Skipped because another occurrence is already active." : null,
         trigger_context: input.triggerContext ?? null,
         usage: emptyUsage,
-        created_at: new Date(input.now),
-        updated_at: new Date(input.now),
+        created_at: createdAt,
+        updated_at: createdAt,
       })
-      if (!overlap && (input.revision.executionTarget ?? "desktop") === "desktop") {
+      if (!overlap && (revision.executionTarget ?? "desktop") === "desktop") {
         await tx.insert(AutomationRunnerNotificationTable).values({
           organization_id: normalizeOrganizationId(input.automation.organizationId),
           owner_member_id: normalizeMemberId(input.automation.ownerMemberId),
@@ -575,21 +686,22 @@ export class DenAutomationRepository implements AutomationRepository {
         })
       }
       await tx.update(AutomationTable).set({
-        next_due_at: date(nextDueAt),
+        ...(input.trigger === "manual" ? {} : { next_due_at: date(nextDueAt) }),
         latest_run_at: new Date(input.now),
-        updated_at: new Date(input.now),
+        updated_at: input.trigger === "manual" ? current.updated_at : new Date(input.now),
       }).where(eq(AutomationTable.id, normalizeAutomationId(input.automation.id)))
       const runRows = await tx.select().from(AutomationRunTable).where(eq(AutomationRunTable.id, newRunId)).limit(1)
       if (!runRows[0]) throw new Error("automation_run_not_durable")
       return overlap
         ? { kind: "overlap", run: mapRun(runRows[0]) }
-        : { kind: "claimed", run: mapRun(runRows[0]), revision: input.revision }
+        : { kind: "claimed", run: mapRun(runRows[0]), revision }
     })
   }
 
   async recordSkippedManual(input: {
     organizationId: string
     ownerMemberId: string
+    actingMemberId?: string
     automation: Automation
     revision: AutomationRevision
     nonce: string
@@ -616,6 +728,7 @@ export class DenAutomationRepository implements AutomationRepository {
       const runId = createDenTypeId("automationRun")
       await tx.insert(AutomationRunTable).values({
         id: runId,
+        acting_member_id: locked[0].agent_id ? normalizeMemberId(input.actingMemberId ?? input.ownerMemberId) : null,
         automation_id: automationId,
         revision_id: revisionId,
         trigger: "manual",
@@ -645,7 +758,7 @@ export class DenAutomationRepository implements AutomationRepository {
       })
       await tx.update(AutomationTable).set({
         latest_run_at: new Date(input.now),
-        updated_at: new Date(input.now),
+        updated_at: locked[0].updated_at,
       }).where(eq(AutomationTable.id, automationId))
       const rows = await tx.select().from(AutomationRunTable).where(eq(AutomationRunTable.id, runId)).limit(1)
       if (!rows[0]) throw new Error("automation_run_not_durable")
@@ -656,6 +769,7 @@ export class DenAutomationRepository implements AutomationRepository {
   async cloudRunTarget(runId: string): Promise<{
     organizationId: string
     ownerMemberId: string
+    actingMemberId: string | null
     actionKind: "agent" | "saved_script" | null
     engineKind: string | null
     model: { providerId: string; modelId: string }
@@ -663,6 +777,7 @@ export class DenAutomationRepository implements AutomationRepository {
     const rows = await db.$primary.select({
       organizationId: AutomationTable.organization_id,
       ownerMemberId: AutomationTable.owner_member_id,
+      actingMemberId: AutomationRunTable.acting_member_id,
       engineKind: AutomationRunTable.engine_kind,
       providerId: AutomationRunTable.provider_id,
       modelId: AutomationRunTable.model_id,
@@ -677,6 +792,7 @@ export class DenAutomationRepository implements AutomationRepository {
     return {
       organizationId: row.organizationId,
       ownerMemberId: row.ownerMemberId,
+      actingMemberId: row.actingMemberId,
       actionKind: row.action?.kind ?? null,
       engineKind: row.engineKind ?? null,
       model: { providerId: row.providerId, modelId: row.modelId },
@@ -691,7 +807,7 @@ export class DenAutomationRepository implements AutomationRepository {
     engineKind?: string
     headlessEngineKind?: string
     now: number
-  }): Promise<DesktopClaim | null> {
+  }): Promise<(DesktopClaim & { actingMemberId: string | null }) | null> {
     for (let attempt = 1; ; attempt += 1) {
       try {
         return await this.claimCloudOnce(input)
@@ -702,7 +818,7 @@ export class DenAutomationRepository implements AutomationRepository {
     }
   }
 
-  private async claimCloudOnce(input: Parameters<DenAutomationRepository["claimCloud"]>[0]): Promise<DesktopClaim | null> {
+  private async claimCloudOnce(input: Parameters<DenAutomationRepository["claimCloud"]>[0]): Promise<(DesktopClaim & { actingMemberId: string | null }) | null> {
     return db.transaction(async (tx) => {
       const headless = input.headlessEngineKind ?? null
       const pool = headless === null
@@ -726,6 +842,27 @@ export class DenAutomationRepository implements AutomationRepository {
         )).limit(1).for("update")
       const selected = rows[0]
       if (!selected) return null
+      if (selected.automation.agent_id) {
+        const message = selected.automation.state === "archived" ? "This routine was archived, so it did not run."
+          : selected.run.trigger !== "manual" && selected.run.acting_member_id !== selected.automation.owner_member_id
+            ? "This agent changed owners, so this scheduled run did not start." : null
+        if (message) {
+          await tx.update(AutomationRunTable).set({ status: "cancelled", finished_at: new Date(input.now), updated_at: new Date(input.now), result_summary: message })
+            .where(eq(AutomationRunTable.id, selected.run.id))
+          return null
+        }
+        const blocking = await tx.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(and(
+          eq(AutomationRunTable.automation_id, selected.automation.id),
+          or(
+            inArray(AutomationRunTable.status, ["claimed", "running"]),
+            and(eq(AutomationRunTable.status, "queued"), or(
+              lt(AutomationRunTable.created_at, selected.run.created_at),
+              and(eq(AutomationRunTable.created_at, selected.run.created_at), lt(AutomationRunTable.id, selected.run.id)),
+            )),
+          ),
+        )).limit(1).for("update")
+        if (blocking.length) return null
+      }
       const revisions = await tx.select().from(AutomationRevisionTable)
         .where(eq(AutomationRevisionTable.id, selected.run.revision_id)).limit(1)
       const revision = revisions[0]
@@ -750,6 +887,7 @@ export class DenAutomationRepository implements AutomationRepository {
         automation: mapAutomation(selected.automation),
         revision: mapRevision(revision),
         run: mapRun(currentRuns[0]),
+        actingMemberId: currentRuns[0].acting_member_id,
       }
     }, { isolationLevel: "serializable", accessMode: "read write" })
   }
@@ -798,6 +936,14 @@ export class DenAutomationRepository implements AutomationRepository {
       eq(AutomationRunTable.status, "running"),
     )).limit(1)
     return rows[0] ? { cancelRequested: Boolean(rows[0].cancelRequestedAt), receipt: rows[0].receipt } : null
+  }
+
+  async setCloudRunModel(input: { runId: string; leaseOwner: string; model: AutomationModel }): Promise<void> {
+    await db.update(AutomationRunTable).set({ provider_id: input.model.providerId, model_id: input.model.modelId }).where(and(
+      eq(AutomationRunTable.id, normalizeRunId(input.runId)),
+      eq(AutomationRunTable.lease_owner, input.leaseOwner),
+      eq(AutomationRunTable.status, "running"),
+    ))
   }
 
   async completeCloud(input: {
@@ -984,6 +1130,7 @@ export class DenAutomationRepository implements AutomationRepository {
       .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
       .where(and(
         eq(AutomationRunTable.id, normalizeRunId(input.runId)),
+        runActorFilter({ actingMemberId: input.ownerMemberId, includeOwnerRuns: true }),
         eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
         eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
       )).limit(1)
@@ -1561,11 +1708,14 @@ export class DenAutomationRepository implements AutomationRepository {
     return expired
   }
 
-  async getRunReceipt(input: Parameters<AutomationRepository["getRunReceipt"]>[0]) {
+  async getRunReceipt(input: Parameters<AutomationRepository["getRunReceipt"]>[0] & RunAudience & { agentId?: string }) {
+    const audience = { actingMemberId: input.actingMemberId ?? input.ownerMemberId, includeOwnerRuns: input.includeOwnerRuns ?? !input.actingMemberId }
     const owned = await db.$primary.select({ automation: AutomationTable, run: AutomationRunTable })
       .from(AutomationRunTable).innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
       .where(and(
         eq(AutomationRunTable.id, normalizeRunId(input.runId)),
+        runActorFilter(audience),
+        input.agentId ? eq(AutomationTable.agent_id, normalizeDenTypeId("personalAgent", input.agentId)) : undefined,
         eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
         eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
       )).limit(1)
@@ -1577,7 +1727,7 @@ export class DenAutomationRepository implements AutomationRepository {
       .where(eq(AutomationRunEventTable.run_id, normalizeRunId(input.runId)))
       .orderBy(asc(AutomationRunEventTable.attempt), asc(AutomationRunEventTable.sequence))
     return {
-      automation: mapAutomation(owned[0].automation),
+      automation: { ...mapAutomation(owned[0].automation), latestRunAt: (await latestRun(owned[0].automation.id, audience))?.createdAt ?? null },
       revision: mapRevision(revisions[0]),
       run: mapRun(owned[0].run),
       events: events.map(mapEvent),
@@ -1588,7 +1738,7 @@ export class DenAutomationRepository implements AutomationRepository {
     const automation = await this.get(input)
     if (!automation) return { items: [], nextCursor: null }
     const limit = Math.max(1, Math.min(input.limit, 100))
-    const conditions = [eq(AutomationRunTable.automation_id, normalizeAutomationId(input.automationId))]
+    const conditions = [eq(AutomationRunTable.automation_id, normalizeAutomationId(input.automationId)), runActorFilter({ actingMemberId: input.ownerMemberId, includeOwnerRuns: true })]
     if (input.cursor) conditions.push(lt(AutomationRunTable.id, normalizeRunId(input.cursor)))
     const rows = await db.select().from(AutomationRunTable).where(and(...conditions))
       .orderBy(desc(AutomationRunTable.id)).limit(limit + 1)
@@ -1605,6 +1755,7 @@ export class DenAutomationRepository implements AutomationRepository {
     const conditions = [
       eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+      runActorFilter({ actingMemberId: input.ownerMemberId, includeOwnerRuns: true }),
       gte(AutomationRunTable.created_at, new Date(input.from - pad)),
       lt(AutomationRunTable.created_at, new Date(input.to + pad)),
     ]
@@ -1707,3 +1858,94 @@ export class DenAutomationRepository implements AutomationRepository {
 }
 
 export const automationRepository = new DenAutomationRepository()
+
+type AutomationTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
+
+export async function listAgentRoutines(input: {
+  organizationId: string
+  ownerMemberId: string
+  agentId: string
+  limit: number
+  memberId?: string
+}): Promise<AutomationListItem[]> {
+  const rows = await db.$primary.select().from(AutomationTable).where(and(
+    eq(AutomationTable.agent_id, normalizeDenTypeId("personalAgent", input.agentId)),
+    eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
+    eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+    ne(AutomationTable.state, "archived"),
+  )).orderBy(desc(AutomationTable.id)).limit(input.limit)
+  return itemsFromRows(rows, input.memberId)
+}
+
+export async function listAgentRoutineItems(agentIds: readonly string[], memberId?: string): Promise<AutomationListItem[]> {
+  if (agentIds.length === 0) return []
+  const rows = await db.$primary.select().from(AutomationTable).where(and(
+    inArray(AutomationTable.agent_id, agentIds.map((id) => normalizeDenTypeId("personalAgent", id))),
+    ne(AutomationTable.state, "archived"),
+  )).orderBy(asc(AutomationTable.created_at), asc(AutomationTable.id))
+  return itemsFromRows(rows, memberId)
+}
+
+export async function listPersonalAgentRuns(input: { organizationId: string; agentId: string; limit: number } & RunAudience) {
+  const rows = await db.$primary.select({ run: AutomationRunTable }).from(AutomationRunTable)
+    .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
+    .where(and(
+      eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      eq(AutomationTable.agent_id, normalizeDenTypeId("personalAgent", input.agentId)),
+      personalAgentRunSummaryFilter(input, normalizeDenTypeId("personalAgent", input.agentId)),
+    )).orderBy(desc(AutomationRunTable.created_at), desc(AutomationRunTable.id)).limit(input.limit)
+  return { items: rows.map(({ run }) => mapPersonalAgentRunSummary(run, input)) }
+}
+
+export async function repinAgentRoutines(tx: AutomationTransaction, input: {
+  agentId: string
+  agentRevisionId: string
+  now: number
+}): Promise<number> {
+  const agentRevisionId = normalizeDenTypeId("personalAgentRevision", input.agentRevisionId)
+  const routines = await tx.select().from(AutomationTable)
+    .where(eq(AutomationTable.agent_id, normalizeDenTypeId("personalAgent", input.agentId)))
+    .orderBy(asc(AutomationTable.id)).for("update")
+  for (const routine of routines) {
+    const [current] = await tx.select().from(AutomationRevisionTable)
+      .where(eq(AutomationRevisionTable.id, routine.current_revision_id)).limit(1)
+    if (!current) throw new Error("automation_revision_not_found")
+    const mapped = mapRevision(current)
+    const newRevisionId = createDenTypeId("automationRevision")
+    await tx.insert(AutomationRevisionTable).values({
+      ...current,
+      id: newRevisionId,
+      version: current.version + 1,
+      agent_revision_id: agentRevisionId,
+      digest: automationRevisionDigest({
+        instructions: mapped.instructions,
+        schedule: mapped.schedule,
+        model: mapped.model,
+        action: mapped.action,
+        executionTarget: current.execution_target,
+        maximumRuntimeMs: current.maximum_runtime_ms,
+        ...(current.workspace_id ? { workspaceId: current.workspace_id } : {}),
+        agentRevisionId,
+      }),
+      created_at: new Date(input.now),
+    })
+    await tx.update(AutomationTable).set({
+      current_revision_id: newRevisionId,
+      updated_at: new Date(input.now),
+    }).where(eq(AutomationTable.id, routine.id))
+  }
+  return routines.length
+}
+
+export async function archiveAgentRoutines(tx: AutomationTransaction, input: { agentId: string; now: number }): Promise<void> {
+  await tx.update(AutomationTable).set({
+    state: "archived",
+    next_due_at: null,
+    archived_at: new Date(input.now),
+    needs_attention_reason: null,
+    updated_at: new Date(input.now),
+  }).where(and(
+    eq(AutomationTable.agent_id, normalizeDenTypeId("personalAgent", input.agentId)),
+    ne(AutomationTable.state, "archived"),
+  ))
+}

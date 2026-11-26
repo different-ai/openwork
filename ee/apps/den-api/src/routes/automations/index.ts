@@ -150,11 +150,24 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
   if (error.message === "automation_cloud_worker_required") {
     return { status: 409, body: { error: error.message, message: "Set up OpenWork Cloud before creating a Cloud Automation." } }
   }
+  if (error.message === "personal_agent_routine_cloud_agent_only") {
+    return { status: 400, body: { error: error.message, message: "This Automation is a routine of a personal agent. It runs as an agent in OpenWork Cloud, where the agent's brief and tool limits apply." } }
+  }
+  if (error.message === "personal_agent_routine_not_shareable") {
+    return { status: 400, body: { error: error.message, message: "A personal agent's routine cannot be shared. Sharing an agent is not available yet." } }
+  }
+  if (error.message === "personal_agent_routine_instructions_too_long") {
+    return { status: 400, body: { error: error.message, message: "A routine's instructions can be at most 60,000 characters, so they fit in a run together with the agent's brief." } }
+  }
+  if (error.message === "personal_agent_archived") {
+    return { status: 409, body: { error: error.message, message: "This routine's agent was archived, so the routine cannot run." } }
+  }
   if (["owner_membership_lost", "model_access_lost", "provider_unavailable"].includes(error.name)) {
     return { status: 409, body: { error: error.name, message: error.message } }
   }
   return null
 }
+export { failure as automationRouteFailure }
 
 const routeDescription = [
   "Den schedules Automations and keeps durable run history.",

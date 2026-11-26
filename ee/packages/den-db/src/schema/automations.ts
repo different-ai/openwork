@@ -42,12 +42,14 @@ export const AutomationTable = mysqlTable(
     needs_attention_reason: compatJsonColumn<AutomationNeedsAttentionReason | null>("needs_attention_reason"),
     latest_successful_run_id: denTypeIdColumn("automationRun", "latest_successful_run_id"),
     latest_successful_result: encryptedJsonColumn<unknown>("latest_successful_result"),
+    agent_id: denTypeIdColumn("personalAgent", "agent_id"),
     archived_at: timestamp("archived_at", { fsp: 3 }),
     ...timestamps,
   },
   (table) => [
     index("automation_org_owner_state").on(table.organization_id, table.owner_member_id, table.state),
     index("automation_due").on(table.state, table.next_due_at),
+    index("automation_agent").on(table.agent_id),
   ],
 )
 
@@ -88,6 +90,7 @@ export const AutomationRevisionTable = mysqlTable(
     action: encryptedJsonColumn<AutomationAction>("action"),
     execution_target: mysqlEnum("execution_target", ["desktop", "cloud"]).notNull().default("desktop"),
     workspace_id: varchar("workspace_id", { length: 240 }),
+    agent_revision_id: denTypeIdColumn("personalAgentRevision", "agent_revision_id"),
     maximum_runtime_ms: int("maximum_runtime_ms").notNull(),
     digest: varchar("digest", { length: 128 }).notNull(),
     created_at: timestamp("created_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3)`),
@@ -159,6 +162,7 @@ export const AutomationRunTable = mysqlTable(
     cancel_requested_at: timestamp("cancel_requested_at", { fsp: 3 }),
     mcp_token_hash: varchar("mcp_token_hash", { length: 128 }),
     mcp_token_expires_at: timestamp("mcp_token_expires_at", { fsp: 3 }),
+    acting_member_id: denTypeIdColumn("member", "acting_member_id"),
     ...timestamps,
   },
   (table) => [

@@ -20,6 +20,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { removeTeamPersonalAgentAudiences } from "../../personal-agents/share-cleanup.js"
 import { deleteTeamAgentPermissionPolicy } from "../../agent-permissions.js"
 import { deleteTeamDefaultModel } from "../../default-model.js"
 import { deleteTeamWorkbotSettings } from "../../workbot/team-settings.js"
@@ -446,6 +447,7 @@ export async function deleteTeam(c: ResourceActionContext, payload: ResourceOrga
 
     await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.teamId, team.id))
     await deleteTeamAgentPermissionPolicy(tx, team.id)
+    await removeTeamPersonalAgentAudiences(tx, payload.organization.id, team.id)
     await deleteTeamDefaultModel(tx, team.id)
     await deleteTeamWorkbotSettings(tx, team.id)
     await deleteTeamPrompts(tx, team.id)

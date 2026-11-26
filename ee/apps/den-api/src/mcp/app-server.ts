@@ -45,7 +45,7 @@ import { callMcpAppTool, mcpAppToolKeepable } from "./app-tools.js"
 import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
 import { createCapabilityRegistryContext, type ExecuteCapabilityToolResult } from "./capability-registry.js"
-import { resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { mcpMemberForToken, resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { getCatalog } from "./index.js"
 import { DEN_MCP_READ_SCOPE } from "./scopes.js"
 
@@ -237,13 +237,14 @@ async function handleMcpAppServerRequestUntimed(input: {
   const organizationId = normalizeDenTypeId("organization", principal.organizationId)
   const refuse = (reason: AppRefusal, organizationName?: string) =>
     refuseAppRequest(context.req.raw, { reason, organizationId, appId: input.appId, organizationName })
-  const [member, home, organizationFeatures, catalog] = await Promise.all([
+  const [resolvedMember, home, organizationFeatures, catalog] = await Promise.all([
     resolveMcpMemberIdentity({ userId: principal.userId, organizationId }),
     appOrganizationForMember(input.appId, principal.userId),
     getOrganizationFeatures(organizationId, { userId: principal.userId }),
     getCatalog(input.app, context.env),
   ])
-  if (!member) return refuse("not_a_member")
+  if (!resolvedMember) return refuse("not_a_member")
+  const member = mcpMemberForToken(resolvedMember, principal.scopes)
   if (home && home.id !== organizationId) return refuse("other_organization", home.name)
   if (!env.appMcpServersEnabled) return refuse("apps_off")
   const capabilityContext = createCapabilityRegistryContext({

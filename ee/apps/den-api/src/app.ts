@@ -40,6 +40,7 @@ import { registerDevRoutes } from "./routes/dev/index.js"
 import { registerInternalRoutes } from "./routes/internal/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerAutomationRoutes } from "./routes/automations/index.js"
+import { registerPersonalAgentRoutes } from "./routes/personal-agents/index.js"
 import { registerSessionRunnerRoutes } from "./routes/session-runners/index.js"
 import { registerRemoteSessionRoutes } from "./routes/remote-sessions/index.js"
 import { automationService, configureCloudAgentExecutor, configureCloudWorkflowExecutor, configureHeadlessAgentExecutor } from "./automations/service.js"
@@ -278,6 +279,7 @@ registerDevRoutes(app)
 registerMeRoutes(app)
 registerSessionRunnerRoutes(app, { automationService: env.automations.runtimeEnabled ? automationService : undefined })
 registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled, sessionRunners: false })
+if (env.automations.runtimeEnabled) registerPersonalAgentRoutes(app)
 registerRemoteSessionRoutes(app)
 registerOrgRoutes(app)
 registerSlackAssistantRoutes(app)
@@ -418,6 +420,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
       { name: "Managed deployments", description: "OpenWork installations in an organization's own cloud account: launch approval, installer milestones and health reports." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
+      { name: "Personal agents", description: "A member's own agents: a Markdown brief, a tool policy, and routines that run as Cloud Automations." },
       { name: "Devices", description: "Personal and shared computers, plus permission-gated team computer inventory for the current organization, including registered OpenWork instances. Inventory grants no control or access to private content." },
       { name: "Documents", description: "Connected Drive and OneDrive documents: listings, metadata and read-only previews." },
       { name: "Workbot", description: "The signed-in member's single Workbot conversation." },

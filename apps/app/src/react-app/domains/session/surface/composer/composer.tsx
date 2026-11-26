@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { useSessionExtensions } from "@/react-app/kernel/session-extensions";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
@@ -259,6 +260,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     mcps: false,
   });
   const [commandsLoaded, setCommandsLoaded] = useState(false);
+  const extensionPlaceholder = useSessionExtensions().composerPlaceholders.get(props.sessionId ?? "");
   const [skillsLoaded, setSkillsLoaded] = useState(Boolean(props.skills?.length));
   const [pluginsLoaded, setPluginsLoaded] = useState(Boolean(props.importedPlugins?.length));
   const [mcpLoaded, setMcpLoaded] = useState(Boolean(props.mcpServers?.length));
@@ -1490,7 +1492,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               pastedText={pastedTextTokens}
               attachments={attachmentTokens}
               submitDisabled={props.disabled}
-              placeholder={followUpSuggestion ?? t("composer.placeholder")}
+              placeholder={followUpSuggestion ?? extensionPlaceholder ?? t("composer.placeholder")}
               placeholderShortcut={followUpSuggestion ? "Tab" : undefined}
               onChange={dictation.edit}
               onInlineMentionChange={inlineSuggestions ? handleInlineMentionChange : undefined}

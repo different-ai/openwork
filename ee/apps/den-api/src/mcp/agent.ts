@@ -112,7 +112,9 @@ import {
   supportsConnectNativeSkills,
 } from "./connect-mcp-server-index.js"
 import { registerAgentSkillTools } from "./skill-created-app.js"
-import { registerAgentSkillCatalogTools, standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
+import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
+import { personalAgentRunId } from "./workbot-turn-limits.js"
+import { GET_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, registerAgentSkillCatalogTools, standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
 import { isSkillDocumentUri, isSkillFileUri, readCachedSkill, rememberSkillRead, skillReadResponse } from "./skill-read-cache.js"
 import {
   parseSkillSyncRequest,
@@ -494,6 +496,22 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       return new Response(null, { status: 202 })
     }
     const organizationId = normalizeDenTypeId("organization", principal.organizationId)
+    const personalRun = personalAgentRunId(principal.scopes) !== undefined
+    if (personalRun) {
+      const refusal = await personalAgentRunDispatchRefusal(principal.scopes, organizationId)
+      if (refusal && method !== "tools/call") {
+        return c.json({ jsonrpc: "2.0", id: requestInfo.id, error: { code: -32000, message: refusal.message } })
+      }
+      if (method === "tools/call") {
+        if (requestInfo.id === null) return new Response(null, { status: 202 })
+        const allowed = new Set<string | null>([SEARCH_CAPABILITIES_TOOL_NAME, EXECUTE_CAPABILITY_TOOL_NAME,
+          EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME, LIST_SKILLS_TOOL_NAME, GET_SKILL_TOOL_NAME])
+        const blocked = refusal ?? (allowed.has(requestInfo.toolName) ? null : personalAgentPolicyRefusal(PERSONAL_AGENT_UNAPPROVABLE_WRITE))
+        if (blocked) return c.json({ jsonrpc: "2.0", id: requestInfo.id, result: {
+          isError: true, content: textContent(JSON.stringify(blocked)), structuredContent: blocked,
+        } })
+      }
+    }
     const skillReadUri = method === "resources/read" && requestInfo.id !== null && isSkillDocumentUri(requestInfo.resourceUri)
       ? requestInfo.resourceUri
       : null
@@ -618,7 +636,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       return skillBatchResponse(requestInfo.id, contents)
     }
     const executeCapabilityTool = async ({ name, arguments: args, schemaDigest, path, query, body }: CapabilityCall & { schemaDigest?: string }) => {
-      const plugin = appServersEnabled ? parseMarketplaceCapabilityName(name) : null
+      const plugin = appServersEnabled && !personalRun ? parseMarketplaceCapabilityName(name) : null
       const definition = plugin && await isActiveMcpApp({ organizationId: principal.organizationId, appId: plugin.configObjectId })
         ? await loadMcpAppServerDefinition({ ...appAccess, appId: plugin.configObjectId }).catch(() => null)
         : null
@@ -659,6 +677,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       remoteSessionEvents: organizationFeatures.mcpThreads,
       canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
       myAgent: Boolean(memberIdentity && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
+      personalAgents: Boolean(organizationFeatures.personalAgents && memberIdentity && principal.scopes.has(DEN_MCP_WRITE_SCOPE) && !capabilityContext.limitedAgentRun),
       skillsExtension,
       nativeEvents: Boolean(auditPrincipal),
       skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,

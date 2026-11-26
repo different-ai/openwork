@@ -156,7 +156,7 @@ function scoreOperation(operation: McpToolOperation, queryTokens: string[], exac
 }
 
 export function searchCapabilities(
-  catalog: McpToolOperation[],
+  catalog: readonly McpToolOperation[],
   query: string,
   limit = 5,
 ): CapabilityMatch[] {

@@ -13,7 +13,7 @@ import { mcpPrincipalCredentialId, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
 import { mintHeadlessTurnCredentials } from "../headless-runner/resume-grants.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
-import { workbotTurnLimitScopes } from "../mcp/workbot-turn-limits.js"
+import { isWorkbotTurnLimitScope, workbotTurnLimitScopes } from "../mcp/workbot-turn-limits.js"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
 import { getOrganizationFeatures, type FeatureMap } from "../features.js"
 import { jsonValidator, tokenRoute } from "../middleware/index.js"
@@ -729,7 +729,10 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         if (!model && workbotUsesManagedDefault(chosen)) {
           model = await workbotIncludedDefaultModel(principal, chosen) ?? undefined
         }
-        const scopes = workbotTurnLimitScopes(memberAgentSettings(resolved.workbot, organization.metadata).sources)
+        const scopes = [...new Set([
+          ...workbotTurnLimitScopes(memberAgentSettings(resolved.workbot, organization.metadata).sources),
+          ...[...resolved.scopes].filter(isWorkbotTurnLimitScope),
+        ])]
         const { token, resumeGrant, modelAccess, indexCapability } = await mintHeadlessTurnCredentials({
           ...principal, ttlMs, readOnly, sessionId, messageId, model, indexKind: "workbot", memberId: resolved.memberId,
           ...(scopes.length ? { scopes } : {}),

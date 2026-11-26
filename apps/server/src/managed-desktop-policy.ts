@@ -6,6 +6,7 @@ import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
 import { externalFetch } from "./server-fetch.js";
+import { createPersonalAgentsFeatureLookup } from "./personal-agents-feature.js";
 import { ApiError } from "./errors.js";
 import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
@@ -88,6 +89,7 @@ class ManagedDesktopPolicy {
   readonly evaluationToken = randomBytes(32).toString("base64url");
   private session: CloudProviderDenSession | null = null;
   private generation = 0;
+  private readonly lookupPersonalAgentsFeature = createPersonalAgentsFeatureLookup(externalFetch);
   private installed: { generation: number; policy: DesktopConfig | null } | undefined;
   private fetching: { generation: number; promise: Promise<DesktopConfig | null> } | undefined;
   private lastKnown: { key: string; policy: DesktopConfig } | undefined;
@@ -581,6 +583,12 @@ class ManagedDesktopPolicy {
 
   async browserSecretHandlesEnabled(): Promise<boolean> {
     return this.organizationFeatureEnabled("browserSecretHandles");
+  }
+
+  async personalAgentsEnabled(): Promise<boolean> {
+    const generation = this.generation;
+    const enabled = await this.lookupPersonalAgentsFeature(this.session);
+    return generation === this.generation && enabled;
   }
 
   async privateValuesEnabled(): Promise<boolean> {

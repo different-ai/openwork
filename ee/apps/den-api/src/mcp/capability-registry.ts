@@ -12,7 +12,9 @@ import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction,
 import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
-import { catalogOperationAvailableToCapabilities, filterGmailThreadRead } from "./catalog-availability.js"
+import { catalogOperationAvailableToCapabilities, filterGmailThreadRead, filterPersonalAgents } from "./catalog-availability.js"
+import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
+import { isLimitedAgentRun, LIMITED_AGENT_RUN_MESSAGE, personalAgentRunId } from "./workbot-turn-limits.js"
 import type { McpToolOperation } from "./catalog.js"
 import {
   executeAdminCapability,
@@ -143,6 +145,7 @@ export type CapabilityRegistryContext = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   managedDeploymentsEnabled: boolean
+  limitedAgentRun: boolean
   remoteSessionAnswersAllowed: boolean
   remoteSessionAttachAllowed: boolean
   resolvePlatformAdmin: () => Promise<boolean>
@@ -160,7 +163,7 @@ export type CapabilityRegistryContextInput = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "personalAgents">>
   audit?: McpAuditPrincipal | null
   usageSource: CapabilityUsageSource
 }
@@ -182,13 +185,17 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
   return {
     app: input.app,
     env: input.env,
-    catalog: filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
+    catalog: filterPersonalAgents(
+      filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
+      input.organizationFeatures.personalAgents,
+    ),
     principal: input.principal,
     organizationId: input.organizationId,
     member: input.member,
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
+    limitedAgentRun: isLimitedAgentRun(input.principal.scopes),
     remoteSessionAnswersAllowed: input.usageSource === "agent",
     remoteSessionAttachAllowed: input.usageSource === "agent",
     resolvePlatformAdmin,
@@ -466,6 +473,7 @@ async function executeMarketplaceSource(
     validateScriptOutput: true,
     redirectUriBase: ctx.redirectUriBase,
     auditWorkflowExecution: workflowExecutionAudit(ctx),
+    readOnly: personalAgentRunId(ctx.principal.scopes) !== undefined,
     usageSource: ctx.usageSource,
     describeUnavailable: (missing) => liveArtifactConnectionFailure(ctx, missing),
   })
@@ -743,6 +751,7 @@ const remoteSessionSource: CapabilitySource = {
     if (!parsedForKind(parsed, "remoteSession")) return unknownCapabilityResult(input.name)
     if (parsed.action === "answer" && !ctx.remoteSessionAnswersAllowed) return unknownCapabilityResult(input.name)
     if (parsed.action === "attach" && !ctx.remoteSessionAttachAllowed) return unknownCapabilityResult(input.name)
+    if (ctx.limitedAgentRun) return capabilityErrorResult({ error: "policy_blocked", message: LIMITED_AGENT_RUN_MESSAGE })
     if (!ctx.member) {
       return capabilityErrorResult({
         error: "membership_required",
@@ -896,6 +905,11 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
         const source = sources[kind]
         const parsed = source.parseName(input.name)
         if (!parsed) continue
+        const refusal = await personalAgentRunDispatchRefusal(ctx.principal.scopes, ctx.organizationId)
+        if (refusal) return capabilityErrorResult(refusal)
+        if (personalAgentRunId(ctx.principal.scopes) !== undefined && capabilityHasNoApprovalPath(parsed)) {
+          return capabilityErrorResult(personalAgentPolicyRefusal(PERSONAL_AGENT_UNAPPROVABLE_WRITE))
+        }
         const call = capabilityCallInput(
           input.arguments === undefined ? input : { ...input, arguments: normalizeToolBody(input.arguments) },
           HTTP_ARGUMENT_KINDS.has(kind),
@@ -909,7 +923,7 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
         const result = await sources[kind].enumerate(ctx, required)
         return "excluded" in result ? [] : result
       }))
-      const leaves = enumerated.flat()
+      const leaves = enumerated.flat().filter((leaf) => personalAgentRunId(ctx.principal.scopes) === undefined || !leaf.capabilityName.startsWith("admin:"))
       const namespaceTools = new Map<string, Map<string, Tool.Definition>>()
       for (const leaf of leaves) {
         const tools = namespaceTools.get(leaf.namespace) ?? new Map<string, Tool.Definition>()
@@ -927,6 +941,11 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
       }
     },
   }
+}
+
+function capabilityHasNoApprovalPath(parsed: ParsedCapability): boolean {
+  if (parsed.kind === "admin" || parsed.kind === "slackSendAsBot") return true
+  return parsed.kind === "remoteSession" && !["read", "list", "targets", "status"].includes(parsed.action)
 }
 
 const HTTP_ARGUMENT_KINDS: ReadonlySet<CapabilitySourceKind> = new Set(["catalog", "native"])

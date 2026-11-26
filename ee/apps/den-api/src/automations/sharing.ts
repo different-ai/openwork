@@ -50,10 +50,11 @@ export async function replaceAutomationSharing(scope: Scope, id: string, request
       eq(MemberTable.id, caller.memberId), eq(MemberTable.organizationId, caller.organizationId), peopleMemberCondition(),
     )).for("share")
     if (!member) throw new Error("automation_not_found")
-    const [owner] = await tx.select({ id: AutomationTable.id }).from(AutomationTable).where(and(
+    const [owner] = await tx.select({ id: AutomationTable.id, agentId: AutomationTable.agent_id }).from(AutomationTable).where(and(
       ownerFilter(scope, id), ne(AutomationTable.state, "archived"),
     )).for("update")
     if (!owner) throw new Error("automation_not_found")
+    if (owner.agentId) throw new Error("personal_agent_routine_not_shareable")
     const members = memberIds.length ? await tx.select({ id: MemberTable.id }).from(MemberTable).where(and(
       eq(MemberTable.organizationId, caller.organizationId), inArray(MemberTable.id, memberIds), peopleMemberCondition(), isNotNull(MemberTable.userId),
     )).for("share") : []
