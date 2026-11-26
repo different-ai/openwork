@@ -56,11 +56,11 @@ function ToolRuleRows({ connectionId, connectionName, tools, busy, onChange }: {
   });
 }
 
-export function OrgAgentPolicy({ orgId, policy }: { orgId: string; policy: PersonalAgentOrgPolicy }) {
+export function OrgAgentPolicy({ orgId, policy, connectorsHref }: { orgId: string; policy: PersonalAgentOrgPolicy; connectorsHref?: string }) {
   const [dialog, setDialog] = useState<"rules" | "tools" | null>(null);
   const toolTrigger = useRef<HTMLButtonElement>(null);
   const rulesTrigger = useRef<HTMLButtonElement>(null);
-  const connections = useMcpConnections("manageable");
+  const connections = useMcpConnections("manageable", { enabled: !connectorsHref });
   const edit = useEditAgentPolicy(orgId);
   const toolRules = Object.entries(policy.toolPolicy.tools).filter(([, tools]) => Object.keys(tools).length > 0);
   const candidates = connections.data?.filter(({ id, nativeProviderKey }) => !isNativeProviderConnectionId(id, nativeProviderKey)) ?? [];
@@ -95,18 +95,18 @@ export function OrgAgentPolicy({ orgId, policy }: { orgId: string; policy: Perso
             <DenSwitch aria-label="Shared logins" checked={policy.sharedLogins} disabled={edit.isPending} onChange={(sharedLogins) => saveSettings({ sharedLogins })} />
           </div>
         </Setting>
-        <Setting label={rulesLabel} hint={policy.rules.split(/\r?\n/, 1)[0]?.trim() || "No rules yet."} truncate>
+        {connectorsHref ? null : <Setting label={rulesLabel} hint={policy.rules.split(/\r?\n/, 1)[0]?.trim() || "No rules yet."} truncate>
           <button type="button" ref={rulesTrigger} data-agents-rules="" aria-label="Edit rules every agent follows"
             className={buttonVariants({ variant: "secondary", size: "sm", className: "disabled:opacity-60" })}
             disabled={edit.isPending} onClick={() => open("rules")}>Edit…</button>
-        </Setting>
+        </Setting>}
         <Setting label="Most an agent may spend in a month" labelId="agents-org-budget">
           <BudgetSelect label="Most an agent may spend in a month" value={policy.monthlyBudgetMicros} limits={orgBudgets}
             disabled={edit.isPending} onChange={(monthlyBudgetMicros) => saveSettings({ monthlyBudgetMicros })} />
         </Setting>
       </div>
     </section>
-    <section aria-labelledby="agents-tool-rules-title" className="space-y-3">
+    {connectorsHref ? <p className={muted}>Tool rules and written rules now apply to everything, not only agents. Set them under <a className="underline underline-offset-2" href={connectorsHref}>Connectors</a>.</p> : <section aria-labelledby="agents-tool-rules-title" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 id="agents-tool-rules-title" className="text-base font-semibold">Tool rules for every agent</h2>
@@ -125,10 +125,10 @@ export function OrgAgentPolicy({ orgId, policy }: { orgId: string; policy: Perso
           connectionName={connections.data?.find(({ id }) => id === connectionId)?.name} busy={edit.isPending}
           onChange={(name, rule) => edit.mutate({ action: "tools", connectionId, toolNames: [name], rule })} />)}
       </ul> : <p className={muted}>No tool rules yet.</p>}
-    </section>
-    {!dialog && edit.isError ? <DenNotice tone="error" message={saveError} /> : null}
-    {dialog === "tools" ? <AddToolRuleDialog {...dialogProps} connections={candidates} finalFocus={toolTrigger} onSave={saveDialog} /> : null}
-    {dialog === "rules" ? <RulesDialog {...dialogProps} rules={policy.rules} finalFocus={rulesTrigger}
+    </section>}
+    {(connectorsHref || !dialog) && edit.isError ? <DenNotice tone="error" message={saveError} /> : null}
+    {!connectorsHref && dialog === "tools" ? <AddToolRuleDialog {...dialogProps} connections={candidates} finalFocus={toolTrigger} onSave={saveDialog} /> : null}
+    {!connectorsHref && dialog === "rules" ? <RulesDialog {...dialogProps} rules={policy.rules} finalFocus={rulesTrigger}
       onSave={(rules) => saveDialog({ action: "settings", settings: { rules } })} /> : null}
   </>;
 }

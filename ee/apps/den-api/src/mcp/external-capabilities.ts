@@ -50,7 +50,7 @@ import { AGENT_SOURCE_BLOCKED_MESSAGE, agentMayUseExternalTool, agentReadAllowli
 import { AGENT_TOOL_WITHHELD_MESSAGE, connectionsWithheld, toolsWithheld, WORKBOT_CONNECTION_WITHHELD_MESSAGE } from "./workbot-turn-limits.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { personalAgentRunId } from "./workbot-turn-limits.js"
-import { personalAgentToolRefusal } from "../personal-agents/permissions-dispatch.js"
+import { toolPermissionRefusal } from "../tool-permissions/dispatch.js"
 import { personalAgentCredentialMember } from "../personal-agents/shared-logins.js"
 import {
   codemodeScriptPath,
@@ -1478,6 +1478,11 @@ export async function executeExternalCapability(input: {
       return { ok: true, tool, schemaWarnings }
     }
 
+    const permissionRefusal = async (tool: ExternalMcpTool): Promise<ExternalCapabilityFailure | null> => {
+      const refusal = await toolPermissionRefusal({ scopes: input.scopes, connection, tool,
+        actingMemberId: input.member?.orgMembershipId, teamIds: input.member?.teamIds })
+      return refusal ? { ok: false, capability: buildExternalCapabilityName(connection.id, input.toolName), ...refusal } : null
+    }
     const forwardedArguments = isRecord(input.args) ? input.args : {}
     let checked: CheckedTool
     let providerCall: ReturnType<typeof callExternalMcpTool>
@@ -1493,10 +1498,15 @@ export async function executeExternalCapability(input: {
         args: forwardedArguments,
         member,
         lifecycleDeadline: deadline,
-        beforeCall: (tools) => {
+        beforeCall: async (tools) => {
           const result = check(tools)
           if (!result.ok) {
             refusal = result
+            throw new Error("OpenWork refused the call before it reached the provider.")
+          }
+          const blocked = await permissionRefusal(result.tool)
+          if (blocked) {
+            refusal = blocked
             throw new Error("OpenWork refused the call before it reached the provider.")
           }
           passed(result)
@@ -1519,10 +1529,8 @@ export async function executeExternalCapability(input: {
       }
       if (!result.ok) return result
       checked = result
-      if (agentMember) {
-        const refusal = await personalAgentToolRefusal({ scopes: input.scopes, connection, tool: checked.tool, actingMemberId: agentMember.orgMembershipId })
-        if (refusal) return { ok: false, capability: buildExternalCapabilityName(connection.id, input.toolName), ...refusal }
-      }
+      const refusal = await permissionRefusal(checked.tool)
+      if (refusal) return refusal
       providerCall = callExternalMcpTool({
         connection,
         redirectUri,

@@ -71,7 +71,7 @@ function toolChangeLines(nextPolicy: PersonalAgentToolPolicy, currentPolicy?: Pe
   });
 }
 
-type ChangeRow = { key: string; text: string; block?: "instructions" | "brief" };
+type ChangeRow = { key: string; text: string; block?: "instructions" | "brief" | "memory" };
 
 export function agentChangeDetails(change: PersonalAgentChange | null, { routines = [], toolPolicy: currentPolicy, catalog }: {
   routines?: PersonalAgentDetail["routines"];
@@ -80,7 +80,7 @@ export function agentChangeDetails(change: PersonalAgentChange | null, { routine
 } = {}) {
   const rows: ChangeRow[] = [];
   if (!change) return { rows, tools: null };
-  const { newRoutine, routineId, name, active, schedule, instructions, brief, toolPolicy } = change;
+  const { newRoutine, routineId, name, active, schedule, instructions, brief, toolPolicy, memoryNote } = change;
   if (newRoutine) {
     rows.push({ key: "add", text: t("agents.change_add_routine", { name: newRoutine.name, schedule: changeScheduleWords(newRoutine.schedule) }) });
     rows.push({ key: "add-instructions", block: "instructions", text: newRoutine.instructions });
@@ -95,6 +95,7 @@ export function agentChangeDetails(change: PersonalAgentChange | null, { routine
     if (instructions) rows.push({ key: "instructions", block: "instructions", text: instructions });
   }
   if (brief) rows.push({ key: "brief", block: "brief", text: brief });
+  if (memoryNote) rows.push({ key: "memory", block: "memory", text: memoryNote });
   return { rows, tools: toolPolicy ? toolChangeLines(toolPolicy, currentPolicy, catalog) : null };
 }
 
@@ -129,8 +130,8 @@ export function AgentChangeRequest({ runtime, agent, request }: { runtime: Agent
     <section aria-labelledby={titleId} className="w-full max-w-xl space-y-2 rounded-xl border border-dls-border bg-dls-surface p-3">
       <p id={titleId} className="wrap-anywhere text-sm font-medium">{line}</p>
       {rows.map(({ key: rowKey, block, text }) => block ? (
-        <details key={rowKey} open data-agent-change-instructions={block === "instructions" ? "" : undefined} data-agent-change-brief={block === "brief" ? "" : undefined}>
-          <summary className="cursor-pointer text-sm font-medium">{block === "instructions" ? t("agents.change_instructions") : t("agents.change_brief")}</summary>
+        <details key={rowKey} open data-agent-change-instructions={block === "instructions" ? "" : undefined} data-agent-change-brief={block === "brief" ? "" : undefined} data-agent-change-memory={block === "memory" ? "" : undefined}>
+          <summary className="cursor-pointer text-sm font-medium">{block === "instructions" ? t("agents.change_instructions") : block === "brief" ? t("agents.change_brief") : t("agents.change_memory")}</summary>
           <div tabIndex={0} className="max-h-48 overflow-auto whitespace-pre-wrap wrap-anywhere text-sm text-dls-secondary">{text}</div>
         </details>
       ) : <p key={rowKey} className="whitespace-pre-wrap wrap-anywhere text-sm text-dls-secondary">{text}</p>)}

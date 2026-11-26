@@ -16,6 +16,9 @@ export const PERSONAL_AGENT_NAME_MAX_LENGTH = 120
 export const PERSONAL_AGENT_BRIEF_MAX_LENGTH = 20_000
 /** A run's prompt is the brief plus the routine's instructions, and has to fit the runner's 100,000 characters. */
 export const PERSONAL_AGENT_ROUTINE_INSTRUCTIONS_MAX_LENGTH = 60_000
+export const PERSONAL_AGENT_MEMORY_MAX_LENGTH = 20_000
+export const PERSONAL_AGENT_MEMORY_NOTE_MAX_LENGTH = 2_000
+export const PERSONAL_AGENT_ROUTINE_STATE_MAX_LENGTH = 4_000
 export const PERSONAL_AGENT_TOOL_POLICY_MAX_CONNECTIONS = 100
 export const PERSONAL_AGENT_TOOL_POLICY_MAX_TOOLS = 200
 export const PERSONAL_AGENT_TOOL_POLICY_MAX_BLOCKED = 200
@@ -342,12 +345,14 @@ export const personalAgentChangeSchema = z.object({
   name: z.string().trim().min(1).max(120).optional().describe("A new name for the routine."),
   active: z.boolean().optional().describe("Turn the routine on or off."),
   toolPolicy: personalAgentToolPolicySchema.optional().describe("The agent's tool settings after the change."),
+  memoryNote: z.string().trim().min(1).max(PERSONAL_AGENT_MEMORY_NOTE_MAX_LENGTH).optional()
+    .describe("Something for the agent to remember, added to its memory when the owner approves."),
   newRoutine: z.object({
     name: z.string().trim().min(1).max(120),
     instructions: z.string().trim().min(1).max(PERSONAL_AGENT_ROUTINE_INSTRUCTIONS_MAX_LENGTH),
     schedule: automationScheduleSchema,
   }).strict().optional().describe("A routine to add to the agent."),
-}).strict().refine((change) => Boolean(change.schedule || change.instructions || change.brief || change.name || change.active !== undefined || change.newRoutine || change.toolPolicy), "Say what to change")
+}).strict().refine((change) => Boolean(change.schedule || change.instructions || change.brief || change.name || change.active !== undefined || change.newRoutine || change.toolPolicy || change.memoryNote), "Say what to change")
   .meta({ ref: "PersonalAgentChange" })
 export type PersonalAgentChange = z.infer<typeof personalAgentChangeSchema>
 
@@ -533,3 +538,37 @@ export const personalAgentPendingChangeSchema = z.object({
   request: personalAgentRequestSchema,
 }).meta({ ref: "PersonalAgentPendingChange" })
 export type PersonalAgentPendingChange = z.infer<typeof personalAgentPendingChangeSchema>
+
+/**
+ * What an agent keeps between runs. `notes` is the agent's memory: the owner
+ * and managers can read and edit it, the agent adds to it while it runs for
+ * its owner, and everyone the agent is shared with can read it. `routines`
+ * holds, per routine, what its last run for the owner did, so the next run
+ * does not do it again.
+ */
+export const personalAgentMemorySchema = z.object({
+  notes: z.string().max(PERSONAL_AGENT_MEMORY_MAX_LENGTH),
+  version: z.number().int().nonnegative().describe("Send it back when saving; a save against an older version is refused."),
+  updatedAt: timestampSchema.nullable(),
+  updatedBy: personalAgentPersonSchema.nullable().describe("The person who last edited the notes; null when the agent wrote them in a run or nothing was written yet."),
+  canEdit: z.boolean().describe("The caller is the owner or a manager."),
+  routines: z.array(z.object({
+    routineId: idSchema,
+    name: z.string().max(120),
+    state: z.string().max(PERSONAL_AGENT_ROUTINE_STATE_MAX_LENGTH),
+    updatedAt: timestampSchema,
+  })).describe("What each routine's last run for the owner did."),
+}).meta({ ref: "PersonalAgentMemory" })
+export type PersonalAgentMemory = z.infer<typeof personalAgentMemorySchema>
+
+export const setPersonalAgentMemorySchema = z.object({
+  notes: z.string().max(PERSONAL_AGENT_MEMORY_MAX_LENGTH),
+  expectedVersion: z.number().int().nonnegative(),
+}).strict().meta({ ref: "SetPersonalAgentMemory" })
+export type SetPersonalAgentMemory = z.infer<typeof setPersonalAgentMemorySchema>
+
+/** One thing to remember. The owner's and a manager's note is added at once; anyone else's waits for the owner's yes. */
+export const rememberForPersonalAgentSchema = z.object({
+  note: z.string().trim().min(1).max(PERSONAL_AGENT_MEMORY_NOTE_MAX_LENGTH).describe("One short fact or preference, in plain words."),
+}).strict().meta({ ref: "RememberForPersonalAgent" })
+export type RememberForPersonalAgent = z.infer<typeof rememberForPersonalAgentSchema>

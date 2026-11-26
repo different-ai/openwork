@@ -132,6 +132,9 @@ export function registerPersonalAgentAdminRoutes<T extends { Variables: RouteVar
         return c.json(policy)
       } catch (error) {
         if (error instanceof PersonalAgentAdminInputError) return c.json({ error: "invalid_request", message: error.message }, 400)
+        if (error instanceof Error && error.message === "tool_permission_rules_limit") {
+          return c.json({ error: "invalid_request", message: "This organization has too many tool rules. Remove some rules before adding more." }, 400)
+        }
         throw error
       }
     },

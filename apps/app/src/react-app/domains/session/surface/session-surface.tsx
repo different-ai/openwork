@@ -1130,6 +1130,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const SkillSharingProvider = props.skillSharingProvider ?? NoCreatedSkillSharing;
   const extensions = useSessionExtensions();
   const extensionOwnsSession = extensions.ownedSessionIds.has(props.sessionId);
+  const approvalsEnabled = !extensionOwnsSession && extensions.renderChatApprovals !== undefined;
+  const completedAt = useSessionActivityStore((state) => {
+    if (!approvalsEnabled) return 0;
+    const record = state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId];
+    return record && !record.runActive && record.runStartedAt > 0 ? record.runStatusAt : 0;
+  });
   const local = useLocal();
   const { config: shellConfig } = useShellConfig();
   const showThinking = local.prefs.showThinking;
@@ -3947,6 +3953,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       </div>
 
       <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2 max-lg:pb-0">
+        {approvalsEnabled && !archived && extensions.renderChatApprovals?.(completedAt)}
         <GatewayUsageApprovalNotice />
         {gatewayNotice && gatewayScope ? <GatewayUsageNotice key={`${gatewayUsage.scopeKey}:${sessionOwner}:${gatewayCloudProviderId ?? ""}`} state={gatewayNotice} status={gatewayScope.status} stale={gatewayUsage.query.isError}
           providerName={gatewayScope.providerName} canSwitchProvider={gatewayCanSwitchProvider} sessionId={props.sessionId} messageSaved={hideGatewayError || hideDirectGatewayError} /> : null}

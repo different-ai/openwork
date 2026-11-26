@@ -1,7 +1,7 @@
 import type { PersonalAgentDetail, PersonalAgentRequest, PersonalAgentRequestDecision } from "@openwork/types/den/personal-agents";
 import { ShieldCheck, ShieldX } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { ToolApprovalCard } from "@/react-app/design-system/tool-approval-card";
 import { t } from "@/i18n";
 
 import { agentOwnerFirstName, requestConnectionName, requestToolTitle, shouldRerunAfterToolDecision, toolRequestReceipt, toolRequestRerunLine } from "./agent-permission-words";
@@ -52,29 +52,14 @@ export function AgentAskCard({ runtime, agent, request, onAllowed }: {
   }
 
   return (
-    <div data-agent-ask={current.id} aria-busy={decision.isPending} className="w-full max-w-[560px] rounded-2xl border border-dls-border bg-dls-surface p-4">
-      <p className="wrap-anywhere text-[13px] font-medium text-dls-text">{t("agents.permission_ask_title", { agent: name, tool, connection })}</p>
-      <p className="mt-1 text-xs text-dls-secondary">{t("agents.permission_ask_accounts")}</p>
-      <div className="mt-3 flex flex-wrap justify-end gap-2">
-        {current.canDecide.includes("deny") ? (
-          <Button type="button" size="sm" variant="ghost" data-agent-ask-decision="deny" disabled={decision.isPending} onClick={() => decide("deny")}>
-            {t("agents.permission_ask_deny")}
-          </Button>
-        ) : null}
-        {current.canDecide.includes("always_allow") ? (
-          <Button type="button" size="sm" variant="outline" data-agent-ask-decision="always_allow" disabled={decision.isPending} onClick={() => decide("always_allow")}>
-            {t("agents.permission_ask_always")}
-          </Button>
-        ) : null}
-        {current.canDecide.includes("allow_once") ? (
-          <Button type="button" size="sm" data-agent-ask-decision="allow_once" disabled={decision.isPending} onClick={() => decide("allow_once")}>
-            {t("agents.permission_ask_once")}
-          </Button>
-        ) : null}
-      </div>
+    <ToolApprovalCard data-agent-ask={current.id}
+      title={t("agents.permission_ask_title", { agent: name, tool, connection })}
+      line={t("agents.permission_ask_accounts")}
+      decisions={current.canDecide.filter((choice) => choice !== "approve")}
+      busy={decision.isPending} onDecide={decide}>
       {agent.role !== "collaborator" && !current.canDecide.includes("always_allow") && (
         <p className="mt-2 text-xs text-dls-secondary">{t("agents.permission_ask_admin")}</p>
       )}
-    </div>
+    </ToolApprovalCard>
   );
 }

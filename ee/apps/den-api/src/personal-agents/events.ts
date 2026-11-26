@@ -10,6 +10,7 @@ export type PersonalAgentEventAction =
   | "agent.budget_set" | "agent.tools_changed"
   | "share.added" | "share.changed" | "share.removed"
   | "routine.created" | "routine.changed"
+  | "memory.edited" | "memory.note_added"
   | "request.asked" | "request.denied" | "request.allowed_once" | "request.always_allowed" | "request.approved"
   | "organization.tools_changed" | "organization.budget_set"
   | "organization.sharing_changed" | "organization.shared_logins_changed" | "organization.rules_changed"

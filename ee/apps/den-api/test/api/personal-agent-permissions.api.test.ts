@@ -29,6 +29,7 @@ const runner = await startFakeHttpServer((request, raw, response) => {
 })
 const tracker = await startFakeMcpServer({ tools: [
   { name: "list_issues", description: "List bug tracker issues", text: "Listed issues", annotations: { readOnlyHint: true } },
+  { name: "List_issues", description: "List Bug tracker issues with a different name", text: "Listed issues", annotations: { readOnlyHint: true } },
   { name: "create_issue", description: "Create a bug tracker issue", text: "Created issue" },
   { name: "delete_issue", description: "Delete a bug tracker issue", text: "Deleted issue", annotations: { readOnlyHint: true, destructiveHint: true } },
 ] })
@@ -194,9 +195,12 @@ test("allow once is for the requester and applies to exactly one run; only Dana 
   assert.equal(already.status, 409, summary(already))
   const ownerRun = await admitted(asDana)
   await asks(ownerRun.token)
+  const unused = await run()
+  assert.equal(unused.receipt.run.status, "succeeded")
+  assert.equal((await requests()).find((row) => row.id === waiting.id)?.status, "allowed_once")
   const first = await admitted()
-  const allowed = await execute(first.token)
-  assert.equal(allowed.isError, false, allowed.raw)
+  assert.equal((await requests()).find((row) => row.id === waiting.id)?.status, "allowed_once")
+  for (const allowed of await Promise.all([execute(first.token), execute(first.token)])) assert.equal(allowed.isError, false, allowed.raw)
   assert.equal((await requests()).find((row) => row.id === waiting.id)?.status, "used")
   const second = await admitted()
   await asks(second.token)
@@ -208,7 +212,7 @@ test("allow once is for the requester and applies to exactly one run; only Dana 
   assert.equal(permanent.status, 200, summary(permanent))
   assert.equal(personalAgentRequestSchema.parse(permanent.body).status, "always_allowed")
   const later = await admitted()
-  assert.equal(later.agentRevision.version, revision + 1)
+  assert.equal(later.agentRevision.version, revision)
   const next = await execute(later.token)
   assert.equal(next.isError, false, next.raw)
 })
@@ -319,6 +323,35 @@ test("never matches all words ignoring case and punctuation and falls back to wr
   })
 })
 
+
+test("team and member rules apply to an agent run only when toolPermissions is on, and names stay case-sensitive", async () => {
+  const { setSubjectToolRule } = await import("../../src/tool-permissions/rules.js")
+  const teamId = await den.createTeam(dana, orgId, "Triage", [priya.memberId])
+  const member = { organizationId: orgId, kind: "member", id: priya.memberId } as const
+  const team = { organizationId: orgId, kind: "team", id: teamId } as const
+  await setSubjectToolRule(team, { connectionId, toolName: "list_issues", rule: "block" }, dana.memberId)
+  await setSubjectToolRule(member, { connectionId, toolName: "List_issues", rule: "block" }, dana.memberId)
+  await setSubjectToolRule(member, { connectionId, toolName: "list_issues", rule: "ask" }, dana.memberId)
+  const clear = await asDana("PATCH", path, { toolPolicy: {} })
+  assert.equal(clear.status, 200, summary(clear))
+  assert.equal((await asDana("PUT", `/v1/org/personal-agents/${agent.agent.id}/budget`, { monthlyBudgetMicros: null })).status, 200)
+  const { token } = await admitted()
+  const reads = () => Promise.all([execute(token, "list_issues"), execute(token, "List_issues")])
+  for (const result of await reads()) assert.equal(result.isError, false, result.raw)
+  assert.equal((await den.setFeature(orgId, "toolPermissions", true)).status, 200)
+  for (const result of await reads()) assert.equal(field(result.body, "error"), "policy_blocked", result.raw)
+  await setSubjectToolRule(member, { connectionId, toolName: "List_issues", rule: null }, dana.memberId)
+  const [lower, upper] = await reads()
+  assert.equal(field(lower.body, "error"), "policy_blocked", lower.raw)
+  assert.equal(upper.isError, false, upper.raw)
+  await setSubjectToolRule(team, { connectionId, toolName: "list_issues", rule: null }, dana.memberId)
+  const [asksLower, allowsUpper] = await reads()
+  assert.equal(field(asksLower.body, "error"), "needs_approval", asksLower.raw)
+  assert.equal(allowsUpper.isError, false, allowsUpper.raw)
+  await setSubjectToolRule(member, { connectionId, toolName: "list_issues", rule: null }, dana.memberId)
+  assert.equal((await den.setFeature(orgId, "toolPermissions", false)).status, 200)
+  await releaseRun?.()
+})
 
 test("Priya's live run loses tool and discovery access after share removal or archive", async () => {
   assert.equal((await asDana("PUT", `/v1/org/personal-agents/${agent.agent.id}/budget`, { monthlyBudgetMicros: null })).status, 200)

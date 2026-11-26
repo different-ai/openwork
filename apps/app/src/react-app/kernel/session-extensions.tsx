@@ -22,6 +22,7 @@ export type SessionExtensions = {
   ProposalCard: ComponentType<SessionProposalCardProps>;
   TranscriptFrame: ComponentType<{ sessionId: string; children: ReactNode }>;
   TranscriptFooter: ComponentType<{ sessionId: string }>;
+  renderChatApprovals?: (completedAt: number) => ReactNode;
   Panel: ComponentType<{ sessionId: string | null }>;
   proposalCards: boolean;
   ownedSessionIds: ReadonlySet<string>;

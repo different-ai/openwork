@@ -164,6 +164,8 @@ export const idTypesMapNameToPrefix = {
   personalAgentEvent: "pge",
   personalAgentAudience: "pgu",
   personalAgentSharedLogin: "pgl",
+  toolPermissionRule: "tpr",
+  toolApproval: "tpa",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

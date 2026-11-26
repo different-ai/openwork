@@ -1,6 +1,7 @@
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { PersonalAgentAudienceTable, PersonalAgentSharedLoginTable, PersonalAgentShareTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { deleteSubjectToolRules } from "../tool-permissions/rules.js"
 import type { PersonalAgentTransaction } from "./access.js"
 
 export async function deletePersonalAgentLoans(tx: PersonalAgentTransaction, organizationId: DenTypeId<"organization">, memberId?: DenTypeId<"member">, agentId?: DenTypeId<"personalAgent">) {
@@ -10,10 +11,12 @@ export async function deletePersonalAgentLoans(tx: PersonalAgentTransaction, org
 }
 
 export async function removeMemberPersonalAgentShares(tx: PersonalAgentTransaction, organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">) {
+  await deleteSubjectToolRules(tx, { organizationId, kind: "member", id: memberId })
   await deletePersonalAgentLoans(tx, organizationId, memberId)
   await tx.delete(PersonalAgentShareTable).where(and(eq(PersonalAgentShareTable.organization_id, organizationId), eq(PersonalAgentShareTable.member_id, memberId)))
 }
 
 export async function removeTeamPersonalAgentAudiences(tx: PersonalAgentTransaction, organizationId: DenTypeId<"organization">, teamId: DenTypeId<"team">) {
+  await deleteSubjectToolRules(tx, { organizationId, kind: "team", id: teamId })
   await tx.delete(PersonalAgentAudienceTable).where(and(eq(PersonalAgentAudienceTable.organization_id, organizationId), eq(PersonalAgentAudienceTable.team_id, teamId)))
 }

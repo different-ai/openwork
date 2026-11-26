@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { AutomationRunTable, AutomationTable, PersonalAgentOrgPolicyTable, PersonalAgentRequestTable } from "@openwork-ee/den-db/schema"
+import { AutomationRunTable, AutomationTable, ToolApprovalTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { automationDetailSchema, automationRunReceiptSchema } from "@openwork/types/automations"
 import {
@@ -330,13 +330,12 @@ test("an organization ask offers only one-time tool approval", async () => {
   const organizationId = normalizeDenTypeId("organization", orgId)
   const connectionId = text(field(connection, "id"), "connection id")
   const toolName = "list_bug_reports"
-  const toolPolicy = { connections: {}, tools: { [connectionId]: { [toolName]: "ask" as const } } }
-  await db.insert(PersonalAgentOrgPolicyTable).values({ organization_id: organizationId, tool_policy: toolPolicy, updated_by_member_id: normalizeDenTypeId("member", dana.memberId) })
-    .onDuplicateKeyUpdate({ set: { tool_policy: toolPolicy } })
-  const requestId = createDenTypeId("personalAgentRequest")
-  await db.insert(PersonalAgentRequestTable).values({
-    id: requestId, organization_id: organizationId, agent_id: normalizeDenTypeId("personalAgent", agentId),
-    kind: "tool", requested_by_member_id: normalizeDenTypeId("member", dana.memberId), connection_id: connectionId, tool_name: toolName,
+  await expectStatus(asDana("PUT", "/v1/org/personal-agent-policy", { toolPolicy: { tools: { [connectionId]: { [toolName]: "ask" } } } }), 200)
+  const requestId = createDenTypeId("toolApproval")
+  await db.insert(ToolApprovalTable).values({
+    id: requestId, organization_id: organizationId, context_id: agentId, context_kind: "agent",
+    requested_by_member_id: normalizeDenTypeId("member", dana.memberId), connection_id: connectionId,
+    connection_name: "Approval tracker", tool_name: toolName, tool_title: toolName,
   })
   const requests = personalAgentRequestListSchema.parse(await expectStatus(asDana("GET", `${path}/requests`), 200)).items
   assert.deepEqual(requests.find((request) => request.id === requestId)?.canDecide, ["deny", "allow_once"])

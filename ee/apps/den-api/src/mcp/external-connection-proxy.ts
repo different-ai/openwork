@@ -36,12 +36,13 @@ import {
   resolveMcpMemberIdentity,
 } from "./external-capabilities.js"
 import { personalAgentRunId, toolsWithheld } from "./workbot-turn-limits.js"
-import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal, personalAgentToolRefusal } from "../personal-agents/permissions-dispatch.js"
+import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
 import { InventoryEventBus, type InventoryRevision } from "./inventory-event-bus.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, scoreText, SEARCH_CAPABILITIES_TOOL_NAME, tokenize } from "./search.js"
 import { personalAgentCredentialMember } from "../personal-agents/shared-logins.js"
+import { toolPermissionRefusal } from "../tool-permissions/dispatch.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 
 function toolArguments(value: unknown): Record<string, unknown> {
@@ -58,6 +59,7 @@ type ExternalMcpProxyOperation = ExternalMcpResourceOperation & {
   member: NonNullable<ExternalMcpResourceOperation["member"]>
   diagnosticReferenceId: string
   actingMemberId?: NonNullable<ExternalMcpResourceOperation["member"]>["orgMembershipId"]
+  actingTeamIds?: readonly string[]
 }
 
 type ExternalMcpProxyDescriptor = Awaited<ReturnType<typeof describeExternalMcpServer>>
@@ -196,7 +198,7 @@ export function createExternalConnectionProxyServer(input: {
         }) }],
       }
     }
-    const refusal = await personalAgentToolRefusal({ scopes: input.scopes, connection, tool, actingMemberId: input.operation.actingMemberId ?? input.operation.member.orgMembershipId })
+    const refusal = await toolPermissionRefusal({ scopes: input.scopes, connection, tool, actingMemberId: input.operation.actingMemberId ?? input.operation.member.orgMembershipId, teamIds: input.operation.actingTeamIds })
     if (refusal) return { isError: true, content: [{ type: "text" as const, text: JSON.stringify(refusal) }] }
     const call = runtime.callTool({ ...input.operation, toolName: tool.name, args })
     recordConnectorCall(Promise.resolve(call), {
@@ -568,6 +570,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       redirectUri,
       member: downstreamMember,
       actingMemberId: member.orgMembershipId,
+      actingTeamIds: member.teamIds,
       diagnosticReferenceId: requestId,
     }
     return deps.proxy({

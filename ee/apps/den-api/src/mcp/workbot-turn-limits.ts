@@ -16,10 +16,6 @@ export function personalAgentRunId(scopes: ReadonlySet<string>): string | undefi
   }
 }
 
-export function personalAgentToolChoiceScope(choice: "allow" | "ask" | "allow_once", connectionId: string, toolName: string): string {
-  return `${AGENT_TOOL_CHOICE_PREFIX}${choice}:${encodeURIComponent(connectionId)}/${encodeURIComponent(toolName)}`
-}
-
 export function isWorkbotTurnLimitScope(scope: string): boolean {
   return scope.startsWith(WITHOUT_CONNECTION_SCOPE_PREFIX)
     || scope.startsWith(WITHOUT_TOOL_SCOPE_PREFIX)

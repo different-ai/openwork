@@ -1,5 +1,5 @@
 import { and, count, desc, eq, gte, inArray, ne, or } from "@openwork-ee/den-db/drizzle"
-import { AutomationTable, PersonalAgentRequestTable, PersonalAgentShareTable, PersonalAgentTable } from "@openwork-ee/den-db/schema"
+import { AutomationTable, PersonalAgentRequestTable, PersonalAgentShareTable, PersonalAgentTable, ToolApprovalTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { PersonalAgentChange, PersonalAgentRequest, PersonalAgentRequestDecision } from "@openwork/types/den/personal-agents"
 import { automationService } from "../automations/service.js"
@@ -7,12 +7,14 @@ import { db } from "../db.js"
 import { canManagePersonalAgent, personalAgentOwnerScope, personalAgentPeople, personOrUnknown, type PersonalAgentAccess, type PersonalAgentCaller } from "./access.js"
 import { personalAgentRequestEventDetail, recordPersonalAgentEvent } from "./events.js"
 import { organizationToolRule, personalAgentOrganizationRules, type PersonalAgentOrganizationRules } from "./org-rules.js"
-import { personalAgentRepository } from "./repository.js"
+import { decideToolApproval, listAgentToolApprovals, type ToolApprovalRow } from "../tool-permissions/approvals.js"
+import { appendPersonalAgentMemoryNote } from "./memory.js"
 import { personalAgentService } from "./service.js"
 
-type RequestRow = typeof PersonalAgentRequestTable.$inferSelect
+type ChangeRow = typeof PersonalAgentRequestTable.$inferSelect
+type RequestRow = (ChangeRow & { kind: "change" }) | (ToolApprovalRow & { kind: "tool" })
 
-function requiresToolApproval(row: RequestRow, rules?: PersonalAgentOrganizationRules) {
+function requiresToolApproval(row: ToolApprovalRow, rules?: PersonalAgentOrganizationRules) {
   return Boolean(rules && row.connection_id && row.tool_name && organizationToolRule(rules, row.connection_id, row.tool_name) === "ask")
 }
 
@@ -31,10 +33,12 @@ async function requestViews(access: PersonalAgentAccess, memberId: string, rows:
       ? personalAgentOrganizationRules(access.organizationId, { fresh: true }) : undefined,
   ])
   return rows.map((row) => ({
-    id: row.id, agentId: row.agent_id, kind: row.kind, status: row.status, requestedBy: personOrUnknown(people, row.requested_by_member_id),
+    id: row.id, agentId: access.agentId, kind: row.kind, status: row.status, requestedBy: personOrUnknown(people, row.requested_by_member_id),
     requestedByCaller: row.requested_by_member_id === memberId,
-    runId: row.run_id, connectionId: row.connection_id, connectionName: row.connection_name, toolName: row.tool_name, toolTitle: row.tool_title,
-    summary: row.summary, change: row.change, decidedBy: row.decided_by_member_id ? personOrUnknown(people, row.decided_by_member_id) : null,
+    runId: row.kind === "tool" ? row.run_id : null, connectionId: row.kind === "tool" ? row.connection_id : null,
+    connectionName: row.kind === "tool" ? row.connection_name : null, toolName: row.kind === "tool" ? row.tool_name : null,
+    toolTitle: row.kind === "tool" ? row.tool_title : null, summary: row.kind === "change" ? row.summary : null,
+    change: row.kind === "change" ? row.change : null, decidedBy: row.decided_by_member_id ? personOrUnknown(people, row.decided_by_member_id) : null,
     decidedAt: row.decided_at?.getTime() ?? null, createdAt: row.created_at.getTime(), canDecide: decisions(access, memberId, row, rules),
   }))
 }
@@ -47,17 +51,31 @@ function requestOfAgent(access: PersonalAgentAccess) {
 export async function listPersonalAgentRequests(access: PersonalAgentAccess, caller: PersonalAgentCaller) {
   const memberId = normalizeDenTypeId("member", caller.memberId)
   const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-  const rows = await db.$primary.select().from(PersonalAgentRequestTable).where(and(requestOfAgent(access),
-    or(eq(PersonalAgentRequestTable.status, "pending"), gte(PersonalAgentRequestTable.decided_at, cutoff)),
-    canManagePersonalAgent(access.role) ? undefined : eq(PersonalAgentRequestTable.requested_by_member_id, memberId),
-  )).orderBy(desc(PersonalAgentRequestTable.created_at), desc(PersonalAgentRequestTable.id)).limit(50)
-  return { items: await requestViews(access, memberId, rows) }
+  const onlyMember = canManagePersonalAgent(access.role) ? undefined : memberId
+  const [changes, approvals] = await Promise.all([
+    db.$primary.select().from(PersonalAgentRequestTable).where(and(requestOfAgent(access),
+      or(eq(PersonalAgentRequestTable.status, "pending"), gte(PersonalAgentRequestTable.decided_at, cutoff)),
+      onlyMember ? eq(PersonalAgentRequestTable.requested_by_member_id, onlyMember) : undefined,
+    )).orderBy(desc(PersonalAgentRequestTable.created_at), desc(PersonalAgentRequestTable.id)).limit(50),
+    listAgentToolApprovals(access.organizationId, access.agentId, { memberId: onlyMember }),
+  ])
+  const rows: RequestRow[] = [...changes.map(asChange), ...approvals.map(asTool)]
+  rows.sort((left, right) => right.created_at.getTime() - left.created_at.getTime() || right.id.localeCompare(left.id))
+  return { items: await requestViews(access, memberId, rows.slice(0, 50)) }
+}
+
+function asChange(row: ChangeRow): RequestRow {
+  return { ...row, kind: "change" }
+}
+
+function asTool(row: ToolApprovalRow): RequestRow {
+  return { ...row, kind: "tool" }
 }
 
 function changedFields(change: PersonalAgentChange) {
   return [
     change.newRoutine && "new routine", change.schedule && "schedule", change.instructions && "instructions",
-    change.name && "name", change.active !== undefined && "on/off", change.brief && "brief", change.toolPolicy && "tool policy",
+    change.name && "name", change.active !== undefined && "on/off", change.brief && "brief", change.toolPolicy && "tool policy", change.memoryNote && "memory",
   ].filter(Boolean).join(", ")
 }
 
@@ -89,21 +107,39 @@ export async function createPersonalAgentChangeRequest(access: PersonalAgentAcce
     : routine ? `Change ${routine.automation.name}: ${changedFields(changed)}` : `Change the agent: ${changedFields(changed)}`)
   await db.insert(PersonalAgentRequestTable).values({
     id, organization_id: normalizeDenTypeId("organization", access.organizationId), agent_id: normalizeDenTypeId("personalAgent", access.agentId),
-    kind: "change", requested_by_member_id: memberId, summary, change: changed, created_at: new Date(),
+    requested_by_member_id: memberId, summary, change: changed, created_at: new Date(),
   })
   const [row] = await db.$primary.select().from(PersonalAgentRequestTable).where(eq(PersonalAgentRequestTable.id, id)).limit(1)
-  const [view] = await requestViews(access, memberId, [row])
+  const [view] = await requestViews(access, memberId, [asChange(row)])
   await recordPersonalAgentEvent({ organizationId: access.organizationId, agentId: access.agentId, actorMemberId: memberId, action: "request.asked",
     detail: { requester: view.requestedBy.name, kind: "change", changes: changedFields(changed) },
   })
   return view
 }
 
-const decisionsApplied = { deny: "denied", allow_once: "allowed_once", always_allow: "always_allowed", approve: "approved" } as const
+async function decidePersonalAgentToolRequest(access: PersonalAgentAccess, memberId: string, approvalId: string, decision: PersonalAgentRequestDecision) {
+  if (decision === "approve" || access.state !== "active") throw new Error("personal_agent_forbidden")
+  const row = await decideToolApproval({ organizationId: access.organizationId, memberId, approvalId, decision,
+    agent: { id: access.agentId, canDecideForOthers: access.role === "manager", onAlwaysAllow: (tx) => recordPersonalAgentEvent({
+      organizationId: access.organizationId, agentId: access.agentId, actorMemberId: memberId,
+      action: "agent.updated", detail: { name: false, brief: false, tools: true, budget: false },
+    }, tx) } }).catch((error: unknown) => {
+    if (error instanceof Error && error.message === "tool_approval_decided") throw new Error("personal_agent_request_decided")
+    if (error instanceof Error && error.message === "tool_approval_forbidden") throw new Error("personal_agent_forbidden")
+    throw error
+  })
+  if (!row) return null
+  const [view] = await requestViews(access, memberId, [asTool(row)])
+  await recordPersonalAgentEvent({ organizationId: access.organizationId, agentId: access.agentId, actorMemberId: memberId,
+    action: `request.${row.status}`, detail: personalAgentRequestEventDetail({ requester: view.requestedBy.name, kind: "tool", tool: row.tool_title, connection: row.connection_name }),
+  })
+  return view
+}
 
 export async function decidePersonalAgentRequest(access: PersonalAgentAccess, caller: PersonalAgentCaller, requestId: string, decision: PersonalAgentRequestDecision) {
-  if (!isDenTypeId("personalAgentRequest", requestId)) return null
   const memberId = normalizeDenTypeId("member", caller.memberId)
+  if (isDenTypeId("toolApproval", requestId)) return decidePersonalAgentToolRequest(access, memberId, requestId, decision)
+  if (!isDenTypeId("personalAgentRequest", requestId)) return null
   const scope = personalAgentOwnerScope(access)
   const row = await db.transaction(async (tx) => {
     const [request] = await tx.select().from(PersonalAgentRequestTable).where(and(requestOfAgent(access),
@@ -115,26 +151,13 @@ export async function decidePersonalAgentRequest(access: PersonalAgentAccess, ca
     const [agent] = await tx.select().from(PersonalAgentTable).where(and(eq(PersonalAgentTable.id, request.agent_id),
       eq(PersonalAgentTable.organization_id, request.organization_id))).limit(1).for("update")
     if (!agent) return null
-    if ((decision === "approve" || decision === "always_allow") && agent.owner_member_id !== memberId) throw new Error("personal_agent_forbidden")
-    if (request.kind === "change" && access.role === "owner" && agent.state !== "active" && decision === "approve") {
+    if (agent.owner_member_id !== memberId) throw new Error("personal_agent_forbidden")
+    if (agent.state !== "active" && decision === "approve") {
       throw new Error("personal_agent_change_stale")
     }
-    if (!decisions(access, memberId, request).includes(decision)) throw new Error("personal_agent_forbidden")
-    if (decision === "always_allow" && request.connection_id && request.tool_name) {
-      if (requiresToolApproval(request, await personalAgentOrganizationRules(access.organizationId, { fresh: true }))) {
-        throw new Error("personal_agent_organization_asks")
-      }
-      const current = await personalAgentRepository.get({ ...scope, agentId: access.agentId })
-      if (!current) throw new Error("personal_agent_not_found")
-      const policy = current.revision.toolPolicy
-      const updated = await personalAgentService.update(scope, access.agentId, { toolPolicy: {
-        connections: policy.connections,
-        tools: { ...policy.tools, [request.connection_id]: { ...policy.tools[request.connection_id], [request.tool_name]: "allow" } },
-      } }, memberId, tx)
-      if (!updated) throw new Error("personal_agent_not_found")
-    }
-    if (decision === "approve" && request.change) {
-      const { newRoutine, schedule, instructions, brief, name, active, toolPolicy, routineId } = request.change
+    if (!decisions(access, memberId, asChange(request)).includes(decision)) throw new Error("personal_agent_forbidden")
+    if (decision === "approve") {
+      const { newRoutine, schedule, instructions, brief, name, active, toolPolicy, routineId, memoryNote } = request.change
       try {
         const [routine] = routineId ? await tx.select().from(AutomationTable).where(and(
           eq(AutomationTable.id, normalizeDenTypeId("automation", routineId)), eq(AutomationTable.agent_id, agent.id),
@@ -152,6 +175,8 @@ export async function decidePersonalAgentRequest(access: PersonalAgentAccess, ca
         if ((brief || toolPolicy) && !await personalAgentService.update(scope, access.agentId, { brief, toolPolicy }, memberId, tx)) {
           throw new Error("personal_agent_change_stale")
         }
+        if (memoryNote) await appendPersonalAgentMemoryNote(tx, { organizationId: agent.organization_id, agentId: agent.id,
+          note: memoryNote, memberId: request.requested_by_member_id })
         if (newRoutine && !await personalAgentService.createRoutine(scope, access.agentId, newRoutine, memberId, tx)) {
           throw new Error("personal_agent_change_stale")
         }
@@ -162,15 +187,15 @@ export async function decidePersonalAgentRequest(access: PersonalAgentAccess, ca
         throw error
       }
     }
-    const changes = { status: decisionsApplied[decision], decided_by_member_id: memberId, decided_at: new Date() }
+    const status: "approved" | "denied" = decision === "approve" ? "approved" : "denied"
+    const changes = { status, decided_by_member_id: memberId, decided_at: new Date() }
     await tx.update(PersonalAgentRequestTable).set(changes).where(eq(PersonalAgentRequestTable.id, request.id))
     return { ...request, ...changes }
   })
   if (!row) return null
-  const [view] = await requestViews(access, memberId, [row])
+  const [view] = await requestViews(access, memberId, [asChange(row)])
   await recordPersonalAgentEvent({ organizationId: access.organizationId, agentId: access.agentId, actorMemberId: memberId,
-    action: `request.${decisionsApplied[decision]}`, detail: row.kind === "change" && row.change ? { requester: view.requestedBy.name, kind: row.kind, changes: changedFields(row.change) }
-      : personalAgentRequestEventDetail({ requester: view.requestedBy.name, kind: row.kind, tool: row.tool_title, connection: row.connection_name }),
+    action: `request.${row.status}`, detail: { requester: view.requestedBy.name, kind: "change", changes: changedFields(row.change) },
   })
   return view
 }
@@ -179,15 +204,23 @@ export async function openPersonalAgentRequestCounts(caller: PersonalAgentCaller
   const ids = agentIds.filter((id) => isDenTypeId("personalAgent", id)).map((id) => normalizeDenTypeId("personalAgent", id))
   if (!ids.length) return new Map()
   const memberId = normalizeDenTypeId("member", caller.memberId)
-  const rows = await db.$primary.select({ agentId: PersonalAgentRequestTable.agent_id, total: count() }).from(PersonalAgentRequestTable)
-    .innerJoin(PersonalAgentTable, eq(PersonalAgentTable.id, PersonalAgentRequestTable.agent_id))
-    .leftJoin(PersonalAgentShareTable, and(eq(PersonalAgentShareTable.agent_id, PersonalAgentTable.id), eq(PersonalAgentShareTable.member_id, memberId)))
-    .where(and(
-      eq(PersonalAgentRequestTable.organization_id, normalizeDenTypeId("organization", caller.organizationId)), inArray(PersonalAgentRequestTable.agent_id, ids),
-      eq(PersonalAgentRequestTable.status, "pending"), eq(PersonalAgentTable.state, "active"),
-      or(eq(PersonalAgentTable.owner_member_id, memberId), eq(PersonalAgentShareTable.role, "manager"), and(
-        eq(PersonalAgentShareTable.role, "collaborator"), eq(PersonalAgentRequestTable.kind, "tool"), eq(PersonalAgentRequestTable.requested_by_member_id, memberId),
-      )),
-    )).groupBy(PersonalAgentRequestTable.agent_id)
-  return new Map(rows.map(({ agentId, total }) => [agentId, total]))
+  const organizationId = normalizeDenTypeId("organization", caller.organizationId)
+  const manages = or(eq(PersonalAgentTable.owner_member_id, memberId), eq(PersonalAgentShareTable.role, "manager"))
+  const share = and(eq(PersonalAgentShareTable.agent_id, PersonalAgentTable.id), eq(PersonalAgentShareTable.member_id, memberId))
+  const [changes, approvals] = await Promise.all([
+    db.$primary.select({ agentId: PersonalAgentRequestTable.agent_id, total: count() }).from(PersonalAgentRequestTable)
+      .innerJoin(PersonalAgentTable, eq(PersonalAgentTable.id, PersonalAgentRequestTable.agent_id))
+      .leftJoin(PersonalAgentShareTable, share).where(and(eq(PersonalAgentRequestTable.organization_id, organizationId),
+        inArray(PersonalAgentRequestTable.agent_id, ids), eq(PersonalAgentRequestTable.status, "pending"), eq(PersonalAgentTable.state, "active"), manages,
+      )).groupBy(PersonalAgentRequestTable.agent_id),
+    db.$primary.select({ agentId: PersonalAgentTable.id, total: count() }).from(ToolApprovalTable)
+      .innerJoin(PersonalAgentTable, eq(PersonalAgentTable.id, ToolApprovalTable.context_id))
+      .leftJoin(PersonalAgentShareTable, share).where(and(eq(ToolApprovalTable.organization_id, organizationId),
+        eq(ToolApprovalTable.context_kind, "agent"), inArray(PersonalAgentTable.id, ids), eq(ToolApprovalTable.status, "pending"),
+        eq(PersonalAgentTable.state, "active"), or(manages, eq(ToolApprovalTable.requested_by_member_id, memberId)),
+      )).groupBy(PersonalAgentTable.id),
+  ])
+  const totals = new Map<string, number>()
+  for (const { agentId, total } of [...changes, ...approvals]) totals.set(agentId, (totals.get(agentId) ?? 0) + total)
+  return totals
 }

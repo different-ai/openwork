@@ -32,6 +32,7 @@ import type { AuthContextVariables } from "../../session.js"
 import { automationRouteFailure } from "../automations/index.js"
 import { registerPersonalAgentAdminRoutes } from "./admin.js"
 import { registerPersonalAgentAudienceRoutes } from "./audience.js"
+import { registerPersonalAgentMemoryRoutes } from "./memory.js"
 import { registerPersonalAgentPermissionsRoutes } from "./permissions.js"
 import { personalAgentCaller, personalAgentForbidden, registerPersonalAgentSharingRoutes } from "./sharing.js"
 
@@ -339,6 +340,7 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
     },
   )
   registerPersonalAgentSharingRoutes(app, gate, service)
+  registerPersonalAgentMemoryRoutes(app, gate)
   registerPersonalAgentAudienceRoutes(app, gate)
   registerPersonalAgentPermissionsRoutes(app, gate)
   registerPersonalAgentAdminRoutes(app, gate)

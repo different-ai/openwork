@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { and, asc, eq, inArray, isNotNull, lt } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, MemberTable, PersonalAgentChatTable, PersonalAgentRevisionTable, PersonalAgentShareTable, PersonalAgentTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { EMPTY_PERSONAL_AGENT_TOOL_POLICY } from "@openwork/types/den/personal-agents"
 import type {
   CreatePersonalAgent,
   PersonalAgentChat,
@@ -16,6 +17,7 @@ import type {
 } from "@openwork/types/den/personal-agents"
 import { archiveAgentRoutines, repinAgentRoutines } from "../automations/repository.js"
 import { db } from "../db.js"
+import { readSubjectToolPolicies, readSubjectToolPolicy, replaceSubjectToolPolicy } from "../tool-permissions/rules.js"
 import { peopleMemberCondition } from "../setup-agent-members.js"
 import { canManagePersonalAgent, organizationAllowsPersonalAgentSharing, personalAgentAccessRows, personalAgentPeople, personOrUnknown, PERSONAL_AGENT_SHARING_ADMINS_ONLY, type PersonalAgentAccess, type PersonalAgentCaller, type PersonalAgentTransaction } from "./access.js"
 import { EMPTY_PERSONAL_AGENT_AUDIENCE, personalAgentAudiences } from "./audience.js"
@@ -28,7 +30,7 @@ import { personalAgentSpend } from "./spend.js"
 type AgentRow = typeof PersonalAgentTable.$inferSelect
 type RevisionRow = typeof PersonalAgentRevisionTable.$inferSelect
 type Scope = { organizationId: string; ownerMemberId: string; isOrgAdmin?: boolean }
-type Definition = Pick<PersonalAgentRevision, "brief" | "toolPolicy" | "defaultExecutionTarget" | "monthlyBudgetMicros">
+type Definition = Pick<PersonalAgentRevision, "brief" | "defaultExecutionTarget" | "monthlyBudgetMicros">
 
 function mapAgent(row: AgentRow): PersonalAgent {
   return {
@@ -45,13 +47,13 @@ function mapAgent(row: AgentRow): PersonalAgent {
   }
 }
 
-function mapRevision(row: RevisionRow): PersonalAgentRevision {
+function mapRevision(row: RevisionRow, toolPolicy: PersonalAgentToolPolicy): PersonalAgentRevision {
   return {
     id: row.id,
     agentId: row.agent_id,
     version: row.version,
     brief: row.brief,
-    toolPolicy: row.tool_policy,
+    toolPolicy,
     defaultExecutionTarget: row.default_execution_target,
     monthlyBudgetMicros: row.monthly_budget_micros,
     digest: row.digest.slice(0, 64),
@@ -63,11 +65,14 @@ function sortedRecord<T>(record: Record<string, T>, value: (entry: T) => unknown
   return Object.keys(record).sort().map((key) => [key, value(record[key])])
 }
 
+function toolPolicyFingerprint(policy: PersonalAgentToolPolicy): string {
+  return JSON.stringify([sortedRecord(policy.connections, (access) => access),
+    sortedRecord(policy.tools, (tools) => sortedRecord(tools, (access) => access))])
+}
+
 function definitionDigest(definition: Definition): string {
   return createHash("sha256").update(JSON.stringify([
     definition.brief,
-    sortedRecord(definition.toolPolicy.connections, (access) => access),
-    sortedRecord(definition.toolPolicy.tools, (tools) => sortedRecord(tools, (access) => access)),
     definition.defaultExecutionTarget,
     definition.monthlyBudgetMicros,
   ])).digest("hex")
@@ -104,7 +109,7 @@ async function details(rows: Awaited<ReturnType<typeof personalAgentAccessRows>>
   const caller = { ...input, memberId: normalizeDenTypeId("member", input.memberId) }
   const agents = rows.map(({ agent }) => agent)
   const ids = agents.map((agent) => agent.id)
-  const [revisions, shares, routines, requests, audiences, chats, sharingAllowed] = await Promise.all([
+  const [revisions, shares, routines, requests, audiences, chats, sharingAllowed, toolPolicies] = await Promise.all([
     db.$primary.select().from(PersonalAgentRevisionTable)
       .where(inArray(PersonalAgentRevisionTable.id, agents.map((agent) => agent.current_revision_id))),
     sharesFor(caller.organizationId, ids),
@@ -116,6 +121,7 @@ async function details(rows: Awaited<ReturnType<typeof personalAgentAccessRows>>
       eq(PersonalAgentChatTable.member_id, caller.memberId), inArray(PersonalAgentChatTable.agent_id, ids),
     )),
     organizationAllowsPersonalAgentSharing(caller),
+    readSubjectToolPolicies(caller.organizationId, "agent", ids),
   ])
   const withChat = new Set(chats.map((chat) => chat.id))
   const revisionById = new Map(revisions.map((revision) => [revision.id, revision]))
@@ -135,7 +141,7 @@ async function details(rows: Awaited<ReturnType<typeof personalAgentAccessRows>>
     const agentRoutines = routines.get(agent.id) ?? []
     const audience = audiences.get(agent.id) ?? EMPTY_PERSONAL_AGENT_AUDIENCE
     return {
-      agent: mapAgent(agent), revision: mapRevision(revision), routineCount: agentRoutines.length,
+      agent: mapAgent(agent), revision: mapRevision(revision, toolPolicies.get(agent.id) ?? EMPTY_PERSONAL_AGENT_TOOL_POLICY), routineCount: agentRoutines.length,
       role, owner: personOrUnknown(people, agent.owner_member_id),
       sharedWith: agentShares.map((share) => ({ ...personOrUnknown(people, share.member_id), role: share.role, createdAt: share.created_at.getTime() })),
       routines: agentRoutines, spend: usage, openRequestCount: requests.get(agent.id) ?? 0,
@@ -181,7 +187,6 @@ export const personalAgentRepository = {
     const now = new Date(input.now)
     const definition: Definition = {
       brief: input.definition.brief,
-      toolPolicy: input.toolPolicy,
       defaultExecutionTarget: input.definition.defaultExecutionTarget ?? "cloud",
       monthlyBudgetMicros: input.definition.monthlyBudgetMicros ?? null,
     }
@@ -192,7 +197,6 @@ export const personalAgentRepository = {
           agent_id: agentId,
           version: 1,
           brief: definition.brief,
-          tool_policy: definition.toolPolicy,
           default_execution_target: definition.defaultExecutionTarget,
           monthly_budget_micros: definition.monthlyBudgetMicros,
           digest: definitionDigest(definition) + (input.definition.idempotencyKey ? creationFingerprint(input.definition) : ""),
@@ -211,6 +215,9 @@ export const personalAgentRepository = {
           created_at: now,
           updated_at: now,
         })
+        if (Object.keys(input.toolPolicy.connections).length || Object.keys(input.toolPolicy.tools).length) {
+          await replaceSubjectToolPolicy({ organizationId: input.organizationId, kind: "agent", id: agentId }, input.toolPolicy, input.ownerMemberId, tx)
+        }
       })
     } catch (error) {
       if (duplicateEntry(error)) {
@@ -241,7 +248,6 @@ export const personalAgentRepository = {
       if (!current) throw new Error("personal_agent_revision_not_found")
       const definition: Definition = {
         brief: input.changes.brief ?? current.brief,
-        toolPolicy: input.toolPolicy ?? current.tool_policy,
         defaultExecutionTarget: input.changes.defaultExecutionTarget ?? current.default_execution_target,
         monthlyBudgetMicros: input.changes.monthlyBudgetMicros === undefined
           ? current.monthly_budget_micros
@@ -249,10 +255,13 @@ export const personalAgentRepository = {
       }
       const digest = definitionDigest(definition)
       const now = new Date(input.now)
+      const subject = { organizationId: input.organizationId, kind: "agent", id: agent.id } as const
+      const toolsChanged = input.toolPolicy !== undefined && toolPolicyFingerprint(input.toolPolicy) !== toolPolicyFingerprint(await readSubjectToolPolicy(subject, tx))
+      if (toolsChanged && input.toolPolicy) await replaceSubjectToolPolicy(subject, input.toolPolicy, input.actorMemberId ?? input.ownerMemberId, tx)
       const changed = {
         name: input.changes.name !== undefined && input.changes.name !== agent.name,
         brief: definition.brief !== current.brief,
-        tools: definitionDigest({ ...definition, toolPolicy: current.tool_policy }) !== digest,
+        tools: toolsChanged,
         budget: definition.monthlyBudgetMicros !== current.monthly_budget_micros,
       }
       if (digest === current.digest.slice(0, 64)) {
@@ -266,7 +275,6 @@ export const personalAgentRepository = {
         agent_id: agent.id,
         version: current.version + 1,
         brief: definition.brief,
-        tool_policy: definition.toolPolicy,
         default_execution_target: definition.defaultExecutionTarget,
         monthly_budget_micros: definition.monthlyBudgetMicros,
         digest,
@@ -403,7 +411,6 @@ export const personalAgentRepository = {
     revisionId: string
     version: number
     brief: string
-    toolPolicy: PersonalAgentToolPolicy
   } | null> {
     if (!isDenTypeId("personalAgentRevision", agentRevisionId)) return null
     const [row] = await db.$primary.select({ agent: PersonalAgentTable, revision: PersonalAgentRevisionTable })
@@ -419,7 +426,6 @@ export const personalAgentRepository = {
       revisionId: row.revision.id,
       version: row.revision.version,
       brief: row.revision.brief,
-      toolPolicy: row.revision.tool_policy,
     }
   },
 }

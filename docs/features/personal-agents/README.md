@@ -120,6 +120,71 @@ Not built yet:
   which agent per workspace, not the messages
 - running a routine on the owner's desktop
 
+## Diagrams
+
+### The primitives
+
+```mermaid
+flowchart TB
+  subgraph Agent["Agent (owned by one member)"]
+    Brief["Brief (versioned)"]
+    Memory["Memory: notes + what each routine did last"]
+  end
+  Routine["Routine = an Automation with a schedule"]
+  Run["Run (fresh runner conversation)"]
+  Share["Shared with: people, teams, the organization"]
+  Rules["Tool permissions: Allow, Ask, Block<br/>organization, team, member, agent"]
+  Approval["Approval: Deny or Allow once"]
+  Admin["Admin: pause, budget, who can share, written rules"]
+  Agent -->|has| Routine
+  Routine -->|starts| Run
+  Run -->|reads and writes| Memory
+  Run -->|every connector tool call| Rules
+  Rules -->|Ask| Approval
+  Share -->|can run and chat| Agent
+  Admin -->|applies to every| Agent
+```
+
+### One run
+
+```mermaid
+sequenceDiagram
+  participant S as Schedule or Run now
+  participant D as Den
+  participant R as Runner
+  participant C as Connector
+  participant P as Person
+  S->>D: start the routine
+  D->>D: admit: feature on, agent not paused, budget, the person still has access
+  D->>R: organization rules, brief, task, memory
+  R->>D: use a tool
+  D->>D: tool permissions: a block wins, then ask, then allow
+  alt allowed
+    D->>C: call with the account of the person the run acts for
+    C-->>R: result
+  else ask
+    D-->>R: refused, a person has to say yes
+    D->>P: approval card: Deny or Allow once
+  else blocked
+    D-->>R: refused
+  end
+  R->>D: remember a note, note progress
+  R-->>D: answer
+  D->>D: save the answer and what this routine did
+```
+
+### Whose account
+
+```mermaid
+flowchart LR
+  Scheduled["Scheduled run"] --> Owner["Owner's accounts"]
+  Manual["Run now by Priya"] --> Hers["Priya's accounts"]
+  Lent["Sam lent his Linear login to the agent"] --> Sams["Sam's Linear account, for everyone's runs on that connection"]
+  Owner --> Check["Tool permissions are checked for the person the run acts for"]
+  Hers --> Check
+  Sams --> Check
+```
+
 ## How it works
 
 - `personal_agent` holds the agent; `personal_agent_revision` holds each

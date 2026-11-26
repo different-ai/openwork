@@ -16,6 +16,8 @@ import {
 } from "@openwork/types/den/personal-agents"
 import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { db } from "../db.js"
+import { invalidateOrganizationWrittenToolRules, readSubjectToolPolicies, replaceSubjectToolPolicy, writeOrganizationWrittenToolRules } from "../tool-permissions/rules.js"
+import { personalAgentOrganizationRules } from "./org-rules.js"
 import { agentToolLimitScopes } from "../mcp/workbot-turn-limits.js"
 import { peopleMemberCondition } from "../setup-agent-members.js"
 import { personalAgentPeople, personOrUnknown, type PersonalAgentCaller } from "./access.js"
@@ -83,10 +85,9 @@ async function latestRunOfAnyone(routineIds: readonly string[]): Promise<Map<str
 async function adminItems(organizationId: string, agents: AgentRow[]): Promise<PersonalAgentAdminItem[]> {
   if (agents.length === 0) return []
   const agentIds = agents.map((agent) => agent.id)
-  const [revisions, shares, routines, audiences] = await Promise.all([
+  const [revisions, shares, routines, audiences, toolPolicies] = await Promise.all([
     db.$primary.select({
       id: PersonalAgentRevisionTable.id,
-      toolPolicy: PersonalAgentRevisionTable.tool_policy,
       monthlyBudgetMicros: PersonalAgentRevisionTable.monthly_budget_micros,
     }).from(PersonalAgentRevisionTable).where(inArray(PersonalAgentRevisionTable.id, agents.map((agent) => agent.current_revision_id))),
     db.$primary.select().from(PersonalAgentShareTable).where(and(
@@ -95,6 +96,7 @@ async function adminItems(organizationId: string, agents: AgentRow[]): Promise<P
     )).orderBy(asc(PersonalAgentShareTable.created_at), asc(PersonalAgentShareTable.id)),
     personalAgentRoutineSummaries(agentIds),
     personalAgentAudiences(organizationId, agentIds),
+    readSubjectToolPolicies(organizationId, "agent", agentIds),
   ])
   const revisionById = new Map(revisions.map((revision) => [revision.id, revision]))
   const lastRuns = await latestRunOfAnyone([...routines.values()].flatMap((list) => list.map((routine) => routine.id)))
@@ -131,7 +133,7 @@ async function adminItems(organizationId: string, agents: AgentRow[]): Promise<P
       owner: personOrUnknown(people, agent.owner_member_id),
       sharedWith: sharedWith.get(agent.id) ?? [],
       audience: audiences.get(agent.id) ?? EMPTY_PERSONAL_AGENT_AUDIENCE,
-      writeAccess: writeAccess(revisionById.get(agent.current_revision_id)?.toolPolicy ?? EMPTY_PERSONAL_AGENT_TOOL_POLICY),
+      writeAccess: writeAccess(toolPolicies.get(agent.id) ?? EMPTY_PERSONAL_AGENT_TOOL_POLICY),
       spend: agentSpend,
       routines: (routines.get(agent.id) ?? []).map((routine) => ({ ...routine, latestRun: lastRuns.get(routine.id) ?? null })),
     }
@@ -230,15 +232,7 @@ export async function setAdminPersonalAgentAudience(caller: PersonalAgentCaller,
 }
 
 export async function getAdminPersonalAgentPolicy(organizationId: string): Promise<PersonalAgentOrgPolicy> {
-  const [stored] = await db.$primary.select().from(PersonalAgentOrgPolicyTable)
-    .where(eq(PersonalAgentOrgPolicyTable.organization_id, normalizeDenTypeId("organization", organizationId))).limit(1)
-  return {
-    toolPolicy: stored?.tool_policy ?? EMPTY_PERSONAL_AGENT_TOOL_POLICY,
-    monthlyBudgetMicros: stored?.monthly_budget_micros ?? null,
-    shareMode: stored?.share_mode ?? "everyone",
-    sharedLogins: stored?.shared_logins ?? false,
-    rules: stored?.rules ?? "",
-  }
+  return personalAgentOrganizationRules(organizationId, { fresh: true })
 }
 
 async function organizationToolPolicy(organizationId: string, policy: PersonalAgentToolPolicy): Promise<PersonalAgentToolPolicy> {
@@ -271,26 +265,26 @@ export async function setAdminPersonalAgentPolicy({ organizationId, memberId }: 
   const toolPolicy = change.toolPolicy && await organizationToolPolicy(organizationId, change.toolPolicy)
   const updatedBy = normalizeDenTypeId("member", memberId)
   const rules = change.rules?.trim()
+  const orgId = normalizeDenTypeId("organization", organizationId)
   await db.transaction(async (tx) => {
+    if (toolPolicy) await replaceSubjectToolPolicy({ organizationId: orgId, kind: "organization", id: orgId }, toolPolicy, updatedBy, tx)
+    if (rules !== undefined) await writeOrganizationWrittenToolRules(orgId, rules, updatedBy, tx)
     await tx.insert(PersonalAgentOrgPolicyTable).values({
       organization_id: normalizeDenTypeId("organization", organizationId),
-      tool_policy: toolPolicy ?? EMPTY_PERSONAL_AGENT_TOOL_POLICY,
       monthly_budget_micros: change.monthlyBudgetMicros ?? null,
       share_mode: change.shareMode,
       shared_logins: change.sharedLogins,
-      rules,
       updated_by_member_id: updatedBy,
     }).onDuplicateKeyUpdate({ set: {
-      tool_policy: toolPolicy,
       monthly_budget_micros: change.monthlyBudgetMicros,
       share_mode: change.shareMode,
       shared_logins: change.sharedLogins,
-      rules,
       updated_by_member_id: updatedBy,
       updated_at: new Date(),
     } })
     if (change.sharedLogins === false) await deletePersonalAgentLoans(tx, normalizeDenTypeId("organization", organizationId))
   })
+  if (rules !== undefined) invalidateOrganizationWrittenToolRules(orgId)
   const event = { organizationId, agentId: null, actorMemberId: memberId }
   if (toolPolicy) await recordPersonalAgentEvent({ ...event, action: "organization.tools_changed", detail: {
     blockedTools: Object.values(toolPolicy.tools).reduce((total, tools) => total + Object.values(tools).filter((access) => access === "block").length, 0),

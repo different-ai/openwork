@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { featureAnalytics } from "@/app/lib/analytics"
 import { useQuery } from "@tanstack/react-query"
@@ -175,6 +175,7 @@ function LoadingState() {
 export function AutomationsPage(props: {
   providerCatalog?: AutomationProviderCatalog
   agentNames?: ReadonlyMap<string, string>
+  renderApprovals?: (completedAt: number) => ReactNode
   workspaceId?: string | null
   headerActionsTarget?: HTMLElement | null
   onSignIn?: () => void
@@ -232,6 +233,12 @@ export function AutomationsPage(props: {
     },
   })
 
+  const approvals = props.renderApprovals?.(Math.max(0,
+    ...(listQuery.data?.items.map((item) => item.latestRun?.finishedAt ?? 0) ?? []),
+    ...(runsQuery.data?.items.map((run) => run.finishedAt ?? 0) ?? []),
+    receiptQuery.data?.run.finishedAt ?? 0,
+    detailQuery.data?.latestRun?.finishedAt ?? 0,
+  ))
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     const items = listQuery.data?.items.filter((item) => (item.automation.state === "archived") === showArchived) ?? []
@@ -451,6 +458,7 @@ export function AutomationsPage(props: {
 
     return (
       <div className="mx-auto max-w-5xl space-y-5 p-6">
+        {approvals}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
             <Button variant="ghost" size="icon" aria-label="Back to Automations" onClick={() => openAutomation(null)}>
@@ -758,6 +766,7 @@ export function AutomationsPage(props: {
   const newAutomation = <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8">
+      {approvals}
       {props.headerActionsTarget
         ? createPortal(newAutomation, props.headerActionsTarget)
         : props.headerActionsTarget === undefined ? <div className="flex justify-end">{newAutomation}</div> : null}

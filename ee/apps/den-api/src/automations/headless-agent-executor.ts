@@ -189,9 +189,10 @@ export async function executeHeadlessAgent(
   let sessionId: string | null = previous?.sessionId ?? null
   const messageId = previous?.messageId ?? headlessMessageIdForRun(input.automationRunId)
   try {
+    const runsFor = input.forAgent ? "the person this run uses" : "the Automation owner"
     const userId = await deps.ownerUserId(input)
     if (!userId) {
-      return failure({ code: "owner_membership_lost", message: "The person this run uses is no longer a member of this organization.", needsAttention: true })
+      return failure({ code: "owner_membership_lost", message: input.forAgent ? "The person this run uses is no longer a member of this organization." : "The Automation owner is no longer an active organization member.", needsAttention: true })
     }
     const actor = { userId, organizationId: input.organizationId }
 
@@ -232,11 +233,16 @@ export async function executeHeadlessAgent(
         if (!selected || !catalog.models.some((entry) => entry.id === selected)) throw new Error("cloud_agent_gateway_model_unavailable")
         model = selected
       } catch {
-        return failure({ code: "provider_unavailable", message: "The selected cloud model is not available to the person this run uses. Check their model access and try again.", needsAttention: true })
+        return failure({ code: "provider_unavailable", message: `The selected cloud model is not available to ${runsFor}. Check their model access and try again.`, needsAttention: true })
       }
     }
-    let pricing = await headlessRunPricing(input.organizationId, model)
-    if (pricing) await input.onModelResolved?.(pricing.model)
+    const priced = async (modelId: string) => {
+      if (!input.forAgent) return null
+      const found = await headlessRunPricing(input.organizationId, modelId).catch(() => null)
+      if (found) await input.onModelResolved?.(found.model)
+      return found
+    }
+    let pricing = await priced(model)
     let modelAccessRequired = storedTurn?.modelAccessRequired === true
     const ttlMs = Math.min(input.maximumRuntimeMs + TOKEN_GRACE_MS, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS)
     const runSessionId = sessionId
@@ -251,7 +257,7 @@ export async function executeHeadlessAgent(
       ...(execution ? { execution } : {}),
       ...(input.mcpScopes?.length ? { mcpScopes: input.mcpScopes } : {}),
     }).catch((error: unknown) => (isModelAccessRefusal(error) ? null : RUNNER_UNREACHABLE))
-    const accessFailure = () => failure({ code: "provider_unavailable", message: "The cloud model is not available to the person this run uses. Check their model access and try again.", needsAttention: true })
+    const accessFailure = () => failure({ code: "provider_unavailable", message: `The cloud model is not available to ${runsFor}. Check their model access and try again.`, needsAttention: true })
 
     const sent = await sendTurn()
     if (!sent) return accessFailure()
@@ -283,8 +289,7 @@ export async function executeHeadlessAgent(
       if (turn.status === "interrupted") {
         if (turn.model && turn.model !== model) {
           model = turn.model
-          pricing = await headlessRunPricing(input.organizationId, model)
-          if (pricing) await input.onModelResolved?.(pricing.model)
+          pricing = await priced(model)
         }
         modelAccessRequired ||= turn.modelAccessRequired === true
         const resumed = await sendTurn()
@@ -297,7 +302,7 @@ export async function executeHeadlessAgent(
       }
       const usage = usageFromTurn(turn, pricing?.rates)
       if (turn.status === "aborted") {
-        return failure({ code: "cancelled", status: "cancelled", message: "The Automation run was cancelled.", usage, events: [{ type: "terminal", payload: { status: "cancelled" } }] })
+        return failure({ code: "cancelled", status: "cancelled", message: "The Automation run was cancelled.", ...(input.forAgent ? { usage } : {}), events: [{ type: "terminal", payload: { status: "cancelled" } }] })
       }
       if (turn.status === "failed") return turnFailure(turn, read.value.messages, usage)
       const answer = read.value.messages.filter((message) => message.role === "assistant" && message.toolCalls.length === 0).at(-1)

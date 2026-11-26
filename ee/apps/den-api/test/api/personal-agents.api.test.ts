@@ -144,6 +144,8 @@ test("with the flag off, personal agents do not exist for the organization: no r
   assert.equal((await connectInstructions(token)).includes("createPersonalAgent"), false, "a chat is not told about agents it cannot make")
 })
 
+let ordinaryAutomationId = ""
+
 test("ordinary Automations carry no agent fields, before and after the flag is on", async () => {
   const created = await asDana("POST", "/v1/cloud-automations", {
     name: "Weekly summary", schedule: { kind: "weekly", daysOfWeek: [1], hour: 9, minute: 0, timezone: "UTC" },
@@ -151,6 +153,7 @@ test("ordinary Automations carry no agent fields, before and after the flag is o
   })
   assert.equal(created.status, 201, summary(created))
   const before = automationDetailSchema.parse(created.body)
+  ordinaryAutomationId = before.automation.id
   assert.equal("agentId" in before.automation, false)
   assert.equal("agentRevisionId" in before.revision, false)
   assert.equal(before.revision.digest, automationRevisionDigest({
@@ -363,13 +366,13 @@ test("a tool the agent's policy blocks is withheld from its next run, and only f
   })
   assert.equal(limited.status, 200, summary(limited))
   const third = personalAgentDetailSchema.parse(limited.body)
-  assert.equal(third.revision.version, 4)
+  assert.equal(third.revision.version, 3)
   const repinned = automationDetailSchema.parse((await asDana("GET", `/v1/automations/${routineId}`)).body)
-  assert.equal(repinned.revision.agentRevisionId, third.revision.id, "the routine moved to the new version")
+  assert.equal(repinned.revision.agentRevisionId, third.revision.id, "changing only tools keeps the brief pinned")
 
   holdRun = true
   const started = personalAgentRunResponseSchema.parse((await asDana("POST", `/v1/personal-agents/${agentId}/run`, { routineId })).body)
-  assert.equal(started.agentRevision.version, 4)
+  assert.equal(started.agentRevision.version, 3)
   const runToken = (await activeTurn(1)).mcpToken
 
   const found = names(await searchTracker(runToken))
@@ -407,7 +410,7 @@ test("a tool the agent's policy blocks is withheld from its next run, and only f
   const delegated = await den.callMcpTool(runToken, "execute_capability", { name: "remote-session:create", body: { prompt: "Delete every issue." } })
   assert.equal(delegated.isError, true, delegated.raw)
   assert.equal(field(delegated.body, "error"), "policy_blocked")
-  assert.equal(personalAgentDetailSchema.parse((await asDana("GET", `/v1/personal-agents/${agentId}`)).body).revision.id, third.revision.id, "the policy is unchanged")
+  assert.deepEqual(personalAgentDetailSchema.parse((await asDana("GET", `/v1/personal-agents/${agentId}`)).body).revision.toolPolicy, third.revision.toolPolicy, "the policy is unchanged")
 
   // Dana in her own chat, and her ordinary Automations, are not limited by the agent's policy.
   const own = names(await searchTracker(await den.mintMcpToken(dana, orgId)))
@@ -415,7 +418,7 @@ test("a tool the agent's policy blocks is withheld from its next run, and only f
 
   // Blocking the whole connection takes all of it away from the next run.
   const closed = await asDana("PATCH", `/v1/personal-agents/${agentId}`, { toolPolicy: { connections: { [trackerId]: "block" }, tools: {} } })
-  assert.equal(personalAgentDetailSchema.parse(closed.body).revision.version, 5)
+  assert.equal(personalAgentDetailSchema.parse(closed.body).revision.version, 3)
   holdRun = false
   assert.equal((await settled(started.run.id)).run.status, "succeeded")
   holdRun = true
@@ -430,17 +433,23 @@ test("a tool the agent's policy blocks is withheld from its next run, and only f
   assert.equal((await settled(last.run.id)).run.status, "succeeded")
 })
 
-test("turning the flag off hides agents but a routine that exists keeps its brief and limits", async () => {
+test("turning the flag off prevents agent routines from starting a turn but ordinary Automations still run", async () => {
   assert.equal((await den.setFeature(orgId, "personalAgents", false)).status, 200)
   assert.equal((await asDana("GET", `/v1/personal-agents/${agentId}`)).status, 404)
   const routine = automationDetailSchema.parse((await asDana("GET", `/v1/automations/${routineId}`)).body)
   assert.equal(routine.automation.agentId, agentId)
+  const priorTurns = turns.length
   const started = await asDana("POST", `/v1/automations/${routineId}/run`, {})
   assert.equal(started.status, 202, summary(started))
-  assert.equal((await settled(text(field(started.body, "run", "id"), "run id"))).run.status, "succeeded")
-  assert.equal(turns.length, 4)
-  assert.ok(turns[3].prompt.includes(BRIEF_V2))
-  assert.deepEqual(names(await searchTracker(turns[3].mcpToken)).filter((name) => name.startsWith(`mcp:${trackerId}:`)), [])
+  const blocked = await settled(text(field(started.body, "run", "id"), "run id"))
+  assert.equal(blocked.run.status, "failed")
+  assert.equal(blocked.run.error?.message, "Agents are turned off for this organization, so this routine did not run.")
+  assert.equal(turns.length, priorTurns)
+  const ordinary = await asDana("POST", `/v1/automations/${ordinaryAutomationId}/run`, {})
+  assert.equal(ordinary.status, 202, summary(ordinary))
+  assert.equal((await settled(text(field(ordinary.body, "run", "id"), "run id"))).run.status, "succeeded")
+  assert.equal(turns.length, priorTurns + 1)
+  assert.ok(turns[priorTurns]?.prompt.includes("Summarize last week."))
   assert.equal((await den.setFeature(orgId, "personalAgents", true)).status, 200)
 })
 

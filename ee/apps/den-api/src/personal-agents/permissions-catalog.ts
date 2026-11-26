@@ -5,9 +5,12 @@ import { listExternalMcpTools } from "../capability-sources/external-mcp-client-
 import { externalMcpCompatibleCallbackUrl } from "../capability-sources/external-mcp-oauth-contract.js"
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { evaluateToolPolicy } from "../capability-sources/external-mcp-tool-policy.js"
-import { listTeamsForMember } from "../orgs.js"
+import { organizationFeatureEnabled } from "../features.js"
+import { listTeamsForMember } from "../member-teams.js"
+import { evaluateToolPermission } from "../tool-permissions/evaluate.js"
+import { readSubjectToolPolicies } from "../tool-permissions/rules.js"
 import { canManagePersonalAgent, type PersonalAgentAccess, type PersonalAgentCaller } from "./access.js"
-import { evaluatePersonalAgentTool, organizationToolRule, personalAgentOrganizationRules, personalAgentToolRule } from "./org-rules.js"
+import { organizationToolRule, personalAgentOrganizationRules, personalAgentToolRule } from "./org-rules.js"
 import { personalAgentSharedLogins, sharedLoginPerson, supportsPersonalAgentSharedLogin } from "./shared-logins.js"
 import { personalAgentToolIsReadOnly, personalAgentToolTitle } from "./permissions-policy.js"
 
@@ -36,7 +39,20 @@ export async function personalAgentConnectionTools(caller: PersonalAgentCaller, 
 }
 
 export async function personalAgentToolCatalog(caller: PersonalAgentCaller, policy: PersonalAgentToolPolicy, agent: PersonalAgentAccess): Promise<PersonalAgentToolCatalog> {
-  const [connections, organization] = await Promise.all([personalAgentUsableConnections(caller), personalAgentOrganizationRules(caller.organizationId, { fresh: true })])
+  const organizationId = normalizeDenTypeId("organization", caller.organizationId)
+  const memberId = normalizeDenTypeId("member", caller.memberId)
+  const [teams, organization, memberRulesEnabled] = await Promise.all([
+    listTeamsForMember({ organizationId, memberId }),
+    personalAgentOrganizationRules(organizationId, { fresh: true }),
+    organizationFeatureEnabled(organizationId, "toolPermissions"),
+  ])
+  const teamIds = teams.map(({ id }) => id)
+  const [connections, teamPolicies, memberPolicies] = await Promise.all([
+    listUsableExternalMcpConnections({ organizationId, orgMembershipId: memberId, teamIds }),
+    memberRulesEnabled ? readSubjectToolPolicies(organizationId, "team", teamIds) : undefined,
+    memberRulesEnabled ? readSubjectToolPolicies(organizationId, "member", [memberId]) : undefined,
+  ])
+  const callerPolicies = [...teamPolicies?.values() ?? [], ...memberPolicies?.values() ?? []]
   const logins = organization.sharedLogins ? await personalAgentSharedLogins(caller.organizationId, agent.agentId) : null
   const catalog: PersonalAgentToolCatalog["connections"] = []
   for (let index = 0; index < connections.length; index += 8) {
@@ -53,11 +69,10 @@ export async function personalAgentToolCatalog(caller: PersonalAgentCaller, poli
           const chosen = Object.hasOwn(policy.tools[connection.id] ?? {}, tool.name) ? policy.tools[connection.id][tool.name] : null
           const rule = organizationToolRule(organization, connection.id, tool.name)
           const lockedByOrganization = rule === "block" || evaluateToolPolicy(connection.toolPolicy, tool.name).blocked
-          const access = evaluatePersonalAgentTool({
-            agent: personalAgentToolRule(policy, connection.id, tool.name),
-            organization: lockedByOrganization ? "block" : rule,
-            readOnly: !tool.write,
-          })
+          const access = evaluateToolPermission([
+            personalAgentToolRule(policy, connection.id, tool.name), lockedByOrganization ? "block" : rule,
+            ...callerPolicies.map((callerPolicy) => personalAgentToolRule(callerPolicy, connection.id, tool.name)),
+          ], !tool.write)
           return { ...tool, chosen, lockedByOrganization, access, organizationRule: rule === "block" ? null : rule }
         }),
       }

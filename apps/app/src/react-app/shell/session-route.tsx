@@ -123,6 +123,7 @@ import { usePersonalAgentSessionExtensions } from "@/react-app/domains/agents/ag
 import { PersonalAgentsProvider, type AgentScope, type AgentsRuntime } from "@/react-app/domains/agents/agents-runtime";
 import { useAgentNames } from "@/react-app/domains/agents/use-agents";
 import { SessionExtensionsProvider } from "@/react-app/kernel/session-extensions";
+import { ToolApprovalsStack } from "@/react-app/domains/tool-approvals/tool-approvals-stack";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { remoteThreadAttentionBySession, setRemoteSessionLiveSync, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { CreatedSkillSharingProvider } from "./created-skill-sharing-provider";
@@ -429,6 +430,7 @@ function personalAgentsOrganizationIdNow(snapshot: { scope: AgentScope; token: s
 
 export function SessionRoute() {
   const personalAgentsEnabled = useOrgFeature("personalAgents");
+  const toolPermissionsEnabled = useOrgFeature("toolPermissions");
   const agentsDen = useAutomationsDenContext();
   const navigate = useNavigate();
   const location = useLocation();
@@ -2783,7 +2785,13 @@ export function SessionRoute() {
       },
     };
   }, [agentsDen.client, agentsDen.ready, handleCreateTaskInWorkspaceWithOpenMode, navigateToWorkspaceSession, opencodeClient, personalAgentsEnabled, personalAgentsScope, renameSessionTitle, selectedSessionId, selectedWorkspaceId]);
-  const sessionExtensions = usePersonalAgentSessionExtensions(agentsRuntime);
+  const agentExtensions = usePersonalAgentSessionExtensions(agentsRuntime);
+  const approvalsScope = useMemo(() => toolPermissionsEnabled && agentsDen.ready && agentsDen.client && personalAgentsScope
+    ? { ...personalAgentsScope, client: agentsDen.client } : null, [agentsDen.client, agentsDen.ready, personalAgentsScope, toolPermissionsEnabled]);
+  const sessionExtensions = useMemo(() => approvalsScope ? {
+    ...agentExtensions,
+    renderChatApprovals: (completedAt: number) => <ToolApprovalsStack scope={approvalsScope} surface="chat" completedAt={completedAt} />,
+  } : agentExtensions, [agentExtensions, approvalsScope]);
   const agentNames = useAgentNames(agentsRuntime);
 
   const createNewSessionInSelectedWorkspace = useCallback(() => {
@@ -4000,6 +4008,7 @@ export function SessionRoute() {
         <AutomationsPage
           providerCatalog={automationCatalog}
           agentNames={agentNames}
+          renderApprovals={approvalsScope ? (completedAt) => <ToolApprovalsStack scope={approvalsScope} surface="automation" completedAt={completedAt} /> : undefined}
           workspaceId={selectedWorkspaceId}
           headerActionsTarget={automationsHeaderActionsTarget}
           onSignIn={() => handleOpenSettings("/settings/cloud-account")}

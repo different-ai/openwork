@@ -1,12 +1,12 @@
 import { relations, sql } from "drizzle-orm"
-import { bigint, boolean, index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
-import type { PersonalAgentChange, PersonalAgentEventDetail, PersonalAgentToolPolicy } from "@openwork/types/den/personal-agents"
+import { bigint, boolean, index, int, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import type { PersonalAgentChange, PersonalAgentEventDetail } from "@openwork/types/den/personal-agents"
 import { compatJsonColumn, denTypeIdColumn, encryptedMediumTextColumn, timestamps } from "../columns"
 
 /**
- * A member's own agent. The definition lives in its revisions, so a routine
- * (an Automation with `agent_id`) can pin the exact brief and tool policy it
- * runs with.
+ * A member's own agent. The brief lives in its revisions, so a routine (an
+ * Automation with `agent_id`) can pin the exact brief it runs with. What the
+ * agent may use is in `tool_permission_rule`, read when a tool is called.
  */
 export const PersonalAgentTable = mysqlTable(
   "personal_agent",
@@ -50,8 +50,9 @@ export const PersonalAgentShareTable = mysqlTable(
 )
 
 /**
- * Something an agent or a collaborator is waiting on a person for: a tool a
- * run was refused until someone says yes, or a change to the agent's job.
+ * A change to an agent that waits for its owner: a collaborator's or a
+ * manager's change to the job, a routine, the tool settings or the memory.
+ * A tool that waits for a yes is a `tool_approval`.
  */
 export const PersonalAgentRequestTable = mysqlTable(
   "personal_agent_request",
@@ -59,17 +60,10 @@ export const PersonalAgentRequestTable = mysqlTable(
     id: denTypeIdColumn("personalAgentRequest", "id").notNull().primaryKey(),
     organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
     agent_id: denTypeIdColumn("personalAgent", "agent_id").notNull(),
-    kind: mysqlEnum("kind", ["tool", "change"]).notNull(),
-    status: mysqlEnum("status", ["pending", "denied", "allowed_once", "always_allowed", "approved", "used"]).notNull().default("pending"),
+    status: mysqlEnum("status", ["pending", "denied", "approved"]).notNull().default("pending"),
     requested_by_member_id: denTypeIdColumn("member", "requested_by_member_id").notNull(),
-    run_id: denTypeIdColumn("automationRun", "run_id"),
-    used_by_run_id: denTypeIdColumn("automationRun", "used_by_run_id"),
-    connection_id: varchar("connection_id", { length: 160 }),
-    connection_name: varchar("connection_name", { length: 160 }),
-    tool_name: varchar("tool_name", { length: 128 }),
-    tool_title: varchar("tool_title", { length: 240 }),
     summary: varchar("summary", { length: 500 }),
-    change: compatJsonColumn<PersonalAgentChange | null>("change"),
+    change: compatJsonColumn<PersonalAgentChange>("change").notNull(),
     decided_by_member_id: denTypeIdColumn("member", "decided_by_member_id"),
     decided_at: timestamp("decided_at", { fsp: 3 }),
     ...timestamps,
@@ -136,27 +130,65 @@ export const PersonalAgentSharedLoginTable = mysqlTable(
   },
   (table) => [
     uniqueIndex("personal_agent_shared_login_connection").on(table.agent_id, table.connection_id),
+    index("personal_agent_shared_login_member").on(table.organization_id, table.member_id),
   ],
 )
 
 /**
  * What an organization decides for every agent: who may share agents, whether
- * a person may lend their own login to an agent, rules every run follows, tool
- * rules (block, always ask first, allow automatically) and the most one agent
- * may spend in a month.
+ * a person may lend their own login to an agent, and the most one agent may
+ * spend in a month. Tool rules and written rules are the organization's tool
+ * permissions (`tool_permission_rule`, `tool_permission_org_policy`).
  */
 export const PersonalAgentOrgPolicyTable = mysqlTable(
   "personal_agent_org_policy",
   {
     organization_id: denTypeIdColumn("organization", "organization_id").notNull().primaryKey(),
-    tool_policy: compatJsonColumn<PersonalAgentToolPolicy>("tool_policy").notNull(),
     monthly_budget_micros: bigint("monthly_budget_micros", { mode: "number", unsigned: true }),
     share_mode: mysqlEnum("share_mode", ["everyone", "admins"]).notNull().default("everyone"),
     shared_logins: boolean("shared_logins").notNull().default(false),
-    rules: text("rules"),
     updated_by_member_id: denTypeIdColumn("member", "updated_by_member_id").notNull(),
     ...timestamps,
   },
+)
+
+/**
+ * What an agent keeps between runs: notes the owner and managers can read and
+ * edit, and the agent adds to while it runs for its owner. Encrypted like the
+ * brief. `version` goes up on every write so two edits cannot overwrite each
+ * other unseen.
+ */
+export const PersonalAgentMemoryTable = mysqlTable(
+  "personal_agent_memory",
+  {
+    agent_id: denTypeIdColumn("personalAgent", "agent_id").notNull().primaryKey(),
+    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+    notes: encryptedMediumTextColumn("notes").notNull(),
+    version: int("version").notNull().default(1),
+    updated_by_member_id: denTypeIdColumn("member", "updated_by_member_id"),
+    updated_by_run_id: denTypeIdColumn("automationRun", "updated_by_run_id"),
+    ...timestamps,
+  },
+  (table) => [
+    index("personal_agent_memory_org").on(table.organization_id),
+  ],
+)
+
+/** What a routine's last run for the owner did, so the next run does not do it again. One row per routine. */
+export const PersonalAgentRoutineStateTable = mysqlTable(
+  "personal_agent_routine_state",
+  {
+    automation_id: denTypeIdColumn("automation", "automation_id").notNull().primaryKey(),
+    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+    agent_id: denTypeIdColumn("personalAgent", "agent_id").notNull(),
+    state: encryptedMediumTextColumn("state").notNull(),
+    run_id: denTypeIdColumn("automationRun", "run_id").notNull(),
+    written_by_agent: boolean("written_by_agent").notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [
+    index("personal_agent_routine_state_agent").on(table.agent_id),
+  ],
 )
 
 /** Who changed what about an agent. Never holds a brief, tool arguments or credentials. */
@@ -184,7 +216,6 @@ export const PersonalAgentRevisionTable = mysqlTable(
     agent_id: denTypeIdColumn("personalAgent", "agent_id").notNull(),
     version: int("version").notNull(),
     brief: encryptedMediumTextColumn("brief").notNull(),
-    tool_policy: compatJsonColumn<PersonalAgentToolPolicy>("tool_policy").notNull(),
     default_execution_target: mysqlEnum("default_execution_target", ["desktop", "cloud"]).notNull().default("cloud"),
     monthly_budget_micros: bigint("monthly_budget_micros", { mode: "number", unsigned: true }),
     digest: varchar("digest", { length: 128 }).notNull(),

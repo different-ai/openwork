@@ -88,6 +88,7 @@ export type CloudAgentExecutorInput = OwnerScope & {
   onAdmitted: (receipt: Record<string, unknown>) => Promise<void>
   workspaceId?: string | null
   mcpScopes?: readonly string[]
+  forAgent?: boolean
   onModelResolved?: (model: AgentAction["model"]) => Promise<void>
 }
 

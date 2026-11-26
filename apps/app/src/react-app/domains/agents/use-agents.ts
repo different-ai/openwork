@@ -32,6 +32,10 @@ export function agentRequestsKey(scope: AgentScope | null, agentId: string | nul
   return [...agentsQueryRoot(scope), "requests", agentId] as const;
 }
 
+export function agentMemoryKey(scope: AgentScope, agentId: string) {
+  return [...agentsQueryRoot(scope), "memory", agentId] as const;
+}
+
 export function useAgentListQuery(runtime: AgentsRuntime | null, poll = false) {
   const chat = useAgentChatStore((state) => agentChatFor(state.chats, runtime, runtime?.selectedSessionId ?? null));
   const requests = useAgentRequestsQuery(runtime, chat?.agentId ?? null, false, false).data;
@@ -79,9 +83,22 @@ export function useAgentRunQuery(runtime: AgentsRuntime, agentId: string, runId:
 }
 
 export function useAgentRunsQuery(runtime: AgentsRuntime | null, agentId: string | null, active: boolean) {
+  const queryClient = useQueryClient();
+  const key = agentRunsKey(runtime, agentId);
   return useQuery({
-    queryKey: agentRunsKey(runtime, agentId),
-    queryFn: async () => runtime && agentId ? (await runtime.client.listPersonalAgentRuns(runtime.organizationId, agentId)).items : [],
+    queryKey: key,
+    queryFn: async () => {
+      if (!runtime || !agentId) return [];
+      const items = (await runtime.client.listPersonalAgentRuns(runtime.organizationId, agentId)).items;
+      const memoryKey = agentMemoryKey(runtime, agentId);
+      const lastRead = queryClient.getQueryState(memoryKey)?.dataUpdatedAt;
+      const previous = queryClient.getQueryData<AutomationRun[]>(key);
+      if (lastRead !== undefined && items.some((run) => !isActiveRun(run) &&
+        ((run.finishedAt !== null && run.finishedAt >= lastRead) || previous?.some((old) => old.id === run.id && isActiveRun(old))))) {
+        void queryClient.invalidateQueries({ queryKey: memoryKey });
+      }
+      return items;
+    },
     enabled: runtime !== null && agentId !== null,
     refetchInterval: (query) => active || query.state.data?.some(isActiveRun) ? ACTIVE_POLL_MS : IDLE_POLL_MS,
   });

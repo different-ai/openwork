@@ -18,9 +18,10 @@ import { LibraryCompactRow, LibraryCompactSection, LibraryCompactSkeleton, Libra
 import { DenButton } from "../../_components/ui/button";
 import { connectorNeedsFirstCheck, connectorReadinessState, connectorReadinessNote } from "./connector-readiness";
 import { useCheckMcpConnection, useRefreshUncheckedConnections } from "./mcp-connections-data";
-import { getOrgAccessFlags } from "../../_lib/den-org";
+import { getOrgAccessFlags, orgFeatureEnabled } from "../../_lib/den-org";
 import { connectorSetupUnfinished, finishSetupHref } from "./admin-connectors";
 import { type ExternalMcpConnection, isNativeProviderConnectionId, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
+import { WrittenRulesCard } from "./tool-permissions/written-rules";
 
 const FILTER_AFTER = 10;
 
@@ -59,6 +60,9 @@ export function AdminConnectorsScreen() {
   const needle = query.trim().toLowerCase();
   const visible = needle ? all.filter((connection) => connection.name.toLowerCase().includes(needle)) : all;
   const empty = !connections.isLoading && !connections.error && all.length === 0;
+  const writtenRules = orgContext && orgFeatureEnabled(orgContext, "toolPermissions")
+    && getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).isAdmin
+    ? <WrittenRulesCard key={orgContext.organization.id} orgId={orgContext.organization.id} /> : null;
 
   const refreshUnchecked = useRefreshUncheckedConnections();
   const requested = useRef(new Set<string>());
@@ -198,6 +202,7 @@ export function AdminConnectorsScreen() {
           ) : null}
         </>
       ) : null}
+      {writtenRules}
     </ItemPage>
   );
 }

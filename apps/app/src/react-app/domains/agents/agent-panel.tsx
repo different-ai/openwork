@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { PersonalAgentDetail } from "@openwork/types/den/personal-agents";
-import { Clock, Play, SlidersHorizontal, X } from "lucide-react";
+import { BookOpen, Clock, Play, SlidersHorizontal, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { t } from "@/i18n";
 import { agentChatFor, agentChatKey, useAgentChatStore } from "./agent-chat-store";
 import { AgentFace } from "./agent-face";
 import { AGENT_PANEL_ID } from "./agent-header";
+import { AgentMemoryView, useAgentMemory } from "./agent-memory";
 import { AgentSettings } from "./agent-settings";
 import { AgentShare } from "./agent-share";
 import { firstName, scheduleInWords, whenInWords } from "./agent-words";
@@ -27,9 +28,11 @@ export function AgentPanel(props: { sessionId: string | null }) {
 }
 
 function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: PersonalAgentDetail }) {
-  const [settings, setSettings] = useState(false);
+  const [view, setView] = useState<"overview" | "settings" | "memory">("overview");
   const actions = useAgentActions(runtime);
   const { id: agentId, name, pausedAt } = agent.agent;
+  const memoryQuery = useAgentMemory(runtime, agentId);
+  const states = new Map(memoryQuery.data?.routines.map((routine) => [routine.routineId, routine.state]));
   const paused = pausedAt !== null;
   const canManage = agent.role !== "collaborator";
   const routines = agent.routines.filter((routine) => routine.state !== "archived");
@@ -40,7 +43,8 @@ function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: Per
 
   return (
     <aside id={AGENT_PANEL_ID} data-agent-panel={agentId} aria-label={name} className="hidden w-75 shrink-0 flex-col gap-5 overflow-y-auto border-l border-dls-border bg-dls-surface px-4 pb-4 pt-2 lg:flex">
-      {settings ? <AgentSettings runtime={runtime} agent={agent} onBack={() => setSettings(false)} /> : <>
+      {view === "settings" ? <AgentSettings runtime={runtime} agent={agent} onBack={() => setView("overview")} />
+        : view === "memory" ? <AgentMemoryView runtime={runtime} agentId={agentId} query={memoryQuery} onBack={() => setView("overview")} /> : <>
         <div className="flex h-8 items-center justify-end">
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("agents.panel_close")} onClick={() => useAgentChatStore.getState().setPanel(null)}>
             <X className="size-4" />
@@ -78,16 +82,23 @@ function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: Per
         <section className="flex flex-col">
           <h2 className="pb-1 text-xs text-dls-secondary">{t("agents.panel_routines")}</h2>
           {routines.length === 0 ? <p className="text-sm text-dls-secondary">{t("agents.panel_no_routines")}</p> : null}
-          {routines.map((routine) => (
-            <div key={routine.id} data-agent-routine={routine.id} className="flex min-h-11 items-center gap-3 border-b border-dls-border py-2 last:border-b-0">
-              <Clock aria-hidden="true" className="size-4 shrink-0 text-dls-secondary" />
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-medium text-dls-text">{routine.name}</span>
-                <span className="block truncate text-xs text-dls-secondary">{scheduleInWords(routine.schedule)}</span>
-              </span>
-            </div>
-          ))}
+          {routines.map((routine) => {
+            const state = states.get(routine.id);
+            return (
+              <div key={routine.id} data-agent-routine={routine.id} className="flex min-h-11 items-center gap-3 border-b border-dls-border py-2 last:border-b-0">
+                <Clock aria-hidden="true" className="size-4 shrink-0 text-dls-secondary" />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-dls-text">{routine.name}</span>
+                  <span className="block truncate text-xs text-dls-secondary">{scheduleInWords(routine.schedule)}</span>
+                  {state && <span className="block truncate text-xs text-dls-secondary" data-agent-routine-state={routine.name}>{t("agents.memory_last_time", { state: Array.from(state).slice(0, 140).join("") })}</span>}
+                </span>
+              </div>
+            );
+          })}
         </section>
+        <Button type="button" variant="ghost" className="min-h-10 w-full justify-start" data-agent-memory-open onClick={() => setView("memory")}>
+          <BookOpen aria-hidden="true" />{t("agents.memory_title")}
+        </Button>
         <div className="flex flex-wrap gap-1">
           <Button
             type="button"
@@ -103,7 +114,7 @@ function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: Per
             <Play aria-hidden="true" />{t("agents.panel_run_now")}
           </Button>
           {canManage && agent.canShare !== false && <AgentShare runtime={runtime} agent={agent} />}
-          <Button type="button" variant="ghost" size="sm" onClick={() => setSettings(true)}>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setView("settings")}>
             <SlidersHorizontal aria-hidden="true" />{t("agents.panel_settings_button")}
           </Button>
         </div>

@@ -1,11 +1,12 @@
-import { and, eq, isNull, or } from "@openwork-ee/den-db/drizzle"
-import { AutomationRunTable, AutomationTable, MemberTable, PersonalAgentRequestTable, PersonalAgentRevisionTable, PersonalAgentTable } from "@openwork-ee/den-db/schema"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { AutomationRunTable, AutomationTable, MemberTable, PersonalAgentRevisionTable, PersonalAgentTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { personalAgentToolPolicyBlocks } from "@openwork/automations"
 import { db } from "../db.js"
-import { agentToolLimitScopes, headlessRunTokenScopes, personalAgentRunScope, personalAgentToolChoiceScope } from "../mcp/workbot-turn-limits.js"
+import { agentToolLimitScopes, headlessRunTokenScopes, personalAgentRunScope } from "../mcp/workbot-turn-limits.js"
 import { personalAgentAccess } from "./access.js"
-import { evaluatePersonalAgentTool, organizationToolRule, personalAgentOrganizationRules, personalAgentToolRule } from "./org-rules.js"
+import { organizationFeatureEnabled } from "../features.js"
+import { readOrganizationWrittenToolRules, readSubjectToolPolicy } from "../tool-permissions/rules.js"
 import { personalAgentRepository } from "./repository.js"
 import { personalAgentSpend } from "./spend.js"
 
@@ -20,6 +21,9 @@ export async function admitPersonalAgentRun(input: {
   actingMemberId: string
   headless: boolean
 }): Promise<PersonalAgentRunAdmission> {
+  if (!await organizationFeatureEnabled(input.organizationId, "personalAgents")) {
+    return { ok: false, code: "execution_failed", message: "Agents are turned off for this organization, so this routine did not run." }
+  }
   const pinned = input.agentRevisionId && await personalAgentRepository.runDefinition(input.agentRevisionId)
   if (!pinned || pinned.archived) {
     return { ok: false, code: "execution_failed", message: "This routine's agent no longer exists, so it did not run." }
@@ -45,47 +49,20 @@ export async function admitPersonalAgentRun(input: {
   if (!input.headless) {
     return { ok: false, code: "execution_runtime_unavailable", message: "This agent limits which tools it may use, and only OpenWork Cloud's headless runtime can apply that. The run was not started." }
   }
-  const [spend, organizationPolicy] = await Promise.all([
+  const [spend, orgTools, agentTools, rules] = await Promise.all([
     personalAgentSpend(organizationId, [{ agentId, ownerBudgetMicros: current.ownerBudget, adminBudgetMicros: current.adminBudget }]),
-    personalAgentOrganizationRules(organizationId, { fresh: true }),
+    readSubjectToolPolicy({ organizationId, kind: "organization", id: organizationId }),
+    readSubjectToolPolicy({ organizationId, kind: "agent", id: agentId }),
+    readOrganizationWrittenToolRules(organizationId, { fresh: true }),
   ])
   if (spend.get(agentId)?.overBudget) return { ok: false, code: "execution_failed", message: "This agent reached its budget for the month, so it did not run." }
-  const orgTools = organizationPolicy.toolPolicy
-  const runId = normalizeDenTypeId("automationRun", input.runId)
-  const blocked = (connectionId: string, toolName: string) => evaluatePersonalAgentTool({
-    agent: personalAgentToolRule(pinned.toolPolicy, connectionId, toolName),
-    organization: organizationToolRule(organizationPolicy, connectionId, toolName),
-    readOnly: false,
-  }) === "block"
-  const choices = new Set([
-    personalAgentRunScope(runId),
-    ...agentToolLimitScopes(personalAgentToolPolicyBlocks(pinned.toolPolicy)),
+  const mcpScopes = [...new Set([
+    personalAgentRunScope(input.runId),
+    ...agentToolLimitScopes(personalAgentToolPolicyBlocks(agentTools)),
     ...agentToolLimitScopes(personalAgentToolPolicyBlocks(orgTools)),
-  ])
-  for (const [connectionId, tools] of Object.entries(pinned.toolPolicy.tools)) {
-    for (const [toolName, choice] of Object.entries(tools)) {
-      if (choice !== "block" && personalAgentToolRule(pinned.toolPolicy, connectionId, toolName) !== "block") choices.add(personalAgentToolChoiceScope(choice, connectionId, toolName))
-    }
+  ])]
+  if (Buffer.byteLength(JSON.stringify(headlessRunTokenScopes({ scopes: mcpScopes }))) > 65_535) {
+    return { ok: false, code: "execution_failed", message: "This agent has too many tool settings for a run. Shorten its tool settings before trying again." }
   }
-  return db.transaction(async (tx): Promise<PersonalAgentRunAdmission> => {
-    const allowances = await tx.select().from(PersonalAgentRequestTable).where(and(
-      eq(PersonalAgentRequestTable.agent_id, agentId), eq(PersonalAgentRequestTable.kind, "tool"),
-      eq(PersonalAgentRequestTable.requested_by_member_id, memberId),
-      or(eq(PersonalAgentRequestTable.status, "allowed_once"), eq(PersonalAgentRequestTable.used_by_run_id, runId)),
-    )).for("update")
-    for (const allowance of allowances) {
-      if (allowance.connection_id && allowance.tool_name && !blocked(allowance.connection_id, allowance.tool_name)) {
-        choices.add(personalAgentToolChoiceScope("allow_once", allowance.connection_id, allowance.tool_name))
-      }
-    }
-    const mcpScopes = [...choices]
-    if (Buffer.byteLength(JSON.stringify(headlessRunTokenScopes({ scopes: mcpScopes }))) > 65_535) {
-      return { ok: false, code: "execution_failed", message: "This agent has too many tool settings for a run. Shorten its tool settings before trying again." }
-    }
-    for (const allowance of allowances) {
-      if (allowance.status !== "allowed_once") continue
-      await tx.update(PersonalAgentRequestTable).set({ status: "used", used_by_run_id: runId }).where(eq(PersonalAgentRequestTable.id, allowance.id))
-    }
-    return { ok: true, agentName: pinned.agentName, brief: pinned.brief, organizationRules: organizationPolicy.rules.trim(), mcpScopes }
-  })
+  return { ok: true, agentName: pinned.agentName, brief: pinned.brief, organizationRules: rules.trim(), mcpScopes }
 }

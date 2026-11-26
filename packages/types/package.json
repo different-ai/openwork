@@ -393,6 +393,14 @@
       "development": "./src/den/personal-agents.ts",
       "default": "./src/den/personal-agents.ts"
     },
+    "./den/tool-permissions": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/tool-permissions.d.ts",
+        "default": "./src/den/tool-permissions.ts"
+      },
+      "development": "./src/den/tool-permissions.ts",
+      "default": "./src/den/tool-permissions.ts"
+    },
     "./den/workbot-proactive": {
       "types": {
         "openwork-build": "./dist/types/src/den/workbot-proactive.d.ts",

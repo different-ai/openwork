@@ -5,7 +5,7 @@ import { DenButton } from "../../../_components/ui/button";
 import { DashboardPageTemplate } from "../../../_components/ui/dashboard-page-template";
 import { DenNotice } from "../../../_components/ui/notice";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { getOrgAccessFlags, orgFeatureEnabled, type DenOrgContext } from "../../../_lib/den-org";
+import { getMcpConnectionsRoute, getOrgAccessFlags, orgFeatureEnabled, type DenOrgContext } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { formatRelativeTime } from "../config-blobs/config-blobs-model";
 import { useAdminAgentEvents, useAdminAgents } from "./data";
@@ -58,7 +58,8 @@ function AgentsAdmin({ org }: { org: DenOrgContext }) {
         {agents.isPending ? <div aria-busy="true"><DenSkeleton className="h-32 w-full" /></div> : null}
         {list ? <>
           <AgentTable org={org} items={list.items} />
-          <OrgAgentPolicy orgId={orgId} policy={list.policy} />
+          <OrgAgentPolicy orgId={orgId} policy={list.policy}
+            connectorsHref={orgFeatureEnabled(org, "toolPermissions") ? getMcpConnectionsRoute(org.organization.slug) : undefined} />
         </> : null}
         <AgentEvents orgId={orgId} />
       </div>

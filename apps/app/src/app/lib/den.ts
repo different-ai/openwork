@@ -27,7 +27,10 @@ import type {
   PersonalAgentChatResponse,
   PersonalAgentDetail,
   PersonalAgentList,
+  PersonalAgentMemory,
   PersonalAgentPendingChange,
+  RememberForPersonalAgent,
+  SetPersonalAgentMemory,
   PersonalAgentRequest,
   PersonalAgentRequestDecision,
   PersonalAgentRequestList,
@@ -42,6 +45,7 @@ import type {
   UpdatePersonalAgent,
   UpdatePersonalAgentRoutine,
 } from "@openwork/types/den/personal-agents";
+import type { DecideToolApproval, ToolApproval, ToolApprovalList } from "@openwork/types/den/tool-permissions";
 import type { GatewayAuthorizationRequest, GatewayProviderSummary } from "@openwork/types/den/gateway";
 import { parseGatewayUsableModel } from "./gateway-usable-model";
 import type { DesktopStartupReport } from "@openwork/types/den/diagnostics";
@@ -3545,6 +3549,26 @@ export function createDenClient(options: {
         `/v1/automations/${encodeURIComponent(automationId)}/runs${query}`,
         { method: "GET", token, organizationId: orgId, automationModelAttentionCapable: true },
       );
+    },
+
+    async getPersonalAgentMemory(orgId: string, agentId: string): Promise<PersonalAgentMemory> {
+      return requestJson<PersonalAgentMemory>(baseUrls, `/v1/personal-agents/${encodeURIComponent(agentId)}/memory`, { method: "GET", token, organizationId: orgId });
+    },
+
+    async setPersonalAgentMemory(orgId: string, agentId: string, input: SetPersonalAgentMemory): Promise<PersonalAgentMemory> {
+      return requestJson<PersonalAgentMemory>(baseUrls, `/v1/personal-agents/${encodeURIComponent(agentId)}/memory`, { method: "PUT", token, organizationId: orgId, body: input });
+    },
+
+    async rememberForPersonalAgent(orgId: string, agentId: string, input: RememberForPersonalAgent): Promise<PersonalAgentMemory | PersonalAgentPendingChange> {
+      return requestJson<PersonalAgentMemory | PersonalAgentPendingChange>(baseUrls, `/v1/personal-agents/${encodeURIComponent(agentId)}/memory/notes`, { method: "POST", token, organizationId: orgId, body: input });
+    },
+
+    async listToolApprovals(orgId: string): Promise<ToolApprovalList> {
+      return requestJson<ToolApprovalList>(baseUrls, "/v1/tool-approvals", { method: "GET", token, organizationId: orgId });
+    },
+
+    async decideToolApproval(orgId: string, approvalId: string, input: DecideToolApproval): Promise<ToolApproval> {
+      return requestJson<ToolApproval>(baseUrls, `/v1/tool-approvals/${encodeURIComponent(approvalId)}/decision`, { method: "POST", token, organizationId: orgId, body: input });
     },
 
     async listPersonalAgents(orgId: string): Promise<PersonalAgentList> {

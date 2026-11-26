@@ -5,6 +5,7 @@ import { createPersonalAgentChangeRequestSchema, decidePersonalAgentRequestSchem
 import { jsonValidator, orgMemberRoute, paramValidator, type OrganizationContextVariables } from "../../middleware/index.js"
 import { jsonResponse, notFoundSchema } from "../../openapi.js"
 import { personalAgentAccess, personalAgentOwnerScope } from "../../personal-agents/access.js"
+import { PERSONAL_AGENT_MEMORY_ERRORS } from "../../personal-agents/memory.js"
 import { personalAgentToolCatalog } from "../../personal-agents/permissions-catalog.js"
 import { personalAgentRepository } from "../../personal-agents/repository.js"
 import { createPersonalAgentChangeRequest, decidePersonalAgentRequest, listPersonalAgentRequests } from "../../personal-agents/requests.js"
@@ -34,6 +35,7 @@ function failure(error: unknown) {
       case "personal_agent_shared_logins_off": return { status: 403, body: { error: error.message, message: "Your admin has not allowed shared logins." } } as const
       case "personal_agent_shared_login_connection_unavailable": return { status: 403, body: { error: error.message, message: "Connect your own login before sharing it." } } as const
       case "personal_agent_organization_asks": return { status: 409, body: { error: error.message, message: "Your admin requires this tool to ask every time." } } as const
+      case "personal_agent_memory_full": return { status: 409, body: { error: error.message, message: PERSONAL_AGENT_MEMORY_ERRORS.personal_agent_memory_full } } as const
       case "personal_agent_change_stale": return { status: 409, body: { error: error.message, message: "This agent or routine changed since this was asked. Ask for the change again." } } as const
       case "personal_agent_forbidden": return { status: 403, body: forbidden } as const
       case "personal_agent_not_found": return { status: 404, body: notFound } as const

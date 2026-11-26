@@ -46,6 +46,8 @@ import type { PersonalAgentTransaction } from "../personal-agents/access.js"
 import { personalAgentRepository } from "../personal-agents/repository.js"
 import { HTTPException } from "hono/http-exception"
 import { admitPersonalAgentRun } from "../personal-agents/run-admission.js"
+import { readPersonalAgentRunMemory, savePersonalAgentRoutineState } from "../personal-agents/memory.js"
+import { organizationFeatureEnabled } from "../features.js"
 import {
   getOpenWorkWebRuntimeAccess,
   OPENWORK_WEB_ACCESS_REQUIRED_CODE,
@@ -1097,11 +1099,17 @@ export class AutomationService {
     const taskAction = meeting?.kind === "calendar_meeting" && schedule.kind === "calendar"
       ? { ...action, instructions: calendarTriggerPrompt({ instructions: action.instructions, trigger: schedule, meeting }) }
       : action
-    const runAction = agentRun
-      ? { ...taskAction, instructions: personalAgentRunInstructions({ agentName: agentRun.agentName, brief: agentRun.brief, instructions: taskAction.instructions, organizationRules: agentRun.organizationRules }) }
-      : taskAction
+    const organizationId = claimed.automation.organizationId
+    const agentId = claimed.automation.agentId
     let result: CloudAgentExecution
     try {
+      const memory = agentId && await organizationFeatureEnabled(organizationId, "personalAgents")
+        ? await readPersonalAgentRunMemory({ organizationId, agentId, routineId: claimed.automation.id })
+        : undefined
+      const runAction = agentRun ? { ...taskAction, instructions: personalAgentRunInstructions({
+        agentName: agentRun.agentName, brief: agentRun.brief, instructions: taskAction.instructions,
+        organizationRules: agentRun.organizationRules, memory,
+      }) } : taskAction
       const state = await automationRepository.cloudRunState(claimed.run.id)
       result = await executor({
         organizationId: claimed.automation.organizationId,
@@ -1114,7 +1122,7 @@ export class AutomationService {
         workspaceId: runWorkspaceId(claimed.revision, "cloud"),
         ...(agentRun?.mcpScopes.length ? { mcpScopes: agentRun.mcpScopes } : {}),
         signal: controller.signal,
-        onModelResolved: (model) => automationRepository.setCloudRunModel({ runId: claimed.run.id, leaseOwner, model }),
+        ...(agentRun ? { forAgent: true, onModelResolved: (model: AgentAction["model"]) => automationRepository.setCloudRunModel({ runId: claimed.run.id, leaseOwner, model }) } : {}),
         onAdmitted: async (receipt) => automationRepository.setCloudExecution({
           runId: claimed.run.id,
           leaseOwner,
@@ -1168,6 +1176,16 @@ export class AutomationService {
       error: result.ok ? null : { code: result.code, message: result.message, retryable: result.retryable },
       now: Date.now(),
     })
+    if (agentId && result.ok && (!claimed.actingMemberId || claimed.actingMemberId === claimed.automation.ownerMemberId)) {
+      try {
+        if (await organizationFeatureEnabled(organizationId, "personalAgents")) {
+          await savePersonalAgentRoutineState({ organizationId, agentId, runId: claimed.run.id, state: result.resultSummary,
+            memberId: claimed.actingMemberId ?? claimed.automation.ownerMemberId, writtenByAgent: false })
+        }
+      } catch {
+        logger.warn("Agent routine progress could not be saved", { run_id: claimed.run.id })
+      }
+    }
     if ((!claimed.actingMemberId || claimed.actingMemberId === claimed.automation.ownerMemberId) && !result.ok && result.needsAttention && ownPlacement(claimed.revision, "cloud")) {
       const attentionCode = [
         "owner_membership_lost",

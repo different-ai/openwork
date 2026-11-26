@@ -8,7 +8,7 @@ import { personalAgentRunId } from "../mcp/workbot-turn-limits.js"
 import { withPrimaryReads } from "../read-routing.js"
 import { activePersonalAgentMember, canManagePersonalAgent, personalAgentAccess, personalAgentPeople, personOrUnknown, type PersonalAgentAccess, type PersonalAgentCaller } from "./access.js"
 import { recordPersonalAgentEvent } from "./events.js"
-import { personalAgentOrganizationRules } from "./org-rules.js"
+import { personalAgentOrgPolicy } from "./permissions-policy.js"
 import { personalAgentDispatchContext } from "./permissions-dispatch.js"
 
 export function supportsPersonalAgentSharedLogin(connection: ExternalMcpConnectionRow): boolean {
@@ -53,7 +53,7 @@ export async function setPersonalAgentSharedLogin(caller: PersonalAgentCaller, a
     return
   }
   if (!canManagePersonalAgent(access.role) || access.state !== "active") throw new Error("personal_agent_forbidden")
-  if (!(await personalAgentOrganizationRules(organizationId, { fresh: true })).sharedLogins) throw new Error("personal_agent_shared_logins_off")
+  if (!(await personalAgentOrgPolicy(organizationId))?.shared_logins) throw new Error("personal_agent_shared_logins_off")
   if (!isDenTypeId("externalMcpConnection", connectionId)) throw new Error("personal_agent_shared_login_connection_unavailable")
   const connection = await withPrimaryReads(async () => {
     const row = await getExternalMcpConnection({ organizationId, connectionId: normalizeDenTypeId("externalMcpConnection", connectionId) })
@@ -91,7 +91,7 @@ export async function personalAgentCredentialMember(input: {
   const runId = input.scopes && personalAgentRunId(input.scopes)
   if (!runId || !supportsPersonalAgentSharedLogin(connection)) return actingMemberId
   const organizationId = connection.organizationId
-  if (!(await personalAgentOrganizationRules(organizationId, { fresh: true })).sharedLogins) return actingMemberId
+  if (!(await personalAgentOrgPolicy(organizationId))?.shared_logins) return actingMemberId
   const context = await personalAgentDispatchContext(runId, organizationId, actingMemberId)
   if (!context || context.paused) return actingMemberId
   const [login] = await db.$primary.select({ memberId: PersonalAgentSharedLoginTable.member_id }).from(PersonalAgentSharedLoginTable)

@@ -166,6 +166,7 @@ test("organization allow permits an unset write, agent ask and block win over al
   const once = await run()
   await updateOrg(policy("block"))
   await refused(once.token, "policy_blocked")
+  assert.equal((await requests()).find(({ id }) => id === waiting.id)?.status, "allowed_once")
   const blocked = (await catalog()).tools.find(({ name }) => name === "create_issue")
   assert.equal(blocked?.lockedByOrganization, true)
   assert.equal(blocked?.organizationRule, null)
