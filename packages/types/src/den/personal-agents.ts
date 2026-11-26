@@ -7,6 +7,8 @@ import {
   automationRunStatusSchema,
   automationScheduleSchema,
   automationStateSchema,
+  remoteSessionTranscriptPartSchema,
+  REMOTE_SESSION_TRANSCRIPT_PARTS_MAX,
 } from "@openwork/types/automations"
 
 const idSchema = z.string().trim().min(1).max(160)
@@ -347,6 +349,7 @@ export const personalAgentChatTurnSchema = z.object({
   message: z.string(),
   status: z.enum(["running", "succeeded", "failed"]),
   reply: z.string().nullable(),
+  parts: z.array(remoteSessionTranscriptPartSchema).max(REMOTE_SESSION_TRANSCRIPT_PARTS_MAX).optional(),
   error: z.string().nullable(),
   createdAt: z.iso.datetime(),
   finishedAt: z.iso.datetime().nullable(),
