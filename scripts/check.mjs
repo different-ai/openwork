@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// The required PR checks that need no database or packaging, run locally:
-// `pnpm check`. The pre-push hook runs it, and CI ("Quick check") runs the
-// same commands, so a red check is found here before a push instead of after.
+// The required PR checks that need no packaging, run locally: `pnpm check`.
+// The pre-push hook runs it, and CI ("Quick check") runs the same commands, so
+// a red check is found here before a push instead of after. api-contract also
+// needs local MySQL and is skipped without it; the API Contract workflow runs
+// the same lint after a merge to dev.
 //
 // Usage: node scripts/check.mjs [--list] [name ...]
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { contractDatabaseUnavailable } from "./den-contract-database.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -75,6 +78,12 @@ export const CHECKS = [
     fix: "Rewrite the flagged markdown line as the message says. Code blocks and inline code are not checked.",
   },
   {
+    name: "api-contract",
+    command: ["node", "scripts/check-api-contract.mjs"],
+    unavailable: () => contractDatabaseUnavailable(),
+    fix: "Fix the new API lint findings above (docs/api-style.md), or document a deliberate exception in .spectral.yaml overrides. Never raise the baseline.",
+  },
+  {
     name: "spec-lint",
     command: ["pnpm", "--dir", "evals", "lint:specs"],
     requires: "evals/node_modules",
@@ -125,7 +134,7 @@ async function main(argv) {
   const selected = selectChecks(argv.filter((arg) => !arg.startsWith("--")));
   const runnable = [];
   for (const check of selected) {
-    const reason = skipReason(check);
+    const reason = skipReason(check) ?? (check.unavailable ? await check.unavailable() : null);
     if (reason) console.log(`skip ${check.name}: ${reason}; CI still runs it.`);
     else runnable.push(check);
   }
