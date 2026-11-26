@@ -1679,6 +1679,11 @@ export function createDesktopAutomationRunner(options) {
           signal: AbortSignal.any([signal, AbortSignal.timeout(lifecycleRequestTimeoutMs)]),
         }).then(() => undefined)
       }
+      const adapter = createDesktopSessionAdapter({
+        getLocalRuntime: options.getLocalRuntime, fetchImpl, now,
+        computerRequests: options.computerRequests,
+        creationOwner: journal.desktopSessionRunnerPartition(baseUrl, account),
+      })
       return createSessionRunner({
         // Read on every use. A runner outlives its credential, so it allows
         // nothing more than sessions started remotely unless its own account
@@ -1687,15 +1692,23 @@ export function createDesktopAutomationRunner(options) {
           const state = connectedRunner()
           return sessionAccessFor(accessKey, state?.recoveryKey === recoveryKey ? state : null)
         },
-        adapter: createDesktopSessionAdapter({
-          getLocalRuntime: options.getLocalRuntime, fetchImpl, now,
-          computerRequests: options.computerRequests,
-          creationOwner: journal.desktopSessionRunnerPartition(baseUrl, account),
-        }),
+        adapter,
         store,
         transport: {
           complete: (id, body, signal) => deliver(`/v1/remote-session-commands/${encodeURIComponent(id)}/complete`, body, signal),
-          report: (id, body, signal) => deliver(`/v1/remote-session-commands/${encodeURIComponent(id)}/session`, body, signal),
+          report: async (id, body, signal) => {
+            let tail = null
+            try {
+              const snapshot = await store.load()
+              const entry = snapshot.commands.find((item) => item.command.commandId === id)
+              if (entry?.receipt) {
+                tail = await adapter.read(entry.receipt, { from: "end", limit: 20, cursor: null }, signal)
+              }
+            } catch {
+              tail = null
+            }
+            return deliver(`/v1/remote-session-commands/${encodeURIComponent(id)}/session`, tail ? { ...body, tail } : body, signal)
+          },
           completeRequest: (id, body, signal) => deliver(`/v1/remote-session-requests/${encodeURIComponent(id)}/complete`, body, signal),
         },
         now,

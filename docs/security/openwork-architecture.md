@@ -456,6 +456,7 @@ Each data store sits next to the service that owns it. Dashed links are optional
 | Inference usage | Den MySQL (Gateway request log) | Identity, model, token counts, cost and status. No prompt or response bodies in the normal request log. |
 | Audit records | Den MySQL | Structured actions and outcomes. Coverage depends on the operation and organization settings. |
 | Session index | Den MySQL | Metadata, including the plaintext chat title. Not the full transcript. |
+| Remote task transcript tails | Den MySQL (`remote_session_tail`), optionally cached in Redis when configured | Short-lived recent tail (last 20 messages, 32 KB write cap) for fast opens across restarts and devices. Expires 24 hours after the last update (enforced on read and purged by a 15-minute batch sweep) and is deleted immediately on computer disconnect, session detach, and organization or member removal. Retained when a single device signs out so the user's other devices keep fast opens. |
 | Automation results | Den MySQL | Run status, a result summary, and an encrypted validated result. |
 | Cached session data | Redis (optional) | `rediss://` (TLS) required for non-local Redis unless explicitly overridden for a trusted private network. |
 | Computer files | Daytona or Freestyle | Third-party environment per conversation; separate from the authoritative chat history but may contain conversation-derived files. |

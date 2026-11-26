@@ -1,11 +1,18 @@
+import { createHash } from "node:crypto";
 import { mcpToolId } from "../opencode-v2-mcp-readiness.js";
 import { nativeDiscoveryCode } from "./openwork-codemode-discovery-v2.js";
 
 type Registration = { dispose(): Promise<void> };
 type CallEvent = { readonly tool: string; readonly messageID: string; readonly id: string };
 type ToolResult = { output?: unknown; content?: unknown; metadata?: Record<string, unknown> };
-type ToolCall = { readonly messageID: string; readonly id: string; progress(metadata: Record<string, unknown>): Promise<void> };
+type ToolCall = { readonly sessionID?: string; readonly messageID: string; readonly id: string; progress(metadata: Record<string, unknown>): Promise<void> };
 type EditableTool = { options?: Record<string, unknown>; execute(input: unknown, call: ToolCall): Promise<ToolResult> };
+
+function workspaceIdForDirectory(directory: string | undefined): string | null {
+  const trimmed = directory?.trim();
+  if (!trimmed) return null;
+  return `ws_${createHash("sha256").update(trimmed).digest("hex").slice(0, 12)}`;
+}
 
 export const PINNED_CONNECT_TOOL_IDS: ReadonlySet<string> = new Set(
   ["search_capabilities", "execute_capability", "get_skill"].map(name => mcpToolId("openwork-cloud", name)));
@@ -15,6 +22,8 @@ type ExecuteAfter = CallEvent & { readonly input: unknown } & (
   | { readonly status: "error"; readonly error: unknown }
 );
 type Context = {
+  location?: { directory?: string };
+  session?: { get?(input: { sessionID: string }): Promise<{ readonly parentID?: string } | undefined> };
   tool: {
     transform(callback: (editor: {
       get(id: string): unknown;
@@ -242,6 +251,42 @@ export default {
   id: "openwork.mcp-results",
   async setup(context: Context) {
     const collector = createMcpResultsCollector();
+    const originWorkspaceId = workspaceIdForDirectory(context.location?.directory);
+    const rootSessionCache = new Map<string, string>();
+    const resolveRootSessionId = async (sessionID: string | undefined): Promise<string | null> => {
+      if (!sessionID) return null;
+      const cached = rootSessionCache.get(sessionID);
+      if (cached) return cached;
+      let current = sessionID;
+      const visited = new Set<string>();
+      while (!visited.has(current)) {
+        visited.add(current);
+        const info = await context.session?.get?.({ sessionID: current }).catch(() => undefined);
+        if (!info?.parentID) break;
+        current = info.parentID;
+      }
+      rootSessionCache.set(sessionID, current);
+      return current;
+    };
+    const attachRemoteOrigin = async (toolId: string, input: unknown, call: ToolCall): Promise<unknown> => {
+      const normalized = normalizedTool(toolId);
+      if (!isRecord(input)) return input;
+      const isExecCapability = normalized === "openwork-cloud_execute_capability";
+      const isDirectRemote = normalized === "openwork-cloud_remote_session_create" || normalized === "openwork-cloud_remote_session_attach";
+      if (!isExecCapability && !isDirectRemote) return input;
+      if (isExecCapability && input.name !== "remote-session:create" && input.name !== "remote-session:attach") return input;
+      const originSessionId = await resolveRootSessionId(call.sessionID);
+      if (!originSessionId && !originWorkspaceId) return input;
+      const origin = {
+        ...(originSessionId ? { originSessionId } : {}),
+        ...(originWorkspaceId ? { originWorkspaceId } : {}),
+      };
+      if (isExecCapability) {
+        const body = isRecord(input.body) ? input.body : {};
+        return { ...input, body: { ...origin, ...body } };
+      }
+      return { ...origin, ...input };
+    };
     let rootSearch = false;
     let toolIds = new Set<string>();
     const catalog = await context.tool.transform(editor => {
@@ -253,15 +298,16 @@ export default {
           if (PINNED_CONNECT_TOOL_IDS.has(info.id)) tool.options = { ...tool.options, pinned: true };
           const execute = tool.execute;
           tool.execute = async (input, call) => {
-            const event = { tool: info.id, messageID: call.messageID, id: call.id, input };
+            const preparedInput = await attachRemoteOrigin(info.id, input, call);
+            const event = { tool: info.id, messageID: call.messageID, id: call.id, input: preparedInput };
             const invocationId = collector.claim(event);
-            if (invocationId === undefined) return execute(input, call);
+            if (invocationId === undefined) return execute(preparedInput, call);
             const publish = async () => {
               await call.progress({ openworkToolDetails: collector.details(event) }).catch(() => {});
             };
             await publish();
             try {
-              const result = await execute(input, call);
+              const result = await execute(preparedInput, call);
               collector.settle(event, invocationId, { status: "completed", output: result.output ?? result.content });
               await publish();
               return result;

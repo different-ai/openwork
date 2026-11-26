@@ -9,6 +9,7 @@ import {
   RemoteDeviceTable,
 } from "@openwork-ee/den-db/schema"
 import { RemoteSessionCommandTable, RemoteSessionRequestTable } from "@openwork-ee/den-db/schema/remote-session-commands"
+import { deleteRemoteSessionTailsForRunner } from "./remote-sessions/tails.js"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { COMPUTER_DISCONNECTED_ERROR } from "@openwork/types/den/remote-devices"
 import { HTTPException } from "hono/http-exception"
@@ -185,6 +186,11 @@ async function releaseDesktopWork(scope: { organizationId: OrganizationId; owner
     eq(RemoteSessionRequestTable.target_runner_id, scope.installId),
     inArray(RemoteSessionRequestTable.status, ["pending", "claimed"]),
   ))
+  await deleteRemoteSessionTailsForRunner({
+    organizationId: scope.organizationId,
+    ownerMemberId: scope.ownerMemberId,
+    runnerId: scope.installId,
+  })
   const automations = db.select({ id: AutomationTable.id }).from(AutomationTable).where(and(
     eq(AutomationTable.organization_id, scope.organizationId),
     eq(AutomationTable.owner_member_id, scope.ownerMemberId),

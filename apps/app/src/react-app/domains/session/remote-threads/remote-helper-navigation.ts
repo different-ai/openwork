@@ -7,9 +7,19 @@ export type RemoteHelperOrigin = {
   parentTitle: string | null
 }
 
-const STORAGE_PREFIX = "openwork.remoteHelper."
+const STORAGE_KEY = "openwork.remoteHelper.v2"
+const MAX_STORED_ORIGINS = 30
+const MAX_PROMPT_LENGTH = 1000
 const memory = new Map<string, RemoteHelperOrigin>()
-const drafts = new Map<string, string>()
+
+type StoredOriginRecord = {
+  savedAt: number
+  origin: RemoteHelperOrigin
+}
+
+function storageKey(scope: string | null, threadKey: string) {
+  return JSON.stringify([scope, threadKey])
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -44,41 +54,65 @@ export function parseRemoteHelperOrigin(value: unknown): RemoteHelperOrigin | nu
   return { start, owner: { workspaceId, sessionId }, parentTitle }
 }
 
-function storage(): Storage | null {
+function readMap(): Record<string, StoredOriginRecord> {
+  if (typeof window === "undefined") return {}
   try {
-    return typeof window === "undefined" ? null : window.sessionStorage
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!isRecord(parsed)) return {}
+    const records: Record<string, StoredOriginRecord> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!isRecord(value) || typeof value.savedAt !== "number") continue
+      const origin = parseRemoteHelperOrigin(value.origin)
+      if (origin) records[key] = { savedAt: value.savedAt, origin }
+    }
+    return records
   } catch {
-    return null
+    return {}
   }
 }
 
-export function rememberRemoteHelperOrigin(origin: RemoteHelperOrigin) {
-  memory.set(origin.start.key, origin)
+function compactOrigin(origin: RemoteHelperOrigin): RemoteHelperOrigin {
+  const prompt = origin.start.prompt && origin.start.prompt.length > MAX_PROMPT_LENGTH
+    ? `${origin.start.prompt.slice(0, MAX_PROMPT_LENGTH - 1)}…`
+    : origin.start.prompt
+  return { ...origin, start: { ...origin.start, prompt } }
+}
+
+export function rememberRemoteHelperOrigin(origin: RemoteHelperOrigin, scope: string | null) {
+  const key = storageKey(scope, origin.start.key)
+  memory.set(key, origin)
+  if (!scope || typeof window === "undefined") return
   try {
-    storage()?.setItem(`${STORAGE_PREFIX}${origin.start.key}`, JSON.stringify(origin))
+    const map = readMap()
+    map[key] = { savedAt: Date.now(), origin: compactOrigin(origin) }
+    const pruned = Object.fromEntries(
+      Object.entries(map)
+        .sort((left, right) => right[1].savedAt - left[1].savedAt)
+        .slice(0, MAX_STORED_ORIGINS),
+    )
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(pruned))
   } catch {
   }
 }
 
-export function remoteHelperOrigin(threadKey: string): RemoteHelperOrigin | null {
-  const known = memory.get(threadKey)
+export function remoteHelperOrigin(threadKey: string, scope: string | null): RemoteHelperOrigin | null {
+  const key = storageKey(scope, threadKey)
+  const known = memory.get(key)
   if (known) return known
+  if (!scope || typeof window === "undefined") return null
+  const stored = readMap()[key]?.origin ?? null
+  if (stored?.start.key !== threadKey) return null
+  memory.set(key, stored)
+  return stored
+}
+
+export function clearRemoteHelperOrigins() {
+  memory.clear()
+  if (typeof window === "undefined") return
   try {
-    const raw = storage()?.getItem(`${STORAGE_PREFIX}${threadKey}`)
-    const parsed = raw ? parseRemoteHelperOrigin(JSON.parse(raw)) : null
-    if (parsed?.start.key !== threadKey) return null
-    memory.set(threadKey, parsed)
-    return parsed
+    window.localStorage.removeItem(STORAGE_KEY)
   } catch {
-    return null
   }
-}
-
-export function remoteHelperDraft(threadKey: string): string {
-  return drafts.get(threadKey) ?? ""
-}
-
-export function saveRemoteHelperDraft(threadKey: string, draft: string) {
-  if (draft) drafts.set(threadKey, draft)
-  else drafts.delete(threadKey)
 }

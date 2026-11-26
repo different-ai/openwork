@@ -4,6 +4,7 @@ import { cache } from "./cache.js"
 import { syncInferenceAfterMemberChange } from "./inference.js"
 import { syncOrganizationBillingQuantities } from "./stripe-billing.js"
 import { removeMemberWorkbotComputersInBackground } from "./workbot/member-computers.js"
+import { deleteRemoteSessionTailsForMember } from "./remote-sessions/tails.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -20,7 +21,10 @@ type OrganizationMemberChangeHookInput = {
 type OrganizationMemberChangeHook = (input: OrganizationMemberChangeHookInput) => Promise<void>
 
 const removeWorkbotComputersAfterRemoval: OrganizationMemberChangeHook = async (input) => {
-  if (input.change === "removed") removeMemberWorkbotComputersInBackground(input)
+  if (input.change === "removed") {
+    removeMemberWorkbotComputersInBackground(input)
+    await deleteRemoteSessionTailsForMember({ organizationId: input.organizationId, ownerMemberId: input.memberId })
+  }
 }
 
 const organizationMemberChangeHooks: OrganizationMemberChangeHook[] = [

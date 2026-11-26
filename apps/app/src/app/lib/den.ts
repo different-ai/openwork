@@ -1,3 +1,13 @@
+import {
+  boundRemoteSessionsResponseSchema,
+  remoteSessionStreamSnapshotEventSchema,
+  remoteSessionStreamUpdateEventSchema,
+  remoteSessionTailResponseSchema,
+  type BoundRemoteSession,
+  type RemoteSessionStreamSnapshotEvent,
+  type RemoteSessionStreamUpdateEvent,
+  type RemoteSessionTailResponse,
+} from "@openwork/types/den/remote-sessions";
 import { memberSandboxStatusSchema } from "@openwork/types/den/sandbox-organizations";
 import { builtMcpAppCatalogSchema, type BuiltMcpAppCatalogEntry } from "./built-mcp-app-catalog";
 import {
@@ -3544,6 +3554,91 @@ export function createDenClient(options: {
       return requestJson<unknown>(baseUrls, `/v1/remote-sessions/${action}`, {
         method: "POST", token, organizationId: orgId, body: input, timeoutMs: 35_000, signal,
       });
+    },
+
+    async getBoundRemoteSessions(
+      orgId: string,
+      options: { parentSessionId?: string; limit?: number; signal?: AbortSignal } = {},
+    ): Promise<BoundRemoteSession[]> {
+      const params = new URLSearchParams();
+      if (options.parentSessionId) params.set("parentSessionId", options.parentSessionId);
+      if (options.limit !== undefined) params.set("limit", String(options.limit));
+      const suffix = params.size > 0 ? `?${params.toString()}` : "";
+      const payload = await requestJson<unknown>(baseUrls, `/v1/remote-sessions/bound${suffix}`, {
+        method: "GET", token, organizationId: orgId, signal: options.signal, cache: "no-store",
+      });
+      return boundRemoteSessionsResponseSchema.parse(payload).sessions;
+    },
+
+    async getRemoteSessionTail(
+      orgId: string,
+      threadKey: string,
+      options: { signal?: AbortSignal } = {},
+    ): Promise<RemoteSessionTailResponse> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/remote-sessions/tail/${encodeURIComponent(threadKey)}`, {
+        method: "GET", token, organizationId: orgId, signal: options.signal, cache: "no-store",
+      });
+      return remoteSessionTailResponseSchema.parse(payload);
+    },
+
+    async openRemoteSessionStream(
+      orgId: string,
+      options: {
+        signal: AbortSignal;
+        onSnapshot: (event: RemoteSessionStreamSnapshotEvent) => void;
+        onUpdate: (event: RemoteSessionStreamUpdateEvent) => void;
+      },
+    ): Promise<void> {
+      const url = `${resolveRequestBaseUrl(baseUrls, "/v1/remote-sessions/stream")}/v1/remote-sessions/stream`;
+      const authToken = token?.trim() ?? "";
+      const headers: Record<string, string> = {
+        Accept: "text/event-stream",
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        [ORG_SCOPE_HEADER]: orgId.trim(),
+        [ORG_PROXY_HEADER]: orgId.trim(),
+      };
+      const response = await fetch(url, { method: "GET", headers, signal: options.signal, cache: "no-store" });
+      if (!response.ok || !response.body) {
+        throw new DenApiError(response.status, "stream_failed", `Remote session stream returned ${response.status}`);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let eventType = "";
+      let dataLines: string[] = [];
+      try {
+        while (!options.signal.aborted) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          buffer += decoder.decode(chunk.value, { stream: true });
+          for (;;) {
+            const newline = buffer.indexOf("\n");
+            if (newline < 0) break;
+            const line = buffer.slice(0, newline).replace(/\r$/, "");
+            buffer = buffer.slice(newline + 1);
+            if (line === "") {
+              if (dataLines.length > 0) {
+                const raw = dataLines.join("\n");
+                try {
+                  const parsed: unknown = JSON.parse(raw);
+                  if (eventType === "snapshot") options.onSnapshot(remoteSessionStreamSnapshotEventSchema.parse(parsed));
+                  else if (eventType === "update") options.onUpdate(remoteSessionStreamUpdateEventSchema.parse(parsed));
+                } catch {
+                }
+              }
+              eventType = "";
+              dataLines = [];
+            } else if (line.startsWith("event:")) {
+              eventType = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              dataLines.push(line.slice(5).replace(/^ /, ""));
+            }
+          }
+        }
+      } finally {
+        void reader.cancel().catch(() => undefined);
+        reader.releaseLock();
+      }
     },
 
     async getDeploymentFeatures(options: { cache?: RequestCache } = {}): Promise<Record<string, boolean>> {

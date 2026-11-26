@@ -24,12 +24,15 @@ import {
 } from "@openwork/types/automations"
 import {
   remoteSessionAttachRequestSchema,
+  type BoundRemoteSession,
   type MemberSessionListResponse,
   type RemoteSessionAttachRequest,
 } from "@openwork/types/den/remote-sessions"
 import { COMPUTER_DISCONNECTED_ERROR } from "@openwork/types/den/remote-devices"
 import { REMOTE_ACCESS_OFF_ERROR } from "@openwork/types/den/remote-sessions"
 import { sessionTimestampIso } from "../remote-sessions/timestamps.js"
+import { createSignalWaiter, onRemoteSessionRequestDone } from "../remote-sessions/work-signal.js"
+import { listRemoteSessionTailUpdatedAt, saveRemoteSessionTail } from "../remote-sessions/tails.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -83,7 +86,7 @@ import {
   sessionAccessOf,
 } from "../remote-sessions/sessions.js"
 import { listedTargets } from "../remote-sessions/targets.js"
-import { readRemoteSessionStatus, type RemoteSessionStatusSources } from "./remote-session-status.js"
+import { commandProjection, readRemoteSessionStatus, type RemoteSessionStatusSources } from "./remote-session-status.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
 
 export const REMOTE_SESSION_CAPABILITY_PREFIX = "remote-session:"
@@ -114,6 +117,8 @@ const createBodySchema = z.object({
   model: modelSchema.optional(),
   computerId: z.string().trim().min(1).max(160).optional(),
   workspaceId: z.string().trim().min(1).max(240).optional(),
+  originSessionId: z.string().trim().min(1).max(240).optional(),
+  originWorkspaceId: z.string().trim().min(1).max(240).optional(),
 }).superRefine((body, context) => {
   if (body.idempotencyKey !== undefined && body.target !== "desktop" && body.target !== "registered") {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["idempotencyKey"], message: "Idempotent admission currently applies only to desktop or registered client targets." })
@@ -945,6 +950,7 @@ function desktopRequestResult(request: RemoteSessionRequest, options: { attached
   const identity = {
     target: "desktop",
     requestId: request.id,
+    commandId: request.commandId,
     sessionId: request.sessionId,
     workspaceId: request.workspaceId,
   }
@@ -986,7 +992,6 @@ function desktopRequestResult(request: RemoteSessionRequest, options: { attached
   if (outcome.action === "send") {
     return jsonResult({
       ...identity,
-      commandId: request.commandId,
       state: "accepted",
       messageId: outcome.result.messageId,
       alreadyPresent: outcome.result.alreadyPresent,
@@ -1104,17 +1109,23 @@ async function executeDesktopSessionAction(
   const wait = deps.requestWait ?? DESKTOP_REQUEST_WAIT
   const deadline = Date.now() + wait.timeoutMs
   let current = request
-  while (current.status === "pending" || current.status === "claimed") {
-    const remaining = deadline - Date.now()
-    if (remaining <= 0) break
-    await sleep(Math.min(wait.pollMs, remaining))
-    const next = await deps.requestStore.get({
-      requestId: request.id,
-      organizationId: input.organizationId,
-      createdByUserId: input.userId,
-    })
-    if (!next) break
-    current = next
+  const waiter = createSignalWaiter((wake) => onRemoteSessionRequestDone(request.id, wake))
+  try {
+    while (current.status === "pending" || current.status === "claimed") {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0 || input.signal?.aborted) break
+      await waiter.wait(Math.min(wait.pollMs, remaining), input.signal)
+      if (input.signal?.aborted) break
+      const next = await deps.requestStore.get({
+        requestId: request.id,
+        organizationId: input.organizationId,
+        createdByUserId: input.userId,
+      })
+      if (!next) break
+      current = next
+    }
+  } finally {
+    waiter.dispose()
   }
   return desktopRequestResult(current, { attached: session.kind === "attach" })
 }
@@ -1126,6 +1137,8 @@ export type RemoteSessionExecuteInput = {
   hasWriteScope: boolean
   body: unknown
   headlessRunTokenId?: string | null
+  originSessionId?: string | null
+  originWorkspaceId?: string | null
   signal?: AbortSignal
 }
 
@@ -1331,6 +1344,8 @@ async function attachDesktopSession(
     targetComputerId: computer.computerId,
     targetWorkspaceId: body.workspaceId,
     targetSessionId: body.sessionId,
+    ...((body.originSessionId ?? input.originSessionId) ? { parentSessionId: body.originSessionId ?? input.originSessionId ?? undefined } : {}),
+    ...((body.originWorkspaceId ?? input.originWorkspaceId) ? { parentWorkspaceId: body.originWorkspaceId ?? input.originWorkspaceId ?? undefined } : {}),
   })
   return jsonResult({ target: "desktop", state: "queued", commandId: command.id, ...identity, expiresAt: sessionTimestampIso(command.expiresAt) })
 }
@@ -1603,6 +1618,8 @@ async function executeRemoteSession(
           : createDenTypeId("remoteSessionCommand"),
         targetComputerId: resolved.computerId,
         ...(resolved.workspaceId === null ? {} : { targetWorkspaceId: resolved.workspaceId }),
+        ...((body.originSessionId ?? input.originSessionId) ? { parentSessionId: body.originSessionId ?? input.originSessionId ?? undefined } : {}),
+        ...((body.originWorkspaceId ?? input.originWorkspaceId) ? { parentWorkspaceId: body.originWorkspaceId ?? input.originWorkspaceId ?? undefined } : {}),
       })
       const postsToThread = await linkToOriginatingRun(deps, input, command.id, body.prompt !== undefined)
       return jsonResult({
@@ -1651,6 +1668,8 @@ async function executeRemoteSession(
           ? `remote_${createHash("sha256").update(`${input.organizationId}\0${input.userId}\0${body.idempotencyKey}`).digest("hex")}`
           : createDenTypeId("remoteSessionCommand"),
         ...(taker ? { targetComputerId: taker.computerId } : {}),
+        ...((body.originSessionId ?? input.originSessionId) ? { parentSessionId: body.originSessionId ?? input.originSessionId ?? undefined } : {}),
+        ...((body.originWorkspaceId ?? input.originWorkspaceId) ? { parentWorkspaceId: body.originWorkspaceId ?? input.originWorkspaceId ?? undefined } : {}),
       })
       const postsToThread = await linkToOriginatingRun(deps, input, command.id, body.prompt !== undefined)
       return jsonResult({
@@ -1771,21 +1790,65 @@ async function executeRemoteSession(
     const pending = pendingItems === null
       ? waiting && client.getThreadPending ? await client.getThreadPending(body.sessionId).catch(() => undefined) : null
       : pendingItems && (pendingItems[0] ?? null)
+    const cloudMessages = boundCloudPage(transcript.messages.slice(-limit).map((message) => ({
+      id: message.id,
+      role: message.role,
+      createdAt: message.createdAt,
+      completedAt: message.completedAt,
+      text: message.text.slice(0, READ_MESSAGE_TEXT_LIMIT),
+      toolCalls: message.toolCalls.map((tool) => ({ id: tool.partId, name: tool.name, status: tool.status })),
+      parts: cloudTranscriptParts(message, READ_MESSAGE_TEXT_LIMIT),
+    })))
+    const cloudStatus = snapshot.status.type === "idle" ? "idle" : pending ? "waiting" : "running"
+    if (!body.messageId) {
+      await saveRemoteSessionTail({
+        organizationId: input.organizationId,
+        createdByUserId: input.userId,
+        threadKey: `cloud:${body.sessionId}`,
+        page: {
+          title: transcript.title,
+          status: cloudStatus,
+          waitingFor: pending ? pending.kind : null,
+          lastError: transcript.terminalError
+            ? { code: transcript.terminalError.name || "session_error", message: transcript.terminalError.message || "The task stopped with an error." }
+            : null,
+          messageCount: transcript.messages.length,
+          from: "end",
+          messages: cloudMessages.map((msg) => ({
+            id: msg.id,
+            role: msg.role === "user" ? "user" : "assistant",
+            createdAt: msg.createdAt,
+            completedAt: msg.completedAt,
+            text: msg.text,
+            truncated: false,
+            toolCalls: msg.toolCalls.map((tool) => ({
+              id: tool.id,
+              name: tool.name,
+              status: tool.status,
+              title: null,
+              input: null,
+              output: null,
+              error: null,
+              truncated: false,
+              startedAt: null,
+              endedAt: null,
+            })),
+            error: null,
+            parts: msg.parts,
+          })),
+          nextCursor: null,
+          ...(pending === undefined ? {} : { pending }),
+          ...(pendingItems ? { pendingItems } : {}),
+        },
+      }).catch(() => undefined)
+    }
     return jsonResult({
       target: "cloud",
       sessionId: body.sessionId,
       title: transcript.title,
       status: snapshot.status.type,
       messageCount: transcript.messages.length,
-      messages: boundCloudPage(transcript.messages.slice(-limit).map((message) => ({
-        id: message.id,
-        role: message.role,
-        createdAt: message.createdAt,
-        completedAt: message.completedAt,
-        text: message.text.slice(0, READ_MESSAGE_TEXT_LIMIT),
-        toolCalls: message.toolCalls.map((tool) => ({ id: tool.partId, name: tool.name, status: tool.status })),
-        parts: cloudTranscriptParts(message, READ_MESSAGE_TEXT_LIMIT),
-      }))),
+      messages: cloudMessages,
       finalAssistantText: body.messageId
         ? transcript.messages.filter(message => message.role === "assistant" && message.text).map(message => message.text).join("\n\n").slice(0, 100_000)
         : transcript.finalAssistantText.slice(0, FINAL_TEXT_LIMIT),
@@ -1810,4 +1873,69 @@ export async function executeRemoteSessionCapability(
     }
     throw error
   }
+}
+
+function versionForProjection(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16)
+}
+
+export async function listBoundRemoteSessions(
+  input: { organizationId: DenTypeId<"organization">; userId: string; parentSessionId?: string; limit?: number },
+  deps: RemoteSessionExecuteDeps = DEFAULT_REMOTE_SESSION_DEPS,
+): Promise<BoundRemoteSession[]> {
+  const now = Date.now()
+  const limit = Math.min(100, Math.max(1, input.limit ?? 40))
+  const listBound = deps.commandStore.listBoundForCreator
+  const commands = listBound
+    ? await listBound({
+        organizationId: input.organizationId,
+        createdByUserId: input.userId,
+        ...(input.parentSessionId ? { parentSessionId: input.parentSessionId } : {}),
+        now,
+        limit,
+      })
+    : await deps.commandStore.listForCreator({
+        organizationId: input.organizationId,
+        createdByUserId: input.userId,
+        now,
+        limit,
+      })
+  if (commands.length === 0) return []
+  const [targets, tailUpdatedByKey] = await Promise.all([
+    deps.desktopTargets
+      ? deps.desktopTargets({ organizationId: input.organizationId, userId: input.userId }).catch(() => ({ ownerMemberId: null, computers: [] }))
+      : Promise.resolve({ ownerMemberId: null, computers: [] }),
+    listRemoteSessionTailUpdatedAt({
+      organizationId: input.organizationId,
+      createdByUserId: input.userId,
+      threadKeys: commands.map((command) => `command:${command.id}`),
+      now,
+    }).catch(() => new Map<string, number>()),
+  ])
+  const labels = new Map(targets.computers.map((computer) => [computer.computerId, computerLabel(computer)]))
+  return commands.map((command) => {
+    const projection = commandProjection(command)
+    const threadKey = `command:${command.id}`
+    const version = versionForProjection({ ...projection, observedAt: undefined })
+    const rawPrompt = command.prompt?.trim() ?? null
+    return {
+      threadKey,
+      commandId: command.id,
+      parentSessionId: command.parentSessionId,
+      parentWorkspaceId: command.parentWorkspaceId,
+      title: command.title,
+      prompt: rawPrompt ? (rawPrompt.length > 1000 ? `${rawPrompt.slice(0, 999)}…` : rawPrompt) : null,
+      target: "desktop",
+      status: {
+        ref: command.id,
+        changed: true,
+        version,
+        ...projection,
+        computerLabel: projection.computerId ? labels.get(projection.computerId) ?? null : null,
+      },
+      activeSince: command.createdAt,
+      updatedAt: command.updatedAt,
+      tailUpdatedAt: tailUpdatedByKey.get(threadKey) ?? null,
+    }
+  })
 }

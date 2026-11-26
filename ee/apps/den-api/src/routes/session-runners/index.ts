@@ -52,11 +52,14 @@ import {
 } from "../../automations/runner-notification-poll.js"
 import { appLogger } from "../../observability/logger.js"
 import { readOrganizationEnginePolicy } from "../engine-policy.js"
-import { onRemoteSessionWork } from "../../remote-sessions/work-signal.js"
+import { hasRemoteSessionSignalPubSub, onRemoteSessionWork } from "../../remote-sessions/work-signal.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 
 const REMOTE_SESSION_PUSH_HEADER = "x-openwork-remote-session-push"
-const REMOTE_SESSION_PUSH_CHECK_MS = 5_000
+const REMOTE_SESSION_PUSH_ACTIVE_CHECK_MS = 2_000
+const REMOTE_SESSION_PUSH_IDLE_CHECK_MS = 5_000
+const REMOTE_SESSION_PUSH_REDIS_CHECK_MS = 15_000
+const REMOTE_SESSION_PUSH_ACTIVE_WINDOW_MS = 5 * 60_000
 
 const idParamsSchema = z.object({ id: z.string().min(1).max(160) })
 const computerDisconnectedSchema = z.object({ error: z.literal(COMPUTER_DISCONNECTED_ERROR), message: z.string() })
@@ -181,7 +184,8 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
         let lastOwnerCheckAt = Date.now()
         let notificationPollDelayMs = RUNNER_NOTIFICATION_POLL_MIN_MS
         let lastPushCheckAt = 0
-        const announced = new Set<string>()
+        let lastRemoteActivityAt = 0
+        let announced = new Set<string>()
         let woken = false
         let wake: (() => void) | null = null
         const unsubscribe = wantsPush
@@ -210,17 +214,31 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
               await stream.writeSSE({ id: payload.cursor, event: payload.type, data: JSON.stringify(payload) })
             }
             let pushed = false
-            if (wantsPush && (woken || Date.now() - lastPushCheckAt >= REMOTE_SESSION_PUSH_CHECK_MS)) {
+            const pushCheckMs = hasRemoteSessionSignalPubSub()
+              ? REMOTE_SESSION_PUSH_REDIS_CHECK_MS
+              : Date.now() - lastRemoteActivityAt < REMOTE_SESSION_PUSH_ACTIVE_WINDOW_MS
+                ? REMOTE_SESSION_PUSH_ACTIVE_CHECK_MS
+                : REMOTE_SESSION_PUSH_IDLE_CHECK_MS
+            if (wantsPush && (woken || Date.now() - lastPushCheckAt >= pushCheckMs)) {
+              const now = Date.now()
               woken = false
-              lastPushCheckAt = Date.now()
-              const pending = await commandStore.listPendingForRunner({
-                organizationId: identity.organizationId, ownerMemberId: identity.ownerMemberId,
-                computerIds: automationRunnerComputerIds(identity), now: Date.now(), limit: 5,
-                ...(announceAttach ? { kinds: ["create", "attach"] as const } : {}),
-              })
-              const fresh = pending.filter((command) => !announced.has(command.id))
-              for (const command of fresh) announced.add(command.id)
-              if (fresh.length > 0) {
+              lastPushCheckAt = now
+              const [pendingCommands, pendingRequests] = await Promise.all([
+                commandStore.listPendingForRunner({
+                  organizationId: identity.organizationId, ownerMemberId: identity.ownerMemberId,
+                  computerIds: automationRunnerComputerIds(identity), now, limit: 5,
+                  ...(announceAttach ? { kinds: ["create", "attach"] as const } : {}),
+                }),
+                pendingRequestItems(identity),
+              ])
+              const currentIds = [
+                ...pendingCommands.map((command) => `cmd:${command.id}`),
+                ...pendingRequests.map((request) => `req:${request.requestId}`),
+              ]
+              if (currentIds.length > 0) lastRemoteActivityAt = now
+              const hasFresh = currentIds.some((id) => !announced.has(id))
+              announced = new Set(currentIds)
+              if (hasFresh) {
                 const payload = automationRunnerNotificationSchema.parse({ type: "remote_session_work_available", cursor: String(cursor || 0) })
                 await stream.writeSSE({ event: payload.type, data: JSON.stringify(payload) })
                 pushed = true
@@ -232,7 +250,14 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
             }
             notificationPollDelayMs = nextRunnerNotificationPollDelay(notificationPollDelayMs, notifications.length > 0)
             let delayMs = capRunnerNotificationPollDelayForKeepalive(notificationPollDelayMs, Date.now() - lastKeepaliveAt)
-            if (wantsPush) delayMs = Math.min(delayMs, Math.max(0, REMOTE_SESSION_PUSH_CHECK_MS - (Date.now() - lastPushCheckAt)))
+            if (wantsPush) {
+              const nextPushMs = hasRemoteSessionSignalPubSub()
+                ? REMOTE_SESSION_PUSH_REDIS_CHECK_MS
+                : Date.now() - lastRemoteActivityAt < REMOTE_SESSION_PUSH_ACTIVE_WINDOW_MS
+                  ? REMOTE_SESSION_PUSH_ACTIVE_CHECK_MS
+                  : REMOTE_SESSION_PUSH_IDLE_CHECK_MS
+              delayMs = Math.min(delayMs, Math.max(0, nextPushMs - (Date.now() - lastPushCheckAt)))
+            }
             if (woken) continue
             await Promise.race([stream.sleep(delayMs), new Promise<void>((resolve) => { wake = resolve })])
             wake = null

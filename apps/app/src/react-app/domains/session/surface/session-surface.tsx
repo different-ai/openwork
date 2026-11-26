@@ -4,6 +4,8 @@ import { childOrigin, rememberChildOrigin, prepareChildReturn, consumeChildRetur
 import { remoteSessionRouteId } from "@/lib/remote-session-route";
 import type { RemoteThreadStart } from "@/lib/remote-session-thread";
 import { rememberRemoteHelperOrigin } from "@/react-app/domains/session/remote-threads/remote-helper-navigation";
+import { useRemoteHelperScope } from "@/react-app/domains/session/remote-threads/use-remote-helper-scope";
+import { useRemoteThreadStore } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { verifyChildTarget } from "@/lib/verify-child-target";
 import { isTaskToolPart, taskChildSessionId } from "@/lib/build-in-tools";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
@@ -3183,13 +3185,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
       brief: task?.type === "dynamic-tool" && isTaskToolPart(task) ? task.input?.prompt ?? "" : "" });
     props.onOpenSubagentSession?.(id);
   }, [baseRenderedMessages, childNavigationScope, props.sessionId, props.chatPane, props.onOpenSubagentSession, props.sessionTitle]);
+  const remoteHelperScope = useRemoteHelperScope();
   const openRemoteTask = useCallback((start: RemoteThreadStart) => {
     const message = baseRenderedMessages.find(message => message.parts.some(part => part.type === "dynamic-tool" && part.toolCallId === start.toolCallId));
     rememberChildOrigin(childNavigationScope, remoteSessionRouteId(start.key), { parentId: props.sessionId, pane: props.chatPane ?? "primary",
       anchor: start.key, scrollTop: scrollRef.current?.scrollTop ?? 0, title: props.sessionTitle, brief: start.prompt ?? "", messageId: message?.id });
-    rememberRemoteHelperOrigin({ start, owner: { workspaceId: props.workspaceId, sessionId: props.sessionId }, parentTitle: props.sessionTitle ?? null });
+    const tracked = useRemoteThreadStore.getState().threads[start.key];
+    const enrichedStart: RemoteThreadStart = tracked
+      ? {
+          ...start,
+          title: tracked.status?.title && tracked.status.title !== "Remote session" ? tracked.status.title : tracked.start.title !== "Task" ? tracked.start.title : start.title,
+          sessionId: tracked.status?.sessionId ?? tracked.start.sessionId ?? start.sessionId,
+          workspaceId: tracked.status?.workspaceId ?? tracked.start.workspaceId ?? start.workspaceId,
+          computerId: tracked.status?.computerId ?? tracked.start.computerId ?? start.computerId,
+        }
+      : start;
+    rememberRemoteHelperOrigin({ start: enrichedStart, owner: { workspaceId: props.workspaceId, sessionId: props.sessionId }, parentTitle: props.sessionTitle ?? null }, remoteHelperScope);
     props.onOpenRemoteTask?.(start.key);
-  }, [baseRenderedMessages, childNavigationScope, props.sessionId, props.chatPane, props.sessionTitle, props.workspaceId, props.onOpenRemoteTask]);
+  }, [baseRenderedMessages, childNavigationScope, props.sessionId, props.chatPane, props.sessionTitle, props.workspaceId, props.onOpenRemoteTask, remoteHelperScope]);
   const handleQueueDraftPersistenceRef = useRef<(() => void) | null>(null);
   handleQueueDraftPersistenceRef.current = () => {
     const state = useComposerStateStore.getState();

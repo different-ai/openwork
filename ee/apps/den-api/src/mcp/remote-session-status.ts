@@ -11,6 +11,7 @@ import {
 } from "@openwork/types/automations"
 import { automationRunnerRowId } from "../automations/repository.js"
 import type { RemoteSessionCommand } from "../remote-sessions/commands.js"
+import { createSignalWaiter, onRemoteSessionCommandUpdated } from "../remote-sessions/work-signal.js"
 
 const COMMAND_RECHECK_MS = 2_000
 const CLOUD_RECHECK_MS = 10_000
@@ -186,18 +187,6 @@ function settled(observation: Observation | undefined) {
   return observation?.kind === "known" && (observation.projection.state === "idle" || observation.projection.state === "error")
 }
 
-function sleep(ms: number, signal?: AbortSignal) {
-  return new Promise<void>((resolve) => {
-    const timer = setTimeout(done, ms)
-    function done() {
-      clearTimeout(timer)
-      signal?.removeEventListener("abort", done)
-      resolve()
-    }
-    signal?.addEventListener("abort", done, { once: true })
-  })
-}
-
 export async function readRemoteSessionStatus(
   body: RemoteSessionStatusRequest,
   sources: RemoteSessionStatusSources,
@@ -225,25 +214,34 @@ export async function readRemoteSessionStatus(
   })
   const startedAt = now()
   const deadline = startedAt + (body.waitMs ?? 0)
-  const [initialCommands, initialCloud] = await Promise.all([
-    observeCommands(commands, sources, startedAt),
-    observeCloud(clouds, cloud, startedAt, options.signal),
-  ])
-  let observed = new Map([...initialCommands, ...initialCloud])
-  let cloudCheckedAt = startedAt
-  while (!changed(observed) && !threads.every((thread) => settled(observed.get(thread.key))) && !options.signal?.aborted) {
-    const remaining = deadline - now()
-    if (remaining <= 0) break
-    await sleep(Math.min(commands.length > 0 ? COMMAND_RECHECK_MS : CLOUD_RECHECK_MS, remaining), options.signal)
-    if (options.signal?.aborted) break
-    const checkedAt = now()
-    const cloudDue = checkedAt - cloudCheckedAt >= CLOUD_RECHECK_MS
-    const [checkedCommands, checkedCloud] = await Promise.all([
-      observeCommands(commands, sources, checkedAt),
-      cloudDue ? observeCloud(clouds, cloud, checkedAt, options.signal) : [],
+  const waiter = createSignalWaiter((wake) => {
+    const stops = commands.map((thread) => onRemoteSessionCommandUpdated(thread.ref, wake))
+    return () => { for (const stop of stops) stop() }
+  })
+  let observed: Map<string, Observation>
+  try {
+    const [initialCommands, initialCloud] = await Promise.all([
+      observeCommands(commands, sources, startedAt),
+      observeCloud(clouds, cloud, startedAt, options.signal),
     ])
-    observed = new Map([...observed, ...checkedCommands, ...checkedCloud])
-    if (cloudDue) cloudCheckedAt = checkedAt
+    observed = new Map([...initialCommands, ...initialCloud])
+    let cloudCheckedAt = startedAt
+    while (!changed(observed) && !threads.every((thread) => settled(observed.get(thread.key))) && !options.signal?.aborted) {
+      const remaining = deadline - now()
+      if (remaining <= 0) break
+      await waiter.wait(Math.min(commands.length > 0 ? COMMAND_RECHECK_MS : CLOUD_RECHECK_MS, remaining), options.signal)
+      if (options.signal?.aborted) break
+      const checkedAt = now()
+      const cloudDue = checkedAt - cloudCheckedAt >= CLOUD_RECHECK_MS
+      const [checkedCommands, checkedCloud] = await Promise.all([
+        observeCommands(commands, sources, checkedAt),
+        cloudDue ? observeCloud(clouds, cloud, checkedAt, options.signal) : [],
+      ])
+      observed = new Map([...observed, ...checkedCommands, ...checkedCloud])
+      if (cloudDue) cloudCheckedAt = checkedAt
+    }
+  } finally {
+    waiter.dispose()
   }
 
   const needsLabels = threads.some((thread) => {

@@ -10,7 +10,8 @@ import {
 } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { automationUpdateChangedRows } from "../automations/update-result.js"
-import { signalRemoteSessionWork } from "./work-signal.js"
+import { signalRemoteSessionCommandUpdated, signalRemoteSessionUserUpdate, signalRemoteSessionWork } from "./work-signal.js"
+import { deleteRemoteSessionTailsForCommands, saveRemoteSessionTail } from "./tails.js"
 
 export const DEFAULT_TTL_MS = 10 * 60_000
 const SESSION_COMMAND_LIMIT = 20
@@ -89,6 +90,8 @@ export type RemoteSessionCommand = {
   targetComputerId: string | null
   targetWorkspaceId: string | null
   targetSessionId: string | null
+  parentSessionId: string | null
+  parentWorkspaceId: string | null
   expiresAt: number
   claimedByRunnerId: string | null
   claimedAt: number | null
@@ -112,6 +115,8 @@ type EnqueueInput = {
   idempotencyKey?: string
   targetComputerId?: string
   targetWorkspaceId?: string
+  parentSessionId?: string
+  parentWorkspaceId?: string
 }
 
 type AttachEnqueueInput = {
@@ -123,6 +128,8 @@ type AttachEnqueueInput = {
   targetComputerId: string
   targetWorkspaceId: string
   targetSessionId: string
+  parentSessionId?: string
+  parentWorkspaceId?: string
 }
 
 type RunnerComputerIds = readonly string[]
@@ -207,6 +214,13 @@ export interface RemoteSessionCommandStore {
     now: number
     limit: number
   }): Promise<RemoteSessionCommand[]>
+  listBoundForCreator?(input: {
+    organizationId: string
+    createdByUserId: string
+    parentSessionId?: string
+    now: number
+    limit: number
+  }): Promise<RemoteSessionCommand[]>
   detach(input: {
     organizationId: string
     runner?: { ownerMemberId: string; runnerId: string }
@@ -284,6 +298,8 @@ function mapCommand(row: CommandRow): RemoteSessionCommand {
     targetComputerId: row.target_computer_id,
     targetWorkspaceId: row.target_workspace_id,
     targetSessionId: row.target_session_id,
+    parentSessionId: row.parent_session_id,
+    parentWorkspaceId: row.parent_workspace_id,
     expiresAt: row.expires_at.getTime(),
     claimedByRunnerId: row.claimed_by_runner_id,
     claimedAt: row.claimed_at?.getTime() ?? null,
@@ -465,6 +481,8 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
         idempotency_key: input.idempotencyKey ?? null,
         target_computer_id: input.targetComputerId ?? null,
         target_workspace_id: input.targetWorkspaceId ?? null,
+        parent_session_id: input.parentSessionId ?? null,
+        parent_workspace_id: input.parentWorkspaceId ?? null,
         expires_at: new Date(now + input.ttlMs),
         created_at: new Date(now),
         updated_at: new Date(now),
@@ -481,6 +499,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     const command = await commandById(id)
     if (!command) throw new Error("remote_session_command_enqueue_failed")
     signalRemoteSessionWork(command.organizationId, command.ownerMemberId)
+    signalRemoteSessionUserUpdate(command.organizationId, command.createdByUserId)
     return command
   },
 
@@ -505,6 +524,8 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
         target_computer_id: input.targetComputerId,
         target_workspace_id: input.targetWorkspaceId,
         target_session_id: input.targetSessionId,
+        parent_session_id: input.parentSessionId ?? null,
+        parent_workspace_id: input.parentWorkspaceId ?? null,
         expires_at: new Date(now + input.ttlMs),
         created_at: new Date(now),
         updated_at: new Date(now),
@@ -518,6 +539,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     const command = await commandById(id)
     if (!command) throw new Error("remote_session_command_enqueue_failed")
     signalRemoteSessionWork(command.organizationId, command.ownerMemberId)
+    signalRemoteSessionUserUpdate(command.organizationId, command.createdByUserId)
     return command
   },
 
@@ -548,7 +570,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
   async complete(input) {
     const commandId = commandIdOrNull(input.commandId)
     if (!commandId) return null
-    return db.transaction(async (tx) => {
+    const completed = await db.transaction(async (tx) => {
       const scope = and(
         eq(RemoteSessionCommandTable.id, commandId),
         eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
@@ -579,6 +601,11 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
         resultSummary: input.resultSummary ?? null, error: input.error ?? null, updatedAt: input.now,
       }
     })
+    if (completed) {
+      signalRemoteSessionCommandUpdated(completed.id)
+      signalRemoteSessionUserUpdate(completed.organizationId, completed.createdByUserId)
+    }
+    return completed
   },
 
   async report(input) {
@@ -614,7 +641,30 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       eq(RemoteSessionCommandTable.status, "delivered"),
       or(isNull(RemoteSessionCommandTable.session_observed_at), lt(RemoteSessionCommandTable.session_observed_at, new Date(input.observedAt))),
     ))
-    if (automationUpdateChangedRows(result)) return "reported"
+    if (automationUpdateChangedRows(result)) {
+      signalRemoteSessionCommandUpdated(commandId)
+      const [reportedRow] = await db.$primary.select({
+        createdByUserId: RemoteSessionCommandTable.created_by_user_id,
+        title: RemoteSessionCommandTable.title,
+        prompt: RemoteSessionCommandTable.prompt,
+      }).from(RemoteSessionCommandTable).where(scope).limit(1)
+      if (reportedRow) {
+        if (input.tail) {
+          await saveRemoteSessionTail({
+            organizationId: input.organizationId,
+            createdByUserId: reportedRow.createdByUserId,
+            threadKey: `command:${commandId}`,
+            ownerMemberId: input.ownerMemberId,
+            commandId,
+            runnerId: input.runnerId,
+            page: input.tail,
+            now: input.observedAt,
+          }).catch(() => undefined)
+        }
+        signalRemoteSessionUserUpdate(input.organizationId, reportedRow.createdByUserId)
+      }
+      return "reported"
+    }
     const existing = await db.$primary.select().from(RemoteSessionCommandTable).where(scope).limit(1)
     const row = existing[0]
     if (!row) return "not_found"
@@ -743,8 +793,24 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     return rows.map(mapListedCommand)
   },
 
+  async listBoundForCreator(input) {
+    const rows = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
+      eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+      eq(RemoteSessionCommandTable.created_by_user_id, normalizeDenTypeId("user", input.createdByUserId)),
+      ...(input.parentSessionId ? [eq(RemoteSessionCommandTable.parent_session_id, input.parentSessionId)] : []),
+      or(
+        eq(RemoteSessionCommandTable.status, "delivered"),
+        and(
+          inArray(RemoteSessionCommandTable.status, ["pending", "claimed"]),
+          gt(RemoteSessionCommandTable.expires_at, new Date(input.now)),
+        ),
+      ),
+    )).orderBy(desc(RemoteSessionCommandTable.updated_at), desc(RemoteSessionCommandTable.id)).limit(input.limit)
+    return rows.map(mapCommand)
+  },
+
   async detach(input) {
-    await db.update(RemoteSessionCommandTable).set(detachedCommandValues(new Date(input.now))).where(and(
+    const condition = and(
       eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
       ...(input.runner
         ? [
@@ -753,7 +819,21 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
         ]
         : []),
       detachableCommands(),
-    ))
+    )
+    const doomed = await db.$primary.select({
+      id: RemoteSessionCommandTable.id,
+      createdByUserId: RemoteSessionCommandTable.created_by_user_id,
+    }).from(RemoteSessionCommandTable).where(condition)
+    if (doomed.length === 0) return
+    await db.update(RemoteSessionCommandTable).set(detachedCommandValues(new Date(input.now))).where(condition)
+    await deleteRemoteSessionTailsForCommands({
+      organizationId: input.organizationId,
+      commandIds: doomed.map((row) => row.id),
+    })
+    for (const row of doomed) {
+      signalRemoteSessionCommandUpdated(row.id)
+      signalRemoteSessionUserUpdate(input.organizationId, row.createdByUserId)
+    }
   },
 
   async findDesktopSession(input) {

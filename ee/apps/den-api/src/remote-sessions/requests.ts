@@ -14,6 +14,8 @@ import {
 } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { detachableCommands, detachedCommandValues } from "./commands.js"
+import { signalRemoteSessionCommandUpdated, signalRemoteSessionRequestDone, signalRemoteSessionUserUpdate, signalRemoteSessionWork } from "./work-signal.js"
+import { deleteRemoteSessionTailsForCommands, saveRemoteSessionTail } from "./tails.js"
 
 export const UNKNOWN_RECEIPT_ERROR_CODE = "unknown_receipt"
 
@@ -191,6 +193,7 @@ export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
     })
     const request = await requestById(id)
     if (!request) throw new Error("remote_session_request_enqueue_failed")
+    signalRemoteSessionWork(request.organizationId, request.ownerMemberId)
     return request
   },
 
@@ -219,7 +222,7 @@ export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
   async complete(input) {
     const requestId = requestIdOrNull(input.requestId)
     if (!requestId) return null
-    return db.transaction(async (tx) => {
+    const completed = await db.transaction(async (tx) => {
       const scope = and(
         eq(RemoteSessionRequestTable.id, requestId),
         eq(RemoteSessionRequestTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
@@ -267,6 +270,33 @@ export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
       return { ...existing, status: input.status, outcome: input.status === "done" ? input.outcome : null,
         error: input.status === "failed" ? input.error : null, completedAt: input.now, updatedAt: input.now }
     })
+    if (completed) {
+      if (completed.status === "done" && completed.outcome?.action === "read") {
+        await saveRemoteSessionTail({
+          organizationId: completed.organizationId,
+          createdByUserId: completed.createdByUserId,
+          threadKey: `command:${completed.commandId}`,
+          ownerMemberId: completed.ownerMemberId,
+          commandId: completed.commandId,
+          runnerId: completed.targetRunnerId,
+          page: completed.outcome.result,
+          now: input.now,
+        }).catch(() => undefined)
+      }
+      if (completed.status === "failed" && completed.error?.code === UNKNOWN_RECEIPT_ERROR_CODE) {
+        await deleteRemoteSessionTailsForCommands({
+          organizationId: completed.organizationId,
+          commandIds: [completed.commandId],
+        }).catch(() => undefined)
+      }
+      signalRemoteSessionRequestDone(completed.id)
+      if ((completed.status === "done" && completed.outcome?.action === "send")
+        || (completed.status === "failed" && completed.error?.code === UNKNOWN_RECEIPT_ERROR_CODE)) {
+        signalRemoteSessionCommandUpdated(completed.commandId)
+        signalRemoteSessionUserUpdate(completed.organizationId, completed.createdByUserId)
+      }
+    }
+    return completed
   },
 
   async get(input) {

@@ -113,6 +113,7 @@ import {
   McpEventReceiptTable,
   McpEventSubscriptionTable,
   McpEventTurnTable,
+  RemoteSessionTailTable,
   HeadlessResumeRevocationTable,
   SandboxOrganizationTable,
 } from "@openwork-ee/den-db/schema"
@@ -640,6 +641,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(McpEventReceiptTable).where(eq(McpEventReceiptTable.organizationId, organizationId))
         await tx.delete(McpEventSubscriptionTable).where(eq(McpEventSubscriptionTable.organizationId, organizationId))
         await tx.delete(McpEventTurnTable).where(eq(McpEventTurnTable.organizationId, organizationId))
+        await tx.delete(RemoteSessionTailTable).where(eq(RemoteSessionTailTable.org_id, organizationId))
         await deleteHeadlessSessionIndexForOrganization(tx, organizationId)
         await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.organizationId, organizationId)))
         await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.organizationId, organizationId)))
