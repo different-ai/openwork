@@ -112,7 +112,7 @@ test("admins-only sharing preserves existing shares and lets direct recipients r
 })
 
 
-test("Lee cannot expand an audience if the only member or team was removed", async () => {
+test("removing a member or team cleans shares, audiences and tool rules even when both flags are off", async () => {
   async function create(name: string) {
     const response = await asDana("POST", agents, { name, brief: "Summarize reports." })
     assert.equal(response.status, 201, summary(response))
@@ -120,11 +120,31 @@ test("Lee cannot expand an audience if the only member or team was removed", asy
   }
   const direct = await create("Direct reports")
   assert.equal((await asDana("PUT", `${agents}/${direct}/shares/${priya.memberId}`, { role: "collaborator" })).status, 200)
-  assert.equal((await asDana("DELETE", `/v1/members/${priya.memberId}`)).status, 204)
   const teamId = await den.createTeam(dana, orgId, "Removed team", [sam.memberId])
   const team = await create("Team reports")
   assert.equal((await asDana("PUT", `${agents}/${team}/audience`, { organization: false, teams: [{ teamId }] })).status, 200)
+  const { db } = await import("../../src/db.js")
+  const { PersonalAgentShareTable, ToolPermissionRuleTable } = await import("@openwork-ee/den-db/schema")
+  const { and, eq } = await import("@openwork-ee/den-db/drizzle")
+  const { normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
+  const { setSubjectToolRule } = await import("../../src/tool-permissions/rules.js")
+  const rule = { connectionId: createDenTypeId("externalMcpConnection"), toolName: "read_reports", rule: "ask" } as const
+  await setSubjectToolRule({ organizationId: orgId, id: priya.memberId, kind: "member" }, rule, dana.memberId)
+  await setSubjectToolRule({ organizationId: orgId, id: teamId, kind: "team" }, rule, dana.memberId)
+  assert.equal((await den.setFeature(orgId, "toolPermissions", true)).status, 200)
+  assert.equal((await den.setFeature(orgId, "toolPermissions", false)).status, 200)
+  assert.equal((await den.setFeature(orgId, "personalAgents", false)).status, 200)
+  assert.equal((await asDana("DELETE", `/v1/members/${priya.memberId}`)).status, 204)
   assert.equal((await asDana("DELETE", `/v1/teams/${teamId}`)).status, 204)
+  const rules = await db.$primary.select().from(ToolPermissionRuleTable).where(eq(ToolPermissionRuleTable.connection_id, rule.connectionId))
+  assert.deepEqual(rules, [])
+  const shares = await db.$primary.select().from(PersonalAgentShareTable).where(and(
+    eq(PersonalAgentShareTable.agent_id, normalizeDenTypeId("personalAgent", direct)),
+    eq(PersonalAgentShareTable.member_id, normalizeDenTypeId("member", priya.memberId)),
+  ))
+  assert.deepEqual(shares, [])
+  assert.equal((await den.setFeature(orgId, "personalAgents", true)).status, 200)
+
   for (const id of [direct, team]) {
     const response = await asLee("PUT", `/v1/org/personal-agents/${id}/audience`, { organization: true, teams: [] })
     assert.equal(response.status, 409, summary(response))

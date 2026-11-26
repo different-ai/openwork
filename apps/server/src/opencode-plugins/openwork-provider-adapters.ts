@@ -361,8 +361,8 @@ function agentContribution(): OpenworkFeatureContribution {
       affordance({
         id: "agent.propose",
         kind: "command",
-        title: "Propose a personal agent",
-        description: "Offer an agent of the person's own, with its first routine, for them to start with one confirmation. This only renders a \"Start like this?\" card in the chat; it cannot create or run anything. Use it only where OpenWork Connect's instructions mention personal agents.",
+        title: "Propose an agent",
+        description: "Offer an agent of the person's own, with its first routine, for them to start with one confirmation. This only renders a \"Start like this?\" card in the chat; it cannot create or run anything. Use it only where the chat's instructions say to set up an agent.",
         provider,
         arguments: [
           argument("name", "string", true, "Short name for the agent taken from its job, two or three words with only the first capitalized, e.g. \"Bug watcher\"."),

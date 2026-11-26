@@ -6,41 +6,32 @@ import { automationService } from "../automations/service.js"
 import { db } from "../db.js"
 import { canManagePersonalAgent, personalAgentOwnerScope, personalAgentPeople, personOrUnknown, type PersonalAgentAccess, type PersonalAgentCaller } from "./access.js"
 import { personalAgentRequestEventDetail, recordPersonalAgentEvent } from "./events.js"
-import { organizationToolRule, personalAgentOrganizationRules, type PersonalAgentOrganizationRules } from "./org-rules.js"
-import { decideToolApproval, listAgentToolApprovals, type ToolApprovalRow } from "../tool-permissions/approvals.js"
+import { decideToolApproval, listAgentToolApprovals, pendingToolApprovalCutoff, toolApprovalRequiresAsk, type ToolApprovalRow } from "../tool-permissions/approvals.js"
 import { appendPersonalAgentMemoryNote } from "./memory.js"
 import { personalAgentService } from "./service.js"
 
 type ChangeRow = typeof PersonalAgentRequestTable.$inferSelect
 type RequestRow = (ChangeRow & { kind: "change" }) | (ToolApprovalRow & { kind: "tool" })
 
-function requiresToolApproval(row: ToolApprovalRow, rules?: PersonalAgentOrganizationRules) {
-  return Boolean(rules && row.connection_id && row.tool_name && organizationToolRule(rules, row.connection_id, row.tool_name) === "ask")
-}
-
-function decisions(access: PersonalAgentAccess, memberId: string, row: RequestRow, rules?: PersonalAgentOrganizationRules): PersonalAgentRequestDecision[] {
+function decisions(access: PersonalAgentAccess, memberId: string, row: RequestRow, requiresAsk = false): PersonalAgentRequestDecision[] {
   if (row.status !== "pending" || access.state !== "active") return []
   if (row.kind === "change") return access.role === "owner" ? ["deny", "approve"] : []
-  if (access.role === "owner") return requiresToolApproval(row, rules) ? ["deny", "allow_once"] : ["deny", "allow_once", "always_allow"]
-  if (access.role === "manager") return row.requested_by_member_id === access.ownerMemberId ? [] : ["deny", "allow_once"]
+  if (access.role === "owner") return requiresAsk ? ["deny", "allow_once"] : ["deny", "allow_once", "always_allow"]
   return row.requested_by_member_id === memberId ? ["deny", "allow_once"] : []
 }
 
 async function requestViews(access: PersonalAgentAccess, memberId: string, rows: RequestRow[]): Promise<PersonalAgentRequest[]> {
-  const [people, rules] = await Promise.all([
-    personalAgentPeople(access.organizationId, rows.flatMap((row) => [row.requested_by_member_id, ...(row.decided_by_member_id ? [row.decided_by_member_id] : [])])),
-    canManagePersonalAgent(access.role) && rows.some((row) => row.kind === "tool" && row.status === "pending")
-      ? personalAgentOrganizationRules(access.organizationId, { fresh: true }) : undefined,
-  ])
-  return rows.map((row) => ({
+  const people = await personalAgentPeople(access.organizationId, rows.flatMap((row) => [row.requested_by_member_id, ...(row.decided_by_member_id ? [row.decided_by_member_id] : [])]))
+  return Promise.all(rows.map(async (row) => ({
     id: row.id, agentId: access.agentId, kind: row.kind, status: row.status, requestedBy: personOrUnknown(people, row.requested_by_member_id),
     requestedByCaller: row.requested_by_member_id === memberId,
     runId: row.kind === "tool" ? row.run_id : null, connectionId: row.kind === "tool" ? row.connection_id : null,
     connectionName: row.kind === "tool" ? row.connection_name : null, toolName: row.kind === "tool" ? row.tool_name : null,
     toolTitle: row.kind === "tool" ? row.tool_title : null, summary: row.kind === "change" ? row.summary : null,
     change: row.kind === "change" ? row.change : null, decidedBy: row.decided_by_member_id ? personOrUnknown(people, row.decided_by_member_id) : null,
-    decidedAt: row.decided_at?.getTime() ?? null, createdAt: row.created_at.getTime(), canDecide: decisions(access, memberId, row, rules),
-  }))
+    decidedAt: row.decided_at?.getTime() ?? null, createdAt: row.created_at.getTime(),
+    canDecide: decisions(access, memberId, row, row.kind === "tool" && row.status === "pending" && access.role === "owner" && await toolApprovalRequiresAsk(row)),
+  })))
 }
 
 function requestOfAgent(access: PersonalAgentAccess) {
@@ -120,7 +111,7 @@ export async function createPersonalAgentChangeRequest(access: PersonalAgentAcce
 async function decidePersonalAgentToolRequest(access: PersonalAgentAccess, memberId: string, approvalId: string, decision: PersonalAgentRequestDecision) {
   if (decision === "approve" || access.state !== "active") throw new Error("personal_agent_forbidden")
   const row = await decideToolApproval({ organizationId: access.organizationId, memberId, approvalId, decision,
-    agent: { id: access.agentId, canDecideForOthers: access.role === "manager", onAlwaysAllow: (tx) => recordPersonalAgentEvent({
+    agent: { id: access.agentId, onAlwaysAllow: (tx) => recordPersonalAgentEvent({
       organizationId: access.organizationId, agentId: access.agentId, actorMemberId: memberId,
       action: "agent.updated", detail: { name: false, brief: false, tools: true, budget: false },
     }, tx) } }).catch((error: unknown) => {
@@ -216,8 +207,8 @@ export async function openPersonalAgentRequestCounts(caller: PersonalAgentCaller
     db.$primary.select({ agentId: PersonalAgentTable.id, total: count() }).from(ToolApprovalTable)
       .innerJoin(PersonalAgentTable, eq(PersonalAgentTable.id, ToolApprovalTable.context_id))
       .leftJoin(PersonalAgentShareTable, share).where(and(eq(ToolApprovalTable.organization_id, organizationId),
-        eq(ToolApprovalTable.context_kind, "agent"), inArray(PersonalAgentTable.id, ids), eq(ToolApprovalTable.status, "pending"),
-        eq(PersonalAgentTable.state, "active"), or(manages, eq(ToolApprovalTable.requested_by_member_id, memberId)),
+        eq(ToolApprovalTable.context_kind, "agent"), inArray(PersonalAgentTable.id, ids), eq(ToolApprovalTable.status, "pending"), gte(ToolApprovalTable.created_at, pendingToolApprovalCutoff()),
+        eq(PersonalAgentTable.state, "active"), or(eq(PersonalAgentTable.owner_member_id, memberId), eq(ToolApprovalTable.requested_by_member_id, memberId)),
       )).groupBy(PersonalAgentTable.id),
   ])
   const totals = new Map<string, number>()

@@ -38,7 +38,7 @@ const eventQuery = z.object({ limit: z.coerce.number().int().min(1).max(100).def
 
 function adminDescription(operationId: string, summary: string, schema: typeof personalAgentAdminItemSchema | typeof personalAgentAdminListSchema | typeof personalAgentOrgPolicySchema | typeof personalAgentEventListSchema, options?: { conflict: string }) {
   return describeRoute({
-    tags: ["Personal agents"], operationId, summary,
+    tags: ["Agents"], operationId, summary,
     responses: {
       200: jsonResponse(summary, schema),
       400: jsonResponse("Invalid request.", invalidRequestSchema),
@@ -70,49 +70,49 @@ async function adminAgentResponse(c: Context, load: () => ReturnType<typeof chan
 export function registerPersonalAgentAdminRoutes<T extends { Variables: RouteVariables }>(app: Hono<T>, gate: MiddlewareHandler): void {
   app.get(
     "/v1/org/personal-agents",
-    adminDescription("listAdminPersonalAgents", "List the organization's personal agents", personalAgentAdminListSchema),
+    adminDescription("listAdminPersonalAgents", "List the organization's agents", personalAgentAdminListSchema),
     orgRoleRoute(["admin"]), gate,
     async (c) => c.json(await listAdminPersonalAgents(caller(c).organizationId)),
   )
   app.post(
     "/v1/org/personal-agents/:id/pause",
-    adminDescription("pauseAdminPersonalAgent", "Pause a personal agent", personalAgentAdminItemSchema),
+    adminDescription("pauseAdminPersonalAgent", "Pause an agent", personalAgentAdminItemSchema),
     orgRoleRoute(["admin"]), gate, agentParams,
     (c) => adminAgentResponse(c, () => changeAdminPersonalAgent(caller(c), c.req.valid("param").id, { kind: "pause" })),
   )
   app.post(
     "/v1/org/personal-agents/:id/resume",
-    adminDescription("resumeAdminPersonalAgent", "Resume a personal agent", personalAgentAdminItemSchema),
+    adminDescription("resumeAdminPersonalAgent", "Resume an agent", personalAgentAdminItemSchema),
     orgRoleRoute(["admin"]), gate, agentParams,
     (c) => adminAgentResponse(c, () => changeAdminPersonalAgent(caller(c), c.req.valid("param").id, { kind: "resume" })),
   )
   app.put(
     "/v1/org/personal-agents/:id/budget",
-    adminDescription("setAdminPersonalAgentBudget", "Set a personal agent's monthly spending limit", personalAgentAdminItemSchema),
+    adminDescription("setAdminPersonalAgentBudget", "Set an agent's monthly spending limit", personalAgentAdminItemSchema),
     orgRoleRoute(["admin"]), gate, agentParams, jsonValidator(setPersonalAgentAdminBudgetSchema),
     (c) => adminAgentResponse(c, () => changeAdminPersonalAgent(caller(c), c.req.valid("param").id, { kind: "budget", ...c.req.valid("json") })),
   )
   app.post(
     "/v1/org/personal-agents/:id/transfer",
-    adminDescription("transferAdminPersonalAgent", "Move a personal agent and its routines to another owner", personalAgentAdminItemSchema),
+    adminDescription("transferAdminPersonalAgent", "Move an agent and its routines to another owner", personalAgentAdminItemSchema),
     orgRoleRoute(["admin"]), gate, agentParams, jsonValidator(transferPersonalAgentSchema),
     (c) => adminAgentResponse(c, () => changeAdminPersonalAgent(caller(c), c.req.valid("param").id, { kind: "transfer", ...c.req.valid("json") })),
   )
   app.post(
     "/v1/org/personal-agents/:id/archive",
-    adminDescription("archiveAdminPersonalAgent", "Archive a personal agent and its routines", personalAgentAdminItemSchema),
+    adminDescription("archiveAdminPersonalAgent", "Archive an agent and its routines", personalAgentAdminItemSchema),
     orgRoleRoute(["admin"]), gate, agentParams,
     (c) => adminAgentResponse(c, () => archiveAdminPersonalAgent(caller(c), c.req.valid("param").id)),
   )
   app.put(
     "/v1/org/personal-agents/:id/audience",
-    adminDescription("setAdminPersonalAgentAudience", "Change who can use an already shared personal agent", personalAgentAdminItemSchema, { conflict: "This agent has not been shared yet." }),
+    adminDescription("setAdminPersonalAgentAudience", "Change who can use an already shared agent", personalAgentAdminItemSchema, { conflict: "This agent has not been shared yet." }),
     orgRoleRoute(["admin"]), gate, agentParams, jsonValidator(setPersonalAgentAudienceSchema),
     (c) => adminAgentResponse(c, () => setAdminPersonalAgentAudience(caller(c), c.req.valid("param").id, c.req.valid("json"))),
   )
   app.get(
     "/v1/org/personal-agent-policy",
-    adminDescription("getPersonalAgentOrgPolicy", "Read the organization's personal agent policy", personalAgentOrgPolicySchema),
+    adminDescription("getPersonalAgentOrgPolicy", "Read the organization's agent policy", personalAgentOrgPolicySchema),
     orgRoleRoute(["admin"]), gate,
     async (c) => {
       const { organizationId } = caller(c)
@@ -122,7 +122,7 @@ export function registerPersonalAgentAdminRoutes<T extends { Variables: RouteVar
   )
   app.put(
     "/v1/org/personal-agent-policy",
-    adminDescription("setPersonalAgentOrgPolicy", "Set sharing, tool rules, and spending limits for personal agents", personalAgentOrgPolicySchema),
+    adminDescription("setPersonalAgentOrgPolicy", "Set sharing, tool rules, and spending limits for agents", personalAgentOrgPolicySchema),
     orgRoleRoute(["admin"]), gate, jsonValidator(setPersonalAgentOrgPolicySchema),
     async (c) => {
       const admin = caller(c)
@@ -141,7 +141,7 @@ export function registerPersonalAgentAdminRoutes<T extends { Variables: RouteVar
   )
   app.get(
     "/v1/org/personal-agent-events",
-    adminDescription("listPersonalAgentEvents", "List changes to the organization's personal agents and policy", personalAgentEventListSchema),
+    adminDescription("listPersonalAgentEvents", "List changes to the organization's agents and policy", personalAgentEventListSchema),
     orgRoleRoute(["admin"]), gate, queryValidator(eventQuery),
     async (c) => {
       const query = c.req.valid("query")

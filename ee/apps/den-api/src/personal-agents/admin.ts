@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthUserTable, AutomationRunTable, AutomationTable, MemberTable, PersonalAgentOrgPolicyTable, PersonalAgentRevisionTable, PersonalAgentShareTable, PersonalAgentTable } from "@openwork-ee/den-db/schema"
+import { AuthUserTable, AutomationRunTable, AutomationTable, MemberTable, PersonalAgentOrgPolicyTable, PersonalAgentRevisionTable, PersonalAgentRoutineStateTable, PersonalAgentShareTable, PersonalAgentTable } from "@openwork-ee/den-db/schema"
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { personalAgentToolPolicyBlocks } from "@openwork/automations"
 import {
@@ -196,6 +196,9 @@ export async function changeAdminPersonalAgent(caller: PersonalAgentCaller, agen
       inArray(AutomationRunTable.automation_id, tx.select({ id: AutomationTable.id }).from(AutomationTable).where(routines)),
     ))
     await tx.update(PersonalAgentTable).set(patch).where(filter)
+    await tx.delete(PersonalAgentRoutineStateTable).where(and(
+      eq(PersonalAgentRoutineStateTable.organization_id, agent.organization_id), eq(PersonalAgentRoutineStateTable.agent_id, agent.id),
+    ))
     await tx.delete(PersonalAgentShareTable).where(and(
       eq(PersonalAgentShareTable.organization_id, agent.organization_id), eq(PersonalAgentShareTable.agent_id, agent.id),
       eq(PersonalAgentShareTable.member_id, newOwnerId),

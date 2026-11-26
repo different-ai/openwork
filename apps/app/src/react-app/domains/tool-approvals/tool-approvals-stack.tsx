@@ -56,8 +56,8 @@ function PendingApproval({ scope, approval }: { scope: ToolApprovalsScope; appro
         toast.error(t("tool_approvals.run_failed", { name }));
         return;
       }
-      void scope.client.runAutomationNow(scope.organizationId, id).then(() => {
-        toast.success(t("tool_approvals.automation_started", { name }));
+      void scope.client.runAutomationNow(scope.organizationId, id).then((run) => {
+        toast.success(t(run.status === "skipped" ? "tool_approvals.automation_next_run" : "tool_approvals.automation_started", { name }));
       }).catch((error: unknown) => {
         toast.error(t("tool_approvals.run_failed", { name }), { description: error instanceof DenApiError ? error.message : undefined });
       });

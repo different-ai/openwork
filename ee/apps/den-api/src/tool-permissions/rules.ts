@@ -1,7 +1,7 @@
 import { and, count, eq, inArray, isNull, ne, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, MemberTable, OrganizationTable, PersonalAgentTable, TeamTable, ToolPermissionOrgPolicyTable, ToolPermissionRuleTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { EMPTY_PERSONAL_AGENT_TOOL_POLICY, type PersonalAgentToolPolicy } from "@openwork/types/den/personal-agents"
+import { EMPTY_PERSONAL_AGENT_TOOL_POLICY, PERSONAL_AGENT_TOOL_POLICY_MAX_TOOLS, type PersonalAgentToolPolicy } from "@openwork/types/den/personal-agents"
 import { TOOL_PERMISSION_EVERY_TOOL, TOOL_PERMISSION_RULES_MAX_PER_ORGANIZATION, type ToolPermissionAccess, type ToolPermissionRule } from "@openwork/types/den/tool-permissions"
 import { db } from "../db.js"
 
@@ -99,6 +99,12 @@ export async function setSubjectToolRule(subject: ToolPermissionSubject, target:
   const write = async (transaction: ToolPermissionTransaction) => {
     await lockSubject(transaction, subject)
     await transaction.delete(table).where(and(subjectFilter(subject), eq(table.connection_id, target.connectionId), sql`binary ${table.tool_name} = ${target.toolName}`))
+    if (target.rule !== null && subject.kind === "agent" && target.toolName !== TOOL_PERMISSION_EVERY_TOOL) {
+      const existing = await transaction.select({ id: table.id }).from(table).where(and(
+        subjectFilter(subject), eq(table.connection_id, target.connectionId), ne(table.tool_name, TOOL_PERMISSION_EVERY_TOOL),
+      )).limit(PERSONAL_AGENT_TOOL_POLICY_MAX_TOOLS).for("share")
+      if (existing.length >= PERSONAL_AGENT_TOOL_POLICY_MAX_TOOLS) throw new Error("agent_tool_approval_limit")
+    }
     if (target.rule !== null) await insertRules(transaction, subject, updatedByMemberId, [{ ...target, rule: target.rule }])
   }
   await (tx ? write(tx) : db.transaction(write))

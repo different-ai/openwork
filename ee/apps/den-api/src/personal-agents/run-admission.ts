@@ -56,13 +56,22 @@ export async function admitPersonalAgentRun(input: {
     readOrganizationWrittenToolRules(organizationId, { fresh: true }),
   ])
   if (spend.get(agentId)?.overBudget) return { ok: false, code: "execution_failed", message: "This agent reached its budget for the month, so it did not run." }
-  const mcpScopes = [...new Set([
-    personalAgentRunScope(input.runId),
-    ...agentToolLimitScopes(personalAgentToolPolicyBlocks(agentTools)),
-    ...agentToolLimitScopes(personalAgentToolPolicyBlocks(orgTools)),
-  ])]
-  if (Buffer.byteLength(JSON.stringify(headlessRunTokenScopes({ scopes: mcpScopes }))) > 65_535) {
-    return { ok: false, code: "execution_failed", message: "This agent has too many tool settings for a run. Shorten its tool settings before trying again." }
+  const blocks = [personalAgentToolPolicyBlocks(orgTools), personalAgentToolPolicyBlocks(agentTools)]
+  const connections = new Set(blocks.flatMap((block) => block.connections))
+  const toolScopes = new Set<string>()
+  for (const tool of blocks.flatMap((block) => block.tools)) {
+    if (toolScopes.size >= 200) break
+    if (connections.has(tool.connectionId)) continue
+    const [, scope] = agentToolLimitScopes({ connections: [], tools: [tool] })
+    toolScopes.add(scope)
+  }
+  const mcpScopes = [personalAgentRunScope(input.runId)]
+  let bytes = Buffer.byteLength(JSON.stringify(headlessRunTokenScopes({ scopes: mcpScopes })))
+  for (const scope of [...agentToolLimitScopes({ connections: [...connections], tools: [] }), ...toolScopes]) {
+    const next = bytes + 1 + Buffer.byteLength(JSON.stringify(scope))
+    if (next > 65_535) break
+    mcpScopes.push(scope)
+    bytes = next
   }
   return { ok: true, agentName: pinned.agentName, brief: pinned.brief, organizationRules: rules.trim(), mcpScopes }
 }

@@ -4,7 +4,7 @@ import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { cachedOrganizationFeatureEnabled } from "../features.js"
 import { listTeamsForMember } from "../member-teams.js"
-import { AGENT_TOOL_WITHHELD_MESSAGE, automationRunId, connectionsWithheld, personalAgentRunId, toolsWithheld, WORKBOT_CONNECTION_WITHHELD_MESSAGE } from "../mcp/workbot-turn-limits.js"
+import { AGENT_TOOL_WITHHELD_MESSAGE, automationRunId, personalAgentRunId } from "../mcp/workbot-turn-limits.js"
 import { personalAgentPeople, personOrUnknown } from "../personal-agents/access.js"
 import { personalAgentRequestEventDetail, recordPersonalAgentEvent } from "../personal-agents/events.js"
 import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentDispatchContext, personalAgentPolicyRefusal } from "../personal-agents/permissions-dispatch.js"
@@ -18,6 +18,7 @@ export type ToolPermissionDispatchInput = {
   tool: { name: string; title?: string; annotations?: { title?: string; readOnlyHint?: boolean; destructiveHint?: boolean } }
   actingMemberId?: string
   teamIds?: readonly string[]
+  toolPermissionsEnabled?: boolean
 }
 
 export type ToolPermissionRefusal =
@@ -26,7 +27,7 @@ export type ToolPermissionRefusal =
 
 export async function ordinaryToolPermissionRefusal(input: ToolPermissionDispatchInput): Promise<ToolPermissionRefusal | null> {
   const { connection, tool, scopes } = input
-  if (!await cachedOrganizationFeatureEnabled(connection.organizationId, "toolPermissions")) return null
+  if (!(input.toolPermissionsEnabled ?? await cachedOrganizationFeatureEnabled(connection.organizationId, "toolPermissions"))) return null
   const organizationId = normalizeDenTypeId("organization", connection.organizationId)
   const memberId = input.actingMemberId && normalizeDenTypeId("member", input.actingMemberId)
   const teamIds = memberId ? (await listTeamsForMember({ organizationId, memberId })).map(({ id }) => id) : undefined
@@ -63,7 +64,7 @@ export async function ordinaryToolPermissionRefusal(input: ToolPermissionDispatc
 export async function toolPermissionRefusal(input: ToolPermissionDispatchInput): Promise<ToolPermissionRefusal | null> {
   const runId = personalAgentRunId(input.scopes)
   if (runId === undefined) return ordinaryToolPermissionRefusal(input)
-  const { connection, tool, scopes } = input
+  const { connection, tool } = input
   const organizationId = normalizeDenTypeId("organization", connection.organizationId)
   const context = input.actingMemberId && await personalAgentDispatchContext(runId, organizationId, input.actingMemberId)
   if (!context) return { error: "forbidden", message: "This run is no longer active or no longer has access to this agent." }
@@ -73,15 +74,8 @@ export async function toolPermissionRefusal(input: ToolPermissionDispatchInput):
   const teamIds = teamAndMember ? input.teamIds ?? (await listTeamsForMember({ organizationId, memberId })).map(({ id }) => id) : undefined
   const rules = await loadApplicableToolPermissionRules({ organizationId, agentId: context.agentId,
     memberId: teamAndMember ? memberId : undefined, teamIds, connectionId: connection.id, toolName: tool.name })
-  const connectionBlocked = connectionsWithheld(scopes)?.has(connection.id)
-  const toolBlocked = toolsWithheld(scopes)?.get(connection.id)?.has(tool.name)
-  const access = evaluateToolPermission([connectionBlocked || toolBlocked ? "block" : null, ...rules.map(({ rule }) => rule)], personalAgentToolIsReadOnly(tool.annotations))
-  if (access === "block") {
-    if (connectionBlocked && !rules.some(({ kind, rule }) => kind === "organization" && rule === "block")) {
-      return { error: "forbidden", message: `"${connection.name}" ${WORKBOT_CONNECTION_WITHHELD_MESSAGE}` }
-    }
-    return personalAgentPolicyRefusal(`${tool.name} ${AGENT_TOOL_WITHHELD_MESSAGE}`)
-  }
+  const access = evaluateToolPermission(rules.map(({ rule }) => rule), personalAgentToolIsReadOnly(tool.annotations))
+  if (access === "block") return personalAgentPolicyRefusal(`${tool.name} ${AGENT_TOOL_WITHHELD_MESSAGE}`)
   if (access === "allow") return null
   if (tool.name.length > 128 || tool.name === "*") return personalAgentPolicyRefusal(PERSONAL_AGENT_UNAPPROVABLE_WRITE)
   const key: ToolApprovalKey = { organizationId, memberId, context: { kind: "agent", id: context.agentId, label: context.agentName, runId },

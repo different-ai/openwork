@@ -20,7 +20,7 @@ const forbiddenResponse = jsonResponse("You cannot edit this memory.", notFoundS
 const memoryResponse = jsonResponse("The agent's notes and routine progress.", personalAgentMemorySchema)
 
 function describe(options: DescribeRouteOptions & { "x-mcp"?: true }) {
-  return describeRoute({ tags: ["Personal agents"], ...options })
+  return describeRoute({ tags: ["Agents"], ...options })
 }
 
 export function registerPersonalAgentMemoryRoutes<T extends { Variables: RouteVariables }>(app: Hono<T>, gate: MiddlewareHandler): void {

@@ -3890,7 +3890,10 @@ function createRoutes(
     },
   });
 
-  registerUiControlRoutes({ routes, jsonResponse, readJsonBody, requireClientScope });
+  registerUiControlRoutes({
+    routes, jsonResponse, readJsonBody, requireClientScope,
+    cachedPersonalAgentsEnabled: () => managedDesktopPolicy(config).cachedPersonalAgentsEnabled(),
+  });
 
   registerFileRoutes({
     routes,

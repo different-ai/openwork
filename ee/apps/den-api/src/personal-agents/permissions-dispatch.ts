@@ -1,7 +1,8 @@
-import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull, ne, sql } from "@openwork-ee/den-db/drizzle"
 import { AutomationRunTable, AutomationTable, MemberTable, PersonalAgentTable } from "@openwork-ee/den-db/schema"
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
+import { cachedOrganizationFeatureEnabled } from "../features.js"
 import { personalAgentRunId } from "../mcp/workbot-turn-limits.js"
 import { activePersonalAgentMember, personalAgentAccess } from "./access.js"
 
@@ -12,7 +13,7 @@ export function personalAgentPolicyRefusal(message: string) {
 export const PERSONAL_AGENT_UNAPPROVABLE_WRITE = "This tool cannot ask first yet, so an agent cannot use it to make changes."
 
 export async function personalAgentDispatchContext(runId: string, organizationId: string, actingMemberId?: string) {
-  if (!isDenTypeId("automationRun", runId)) return null
+  if (!isDenTypeId("automationRun", runId) || !await cachedOrganizationFeatureEnabled(organizationId, "personalAgents")) return null
   const member = sql`coalesce(${AutomationRunTable.acting_member_id}, ${AutomationTable.owner_member_id})`
   const [context] = await db.$primary.select({ agentId: PersonalAgentTable.id, agentName: PersonalAgentTable.name, memberId: MemberTable.id, paused: PersonalAgentTable.paused_at })
     .from(AutomationRunTable)
@@ -22,7 +23,7 @@ export async function personalAgentDispatchContext(runId: string, organizationId
     .where(and(eq(AutomationRunTable.id, normalizeDenTypeId("automationRun", runId)),
       eq(AutomationTable.organization_id, normalizeDenTypeId("organization", organizationId)),
       eq(PersonalAgentTable.state, "active"), inArray(AutomationRunTable.status, ["claimed", "running"]),
-      isNull(AutomationRunTable.cancel_requested_at),
+      ne(AutomationTable.state, "archived"), isNull(AutomationRunTable.cancel_requested_at),
       actingMemberId ? eq(MemberTable.id, normalizeDenTypeId("member", actingMemberId)) : undefined)).limit(1)
   if (!context) return null
   const access = await personalAgentAccess({ organizationId, memberId: context.memberId }, context.agentId, true)

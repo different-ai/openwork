@@ -40,7 +40,7 @@ const missingResponse = jsonResponse("Not found.", notFoundSchema)
 const forbiddenResponse = jsonResponse("You cannot make this change.", invalidRequestSchema)
 
 function describe(options: DescribeRouteOptions & { "x-mcp"?: true }) {
-  return describeRoute({ tags: ["Personal agents"], ...options })
+  return describeRoute({ tags: ["Agents"], ...options })
 }
 
 export function personalAgentCaller(c: { get(name: "organizationContext"): OrganizationContextVariables["organizationContext"] }) {
@@ -72,7 +72,7 @@ export function registerPersonalAgentSharingRoutes<T extends { Variables: RouteV
   }
 
   app.get("/v1/personal-agents/:id/shares",
-    describe({ operationId: "listPersonalAgentShares", "x-mcp": true, summary: "See who can use a personal agent",
+    describe({ operationId: "listPersonalAgentShares", "x-mcp": true, summary: "See who can use an agent",
       responses: { 200: jsonResponse("People with access to the agent.", personalAgentShareListSchema), 404: missingResponse } }),
     orgMemberRoute(), gate, paramValidator(agentParams), async (c) => {
       const access = await personalAgentAccess(personalAgentCaller(c), c.req.valid("param").id)
@@ -82,7 +82,7 @@ export function registerPersonalAgentSharingRoutes<T extends { Variables: RouteV
     })
 
   app.put("/v1/personal-agents/:id/shares/:memberId",
-    describe({ operationId: "sharePersonalAgent", "x-mcp": true, summary: "Share a personal agent with a teammate",
+    describe({ operationId: "sharePersonalAgent", "x-mcp": true, summary: "Share an agent with a teammate",
       description: "An owner can add managers and collaborators. Managers can only add collaborators.",
       responses: { 200: jsonResponse("People with access to the agent.", personalAgentShareListSchema), 403: forbiddenResponse, 404: missingResponse } }),
     orgMemberRoute(), gate, paramValidator(shareParams), jsonValidator(setPersonalAgentShareSchema), async (c) => {
@@ -93,7 +93,7 @@ export function registerPersonalAgentSharingRoutes<T extends { Variables: RouteV
     })
 
   app.delete("/v1/personal-agents/:id/shares/:memberId",
-    describe({ operationId: "unsharePersonalAgent", "x-mcp": true, summary: "Remove someone's access to a personal agent",
+    describe({ operationId: "unsharePersonalAgent", "x-mcp": true, summary: "Remove someone's access to an agent",
       description: "An owner can remove managers and collaborators. Managers can remove collaborators. A teammate can also leave on their own.",
       responses: { 200: jsonResponse("People with access to the agent.", personalAgentShareListSchema), 403: forbiddenResponse, 404: missingResponse } }),
     orgMemberRoute(), gate, paramValidator(shareParams), async (c) => {

@@ -48,7 +48,7 @@ const describeMcpRoute = (options: McpDescribeRouteOptions) => describeRoute(opt
 type RouteVariables = Partial<OrganizationContextVariables> & Partial<Pick<AuthContextVariables, "session">>
 
 const about = [
-  "A personal agent has an owner, a name, a brief that says how it works, and rules for which tools it can use.",
+  "An agent has an owner, a name, a brief that says how it works, and rules for which tools it can use.",
   "Every change to the brief or tool policy makes a new version.",
   "An agent does its work through routines. A routine is a Cloud Automation that belongs to the agent, so it also appears in the Automation capabilities; each run starts from the agent's brief and can use only what the agent's tool policy allows.",
   "The owner can share the agent with teammates. Managers can change who can collaborate. The owner must approve changes a manager proposes to the brief, tool policy or routines. Collaborators can use the agent and ask for changes. Runs started by a teammate are private. Scheduled runs use the owner’s accounts and share their results with the team.",
@@ -114,11 +114,11 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
   app.get(
     "/v1/personal-agents",
     describeMcpRoute({
-      tags: ["Personal agents"], operationId: "listPersonalAgents", "x-mcp": true,
-      summary: "List your personal agents", description: about,
+      tags: ["Agents"], operationId: "listPersonalAgents", "x-mcp": true,
+      summary: "List your agents", description: about,
       responses: {
         200: jsonResponse("Agents returned, newest first.", personalAgentListSchema),
-        404: jsonResponse("Personal agents are not turned on for this organization.", notFoundSchema),
+        404: jsonResponse("Agents are not turned on for this organization.", notFoundSchema),
       },
     }),
     orgMemberRoute(), gate, queryValidator(paginationSchema),
@@ -128,14 +128,14 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
   app.post(
     "/v1/personal-agents",
     describeMcpRoute({
-      tags: ["Personal agents"], operationId: "createPersonalAgent", "x-mcp": true,
-      summary: "Create a personal agent",
+      tags: ["Agents"], operationId: "createPersonalAgent", "x-mcp": true,
+      summary: "Create an agent",
       description: `${about} Create one only when the person asks for an agent. Write the brief as Markdown from what they said: what the agent watches or does, how it decides, and how it reports. The agent does nothing until it has a routine; add one with createPersonalAgentRoutine.`,
       responses: {
         201: jsonResponse("Agent created or returned from an earlier request.", personalAgentDetailSchema),
         409: jsonResponse("This key was already used with a different name or brief.", notFoundSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
-        404: jsonResponse("Personal agents are not turned on for this organization.", notFoundSchema),
+        404: jsonResponse("Agents are not turned on for this organization.", notFoundSchema),
       },
     }),
     orgMemberRoute(), gate, jsonValidator(createPersonalAgentSchema),
@@ -155,8 +155,8 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
   app.get(
     "/v1/personal-agents/:id",
     describeMcpRoute({
-      tags: ["Personal agents"], operationId: "getPersonalAgent", "x-mcp": true,
-      summary: "Get a personal agent and its current brief", description: about,
+      tags: ["Agents"], operationId: "getPersonalAgent", "x-mcp": true,
+      summary: "Get an agent and its current brief", description: about,
       responses: { 200: jsonResponse("Agent returned.", personalAgentDetailSchema), 404: jsonResponse("Not found.", notFoundSchema) },
     }),
     orgMemberRoute(), gate, paramValidator(idParamsSchema),
@@ -172,8 +172,8 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
   app.patch(
     "/v1/personal-agents/:id",
     describeMcpRoute({
-      tags: ["Personal agents"], operationId: "updatePersonalAgent", "x-mcp": true,
-      summary: "Change a personal agent",
+      tags: ["Agents"], operationId: "updatePersonalAgent", "x-mcp": true,
+      summary: "Change an agent",
       description: `${about} Send only what changes. A new brief or tool policy replaces the old one whole, makes the next version, and applies to the agent's routines from their next run; a run already in progress keeps the version it started with. A rename alone keeps the version.`,
       responses: {
         200: jsonResponse("Agent updated.", personalAgentDetailSchema),
@@ -213,8 +213,8 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
   app.delete(
     "/v1/personal-agents/:id",
     describeMcpRoute({
-      tags: ["Personal agents"], operationId: "archivePersonalAgent", "x-mcp": true,
-      summary: "Archive a personal agent",
+      tags: ["Agents"], operationId: "archivePersonalAgent", "x-mcp": true,
+      summary: "Archive an agent",
       description: `${about} Archiving also archives the agent's routines, so nothing keeps running. Run history is kept.`,
       responses: { 200: jsonResponse("Agent archived.", personalAgentDetailSchema), 403: jsonResponse("Only the owner can archive the agent.", invalidRequestSchema), 404: jsonResponse("Not found.", notFoundSchema) },
     }),
@@ -232,8 +232,8 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
   app.get(
     "/v1/personal-agents/:id/routines",
     describeMcpRoute({
-      tags: ["Personal agents"], operationId: "listPersonalAgentRoutines", "x-mcp": true,
-      summary: "List a personal agent's routines", description: `${about} Returns the 100 newest routines.`,
+      tags: ["Agents"], operationId: "listPersonalAgentRoutines", "x-mcp": true,
+      summary: "List an agent's routines", description: `${about} Returns the 100 newest routines.`,
       responses: { 200: jsonResponse("Routines returned, newest first.", personalAgentRoutineListSchema), 404: jsonResponse("Not found.", notFoundSchema) },
     }),
     orgMemberRoute(), gate, paramValidator(idParamsSchema),
@@ -249,9 +249,9 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
   app.post(
     "/v1/personal-agents/:id/routines",
     describeMcpRoute({
-      tags: ["Personal agents"], operationId: "createPersonalAgentRoutine", "x-mcp": true,
-      summary: "Give a personal agent a routine",
-      description: `${about} A manager’s request waits for the owner’s approval. Once created, the routine is active and runs in OpenWork Cloud on its schedule. Its instructions say what this routine does; do not repeat the brief in them. Change or pause it with the personal agent routine update.`,
+      tags: ["Agents"], operationId: "createPersonalAgentRoutine", "x-mcp": true,
+      summary: "Give an agent a routine",
+      description: `${about} A manager’s request waits for the owner’s approval. Once created, the routine is active and runs in OpenWork Cloud on its schedule. Its instructions say what this routine does; do not repeat the brief in them. Change or pause it with the agent routine update.`,
       responses: {
         202: jsonResponse("Routine requested and waiting for the owner.", personalAgentPendingChangeSchema),
         201: jsonResponse("Routine created as an active Cloud Automation that carries the agent's id.", automationDetailSchema),
@@ -291,8 +291,8 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
   app.post(
     "/v1/personal-agents/:id/run",
     describeMcpRoute({
-      tags: ["Personal agents"], operationId: "runPersonalAgentNow", "x-mcp": true,
-      summary: "Run a personal agent now",
+      tags: ["Agents"], operationId: "runPersonalAgentNow", "x-mcp": true,
+      summary: "Run an agent now",
       description: `${about} Starts one run of the agent's routine now, in addition to its schedule. Pass routineId when the agent has more than one routine. The run appears in your own run history.`,
       requestBody: {
         required: false,

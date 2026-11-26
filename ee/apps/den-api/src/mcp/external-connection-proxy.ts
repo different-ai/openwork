@@ -35,7 +35,7 @@ import {
   mcpMemberForToken,
   resolveMcpMemberIdentity,
 } from "./external-capabilities.js"
-import { personalAgentRunId, toolsWithheld } from "./workbot-turn-limits.js"
+import { connectionsWithheld, personalAgentRunId, toolsWithheld } from "./workbot-turn-limits.js"
 import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
 import { InventoryEventBus, type InventoryRevision } from "./inventory-event-bus.js"
@@ -214,8 +214,11 @@ export function createExternalConnectionProxyServer(input: {
     && input.appHostClient !== true
   const downstreamUi = input.descriptor.capabilities.extensions?.[EXTENSION_ID]
   const withheldTools = toolsWithheld(input.scopes)?.get(connection.id)
-  const listProviderTools = async () => {
-    if (!input.descriptor.capabilities.tools) return []
+  const agentRun = personalAgentRunId(input.scopes) !== undefined
+  const withheldConnection = connectionsWithheld(input.scopes)?.has(connection.id)
+  const listProviderTools = async (calling = false) => {
+    const useLiveRules = calling && agentRun
+    if (!input.descriptor.capabilities.tools || (!useLiveRules && withheldConnection)) return []
     return (await runtime.listTools(
       connection,
       input.operation.redirectUri,
@@ -224,12 +227,12 @@ export function createExternalConnectionProxyServer(input: {
     )).filter((tool) => (
       !PROXY_GATEWAY_TOOL_NAMES.has(tool.name)
       && !evaluateToolPolicy(connection.toolPolicy, tool.name).blocked
-      && !withheldTools?.has(tool.name)
+      && ((calling && agentRun) || !withheldTools?.has(tool.name))
     ))
   }
-  const listDirectTools = async () => (await listProviderTools()).filter(toolVisibleToModel)
-  const listAppTools = async () => (
-    await listProviderTools()
+  const listDirectTools = async (calling = false) => (await listProviderTools(calling)).filter(toolVisibleToModel)
+  const listAppTools = async (calling = false) => (
+    await listProviderTools(calling)
   ).flatMap((tool) => {
     const appTool = appOnlyProxyTool(tool)
     return appTool ? [appTool] : []
@@ -269,7 +272,7 @@ export function createExternalConnectionProxyServer(input: {
     server.setRequestHandler("tools/call", async (request) => {
       const args = toolArguments(request.params.arguments)
       if (directClient) {
-        const tool = (await listDirectTools()).find((tool) => tool.name === request.params.name)
+        const tool = (await listDirectTools(true)).find((tool) => tool.name === request.params.name)
         if (!tool) {
           throw new ProtocolError(ProtocolErrorCode.InvalidRequest, `Tool ${request.params.name} is not available on ${connection.name}.`)
         }
@@ -312,7 +315,7 @@ export function createExternalConnectionProxyServer(input: {
       }
       if (request.params.name === EXECUTE_CAPABILITY_TOOL_NAME) {
         const toolName = typeof args.name === "string" ? args.name.trim() : ""
-        const tool = (await listProviderTools()).find((candidate) => candidate.name === toolName)
+        const tool = (await listProviderTools(true)).find((candidate) => candidate.name === toolName)
         if (!tool) throw new ProtocolError(ProtocolErrorCode.InvalidRequest, "The capability is unavailable. Call search_capabilities again.")
         return callTool(tool, toolArguments(args.arguments ?? args.body))
       }
@@ -322,7 +325,7 @@ export function createExternalConnectionProxyServer(input: {
           `Direct provider tool ${request.params.name} is unavailable. Use search_capabilities and execute_capability.`,
         )
       }
-      const tool = (await listAppTools()).find((tool) => tool.name === request.params.name)
+      const tool = (await listAppTools(true)).find((tool) => tool.name === request.params.name)
       if (!tool) {
         throw new ProtocolError(
           ProtocolErrorCode.InvalidRequest,
@@ -354,16 +357,15 @@ export function createExternalConnectionProxyServer(input: {
   return server
 }
 
-async function jsonRpcRequestId(request: Request): Promise<string | number | null> {
+async function jsonRpcRequestField(request: Request, field: "id" | "method"): Promise<string | number | null> {
   try {
     const value: unknown = await request.clone().json()
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      const id = (value as { id?: unknown }).id
-      if (typeof id === "string" || typeof id === "number") return id
-    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null
+    const fieldValue = field === "id" && "id" in value ? value.id : field === "method" && "method" in value ? value.method : null
+    return typeof fieldValue === "string" || typeof fieldValue === "number" ? fieldValue : null
   } catch {
+    return null
   }
-  return null
 }
 
 export async function externalMcpProxyProtocolErrorResponse(
@@ -381,7 +383,7 @@ export async function externalMcpProxyProtocolErrorResponse(
   })
   return new Response(JSON.stringify({
     jsonrpc: "2.0",
-    id: await jsonRpcRequestId(request),
+    id: await jsonRpcRequestField(request, "id"),
     error: {
       code: ProtocolErrorCode.InternalError,
       message: "The connected MCP server is not ready.",
@@ -552,7 +554,8 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       teamIds: member.teamIds,
     })
     if (!connection || !granted) return unavailable()
-    const hold = externalMcpConnectionHold(connection, member)
+    const useLiveAgentRules = member.personalAgentScopes && await jsonRpcRequestField(c.req.raw, "method") === "tools/call"
+    const hold = externalMcpConnectionHold(connection, useLiveAgentRules ? {} : member)
     if (hold) return unavailable(hold.message)
     const credentialMemberId = await personalAgentCredentialMember({ scopes: principal.scopes, connection, actingMemberId: member.orgMembershipId })
     if (usesMemberApiKey(connection)

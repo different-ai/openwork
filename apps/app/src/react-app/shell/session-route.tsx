@@ -117,7 +117,7 @@ import type { ActivityResource } from "@/react-app/kernel/activity-types";
 import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
+import { useQueryCacheState } from "@/react-app/infra/query-cache-state";
 import { agentPromptNoteParts } from "@/react-app/domains/agents/agent-prompt-note";
 import { usePersonalAgentSessionExtensions } from "@/react-app/domains/agents/agents-extension";
 import { PersonalAgentsProvider, type AgentScope, type AgentsRuntime } from "@/react-app/domains/agents/agents-runtime";
@@ -428,10 +428,17 @@ function personalAgentsOrganizationIdNow(snapshot: { scope: AgentScope; token: s
   return features?.personalAgents === true ? scope : null;
 }
 
+const NO_ORG_FEATURES: Record<string, boolean> = {};
+
 export function SessionRoute() {
-  const personalAgentsEnabled = useOrgFeature("personalAgents");
-  const toolPermissionsEnabled = useOrgFeature("toolPermissions");
   const agentsDen = useAutomationsDenContext();
+  const orgFeaturesKey = useMemo(
+    () => (agentsDen.ready && agentsDen.organizationId ? ["den", "org-features", agentsDen.organizationId] : null),
+    [agentsDen.ready, agentsDen.organizationId],
+  );
+  const orgFeatures = useQueryCacheState<Record<string, boolean>>(orgFeaturesKey, NO_ORG_FEATURES);
+  const personalAgentsEnabled = orgFeatures.personalAgents === true;
+  const toolPermissionsEnabled = orgFeatures.toolPermissions === true;
   const navigate = useNavigate();
   const location = useLocation();
   const appsRouteActive = /^(?:\/apps|\/dashboard\/apps)(?:\/|$)/.test(location.pathname);

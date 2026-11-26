@@ -1104,10 +1104,11 @@ export class AutomationService {
       : action
     const organizationId = claimed.automation.organizationId
     const agentId = claimed.automation.agentId
+    const memberId = claimed.actingMemberId ?? claimed.automation.ownerMemberId
     let result: CloudAgentExecution
     try {
       const memory = agentId && await organizationFeatureEnabled(organizationId, "personalAgents")
-        ? await readPersonalAgentRunMemory({ organizationId, agentId, routineId: claimed.automation.id })
+        ? await readPersonalAgentRunMemory({ organizationId, agentId, routineId: claimed.automation.id, memberId })
         : undefined
       const toolPermissions = !agentId && await cachedOrganizationFeatureEnabled(organizationId, "toolPermissions")
       const preamble = toolPermissions ? organizationToolRuleInstructions(await readOrganizationWrittenToolRules(organizationId)) : []
@@ -1117,7 +1118,6 @@ export class AutomationService {
       }) } : preamble.length ? { ...taskAction, instructions: [...preamble, taskAction.instructions].join("\n") } : taskAction
       const mcpScopes = agentRun?.mcpScopes ?? (toolPermissions ? [automationRunScope(claimed.run.id)] : [])
       const state = await automationRepository.cloudRunState(claimed.run.id)
-      const memberId = claimed.actingMemberId ?? claimed.automation.ownerMemberId
       if (agentRun) markFeaturesUsed({ organizationId, memberId, keys: ["personalAgents"] })
       result = await executor({
         organizationId,

@@ -222,13 +222,30 @@ test("a run approval covers one Automation run and written rules precede its tas
   const approval = await onePending()
   assert.deepEqual(approval.context, { kind: "automation", id: definition.automation.id, label: automationName })
   assert.equal(approval.runId, first.id)
+  await decide(approval.id, "allow_once")
+  await execute(first.token, "needs_approval")
   await finish?.()
   finish = undefined
-  await decide(approval.id, "allow_once")
   const next = await run()
   await execute(next.token)
   await execute(next.token)
   await execute((await run()).token, "needs_approval")
   await finish?.()
   finish = undefined
+})
+
+
+test("expired pending approvals are hidden, cannot be decided, and do not deduplicate a new ask", async () => {
+  const { eq } = await import("@openwork-ee/den-db/drizzle")
+  const { normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
+  await execute(samToken, "needs_approval")
+  const old = (await pending()).find((row) => row.context.kind === "chat")
+  assert.ok(old)
+  await db.update(ToolApprovalTable).set({ created_at: new Date(Date.now() - 31 * 86_400_000) }).where(eq(ToolApprovalTable.id, normalizeDenTypeId("toolApproval", old.id)))
+  assert.ok(!(await pending()).some((row) => row.id === old.id))
+  await decide(old.id, "deny", 404)
+  await execute(samToken, "needs_approval")
+  const fresh = (await pending()).find((row) => row.context.kind === "chat")
+  assert.ok(fresh)
+  assert.notEqual(fresh.id, old.id)
 })

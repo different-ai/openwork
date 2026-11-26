@@ -52,7 +52,7 @@ import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
 import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
 import { env } from "../env.js"
-import { getOrganizationFeatures } from "../features.js"
+import { cachedOrganizationFeatureContext } from "../features.js"
 import { getOrganizationContextForUser } from "../orgs.js"
 import { executeLiveArtifactWorkflow, getWorkflowDetail, getWorkflowSnapshot } from "../workflows.js"
 import { artifactFreshness } from "../workflow-artifacts.js"
@@ -535,7 +535,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
 
     const finishIndexTiming = startMcpAppTiming("den.agent-index-read")
     const catalog = await getCatalog(app as unknown as Hono, c.env)
-    const organizationFeatures = await getOrganizationFeatures(organizationId, { userId: principal.userId })
+    const { features: organizationFeatures, organizationToolPermissions } = await cachedOrganizationFeatureContext(organizationId, principal.userId)
     const member = await resolveMcpMember({
       userId: principal.userId,
       organizationId: principal.organizationId,
@@ -563,6 +563,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       redirectUriBase,
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationFeatures,
+    organizationToolPermissions,
       audit: auditPrincipal,
       usageSource: "agent",
     })

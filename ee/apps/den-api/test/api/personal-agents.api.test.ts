@@ -282,6 +282,7 @@ test("a routine is an ordinary Automation that carries the agent's id and pins i
   const shared = await asDana("PUT", `/v1/automations/${routineId}/sharing`, { orgWide: false, memberIds: [lee.memberId], teamIds: [] })
   assert.equal(shared.status, 400, summary(shared))
   assert.equal(field(shared.body, "error"), "personal_agent_routine_not_shareable")
+  assert.equal(field(shared.body, "message"), "This routine cannot be shared on its own. Share its agent instead.")
 
   // A run that was read before the agent changed is still queued with the routine's current version.
   const { automationRepository } = await import("../../src/automations/repository.js")
@@ -392,7 +393,7 @@ test("a tool the agent's policy blocks is withheld from its next run, and only f
   // A limited run cannot lift its own limits or start work that would run without them.
   assert.equal((await connectInstructions(runToken)).includes("createPersonalAgent"), false)
   const offered = [
-    ...names(await searchApi(runToken, "update personal agent tool policy")),
+    ...names(await searchApi(runToken, "update agent tool policy")),
     ...names(await searchApi(runToken, "create cloud automation run now")),
   ]
   assert.ok(offered.includes("getPersonalAgent"), offered.join(", "))

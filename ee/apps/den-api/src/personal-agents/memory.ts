@@ -29,12 +29,13 @@ function routinesOfAgent(input: ReturnType<typeof agentScope>) {
   return and(eq(AutomationTable.agent_id, input.agentId), eq(AutomationTable.organization_id, input.organizationId))
 }
 
-function routineStates(input: ReturnType<typeof agentScope>, routineId?: string) {
+function routineStates(input: ReturnType<typeof agentScope>, ownerMemberId: string, routineId?: string) {
   return db.$primary.select({
     routineId: AutomationTable.id, name: AutomationTable.name,
     state: PersonalAgentRoutineStateTable.state, updatedAt: PersonalAgentRoutineStateTable.updated_at,
   }).from(PersonalAgentRoutineStateTable)
     .innerJoin(AutomationTable, eq(AutomationTable.id, PersonalAgentRoutineStateTable.automation_id))
+    .innerJoin(PersonalAgentTable, and(eq(PersonalAgentTable.id, AutomationTable.agent_id), eq(PersonalAgentTable.owner_member_id, normalizeDenTypeId("member", ownerMemberId))))
     .where(and(statesOfAgent(input), routinesOfAgent(input), routineId === undefined ? undefined : eq(AutomationTable.id, normalizeDenTypeId("automation", routineId))))
     .orderBy(asc(AutomationTable.name), asc(AutomationTable.id))
 }
@@ -43,7 +44,7 @@ export async function readPersonalAgentMemory(access: PersonalAgentAccess): Prom
   const scope = agentScope(access)
   const [[memory], routines] = await Promise.all([
     db.$primary.select().from(PersonalAgentMemoryTable).where(notesOfAgent(scope)).limit(1),
-    routineStates(scope),
+    access.role === "owner" ? routineStates(scope, access.ownerMemberId) : [],
   ])
   const memberId = memory?.updated_by_member_id
   const updatedBy = memberId ? personOrUnknown(await personalAgentPeople(scope.organizationId, [memberId]), memberId) : null
@@ -57,11 +58,11 @@ export async function readPersonalAgentMemory(access: PersonalAgentAccess): Prom
   }
 }
 
-export async function readPersonalAgentRunMemory(input: AgentScope & { routineId: string }) {
+export async function readPersonalAgentRunMemory(input: AgentScope & { routineId: string; memberId: string }) {
   const scope = agentScope(input)
   const [[memory], [routine]] = await Promise.all([
     db.$primary.select({ notes: PersonalAgentMemoryTable.notes }).from(PersonalAgentMemoryTable).where(notesOfAgent(scope)).limit(1),
-    routineStates(scope, input.routineId).limit(1),
+    routineStates(scope, input.memberId, input.routineId).limit(1),
   ])
   return { notes: memory?.notes ?? "", ...(routine ? { routineState: { name: routine.name, state: routine.state } } : {}) }
 }
@@ -176,6 +177,11 @@ export async function savePersonalAgentRoutineState(input: AgentScope & {
     const [current] = await tx.select({ runId: PersonalAgentRoutineStateTable.run_id, writtenByAgent: PersonalAgentRoutineStateTable.written_by_agent })
       .from(PersonalAgentRoutineStateTable).where(where).limit(1).for("update")
     if (!input.writtenByAgent && current?.runId === run.id && current.writtenByAgent) return false
+    if (current && current.runId !== run.id) {
+      const [previousRun] = await tx.select({ createdAt: AutomationRunTable.created_at }).from(AutomationRunTable)
+        .where(eq(AutomationRunTable.id, current.runId)).limit(1).for("share")
+      if (previousRun && previousRun.createdAt >= run.created_at) return false
+    }
     const changes = {
       run_id: run.id, state: input.state.slice(0, PERSONAL_AGENT_ROUTINE_STATE_MAX_LENGTH),
       written_by_agent: input.writtenByAgent, updated_at: new Date(),

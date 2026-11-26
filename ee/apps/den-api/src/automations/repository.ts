@@ -345,9 +345,9 @@ function personalAgentQueueHead() {
 export class DenAutomationRepository implements AutomationRepository {
   async listQueuedCloud(input: { limit: number }): Promise<string[]> {
     const queued = and(eq(AutomationRunTable.status, "queued"), eq(AutomationRunTable.execution_target, "cloud"))
-    const primary = env.features.deployment === "cloud"
-    const rows = await (primary
-      ? db.$primary.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
+    const cloud = env.features.deployment === "cloud"
+    const rows = await (cloud
+      ? db.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
         .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
         .where(and(queued, or(isNull(AutomationTable.agent_id), personalAgentQueueHead())))
       : db.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(queued)

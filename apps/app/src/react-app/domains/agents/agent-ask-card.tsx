@@ -4,7 +4,7 @@ import { ShieldCheck, ShieldX } from "lucide-react";
 import { ToolApprovalCard } from "@/react-app/design-system/tool-approval-card";
 import { t } from "@/i18n";
 
-import { agentOwnerFirstName, requestConnectionName, requestToolTitle, shouldRerunAfterToolDecision, toolRequestReceipt, toolRequestRerunLine } from "./agent-permission-words";
+import { requestConnectionName, requestToolTitle, shouldRerunAfterToolDecision, toolRequestReceipt, toolRequestRerunLine, toolRequestWaitingLine } from "./agent-permission-words";
 import type { AgentsRuntime } from "./agents-runtime";
 import { useDecideAgentToolRequest } from "./use-agent-permissions";
 
@@ -43,12 +43,9 @@ export function AgentAskCard({ runtime, agent, request, onAllowed }: {
       </div>
     );
   }
-  if (current.canDecide.length === 0) {
-    return (
-      <p data-agent-ask={current.id} className="text-xs leading-relaxed text-dls-secondary">
-        {t("agents.permission_ask_waiting", { owner: agentOwnerFirstName(agent.owner), tool, connection })}
-      </p>
-    );
+  const waiting = toolRequestWaitingLine(current, agent.owner);
+  if (waiting) {
+    return <p data-agent-ask={current.id} className="text-xs leading-relaxed text-dls-secondary">{waiting}</p>;
   }
 
   return (
@@ -57,7 +54,7 @@ export function AgentAskCard({ runtime, agent, request, onAllowed }: {
       line={t("agents.permission_ask_accounts")}
       decisions={current.canDecide.filter((choice) => choice !== "approve")}
       busy={decision.isPending} onDecide={decide}>
-      {agent.role !== "collaborator" && !current.canDecide.includes("always_allow") && (
+      {agent.role === "owner" && !current.canDecide.includes("always_allow") && (
         <p className="mt-2 text-xs text-dls-secondary">{t("agents.permission_ask_admin")}</p>
       )}
     </ToolApprovalCard>

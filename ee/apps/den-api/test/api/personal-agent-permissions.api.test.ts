@@ -176,7 +176,8 @@ test("writes are listed but ask without a provider call and only one pending car
   assert.equal(rows[0].runId, receipt.id)
   assert.equal(rows[0].requestedBy.memberId, priya.memberId)
   assert.deepEqual(rows[0].canDecide, ["deny", "allow_once"])
-  assert.deepEqual((await requests(asSam))[0].canDecide, ["deny", "allow_once"])
+  assert.deepEqual((await requests(asSam))[0].canDecide, [])
+  assert.equal((await decide(asSam, rows[0].id, "deny")).status, 403)
   assert.ok((await requests(asDana))[0].canDecide.includes("always_allow"))
   const forbidden = await decide(asPriya, rows[0].id, "always_allow")
   assert.equal(forbidden.status, 403, summary(forbidden))
@@ -192,7 +193,7 @@ test("allow once is for the requester and applies to exactly one run; only Dana 
   assert.equal(once.status, 200, summary(once))
   assert.equal(personalAgentRequestSchema.parse(once.body).status, "allowed_once")
   const already = await decide(asSam, waiting.id, "deny")
-  assert.equal(already.status, 409, summary(already))
+  assert.equal(already.status, 403, summary(already))
   const ownerRun = await admitted(asDana)
   await asks(ownerRun.token)
   const unused = await run()
@@ -348,9 +349,60 @@ test("team and member rules apply to an agent run only when toolPermissions is o
   const [asksLower, allowsUpper] = await reads()
   assert.equal(field(asksLower.body, "error"), "needs_approval", asksLower.raw)
   assert.equal(allowsUpper.isError, false, allowsUpper.raw)
+  const asked = (await requests(asDana)).find((row) => row.toolName === "list_issues" && row.status === "pending")
+  assert.ok(asked)
+  const assertNoAlwaysAllow = async () => {
+    assert.deepEqual((await requests(asDana)).find((row) => row.id === asked.id)?.canDecide, ["deny", "allow_once"])
+    const refused = await decide(asDana, asked.id, "always_allow")
+    assert.equal(refused.status, 409, summary(refused))
+  }
+  await assertNoAlwaysAllow()
+  await setSubjectToolRule(member, { connectionId, toolName: "list_issues", rule: null }, dana.memberId)
+  await setSubjectToolRule(team, { connectionId, toolName: "list_issues", rule: "ask" }, dana.memberId)
+  await assertNoAlwaysAllow()
+  await setSubjectToolRule(team, { connectionId, toolName: "list_issues", rule: null }, dana.memberId)
+  const { PERSONAL_AGENT_TOOL_POLICY_MAX_TOOLS } = await import("@openwork/types/den/personal-agents")
+  const full = await asDana("PATCH", path, { toolPolicy: { tools: { [connectionId]: Object.fromEntries(
+    Array.from({ length: PERSONAL_AGENT_TOOL_POLICY_MAX_TOOLS }, (_, index) => [`tool_${index}`, "allow"]),
+  ) } } })
+  assert.equal(full.status, 200, summary(full))
+  const tooMany = await decide(asDana, asked.id, "always_allow")
+  assert.equal(tooMany.status, 409, summary(tooMany))
+  assert.match(text(field(tooMany.body, "message"), "tool limit message"), /reached the tool limit/)
+
   await setSubjectToolRule(member, { connectionId, toolName: "list_issues", rule: null }, dana.memberId)
   assert.equal((await den.setFeature(orgId, "toolPermissions", false)).status, 200)
   await releaseRun?.()
+})
+
+test("a live token is refused when the organization turns agents off or the routine is archived", async () => {
+  const { db } = await import("../../src/db.js")
+  const { AutomationTable } = await import("@openwork-ee/den-db/schema")
+  const { eq } = await import("@openwork-ee/den-db/drizzle")
+  const { normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
+  const selector = eq(AutomationTable.id, normalizeDenTypeId("automation", routineId))
+  const { token } = await admitted()
+  const denied = async () => {
+    const count = providerCalls()
+    for (const refusal of [await execute(token, "list_issues"), await den.callMcpTool(token, "agent_remember", { note: "Not saved" }),
+      await den.callMcpTool(token, "agent_note_progress", { state: "Not saved" })]) {
+      assert.equal(field(refusal.body, "error"), "policy_blocked", refusal.raw)
+    }
+    assert.equal(providerCalls(), count)
+  }
+  try {
+    assert.equal((await execute(token, "list_issues")).isError, false)
+    assert.equal((await den.setFeature(orgId, "personalAgents", false)).status, 200)
+    await denied()
+    assert.equal((await den.setFeature(orgId, "personalAgents", true)).status, 200)
+    assert.equal((await execute(token, "list_issues")).isError, false)
+    await db.update(AutomationTable).set({ state: "archived" }).where(selector)
+    await denied()
+  } finally {
+    await db.update(AutomationTable).set({ state: "active" }).where(selector)
+    await den.setFeature(orgId, "personalAgents", true)
+    await releaseRun?.()
+  }
 })
 
 test("Priya's live run loses tool and discovery access after share removal or archive", async () => {

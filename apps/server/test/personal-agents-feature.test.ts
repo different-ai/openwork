@@ -5,13 +5,20 @@ import { createPersonalAgentsFeatureLookup } from "../src/personal-agents-featur
 
 const session = { baseUrl: "https://den.acme.test", orgId: "org-1", token: "test-token" };
 
-test("only the literal true flag enables personal agents, using the signed-in Den session", async () => {
+function featureResponse(enabled: boolean) {
+  return Response.json({ features: { personalAgents: enabled } });
+}
+
+test("cold discovery answers off while one shared request warms the cache", async () => {
+  const response = Promise.withResolvers<Response>();
   const requests: { url: string; init: RequestInit }[] = [];
-  const lookup = createPersonalAgentsFeatureLookup(async (url, init) => {
+  const lookup = createPersonalAgentsFeatureLookup((url, init) => {
     requests.push({ url, init });
-    return Response.json({ features: { personalAgents: true } });
+    return response.promise;
   });
-  assert.equal(await lookup(session), true);
+  assert.equal(lookup.cached(session), false);
+  assert.equal(lookup.cached(session), false);
+  const check = lookup.check(session);
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.url, "https://den.acme.test/v1/org");
   assert.equal(requests[0]?.init.method, "GET");
@@ -22,10 +29,16 @@ test("only the literal true flag enables personal agents, using the signed-in De
     "x-openwork-org-id": "org-1",
     "x-openwork-legacy-org-id": "org-1",
   });
+  response.resolve(featureResponse(true));
+  assert.equal(await check, true);
+  assert.equal(lookup.cached(session), true);
+  assert.equal(requests.length, 1);
+});
 
+test("only a literal true flag enables agents", async () => {
   for (const payload of [{ features: { personalAgents: false } }, { features: {} }, {}, { features: { personalAgents: "true" } }]) {
-    const disabled = createPersonalAgentsFeatureLookup(async () => Response.json(payload));
-    assert.equal(await disabled(session), false);
+    const lookup = createPersonalAgentsFeatureLookup(async () => Response.json(payload));
+    assert.equal(await lookup.check(session), false);
   }
 });
 
@@ -33,41 +46,57 @@ test("signed out never looks up the flag, even after it was enabled", async () =
   let calls = 0;
   const lookup = createPersonalAgentsFeatureLookup(async () => {
     calls++;
-    return Response.json({ features: { personalAgents: true } });
+    return featureResponse(true);
   });
-  assert.equal(await lookup(null), false);
-  assert.equal(await lookup(session), true);
-  assert.equal(await lookup(null), false);
+  assert.equal(lookup.cached(null), false);
+  assert.equal(await lookup.check(null), false);
+  assert.equal(calls, 0);
+  assert.equal(await lookup.check(session), true);
+  assert.equal(lookup.cached(null), false);
+  assert.equal(await lookup.check(null), false);
   assert.equal(calls, 1);
 });
 
-test("a network error, Den error response or invalid JSON leaves personal agents unavailable", async () => {
-  const networkError = createPersonalAgentsFeatureLookup(async () => { throw new Error("offline"); });
-  const denError = createPersonalAgentsFeatureLookup(async () => Response.json({ features: { personalAgents: true } }, { status: 401 }));
-  const invalidJson = createPersonalAgentsFeatureLookup(async () => new Response("not JSON"));
-  assert.equal(await networkError(session), false);
-  assert.equal(await denError(session), false);
-  assert.equal(await invalidJson(session), false);
+test("network errors, Den errors and invalid responses keep the last known result until a successful refresh", async () => {
+  let now = 0;
+  let fetchDen = async () => featureResponse(true);
+  const lookup = createPersonalAgentsFeatureLookup(() => fetchDen(), () => now);
+  assert.equal(await lookup.check(session), true);
+
+  for (const failure of [
+    async () => { throw new Error("offline"); },
+    async () => new Response("Unauthorized", { status: 401 }),
+    async () => new Response("not JSON"),
+    async () => Response.json({ features: { personalAgents: "true" } }),
+  ]) {
+    now += 60_000;
+    fetchDen = failure;
+    assert.equal(lookup.cached(session), true);
+    assert.equal(await lookup.check(session), true);
+    assert.equal(lookup.cached(session), true);
+  }
+  now += 60_000;
+  fetchDen = async () => featureResponse(false);
+  assert.equal(lookup.cached(session), true);
+  assert.equal(await lookup.check(session), false);
+  assert.equal(lookup.cached(session), false);
 });
 
-test("personal agent results are cached for 60 seconds per Den URL, organization and token", async () => {
+test("warm entries do not fetch for 60 seconds and are isolated by Den URL, organization and token", async () => {
   let now = 0;
   let calls = 0;
-  const lookup = createPersonalAgentsFeatureLookup(async () => {
-    calls++;
-    return Response.json({ features: { personalAgents: calls === 1 } });
-  }, () => now);
+  const lookup = createPersonalAgentsFeatureLookup(async () => featureResponse(++calls === 1), () => now);
 
-  assert.deepEqual(await Promise.all([lookup(session), lookup(session)]), [true, true]);
+  assert.deepEqual(await Promise.all([lookup.check(session), lookup.check(session)]), [true, true]);
   now = 59_999;
-  assert.equal(await lookup({ ...session }), true);
+  assert.equal(lookup.cached({ ...session }), true);
   assert.equal(calls, 1);
-  assert.equal(await lookup({ ...session, baseUrl: "https://other.acme.test" }), false);
-  assert.equal(await lookup({ ...session, orgId: "org-2" }), false);
-  assert.equal(await lookup({ ...session, token: "other-test-token" }), false);
-  assert.equal(await lookup({ ...session, token: "other-test-token" }), false);
+  for (const other of [{ baseUrl: "https://other.acme.test" }, { orgId: "org-2" }, { token: "other-test-token" }]) {
+    assert.equal(lookup.cached({ ...session, ...other }), false);
+    assert.equal(await lookup.check({ ...session, ...other }), false);
+  }
   assert.equal(calls, 4);
   now = 60_000;
-  assert.equal(await lookup(session), false);
+  assert.equal(await lookup.check(session), false);
   assert.equal(calls, 5);
 });

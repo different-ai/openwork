@@ -1,9 +1,11 @@
-import { and, desc, eq, gte, inArray, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, PersonalAgentTable, ToolApprovalTable } from "@openwork-ee/den-db/schema"
+import { and, desc, eq, gte, inArray, isNull, ne, or, sql } from "@openwork-ee/den-db/drizzle"
+import { MemberTable, PersonalAgentTable, TeamMemberTable, TeamTable, ToolApprovalTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { ToolApproval, ToolApprovalDecision } from "@openwork/types/den/tool-permissions"
 import { db } from "../db.js"
-import { readSubjectToolPolicy, setSubjectToolRule, type ToolPermissionTransaction } from "./rules.js"
+import { cachedOrganizationFeatureEnabled, organizationFeatureEnabled } from "../features.js"
+import { loadApplicableToolPermissionRules } from "./evaluate.js"
+import { setSubjectToolRule, type ToolPermissionTransaction } from "./rules.js"
 
 export type ToolApprovalRow = typeof ToolApprovalTable.$inferSelect
 export type ToolApprovalContext =
@@ -12,6 +14,10 @@ export type ToolApprovalContext =
 export type ToolApprovalKey = { organizationId: string; memberId: string; context: ToolApprovalContext; connectionId: string; toolName: string }
 const table = ToolApprovalTable
 const DAY = 86_400_000
+
+export function pendingToolApprovalCutoff() {
+  return new Date(Date.now() - 30 * DAY)
+}
 
 function match(input: ToolApprovalKey) {
   return and(eq(table.organization_id, normalizeDenTypeId("organization", input.organizationId)),
@@ -31,7 +37,7 @@ async function lockMember(tx: ToolPermissionTransaction, input: ToolApprovalKey)
 type PendingToolApproval = ToolApprovalKey & { connectionName: string; toolTitle: string }
 
 async function createPending(tx: ToolPermissionTransaction, input: PendingToolApproval): Promise<boolean> {
-  const [existing] = await tx.select({ id: table.id }).from(table).where(and(match(input), eq(table.status, "pending"))).limit(1).for("update")
+  const [existing] = await tx.select({ id: table.id }).from(table).where(and(match(input), eq(table.status, "pending"), gte(table.created_at, pendingToolApprovalCutoff()))).limit(1).for("update")
   if (existing) return false
   await tx.insert(table).values({
     id: createDenTypeId("toolApproval"), organization_id: normalizeDenTypeId("organization", input.organizationId),
@@ -54,6 +60,7 @@ async function claim(tx: ToolPermissionTransaction, input: ToolApprovalKey): Pro
     if (used) return true
   }
   const [available] = await tx.select({ id: table.id }).from(table).where(and(match(input), eq(table.status, "allowed_once"),
+    runId ? ne(table.run_id, runId) : undefined,
     gte(table.decided_at, new Date(Date.now() - 7 * DAY)),
   )).orderBy(table.decided_at, table.id).limit(1).for("update")
   if (!available) return false
@@ -82,7 +89,7 @@ export function toolApprovalView(row: ToolApprovalRow): ToolApproval {
 export async function listPendingMemberToolApprovals(organizationId: string, memberId: string): Promise<ToolApproval[]> {
   const rows = await db.$primary.select().from(table).where(and(eq(table.organization_id, normalizeDenTypeId("organization", organizationId)),
     eq(table.requested_by_member_id, normalizeDenTypeId("member", memberId)), eq(table.status, "pending"),
-    inArray(table.context_kind, ["automation", "chat"]), gte(table.created_at, new Date(Date.now() - 30 * DAY)),
+    inArray(table.context_kind, ["automation", "chat"]), gte(table.created_at, pendingToolApprovalCutoff()),
   )).orderBy(desc(table.created_at), desc(table.id))
   return rows.map(toolApprovalView)
 }
@@ -91,13 +98,28 @@ export async function listAgentToolApprovals(organizationId: string, agentId: st
   return db.$primary.select().from(table).where(and(eq(table.organization_id, normalizeDenTypeId("organization", organizationId)),
     eq(table.context_kind, "agent"), eq(table.context_id, agentId),
     options.memberId ? eq(table.requested_by_member_id, normalizeDenTypeId("member", options.memberId)) : undefined,
-    or(eq(table.status, "pending"), gte(table.decided_at, new Date(Date.now() - 7 * DAY))),
+    or(and(eq(table.status, "pending"), gte(table.created_at, pendingToolApprovalCutoff())), gte(table.decided_at, new Date(Date.now() - 7 * DAY))),
   )).orderBy(desc(table.created_at), desc(table.id)).limit(options.limit ?? 50)
+}
+
+export async function toolApprovalRequiresAsk(row: ToolApprovalRow, tx?: ToolPermissionTransaction) {
+  const organizationId = row.organization_id
+  const teamAndMember = tx
+    ? await organizationFeatureEnabled(organizationId, "toolPermissions", { database: tx, lock: "share" })
+    : await cachedOrganizationFeatureEnabled(organizationId, "toolPermissions")
+  const memberId = teamAndMember ? row.requested_by_member_id : undefined
+  const query = memberId && (tx ?? db.$primary).select({ id: TeamTable.id }).from(TeamTable)
+    .innerJoin(TeamMemberTable, eq(TeamMemberTable.teamId, TeamTable.id))
+    .where(and(eq(TeamTable.organizationId, organizationId), eq(TeamMemberTable.orgMembershipId, memberId)))
+  const teams = query ? await (tx ? query.for("share") : query) : []
+  const rules = await loadApplicableToolPermissionRules({ organizationId, memberId, teamIds: teams.map(({ id }) => id),
+    connectionId: row.connection_id, toolName: row.tool_name }, tx)
+  return rules.some(({ rule }) => rule === "ask")
 }
 
 export async function decideToolApproval(input: {
   organizationId: string; memberId: string; approvalId: string; decision: ToolApprovalDecision | "always_allow"
-  agent?: { id: string; canDecideForOthers: boolean; onAlwaysAllow?: (tx: ToolPermissionTransaction) => Promise<void> }
+  agent?: { id: string; onAlwaysAllow?: (tx: ToolPermissionTransaction) => Promise<void> }
 }): Promise<(ToolApprovalRow & { status: "denied" | "allowed_once" | "always_allowed" }) | null> {
   if (!isDenTypeId("toolApproval", input.approvalId)) return null
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
@@ -111,19 +133,15 @@ export async function decideToolApproval(input: {
       eq(table.organization_id, organizationId), agent ? and(eq(table.context_kind, "agent"), eq(table.context_id, agent.id))
         : and(inArray(table.context_kind, ["chat", "automation"]), eq(table.requested_by_member_id, memberId)),
     )).limit(1).for("update")
-    if (!row) return null
+    if (!row || (row.status === "pending" && row.created_at < pendingToolApprovalCutoff())) return null
     const owner = agent?.owner_member_id === memberId
-    if (!owner && memberId !== row.requested_by_member_id && !(input.agent?.canDecideForOthers && agent?.owner_member_id !== row.requested_by_member_id)) {
+    if (!owner && memberId !== row.requested_by_member_id) {
       throw new Error("tool_approval_forbidden")
     }
-    if (!owner && agent?.owner_member_id === row.requested_by_member_id) throw new Error("tool_approval_forbidden")
     if (row.status !== "pending") throw new Error("tool_approval_decided")
     if (input.decision === "always_allow") {
       if (!agent || !owner) throw new Error("tool_approval_forbidden")
-      const policy = await readSubjectToolPolicy({ organizationId, kind: "organization", id: organizationId }, tx)
-      if (policy.connections[row.connection_id] !== "block" && policy.tools[row.connection_id]?.[row.tool_name] === "ask") {
-        throw new Error("personal_agent_organization_asks")
-      }
+      if (await toolApprovalRequiresAsk(row, tx)) throw new Error("personal_agent_organization_asks")
       await setSubjectToolRule({ organizationId, kind: "agent", id: agent.id }, { connectionId: row.connection_id, toolName: row.tool_name, rule: "allow" }, memberId, tx)
       await tx.update(PersonalAgentTable).set({ updated_at: new Date() }).where(eq(PersonalAgentTable.id, agent.id))
       await input.agent?.onAlwaysAllow?.(tx)

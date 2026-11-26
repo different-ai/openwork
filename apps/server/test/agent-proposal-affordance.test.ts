@@ -31,13 +31,20 @@ const args = {
 test("personal agent discovery and execution check the flag independently", async () => {
   const plugin = await OpenWorkExtensionsPreview();
   let enabled = true;
+  let checks = 0;
   try {
     await openworkReadTransport.run({
       async get(path) {
-        if (path === "/managed-policy/personal-agents") return { enabled };
+        if (path === "/managed-policy/personal-agents") {
+          checks++;
+          return { enabled };
+        }
+        assert.equal(path, "/experimental/connect/skills");
         return { skills: [] };
       },
-      async post() { return { context: { availableAffordances: [] } }; },
+      async post() {
+        return { context: { availableAffordances: [] }, ...(enabled ? { personalAgentsEnabled: true } : {}) };
+      },
     }, async () => {
       const on = contract.parse(JSON.parse(await plugin.tool.openwork_context.execute())).context;
       assert.equal(on.contributions.some(({ featureId }) => featureId === "agents"), true);
@@ -46,11 +53,12 @@ test("personal agent discovery and execution check the flag independently", asyn
 
       enabled = false;
       const denied: unknown = JSON.parse(await plugin.tool.openwork_execute.execute({ id: "agent.propose", args }, {}));
-      assert.deepEqual(denied, { ok: false, id: "agent.propose", code: "unavailable", error: "Personal agents are not turned on for this organization." });
+      assert.deepEqual(denied, { ok: false, id: "agent.propose", code: "unavailable", error: "Agents are not turned on for this organization." });
       const off = contract.parse(JSON.parse(await plugin.tool.openwork_context.execute())).context;
       assert.equal(off.contributions.some(({ featureId }) => featureId === "agents"), false);
       assert.equal(off.availableAffordances.some(({ id }) => id === "agent.propose"), false);
       assert.deepEqual(off.availableAffordances.find(({ id }) => id === "automation.propose"), on.availableAffordances.find(({ id }) => id === "automation.propose"));
+      assert.equal(checks, 1);
     });
   } finally {
     plugin.dispose();

@@ -22,7 +22,7 @@ const errorSchema = z.object({ error: z.string(), message: z.string().optional()
 const notFound = { error: "personal_agent_not_found" }
 const requestNotFound = { error: "personal_agent_request_not_found" }
 const forbidden = { error: "personal_agent_forbidden" }
-const describe = (options: DescribeRouteOptions & { "x-mcp"?: true }) => describeRoute({ tags: ["Personal agents"], ...options })
+const describe = (options: DescribeRouteOptions & { "x-mcp"?: true }) => describeRoute({ tags: ["Agents"], ...options })
 
 function caller(c: { get(name: "organizationContext"): OrganizationContextVariables["organizationContext"] }) {
   const context = c.get("organizationContext")
@@ -35,6 +35,7 @@ function failure(error: unknown) {
       case "personal_agent_shared_logins_off": return { status: 403, body: { error: error.message, message: "Your admin has not allowed shared logins." } } as const
       case "personal_agent_shared_login_connection_unavailable": return { status: 403, body: { error: error.message, message: "Connect your own login before sharing it." } } as const
       case "personal_agent_organization_asks": return { status: 409, body: { error: error.message, message: "Your admin requires this tool to ask every time." } } as const
+      case "agent_tool_approval_limit": return { status: 409, body: { error: error.message, message: "This agent has reached the tool limit for this connection. Remove a tool rule and try again." } } as const
       case "personal_agent_memory_full": return { status: 409, body: { error: error.message, message: PERSONAL_AGENT_MEMORY_ERRORS.personal_agent_memory_full } } as const
       case "personal_agent_change_stale": return { status: 409, body: { error: error.message, message: "This agent or routine changed since this was asked. Ask for the change again." } } as const
       case "personal_agent_forbidden": return { status: 403, body: forbidden } as const
@@ -98,7 +99,7 @@ export function registerPersonalAgentPermissionsRoutes<T extends { Variables: Ro
   })
 
   app.get("/v1/personal-agents/:id/tools", describe({
-    operationId: "listPersonalAgentTools", "x-mcp": true, summary: "List tools and permissions for a personal agent",
+    operationId: "listPersonalAgentTools", "x-mcp": true, summary: "List tools and permissions for an agent",
     responses: { 200: jsonResponse("Tools and their permissions.", personalAgentToolCatalogSchema), 404: jsonResponse("Agent not found.", notFoundSchema) },
   }), orgMemberRoute(), gate, paramValidator(agent), async (c) => {
     const member = caller(c)

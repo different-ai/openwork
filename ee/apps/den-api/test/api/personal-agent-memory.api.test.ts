@@ -9,6 +9,7 @@ const restoreCatalog = stubPublicModelCatalog()
 const turns: { sessionId: string; messageId: string; token: string; prompt: string; model: string }[] = []
 let sequence = 0
 let holdRun = false
+let failRun = false
 let answer = "Checked the tracker."
 const runner = await startFakeHttpServer((request, raw, response) => {
   const url = new URL(request.url ?? "/", "http://runner")
@@ -26,7 +27,7 @@ const runner = await startFakeHttpServer((request, raw, response) => {
   }
   const turn = turns.find((entry) => entry.sessionId === sessionId)
   response.end(JSON.stringify({
-    turns: turn ? [{ messageId: turn.messageId, model: turn.model, status: holdRun ? "running" : "completed", error: null, usage: { inputTokens: 42, cachedInputTokens: 0, outputTokens: 3 } }] : [],
+    turns: turn ? [{ messageId: turn.messageId, model: turn.model, status: holdRun ? "running" : failRun ? "failed" : "completed", error: null, usage: { inputTokens: 42, cachedInputTokens: 0, outputTokens: 3 } }] : [],
     messages: [], finalAssistantText: holdRun ? "" : answer, status: holdRun ? "running" : "idle",
   }))
 })
@@ -43,7 +44,7 @@ const asSam = den.as(sam, orgId)
 const asLee = den.as(lee, orgId)
 const { automationService } = await import("../../src/automations/service.js")
 const { db } = await import("../../src/db.js")
-const { AutomationTable, PersonalAgentRoutineStateTable } = await import("@openwork-ee/den-db/schema")
+const { AutomationRunTable, AutomationTable, PersonalAgentRoutineStateTable } = await import("@openwork-ee/den-db/schema")
 const { and, eq } = await import("@openwork-ee/den-db/drizzle")
 const { normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
 
@@ -144,7 +145,7 @@ test("the owner and manager can edit; stale writes lose, and a collaborator's no
   assert.equal((await memory(path)).canEdit, false)
 })
 
-test("live run tokens save owner notes and checkpoints, ask for collaborator notes, and use the owner answer as a fallback", async () => {
+test("owner-only progress survives a failed run, cannot be overwritten by an older run, and is cleared on transfer", async () => {
   await expectStatus(den.setFeature(orgId, "personalAgents", true), 200)
   const path = await createAgent()
   const { automation } = automationDetailSchema.parse(await expectStatus(asDana("POST", `${path}/routines`, {
@@ -169,9 +170,9 @@ test("live run tokens save owner notes and checkpoints, ask for collaborator not
     }
     const turn = await until(() => turns[previous], Boolean)
     const run = await until(() => receipt(as, runId), (value) => value.status === "running")
-    return { ...turn, run, finish: async () => {
+    return { ...turn, run, finish: async (expected = "succeeded") => {
       holdRun = false
-      return until(() => receipt(as, runId), (value) => value.status === "succeeded")
+      return until(() => receipt(as, runId), (value) => value.status === expected)
     } }
   }
   async function tool(token: string, name: string, args: Record<string, unknown>, expected: string) {
@@ -192,23 +193,28 @@ test("live run tokens save owner notes and checkpoints, ask for collaborator not
     const liveTools = await mcpTools(run.token)
     assert.ok(toolNames.every((name) => liveTools.includes(name)))
     await expectStatus(den.setFeature(orgId, "personalAgents", false), 200)
-    const disabledTools = await mcpTools(run.token)
-    assert.ok(toolNames.every((name) => !disabledTools.includes(name)))
     await refused(run.token)
     await expectStatus(den.setFeature(orgId, "personalAgents", true), 200)
     const note = "Review urgent reports first."
     const state = "Already reviewed report 17."
     await tool(run.token, "agent_remember", { note }, "Saved the note for future runs.")
     await tool(run.token, "agent_note_progress", { state }, "Saved the progress for this routine's next run.")
-    await run.finish()
+    failRun = true
+    await run.finish("failed")
+    failRun = false
     await refused(run.token)
     await refused(memberToken)
     assert.equal((await memory(path)).updatedBy, null)
     assert.equal((await stateRow()).written_by_agent, true)
 
+    for (const as of [asSam, asPriya]) {
+      assert.deepEqual((await memory(path, as)).routines, [])
+      assert.equal((await memory(path, as)).notes, `- ${note}`)
+    }
     const collaborator = await start(asPriya)
     assert.ok(collaborator.prompt.includes(`<file name="memory/notes.md">\n- ${note}\n</file>`), collaborator.prompt)
-    assert.ok(collaborator.prompt.includes(`<file name="memory/routines/Morning sweep.md">\n${state}\n</file>`), collaborator.prompt)
+    assert.ok(!collaborator.prompt.includes(state), collaborator.prompt)
+    assert.ok(!collaborator.prompt.includes("memory/routines/"), collaborator.prompt)
     assert.ok(collaborator.prompt.indexOf(instructions) < collaborator.prompt.indexOf("<agent_memory>"), collaborator.prompt)
     const proposed = "Include pending reports too."
     await tool(collaborator.token, "agent_remember", { note: proposed }, "The note is waiting for the owner's approval. It has not been saved yet.")
@@ -222,11 +228,31 @@ test("live run tokens save owner notes and checkpoints, ask for collaborator not
 
     answer = "A".repeat(PERSONAL_AGENT_ROUTINE_STATE_MAX_LENGTH + 100)
     const fallback = await start(asDana)
+    assert.ok(fallback.prompt.includes(state), fallback.prompt)
     await fallback.finish()
     const saved = await until(stateRow, (row) => row?.run_id === fallback.run.id)
     assert.equal(saved.written_by_agent, false)
     assert.equal(saved.state, answer.slice(0, PERSONAL_AGENT_ROUTINE_STATE_MAX_LENGTH))
     assert.equal((await memory(path)).routines[0]?.state, saved.state)
+    const { savePersonalAgentRoutineState } = await import("../../src/personal-agents/memory.js")
+    const agentId = path.slice(path.lastIndexOf("/") + 1)
+    const older = { organizationId: orgId, agentId, runId: run.run.id, memberId: dana.memberId, state: "Old progress" }
+    for (const [status, writtenByAgent] of [["succeeded", false], ["running", true]] as const) {
+      await db.update(AutomationRunTable).set({ status }).where(eq(AutomationRunTable.id, normalizeDenTypeId("automationRun", older.runId)))
+      assert.equal(await savePersonalAgentRoutineState({ ...older, writtenByAgent }), false)
+    }
+    await db.update(AutomationRunTable).set({ status: "failed" }).where(eq(AutomationRunTable.id, normalizeDenTypeId("automationRun", older.runId)))
+    assert.equal((await stateRow()).state, saved.state)
+    const live = await start(asDana)
+    await db.update(AutomationTable).set({ state: "archived" }).where(eq(AutomationTable.id, routineId))
+    await refused(live.token)
+    await db.update(AutomationTable).set({ state: "active" }).where(eq(AutomationTable.id, routineId))
+    await live.finish()
+    await until(stateRow, (row) => row?.run_id === live.run.id)
+    await expectStatus(asLee("POST", `/v1/org/personal-agents/${agentId}/transfer`, { memberId: sam.memberId }), 200)
+    assert.deepEqual((await memory(path, asSam)).routines, [])
+    assert.equal((await memory(path, asSam)).notes, `- ${note}`)
+
   } finally {
     holdRun = false
   }

@@ -1205,7 +1205,7 @@ async function prepareExternalCapability(input: {
     return { ok: false, error: "unknown_capability", message: `Connection "${input.connectionId}" is a native provider connector and does not expose MCP tools.` }
   }
   const hold = externalMcpConnectionHold(connection, input.member)
-  if (hold?.reason === "withheld_from_workbot") {
+  if (hold?.reason === "withheld_from_workbot" && !input.member.personalAgentScopes) {
     return { ok: false, error: "forbidden", message: hold.message }
   }
 
@@ -1218,7 +1218,7 @@ async function prepareExternalCapability(input: {
     return { ok: false, error: "forbidden", message: `You have not been granted access to "${connection.name}".` }
   }
 
-  if (externalMcpToolWithheld(input.member, connection.id, input.toolName)) {
+  if (!input.member.personalAgentScopes && externalMcpToolWithheld(input.member, connection.id, input.toolName)) {
     return {
       ok: false,
       error: "policy_blocked",
@@ -1387,6 +1387,7 @@ export async function executeExternalCapability(input: {
   requireReadOnly?: boolean
   refuseDestructive?: boolean
   requireSchemaMatch?: boolean
+  toolPermissionsEnabled?: boolean
   usageSource: CapabilityUsageSource
 }): Promise<ExternalCapabilityExecuteResult> {
   const prepared = await prepareExternalCapability(input)
@@ -1480,7 +1481,7 @@ export async function executeExternalCapability(input: {
 
     const permissionRefusal = async (tool: ExternalMcpTool): Promise<ExternalCapabilityFailure | null> => {
       const refusal = await toolPermissionRefusal({ scopes: input.scopes, connection, tool,
-        actingMemberId: input.member?.orgMembershipId, teamIds: input.member?.teamIds })
+        actingMemberId: input.member?.orgMembershipId, teamIds: input.member?.teamIds, toolPermissionsEnabled: input.toolPermissionsEnabled })
       return refusal ? { ok: false, capability: buildExternalCapabilityName(connection.id, input.toolName), ...refusal } : null
     }
     const forwardedArguments = isRecord(input.args) ? input.args : {}

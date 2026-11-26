@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PersonalAgentAccess, PersonalAgentTool, PersonalAgentToolPolicy } from "@openwork/types/den/personal-agents";
 
-import { agentOwnerFirstName, agentSpendLine, formatAgentMoney, requestToolTitle, shouldRerunAfterToolDecision, toolAccessSummary, toolRequestReceipt, toolRequestRerunLine } from "../src/react-app/domains/agents/agent-permission-words";
+import { agentOwnerFirstName, agentSpendLine, formatAgentMoney, requestToolTitle, shouldRerunAfterToolDecision, toolAccessSummary, toolRequestReceipt, toolRequestRerunLine, toolRequestWaitingLine } from "../src/react-app/domains/agents/agent-permission-words";
 import { nextAgentToolPolicy } from "../src/react-app/domains/agents/use-agent-permissions";
 
 const dana = { memberId: "member-dana", name: "Dana Reyes" };
@@ -47,6 +47,13 @@ describe("personal agent permissions", () => {
     expect(toolRequestReceipt({ ...request, status: "used" }, "Bug watcher")).toBe("Bug watcher can use Post a message this time");
     expect(toolRequestReceipt({ ...request, status: "always_allowed" }, "Bug watcher")).toBe("Bug watcher can use Post a message from now on");
     expect(toolRequestReceipt({ ...request, status: "pending" }, "Bug watcher")).toBeNull();
+  });
+
+  test("a pending tool request with no permitted decisions shows the waiting line regardless of role", () => {
+    const request = { status: "pending", toolTitle: "Post a message", toolName: "post_message", connectionName: "Slack" } as const;
+    expect(toolRequestWaitingLine({ ...request, canDecide: [] }, dana)).toBe("Waiting for Dana to answer: Post a message in Slack");
+    expect(toolRequestWaitingLine({ ...request, canDecide: ["deny", "allow_once"] }, dana)).toBeNull();
+    expect(toolRequestWaitingLine({ ...request, status: "denied", canDecide: [] }, dana)).toBeNull();
   });
 
   test("only allowing your own request starts another run", () => {

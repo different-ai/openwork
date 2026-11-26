@@ -32,7 +32,8 @@ function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: Per
   const actions = useAgentActions(runtime);
   const { id: agentId, name, pausedAt } = agent.agent;
   const memoryQuery = useAgentMemory(runtime, agentId);
-  const states = new Map(memoryQuery.data?.routines.map((routine) => [routine.routineId, routine.state]));
+  const isOwner = agent.role === "owner";
+  const states = new Map(isOwner ? memoryQuery.data?.routines.map((routine) => [routine.routineId, routine.state]) : []);
   const paused = pausedAt !== null;
   const canManage = agent.role !== "collaborator";
   const routines = agent.routines.filter((routine) => routine.state !== "archived");
@@ -44,7 +45,7 @@ function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: Per
   return (
     <aside id={AGENT_PANEL_ID} data-agent-panel={agentId} aria-label={name} className="hidden w-75 shrink-0 flex-col gap-5 overflow-y-auto border-l border-dls-border bg-dls-surface px-4 pb-4 pt-2 lg:flex">
       {view === "settings" ? <AgentSettings runtime={runtime} agent={agent} onBack={() => setView("overview")} />
-        : view === "memory" ? <AgentMemoryView runtime={runtime} agentId={agentId} query={memoryQuery} onBack={() => setView("overview")} /> : <>
+        : view === "memory" ? <AgentMemoryView runtime={runtime} agentId={agentId} isOwner={isOwner} query={memoryQuery} onBack={() => setView("overview")} /> : <>
         <div className="flex h-8 items-center justify-end">
           <Button type="button" variant="ghost" size="icon-sm" aria-label={t("agents.panel_close")} onClick={() => useAgentChatStore.getState().setPanel(null)}>
             <X className="size-4" />

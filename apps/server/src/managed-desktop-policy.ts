@@ -585,9 +585,13 @@ class ManagedDesktopPolicy {
     return this.organizationFeatureEnabled("browserSecretHandles");
   }
 
+  cachedPersonalAgentsEnabled(): boolean {
+    return this.lookupPersonalAgentsFeature.cached(this.session);
+  }
+
   async personalAgentsEnabled(): Promise<boolean> {
     const generation = this.generation;
-    const enabled = await this.lookupPersonalAgentsFeature(this.session);
+    const enabled = await this.lookupPersonalAgentsFeature.check(this.session);
     return generation === this.generation && enabled;
   }
 

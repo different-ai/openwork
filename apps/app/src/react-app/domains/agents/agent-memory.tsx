@@ -34,9 +34,24 @@ export function isAgentMemoryConflict(error: unknown): boolean {
   return error instanceof DenApiError && error.status === 409 && error.code === "personal_agent_memory_conflict";
 }
 
-export function AgentMemoryView({ runtime, agentId, query, onBack }: {
+export function AgentRoutineHistory({ routines }: Pick<PersonalAgentMemory, "routines">) {
+  if (!routines.length) return null;
+  return <section className="space-y-3 border-t border-dls-border pt-3">
+    <div className="space-y-1">
+      <h3 className="text-sm font-semibold">{t("agents.memory_routine_history")}</h3>
+      <p className="text-xs text-dls-secondary">{t("agents.memory_routine_private")}</p>
+    </div>
+    {routines.map((routine) => <div key={routine.routineId} data-agent-routine-state={routine.name} className="space-y-1">
+      <p className="text-sm font-medium">{routine.name}</p>
+      <p className="whitespace-pre-wrap wrap-anywhere text-sm text-dls-secondary">{routine.state}</p>
+    </div>)}
+  </section>;
+}
+
+export function AgentMemoryView({ runtime, agentId, isOwner, query, onBack }: {
   runtime: AgentsRuntime;
   agentId: string;
+  isOwner: boolean;
   query: ReturnType<typeof useAgentMemory>;
   onBack: () => void;
 }) {
@@ -97,13 +112,7 @@ export function AgentMemoryView({ runtime, agentId, query, onBack }: {
         </form> : <p data-agent-memory-notes className="whitespace-pre-wrap wrap-anywhere text-sm">{memory.notes || t("agents.memory_empty")}</p>}
         {updated && <p className="text-xs text-dls-secondary">{updated}</p>}
         {!memory.canEdit && <p className="flex items-start gap-2 text-xs text-dls-secondary"><Lock aria-hidden="true" className="size-4 shrink-0" />{t("agents.memory_readonly")}</p>}
-        {memory.routines.length > 0 && <section className="space-y-3 border-t border-dls-border pt-3">
-          <h3 className="text-sm font-semibold">{t("agents.memory_routine_history")}</h3>
-          {memory.routines.map((routine) => <div key={routine.routineId} data-agent-routine-state={routine.name} className="space-y-1">
-            <p className="text-sm font-medium">{routine.name}</p>
-            <p className="whitespace-pre-wrap wrap-anywhere text-sm text-dls-secondary">{routine.state}</p>
-          </div>)}
-        </section>}
+        {isOwner && <AgentRoutineHistory routines={memory.routines} />}
       </>}
     </section>
   );

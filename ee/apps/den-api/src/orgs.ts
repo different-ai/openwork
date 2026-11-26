@@ -43,7 +43,7 @@ import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { parseOrganizationPlan, type PlanTier } from "./entitlements.js"
-import { cachedOrganizationFeatureEnabled, getOrganizationFeatures, readOrganizationForAuthorization, type FeatureMap } from "./features.js"
+import { getOrganizationFeatures, readOrganizationForAuthorization, type FeatureMap } from "./features.js"
 import {
   getRoleValueAfterOwnershipTransfer,
   roleIncludesAdmin,
@@ -2175,7 +2175,7 @@ export async function removeOrganizationMember(input: {
       .update(MemberTable)
       .set({ removedAt, removedByOrgMember: input.removedByOrgMemberId ?? null })
       .where(and(eq(MemberTable.id, member.id), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
-    if (await cachedOrganizationFeatureEnabled(input.organizationId, "personalAgents") || await cachedOrganizationFeatureEnabled(input.organizationId, "toolPermissions")) {
+    if (env.features.deployment === "cloud") {
       await removeMemberPersonalAgentShares(tx, input.organizationId, member.id)
     }
     const auditEventIds = await appendDomainChanges(tx, capture, [memberRemovedEvent({ organizationId: input.organizationId, member, removedByMemberId: input.removedByOrgMemberId })])

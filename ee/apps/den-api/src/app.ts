@@ -16,7 +16,7 @@ import { describeRoute, generateSpecs, resolver } from "hono-openapi"
 import { z } from "zod"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { cachedOrganizationFeatureEnabled, getOrganizationFeatures } from "./features.js"
+import { cachedOrganizationFeatureContext } from "./features.js"
 import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
@@ -315,12 +315,12 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
   )).limit(1)
   const userId = members[0]?.userId
   if (!userId) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
-  const organizationFeatures = await getOrganizationFeatures(normalizedOrganizationId, { userId })
+  const { features: organizationFeatures, organizationToolPermissions } = await cachedOrganizationFeatureContext(normalizedOrganizationId, userId)
   const member = await resolveMcpMemberIdentity({ userId, organizationId })
   if (!member) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
   const catalog = await getCatalog(app as unknown as Hono, undefined)
   const scopes = new Set<string>(DEN_MCP_REQUESTED_SCOPES)
-  if (await cachedOrganizationFeatureEnabled(organizationId, "toolPermissions")) scopes.add(automationRunScope(automationRunId))
+  if (organizationToolPermissions) scopes.add(automationRunScope(automationRunId))
   const principal = { userId, organizationId, scopes, payload: {} }
   const capabilityContext = createCapabilityRegistryContext({
     app: app as unknown as Hono,
@@ -332,6 +332,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
     redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
     organizationFeatures,
+    organizationToolPermissions,
     usageSource: "automation",
   })
   const result = await executeMarketplaceCapability({
@@ -426,7 +427,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Managed deployments", description: "OpenWork installations in an organization's own cloud account: launch approval, installer milestones and health reports." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
       { name: "Tool permissions", description: "Organization rules and member approvals for external connector tools." },
-      { name: "Personal agents", description: "A member's own agents: a Markdown brief, a tool policy, and routines that run as Cloud Automations." },
+      { name: "Agents", description: "A member's own agents: a Markdown brief, a tool policy, and routines that run as Cloud Automations." },
       { name: "Devices", description: "Personal and shared computers, plus permission-gated team computer inventory for the current organization, including registered OpenWork instances. Inventory grants no control or access to private content." },
       { name: "Documents", description: "Connected Drive and OneDrive documents: listings, metadata and read-only previews." },
       { name: "Workbot", description: "The signed-in member's single Workbot conversation." },

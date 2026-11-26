@@ -236,3 +236,41 @@ test("shared logins use the lender in both paths and do not return after revocat
   assert.ok(events.some(({ actor, action, detail }) => action === "share.changed" && actor.memberId === sam.memberId && detail.what === "shared_login" && detail.connection === "Bug tracker" && detail.on === true))
   assert.ok(events.some(({ action, detail }) => action === "share.changed" && detail.what === "shared_login" && detail.on === false))
 })
+
+test("400 organization tool blocks do not prevent admission and live removal allows the next call", async () => {
+  const { replaceSubjectToolPolicy } = await import("../../src/tool-permissions/rules.js")
+  const { toolPermissionRefusal } = await import("../../src/tool-permissions/dispatch.js")
+  const { verifyMcpRequest } = await import("../../src/mcp/auth.js")
+  const { toolsWithheld } = await import("../../src/mcp/workbot-turn-limits.js")
+  const { normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
+  const org = normalizeDenTypeId("organization", orgId)
+  const subject = { organizationId: org, kind: "organization", id: org } as const
+  const tools = ["list_issues", ...Array.from({ length: 399 }, (_, index) => `${"é".repeat(60)}_${index}`)]
+  const rules = Object.fromEntries(tools.map((tool) => [tool, "block"] as const))
+  await replaceSubjectToolPolicy(subject, { connections: {}, tools: { [connectionId]: rules } }, dana.memberId)
+  try {
+    const live = await run()
+    const principal = await verifyMcpRequest(new Headers({ authorization: `Bearer ${live.token}` }))
+    assert.ok(!(principal instanceof Response))
+    const hidden = toolsWithheld(principal.scopes)?.get(connectionId)
+    assert.ok(hidden && hidden.size <= 200 && hidden.size < tools.length)
+    for (const toolName of tools) {
+      const refusal = await toolPermissionRefusal({ scopes: principal.scopes, connection: { id: connectionId, name: "Bug tracker", organizationId: org },
+        tool: { name: toolName, annotations: { readOnlyHint: true } }, actingMemberId: priya.memberId })
+      assert.equal(refusal?.error, "policy_blocked", toolName)
+    }
+    const blocked = await execute(live.token, "list_issues")
+    assert.equal(field(blocked.body, "error"), "policy_blocked", blocked.raw)
+    await replaceSubjectToolPolicy(subject, { connections: {}, tools: {} }, dana.memberId)
+    const unblocked = await execute(live.token, "list_issues")
+    assert.equal(unblocked.isError, false, unblocked.raw)
+    await replaceSubjectToolPolicy(subject, { connections: { [connectionId]: "block" }, tools: {} }, dana.memberId)
+    const withheld = await run()
+    await replaceSubjectToolPolicy(subject, { connections: {}, tools: {} }, dana.memberId)
+    const allowed = await execute(withheld.token, "list_issues")
+    assert.equal(allowed.isError, false, allowed.raw)
+  } finally {
+    await replaceSubjectToolPolicy(subject, { connections: {}, tools: {} }, dana.memberId)
+    await releaseRun?.()
+  }
+})

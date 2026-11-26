@@ -145,6 +145,7 @@ export type CapabilityRegistryContext = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   managedDeploymentsEnabled: boolean
+  toolPermissionsEnabled?: boolean
   limitedAgentRun: boolean
   remoteSessionAnswersAllowed: boolean
   remoteSessionAttachAllowed: boolean
@@ -164,6 +165,7 @@ export type CapabilityRegistryContextInput = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "personalAgents">>
+  organizationToolPermissions?: boolean
   audit?: McpAuditPrincipal | null
   usageSource: CapabilityUsageSource
 }
@@ -195,6 +197,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
+    toolPermissionsEnabled: input.organizationToolPermissions,
     limitedAgentRun: isLimitedAgentRun(input.principal.scopes),
     remoteSessionAnswersAllowed: input.usageSource === "agent",
     remoteSessionAttachAllowed: input.usageSource === "agent",
@@ -629,6 +632,7 @@ const externalMcpSource: CapabilitySource = {
       scopes: ctx.principal.scopes,
       connectionId: parsed.connectionId,
       toolName: parsed.toolName,
+      toolPermissionsEnabled: ctx.toolPermissionsEnabled,
       args: normalizeToolBody(input.body),
       schemaDigest: input.schemaDigest,
       ...(input.requireSchemaMatch ? { requireSchemaMatch: true } : {}),

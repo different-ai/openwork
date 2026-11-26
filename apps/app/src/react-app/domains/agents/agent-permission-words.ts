@@ -35,6 +35,16 @@ export function requestConnectionName(request: Pick<PersonalAgentRequest, "conne
   return request.connectionName?.trim() || t("agents.permission_ask_connection");
 }
 
+export function toolRequestWaitingLine(
+  request: Pick<PersonalAgentRequest, "status" | "canDecide" | "toolTitle" | "toolName" | "connectionName">,
+  owner: PersonalAgentPerson | null,
+): string | null {
+  if (request.status !== "pending" || request.canDecide.length > 0) return null;
+  return t("agents.permission_ask_waiting", {
+    owner: agentOwnerFirstName(owner), tool: requestToolTitle(request), connection: requestConnectionName(request),
+  });
+}
+
 export function toolRequestReceipt(
   request: Pick<PersonalAgentRequest, "status" | "toolTitle" | "toolName" | "decidedBy">,
   agentName: string,

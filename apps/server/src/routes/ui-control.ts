@@ -1,4 +1,5 @@
 import { ApiError } from "../errors.js";
+import { isRecord } from "../workspace-kv-store.js";
 import type { TokenScope, UiControlKind } from "../types.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
@@ -10,6 +11,7 @@ interface RegisterUiControlRoutesOptions {
   jsonResponse: JsonResponse;
   readJsonBody: ReadJsonBody;
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
+  cachedPersonalAgentsEnabled: () => boolean;
 }
 
 function isUiControlKind(value: unknown): value is UiControlKind {
@@ -30,6 +32,9 @@ export function registerUiControlRoutes(options: RegisterUiControlRoutesOptions)
       );
     }
     const result = await ctx.uiControl.request(body.kind, body.input);
+    if (body.kind === "context" && options.cachedPersonalAgentsEnabled() && isRecord(result)) {
+      return jsonResponse({ ...result, personalAgentsEnabled: true });
+    }
     return jsonResponse(result);
   });
 

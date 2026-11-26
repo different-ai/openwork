@@ -10,11 +10,13 @@ import {
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
-import { featureAvailableOn, resolveFeatures, type FeatureKey, type FeatureMap } from "@openwork/features"
+import { featureAvailableOn, mapFeatures, resolveFeature, resolveFeatures, type FeatureKey, type FeatureMap } from "@openwork/features"
 import type { MiddlewareHandler } from "hono"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { createFeatureCache } from "./feature-cache.js"
+import { appLogger } from "./observability/logger.js"
 import { markFeaturesUsed } from "./feature-usage.js"
 import type { OrganizationContextVariables } from "./middleware/organization-context.js"
 
@@ -40,11 +42,19 @@ export async function getOrganizationFeatures(organizationId: string, options: R
     const organization = await readFeatures(options.database ?? db, organizationId, env.features, { lock: options.lock })
     return { ...features, bedrockGuardrails: organization.bedrockGuardrails }
   }
+  return (await getOrganizationFeatureContext(organizationId, options.userId)).features
+}
+
+async function getOrganizationFeatureContext(organizationId: string, userId?: string) {
   const id = normalizeDenTypeId("organization", organizationId)
-  const userId = options.userId ? normalizeDenTypeId("user", options.userId) : undefined
-  const { rollouts, overrides, memberOverrides } = await cache.features.state(id, userId)
-  const organization = resolveFeatures({ ...env.features, rollouts, overrides })
-  return { ...resolveFeatures({ ...env.features, rollouts, overrides, memberOverrides }), bedrockGuardrails: organization.bedrockGuardrails }
+  const user = userId ? normalizeDenTypeId("user", userId) : undefined
+  const { rollouts, overrides, memberOverrides } = await cache.features.state(id, user)
+  const organization = { ...env.features, rollouts, overrides }
+  const organizationFeatures = resolveFeatures(organization)
+  return {
+    features: { ...resolveFeatures({ ...organization, memberOverrides }), bedrockGuardrails: organizationFeatures.bedrockGuardrails },
+    organizationToolPermissions: organizationFeatures.toolPermissions,
+  }
 }
 
 export async function organizationFeatureEnabled(organizationId: string, key: FeatureKey, options: ReadOptions = {}): Promise<boolean> {
@@ -52,23 +62,29 @@ export async function organizationFeatureEnabled(organizationId: string, key: Fe
   return (await getOrganizationFeatures(organizationId, options))[key]
 }
 
-const organizationPolicyFeatures = new Map<string, { expiresAt: number; value: Promise<boolean> }>()
+const logger = appLogger.child({ component: "features" })
+const organizationPolicyFeatures = createFeatureCache<string, Awaited<ReturnType<typeof getOrganizationFeatureContext>> | undefined>({
+  lookup: (key: string) => {
+    const [organizationId, userId] = key.split(":")
+    return getOrganizationFeatureContext(organizationId, userId || undefined)
+  },
+  onError: (key, error) => logger.warn("Organization feature lookup failed", { organization_id: key.split(":")[0], error }),
+  fallback: undefined,
+  maxEntries: 2048,
+  ttlMs: 5000,
+})
 
-export function cachedOrganizationFeatureEnabled(organizationId: string, key: "toolPermissions" | "personalAgents", options?: { userId?: string }): Promise<boolean> {
-  if (!featureAvailableOn(key, env.features.deployment)) return Promise.resolve(false)
-  const id = normalizeDenTypeId("organization", organizationId)
+export async function cachedOrganizationFeatureEnabled(organizationId: string, key: "toolPermissions" | "personalAgents", options?: { userId?: string }): Promise<boolean> {
+  if (!featureAvailableOn(key, env.features.deployment)) return false
   const userId = key === "personalAgents" ? options?.userId : undefined
-  const cacheKey = `${key}:${id}:${userId ?? ""}`
-  const now = Date.now()
-  const cached = organizationPolicyFeatures.get(cacheKey)
-  if (cached && cached.expiresAt > now) return cached.value
-  const value = organizationFeatureEnabled(id, key, { userId }).catch((error) => {
-    if (organizationPolicyFeatures.get(cacheKey)?.value === value) organizationPolicyFeatures.delete(cacheKey)
-    throw error
-  })
-  if (organizationPolicyFeatures.size >= 2048) organizationPolicyFeatures.clear()
-  organizationPolicyFeatures.set(cacheKey, { expiresAt: now + 5000, value })
-  return value
+  const context = await organizationPolicyFeatures.get(`${organizationId}:${userId ?? ""}`)
+  return context?.features[key] ?? false
+}
+
+const unavailableOrganizationFeatures = { features: mapFeatures(() => false), organizationToolPermissions: false }
+
+export async function cachedOrganizationFeatureContext(organizationId: string, userId: string) {
+  return await organizationPolicyFeatures.get(`${organizationId}:${userId}`) ?? unavailableOrganizationFeatures
 }
 
 export async function getOrganizationFeaturesByMember(organizationId: string): Promise<{ organization: FeatureMap; forMember(memberId: string): FeatureMap }> {
@@ -109,7 +125,7 @@ export async function updateFeatureRollout(input: Parameters<typeof setFeatureRo
     return await setFeatureRollout(db, input)
   } finally {
     await cache.features.invalidate()
-    organizationPolicyFeatures.clear()
+    organizationPolicyFeatures.invalidate()
   }
 }
 
@@ -118,7 +134,7 @@ export async function updateOrganizationFeatureOverrides(input: Parameters<typeo
     return await setOrganizationFeatureOverrides(db, input)
   } finally {
     await cache.features.invalidate()
-    organizationPolicyFeatures.clear()
+    organizationPolicyFeatures.invalidate()
   }
 }
 
@@ -127,7 +143,7 @@ export async function updateMemberFeatureOverrides(input: Parameters<typeof setM
     return await setMemberFeatureOverrides(db, input)
   } finally {
     await cache.features.invalidate()
-    organizationPolicyFeatures.clear()
+    organizationPolicyFeatures.invalidate()
   }
 }
 
