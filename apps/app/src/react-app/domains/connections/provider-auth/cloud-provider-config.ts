@@ -79,6 +79,7 @@ export type GatewayConnectProvider = {
   credentialSetId?: string;
   models?: GatewayUsableModel[];
   providerId: string;
+  sourceProviderId?: string;
   name: string;
   authUrl: string | null;
 };
@@ -100,7 +101,7 @@ export const gatewayConnectCopy = (name: string) => `Sign in to ${name} to use i
 
 export const resolveGatewayConnectProviders = (
   skippedProviders:
-    | Record<string, { cloudProviderId: string; credentialSetId?: string; models?: GatewayUsableModel[]; providerId: string; name: string; reason: string; authUrl?: string | null }>
+    | Record<string, { cloudProviderId: string; credentialSetId?: string; models?: GatewayUsableModel[]; providerId: string; sourceProviderId?: string; name: string; reason: string; authUrl?: string | null }>
     | undefined
     | null,
 ): GatewayConnectProvider[] =>
@@ -111,6 +112,7 @@ export const resolveGatewayConnectProviders = (
       credentialSetId: provider.credentialSetId,
       ...(provider.models === undefined ? {} : { models: provider.models }),
       providerId: provider.providerId,
+      ...(provider.sourceProviderId ? { sourceProviderId: provider.sourceProviderId } : {}),
       name: provider.name,
       authUrl: provider.authUrl ?? null,
     }));
@@ -127,16 +129,21 @@ export type LiveGatewayProvider = {
 
 export const resolveLiveGatewayConnectProviders = (providers: readonly LiveGatewayProvider[]): GatewayConnectProvider[] =>
   providers.flatMap((provider) => {
-    const requests = provider.authorizationRequests.map((request) => ({
+    const sourceProviderId = provider.providerId.trim();
+    const connectProvider = {
       cloudProviderId: provider.id,
+      providerId: provider.id,
+      ...(sourceProviderId ? { sourceProviderId } : {}),
+      authUrl: null,
+    };
+    const requests = provider.authorizationRequests.map((request) => ({
+      ...connectProvider,
       credentialSetId: request.credentialSetId,
       ...(request.models === undefined ? {} : { models: request.models }),
-      providerId: provider.id,
       name: `${provider.name} / ${request.name}`,
-      authUrl: null,
     }));
     if (requests.length > 0 || provider.models.length > 0 || provider.credentialStatus !== GATEWAY_MEMBER_AUTH_REQUIRED_REASON) return requests;
-    return [{ cloudProviderId: provider.id, providerId: provider.id, name: provider.name, authUrl: null }];
+    return [{ ...connectProvider, name: provider.name }];
   });
 
 export const resolveLiveGatewayReadyProviders = (

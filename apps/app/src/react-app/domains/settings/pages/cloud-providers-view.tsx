@@ -7,9 +7,9 @@ import type { DenOrgLlmProvider, DenOrgLlmProviderAccess } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
-import { GatewayConnectRow, GatewayReadyRow } from "./ai-view";
+import { GatewayConnectRow } from "./ai-view";
 import { ProviderIcon } from "../../../design-system/provider-icon";
-import { gatewayConnectProviderKey, resolveLiveGatewayReadyProviders, type GatewayConnectProvider, type LiveGatewayProvider } from "../../connections/provider-auth/cloud-provider-config";
+import { cleanProviderSlug, formatGatewayModelPreview } from "./provider-rows";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import {
   CloudProvidersSection,
@@ -20,7 +20,11 @@ import {
 import {
   getCloudProviderEnv,
   getCloudManagedProviderId,
+  gatewayConnectProviderKey,
+  GATEWAY_MEMBER_AUTH_REQUIRED_REASON,
   isCloudProviderOutOfSync,
+  type GatewayConnectProvider,
+  type LiveGatewayProvider,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { isProviderAllowedByDesktopPolicy } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import type {
@@ -84,10 +88,12 @@ export type CloudProvidersViewProps = {
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
   runCloudProviderSync: (reason: "manual") => Promise<unknown>;
   serverSync: CloudProviderServerSyncState | null;
-  gatewayConnectProviders?: GatewayConnectProvider[];
   liveGatewayProviders?: readonly LiveGatewayProvider[] | null;
+  liveGatewaySyncedAt?: number | null;
+  gatewayConnectProviders?: GatewayConnectProvider[];
   connectingGatewayProviderId?: string | null;
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
+  onCancelGatewayConnect?: () => void;
   onOpenDen?: () => void;
   onOpenModelConnections?: () => void;
   shareEmptyState?: OrganizationShareEmptyState;
@@ -108,10 +114,12 @@ export function CloudProvidersView({
   refreshCloudOrgProviders,
   runCloudProviderSync,
   serverSync,
-  gatewayConnectProviders = [],
   liveGatewayProviders = null,
+  liveGatewaySyncedAt,
+  gatewayConnectProviders = [],
   connectingGatewayProviderId,
   onConnectGatewayProvider,
+  onCancelGatewayConnect,
   onOpenDen,
   onOpenModelConnections,
   shareEmptyState,
@@ -123,7 +131,7 @@ export function CloudProvidersView({
   const [actionError, setActionError] = React.useState<string | null>(null);
 
   const healthEntries = useProviderCredentialHealth((state) => state.entries);
-  const rows = React.useMemo<CloudProviderRow[]>(() => {
+  const { rows, waitingRows } = React.useMemo(() => {
     const providerHealth = (providerId: string): ProviderCredentialHealth =>
       (runtimeWorkspaceId ? healthEntries[credentialHealthKey(runtimeWorkspaceId, providerId)]?.status : undefined) ?? "unverified";
     const restrictToCloud = checkDesktopAppRestriction({ restriction: "allowCustomProviders" });
@@ -151,7 +159,7 @@ export function CloudProvidersView({
       });
       const providerDetail = provider.source === "openwork"
         ? `Organization credential · ${provider.models.length ? `${provider.models.length} models` : "All models"}`
-        : `${imported?.source === "openwork_gateway" ? "OpenWork Gateway" : "Organization credential"} · ${provider.credentialMode === "per_member" ? "Each member signs in" : "Shared org key"}`;
+        : `${imported?.source === "openwork_gateway" ? "AI Gateway" : "Organization credential"} · ${provider.credentialMode === "per_member" ? "Each member signs in" : "Shared org key"}`;
       const detail = status === "blocked"
         ? t("den.cloud_provider_blocked")
         : status === "unavailable"
@@ -170,20 +178,88 @@ export function CloudProvidersView({
         status,
         name: provider.name,
         detail,
-        metaId: provider.source === "openwork" ? "openwork" : provider.id,
+        metaId: provider.source === "openwork" ? "openwork" : cleanProviderSlug(provider.providerId),
         access: providerAccessLabel(provider.access),
         credentialReady: provider.source === "openwork" || provider.hasApiKey || provider.hasMyCredential === true || Boolean(imported),
       };
     });
-    const importedRows: CloudProviderRow[] = Object.values(importedCloudProviders).filter((provider) => !cloudOrgProviders.some((live) => live.id === provider.cloudProviderId)).map((provider) => ({
-      key: `imported:${provider.cloudProviderId}`, cloudProviderId: provider.cloudProviderId, provider: null, imported: provider, name: provider.name,
-      status: resolveCloudProviderRowStatus({ imported: true, credentialHealth: providerHealth(provider.providerId), outOfSync: false, allowed: isProviderAllowedByDesktopPolicy({ providerId: provider.providerId, restrictToCloud, checkRestriction: checkDesktopAppRestriction }), importsUnavailable, needsCredential: false, needsServer: false, syncError: null, reloadPending: serverSync?.reloadPending, skippedByServer: Boolean(serverSync?.skippedProviders[provider.cloudProviderId]) }),
-      detail: provider.source === "openwork_gateway" ? "OpenWork Gateway · Organization credential" : "Managed in Den",
-      metaId: provider.cloudProviderId,
-      credentialReady: true,
-    }));
-    const combined = [...liveRows, ...importedRows];
-    return combined.filter((row) => !gatewayConnectProviders.some((provider) => provider.cloudProviderId === row.cloudProviderId)).map<CloudProviderRow>((row) => serverSync?.lastRun?.status === "failed" ? { ...row, status: "unavailable", detail: "Could not verify with Den. Sync again to check access." } : row);
+    const liveGatewayById = new Map(liveGatewayProviders?.map((provider) => [provider.id, provider]));
+    const orgProviderIds = new Set(liveRows.map((row) => row.cloudProviderId));
+    const importedRows = Object.values(importedCloudProviders)
+      .filter((provider) => !orgProviderIds.has(provider.cloudProviderId))
+      .map<CloudProviderRow>((provider) => {
+        const isGateway = provider.source === "openwork_gateway";
+        const deliveredLive = isGateway && liveGatewayProviders !== null;
+        const live = isGateway ? liveGatewayById.get(provider.cloudProviderId) : undefined;
+        const health = providerHealth(provider.providerId);
+        const status = resolveCloudProviderRowStatus({
+          imported: true,
+          credentialHealth: isGateway && health !== "rejected" && provider.modelIds.length > 0 ? "verified" : health,
+          outOfSync: false,
+          allowed: isProviderAllowedByDesktopPolicy({ providerId: provider.providerId, restrictToCloud, checkRestriction: checkDesktopAppRestriction }),
+          importsUnavailable: !deliveredLive && importsUnavailable,
+          needsCredential: false,
+          needsServer: false,
+          syncError: null,
+          reloadPending: !deliveredLive && serverSync?.reloadPending === true,
+          skippedByServer: !deliveredLive && Boolean(serverSync?.skippedProviders[provider.cloudProviderId]),
+        });
+        const sourceProviderId = live?.providerId ?? provider.sourceProviderId;
+        const modelNames = live ? live.models.map((model) => model.name) : provider.modelIds;
+        const modelCount = isGateway
+          ? new Set(live ? live.models.map((model) => model.name.trim() || model.id) : provider.modelIds).size
+          : 0;
+        return {
+          key: `imported:${provider.cloudProviderId}`,
+          cloudProviderId: provider.cloudProviderId,
+          provider: null,
+          imported: provider,
+          sourceProviderId,
+          name: provider.name,
+          status,
+          detail: status === "blocked" ? t("den.cloud_provider_blocked") : isGateway
+            ? `AI Gateway · ${formatGatewayModelPreview(modelNames) ?? "Organization credential"}`
+            : "Managed in Den",
+          metaId: cleanProviderSlug(sourceProviderId),
+          modelCountLabel: modelCount > 0 ? (modelCount === 1 ? "1 model" : `${modelCount} models`) : null,
+          credentialReady: !isGateway || provider.modelIds.length > 0,
+        };
+      });
+    const pendingIds = new Set(gatewayConnectProviders.map((provider) => provider.cloudProviderId));
+    const listedIds = new Set([...orgProviderIds, ...importedRows.map((row) => row.cloudProviderId), ...pendingIds]);
+    const unconfigured = liveGatewayProviders !== null
+      ? liveGatewayProviders
+        .filter((provider) => !provider.models.length && !provider.authorizationRequests.length && provider.credentialStatus !== GATEWAY_MEMBER_AUTH_REQUIRED_REASON)
+        .map((provider) => ({ cloudProviderId: provider.id, providerId: provider.id, sourceProviderId: provider.providerId, name: provider.name }))
+      : Object.values(serverSync?.skippedProviders ?? {})
+        .filter((provider) => /^ipr_/i.test(provider.cloudProviderId) && provider.reason !== GATEWAY_MEMBER_AUTH_REQUIRED_REASON);
+    const waitingRows: CloudProviderRow[] = [];
+    for (const provider of unconfigured) {
+      if (listedIds.has(provider.cloudProviderId)) continue;
+      listedIds.add(provider.cloudProviderId);
+      const allowed = isProviderAllowedByDesktopPolicy({ providerId: provider.providerId, restrictToCloud, checkRestriction: checkDesktopAppRestriction });
+      waitingRows.push({
+        key: `waiting:${provider.cloudProviderId}`,
+        cloudProviderId: provider.cloudProviderId,
+        provider: null,
+        imported: null,
+        name: provider.name,
+        status: allowed ? "needs_credential" : "blocked",
+        sourceProviderId: provider.sourceProviderId,
+        metaId: cleanProviderSlug(provider.sourceProviderId),
+        detail: allowed ? "AI Gateway · Waiting on admin setup" : t("den.cloud_provider_blocked"),
+        credentialReady: false,
+      });
+    }
+    const rows = [...liveRows, ...importedRows]
+      .filter((row) => row.credentialReady || !pendingIds.has(row.cloudProviderId))
+      .map<CloudProviderRow>((row) => {
+        if (row.status === "blocked" || (liveGatewayProviders !== null && row.imported?.source === "openwork_gateway")) return row;
+        return serverSync?.lastRun?.status === "failed"
+          ? { ...row, status: "unavailable", detail: "Could not verify with Den. Sync again to check access." }
+          : row;
+      });
+    return { rows, waitingRows };
   }, [
     runtimeWorkspaceId,
     healthEntries,
@@ -193,6 +269,7 @@ export function CloudProvidersView({
     importedCloudProviders,
     importsUnavailable,
     lastSyncError,
+    liveGatewayProviders,
     openworkServerAvailable,
     serverSync,
   ]);
@@ -212,13 +289,13 @@ export function CloudProvidersView({
     setBusy(true);
     setActionError(null);
     try {
-      await runCloudProviderSync("manual");
+      await Promise.all([refreshCloudOrgProviders({ force: true }), runCloudProviderSync("manual")]);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : t("den.sync_provider_failed", { name: "Cloud providers" }));
     } finally {
       setBusy(false);
     }
-  }, [busy, runCloudProviderSync]);
+  }, [busy, refreshCloudOrgProviders, runCloudProviderSync]);
 
   const retryProvider = React.useCallback(async (cloudProviderId: string) => {
     if (actionId) return;
@@ -261,23 +338,32 @@ export function CloudProvidersView({
     );
   }
 
-  const gatewayReadyProviders = resolveLiveGatewayReadyProviders(liveGatewayProviders, cloudOrgProviders.map((provider) => provider.id));
-
+  const hasLegacyServerFailure = serverSync?.lastRun?.status === "failed"
+    && (liveGatewayProviders === null || rows.some((row) => row.status !== "blocked" && row.imported?.source !== "openwork_gateway"));
   const section = (
     <CloudProvidersSection
-      actionError={actionError ?? (serverSync?.lastRun?.status === "failed" ? "Could not verify providers with Den. Sync again to retry." : null)}
+      actionError={actionError ?? (hasLegacyServerFailure ? "Could not verify providers with Den. Sync again to retry." : null)}
       actionId={actionId}
       busy={busy}
       rows={rows}
+      waitingRows={waitingRows}
       onRefresh={syncNow}
       onRetry={retryProvider}
       onOpenDen={onOpenDen}
       onOpenModelConnections={onOpenModelConnections}
       shareEmptyState={shareEmptyState}
-      lastVerifiedAt={serverSync?.lastVerifiedAt}
+      lastVerifiedAt={liveGatewaySyncedAt ?? serverSync?.lastVerifiedAt}
       openWorkModelsToggle={openWorkModelsToggle}
-      additionalCount={gatewayReadyProviders.length + gatewayConnectProviders.length}
-      additionalRows={<>{gatewayReadyProviders.map((provider) => <GatewayReadyRow key={provider.id} provider={provider} />)}{gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}</>}
+      additionalProviderIds={gatewayConnectProviders.map((provider) => provider.cloudProviderId)}
+      additionalRows={gatewayConnectProviders.map((provider) => (
+        <GatewayConnectRow
+          key={gatewayConnectProviderKey(provider)}
+          provider={provider}
+          busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)}
+          onConnect={onConnectGatewayProvider}
+          onCancel={onCancelGatewayConnect}
+        />
+      ))}
     />
   );
 

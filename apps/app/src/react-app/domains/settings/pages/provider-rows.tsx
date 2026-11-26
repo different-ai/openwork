@@ -6,6 +6,21 @@ import type { ProviderCredentialHealth } from "../../connections/provider-auth/c
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
+export function cleanProviderSlug(id: string | null | undefined): string | undefined {
+  const slug = id?.trim().toLowerCase();
+  if (!slug || /^(ipr|lpr)_/.test(slug) || /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/.test(slug)) {
+    return undefined;
+  }
+  return slug;
+}
+
+export function formatGatewayModelPreview(names: readonly string[]): string | null {
+  const uniqueNames = [...new Set(names.map((name) => name.trim()).filter((name) => name && !/^gwm_/i.test(name)))].sort();
+  if (!uniqueNames.length) return null;
+  const preview = uniqueNames.slice(0, 2).join(", ");
+  return uniqueNames.length > 2 ? `${preview} +${uniqueNames.length - 2}` : preview;
+}
+
 export type ProviderStatusTone = "ready" | "attention" | "neutral" | "locked" | "error";
 
 export function ProviderTile({ providerId, name, size = "md" }: { providerId: string; name?: string; size?: "sm" | "md" }) {

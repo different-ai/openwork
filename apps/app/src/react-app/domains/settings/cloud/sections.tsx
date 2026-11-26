@@ -62,6 +62,8 @@ export type CloudProviderRow = {
   name: string;
   detail: string;
   metaId?: string;
+  sourceProviderId?: string | null;
+  modelCountLabel?: string | null;
   access?: string | null;
   credentialReady?: boolean;
 };
@@ -212,6 +214,8 @@ function cloudProviderRowStatus(status: CloudProviderRowStatus) {
     case "error":
     case "conflict":
       return <ProviderStatus tone="error">{cloudProviderStatusLabel(status)}</ProviderStatus>;
+    case "blocked":
+      return <ProviderStatus tone="locked">{cloudProviderStatusLabel(status)}</ProviderStatus>;
     case "credential_rejected":
     case "needs_credential":
     case "needs_server":
@@ -224,7 +228,10 @@ function cloudProviderRowStatus(status: CloudProviderRowStatus) {
 function CloudProviderListItem({ actionId, row, onRetry, openWorkModelsToggle, organizationName }: CloudProviderListItemProps) {
   const actionBusy = actionId === row.cloudProviderId;
   const status = actionBusy ? "syncing" : row.status;
-  const providerId = row.imported?.sourceProviderId ?? row.provider?.providerId ?? "";
+  const providerId = row.sourceProviderId ?? row.imported?.sourceProviderId ?? row.provider?.providerId ?? "";
+  const aside = row.access
+    ? <><Users className="size-4" strokeWidth={1.5} aria-hidden />{row.access}</>
+    : row.modelCountLabel ? <span className="tabular-nums">{row.modelCountLabel}</span> : null;
   const toggle = row.provider?.source === "openwork" ? openWorkModelsToggle : undefined;
 
   if (toggle?.managed) {
@@ -236,7 +243,7 @@ function CloudProviderListItem({ actionId, row, onRetry, openWorkModelsToggle, o
         name={row.name}
         status={cloudProviderRowStatus(status)}
         meta={<ProviderMeta id={row.metaId} parts={[row.detail, organizationName ? `Managed by ${organizationName}` : "Managed by your organization"]} />}
-        aside={row.access ? <><Users className="size-3.5" aria-hidden />{row.access}</> : null}
+        aside={aside}
       />
     );
   }
@@ -250,7 +257,7 @@ function CloudProviderListItem({ actionId, row, onRetry, openWorkModelsToggle, o
         name={row.name}
         status={toggle.turnedOff ? <ProviderStatus tone="neutral">Turned off</ProviderStatus> : cloudProviderRowStatus(status)}
         meta={<ProviderMeta id={row.metaId} parts={[toggle.turnedOff ? "Turned off on this device" : row.detail]} />}
-        aside={row.access ? <><Users className="size-3.5" aria-hidden />{row.access}</> : null}
+        aside={aside}
         actions={<Button variant="ghost" disabled={toggle.busy} onClick={() => void toggle.onToggle(toggle.turnedOff)}>{toggle.turnedOff ? "Turn on" : "Turn off"}</Button>}
       />
     );
@@ -263,7 +270,7 @@ function CloudProviderListItem({ actionId, row, onRetry, openWorkModelsToggle, o
       name={row.name}
       status={cloudProviderRowStatus(status)}
       meta={<ProviderMeta id={row.metaId} parts={[row.detail]} />}
-      aside={row.access ? <><Users className="size-3.5" aria-hidden />{row.access}</> : null}
+      aside={aside}
       actions={status === "credential_rejected" ? <span className="text-xs text-muted-foreground">Contact your admin</span> : row.status === "error" && row.provider ? (
         <Button
           variant="outline"
@@ -290,7 +297,8 @@ export interface CloudProvidersSectionProps {
   onOpenModelConnections?: () => void;
   lastVerifiedAt?: string | number | null;
   additionalRows?: React.ReactNode;
-  additionalCount?: number;
+  additionalProviderIds?: readonly string[];
+  waitingRows?: readonly CloudProviderRow[];
   openWorkModelsToggle?: OpenWorkModelsToggle;
 }
 
@@ -315,13 +323,14 @@ export function OrganizationShareEmpty({ state, organizationName, onOpenDen }: {
   </div>;
 }
 
-export function CloudProvidersSection({ actionError, actionId, busy, rows, onRefresh, onRetry, onOpenDen, onOpenModelConnections, lastVerifiedAt, additionalRows, additionalCount = 0, shareEmptyState, openWorkModelsToggle }: CloudProvidersSectionProps) {
+export function CloudProvidersSection({ actionError, actionId, busy, rows, waitingRows = [], onRefresh, onRetry, onOpenDen, onOpenModelConnections, lastVerifiedAt, additionalRows, additionalProviderIds = [], shareEmptyState, openWorkModelsToggle }: CloudProvidersSectionProps) {
   const { hasActiveOrg, activeOrgName } = useCloudSession();
   const organizationName = activeOrgName || "your organization";
   const verified = lastVerifiedAt ? new Date(lastVerifiedAt) : null;
   const timestamp = verified && Number.isFinite(verified.getTime()) ? formatRelativeTime(verified.getTime()) : null;
-  const providerCount = rows.length + additionalCount;
+  const providerCount = new Set([...rows, ...waitingRows].map((row) => row.cloudProviderId).concat(additionalProviderIds)).size;
   const credentialCount = rows.filter((row) => row.credentialReady).length;
+  const renderRow = (row: CloudProviderRow) => <CloudProviderListItem key={row.key} actionId={actionId} row={row} onRetry={onRetry} openWorkModelsToggle={openWorkModelsToggle} organizationName={activeOrgName} />;
   return <section className="flex flex-col gap-3" aria-labelledby="ai-providers-organization">
     <div className="space-y-1">
       <div className="flex items-start justify-between gap-3">
@@ -343,8 +352,9 @@ export function CloudProvidersSection({ actionError, actionId, busy, rows, onRef
       ? <OrganizationShareEmpty state={shareEmptyState} organizationName={organizationName} onOpenDen={onOpenDen} />
       : <SettingsListEmptyState>{hasActiveOrg ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}</SettingsListEmptyState> : null}
     {providerCount ? <ProviderList>
-      {rows.map((row) => <CloudProviderListItem key={row.key} actionId={actionId} row={row} onRetry={onRetry} openWorkModelsToggle={openWorkModelsToggle} organizationName={activeOrgName} />)}
+      {rows.map(renderRow)}
       {additionalRows}
+      {waitingRows.map(renderRow)}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-dls-surface-muted px-4 py-2.5 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-2"><RefreshCcw className="size-3.5" aria-hidden />{timestamp ? `Synced with Den ${timestamp}` : "Not synced with Den yet"} · {providerCount === 1 ? "1 provider" : `${providerCount} providers`}, {credentialCount === 1 ? "1 credential" : `${credentialCount} credentials`}</span>
         <Button variant="ghost" size="sm" disabled={busy || !hasActiveOrg} onClick={() => void onRefresh()}>{busy ? "Syncing…" : "Sync now"}</Button>

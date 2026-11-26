@@ -52,6 +52,7 @@ const memberOnly: LiveGatewayProvider = {
 const mixed: LiveGatewayProvider = {
   ...ready,
   id: "ipr_mixed",
+  providerId: " bedrock ",
   name: "Bedrock",
   authorizationRequests: [{ credentialSetId: `gcs_${pendingSet}`, name: "Personal", authUrl: "https://den.example.test/auth", models: [model(pendingSet)] }],
 };
@@ -77,12 +78,13 @@ describe("Settings lists Gateway providers under live provider sync", () => {
 
   test("pending member sign-ins become Connect rows like the server sync's skips", () => {
     expect(resolveLiveGatewayConnectProviders([ready, memberOnly, mixed, missing])).toEqual([
-      { cloudProviderId: "ipr_member", providerId: "ipr_member", name: "OpenAI", authUrl: null },
+      { cloudProviderId: "ipr_member", providerId: "ipr_member", sourceProviderId: "openai", name: "OpenAI", authUrl: null },
       {
         cloudProviderId: "ipr_mixed",
         credentialSetId: `gcs_${pendingSet}`,
         models: [model(pendingSet)],
         providerId: "ipr_mixed",
+        sourceProviderId: "bedrock",
         name: "Bedrock / Personal",
         authUrl: null,
       },

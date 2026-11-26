@@ -611,6 +611,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const routeStateRef = useRef({
     checkDesktopRestriction,
     activeClient: null as Client | null,
+    providerClient: activeClient,
     providerBaseUrl: "",
     selectedWorkspaceId: "",
     selectedWorkspaceRoot: "",
@@ -678,10 +679,36 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
   const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? engineRootEndpoint?.opencodeBaseUrl ?? "";
 
+  const opencodeClient = useMemo(() => {
+    if (!selectedWorkspaceEndpoint) {
+      return engineRootEndpoint
+        ? createClient(engineRootEndpoint.opencodeBaseUrl, undefined, { token: engineRootEndpoint.token, mode: "openwork" })
+        : null;
+    }
+    if (!selectedWorkspaceEndpoint.token) return null;
+    return createClient(
+      selectedWorkspaceEndpoint.opencodeBaseUrl,
+      selectedWorkspaceRoot || undefined,
+      {
+        token: selectedWorkspaceEndpoint.token,
+        mode: "openwork",
+      },
+    );
+  }, [engineRootEndpoint, selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
+
+  const chatEngine = useChatEngineClient({
+    endpoint: selectedWorkspaceEndpoint,
+    engineRoot: engineRootEndpoint,
+    serverClient: openworkClient,
+    workspaceRoot: selectedWorkspaceRoot,
+    fallback: { client: opencodeClient, baseUrl: opencodeBaseUrl },
+  });
+
   routeStateRef.current = {
     checkDesktopRestriction,
     activeClient,
-    providerBaseUrl: opencodeBaseUrl,
+    providerClient: chatEngine.client,
+    providerBaseUrl: chatEngine.baseUrl,
     selectedWorkspaceId,
     selectedWorkspaceRoot,
     selectedWorkspaceType: selectedWorkspace?.workspaceType ?? "local",
@@ -767,7 +794,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       createProviderAuthStore({
         nativeOpenworkClient: () => routeStateRef.current.selectedWorkspaceOpenworkClient,
         nativeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
-        client: () => routeStateRef.current.activeClient,
+        client: () => routeStateRef.current.providerClient,
         providers: () => routeStateRef.current.providerItems,
         providerDefaults: () => routeStateRef.current.providerDefaults,
         providerConnectedIds: () => routeStateRef.current.providerConnectedIds,
@@ -833,13 +860,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const openworkServerSnapshot = useOpenworkServerStoreSnapshot(openworkServerStore);
   const connectionsSnapshot = useConnectionsStoreSnapshot(connectionsStore);
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
-  useEffect(() => { providerAuthStore.syncFromOptions(); }, [providerAuthStore]);
   const cloudSession = useCloudSession();
   const liveGatewayProviders = cloudSession.isSignedIn ? providerAuthSnapshot.liveGatewayProviders : null;
   const settingsImportedCloudProviders = useMemo(
     () => liveGatewayProviders === null
       ? providerAuthSnapshot.importedCloudProviders
-      : { ...resolveLiveGatewayImportedProviders(liveGatewayProviders), ...providerAuthSnapshot.importedCloudProviders },
+      : {
+          ...Object.fromEntries(Object.entries(providerAuthSnapshot.importedCloudProviders).filter(([, provider]) =>
+            provider.source !== "openwork_gateway" && !/^ipr_/i.test(provider.cloudProviderId),
+          )),
+          ...resolveLiveGatewayImportedProviders(liveGatewayProviders),
+        },
     [liveGatewayProviders, providerAuthSnapshot.importedCloudProviders],
   );
   const gatewayProviderIds = useMemo(
@@ -856,6 +887,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
   const [connectingGatewayProviderId, setConnectingGatewayProviderId] = useState<string | null>(null);
   const gatewayConnectAbort = useRef<AbortController | null>(null);
+  const cancelGatewayConnect = useCallback(() => {
+    gatewayConnectAbort.current?.abort();
+    setConnectingGatewayProviderId(null);
+    toast.info("Stopped waiting. Browser sign-in was not revoked. Refresh AI Providers after finishing, or Connect again to retry.");
+  }, []);
   useEffect(() => {
     const cancel = () => {
       gatewayConnectAbort.current?.abort();
@@ -909,6 +945,19 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       if (gatewayConnectAbort.current === controller) setConnectingGatewayProviderId(null);
     }
   }, [platform, providerAuthStore]);
+  const syncGatewayProvidersManually = useCallback(
+    (reason: "manual") => providerAuthStore.runCloudProviderSync(reason, { refreshGatewayCatalog: true }),
+    [providerAuthStore],
+  );
+  const cloudGatewayProps = {
+    gatewayConnectProviders,
+    connectingGatewayProviderId,
+    onConnectGatewayProvider: (provider: GatewayConnectProvider) => { void handleConnectGatewayProvider(provider); },
+    onCancelGatewayConnect: cancelGatewayConnect,
+    liveGatewayProviders,
+    liveGatewaySyncedAt: providerAuthSnapshot.liveGatewaySyncedAt,
+    runCloudProviderSync: syncGatewayProvidersManually,
+  };
   const libraryModelProviders = useMemo(
     () => cloudSession.isSignedIn
       ? buildLibraryModelProviders({
@@ -1186,23 +1235,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setCloudMcpHealthResult(health && workspaceId ? { workspaceId, health } : null);
   }, [runtimeWorkspaceId]);
 
-  const opencodeClient = useMemo(() => {
-    if (!selectedWorkspaceEndpoint) {
-      return engineRootEndpoint
-        ? createClient(engineRootEndpoint.opencodeBaseUrl, undefined, { token: engineRootEndpoint.token, mode: "openwork" })
-        : null;
-    }
-    if (!selectedWorkspaceEndpoint.token) return null;
-    return createClient(
-      selectedWorkspaceEndpoint.opencodeBaseUrl,
-      selectedWorkspaceRoot || undefined,
-      {
-        token: selectedWorkspaceEndpoint.token,
-        mode: "openwork",
-      },
-    );
-  }, [engineRootEndpoint, selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
-
   useEffect(() => {
     setActiveClient(opencodeClient);
   }, [opencodeClient]);
@@ -1240,11 +1272,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const handleModelPickerOpen = useCallback(() => {
     void providerAuthStore.runCloudProviderSync("model_picker_open");
   }, [providerAuthStore]);
-  const chatEngine = useChatEngineClient({
-    endpoint: selectedWorkspaceEndpoint,
-    workspaceRoot: selectedWorkspaceRoot,
-    fallback: { client: opencodeClient, baseUrl: opencodeBaseUrl },
-  });
   const modelPicker = useModelPicker({
     client: chatEngine.client,
     baseUrl: chatEngine.baseUrl,
@@ -1835,11 +1862,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useCloudProviderAutoSync(() => connectionsStore.syncCloudControlMcp());
 
   useEffect(() => {
-    if (route.tab !== "cloud-providers" && route.tab !== "ai") return;
-    void providerAuthStore.runCloudProviderSync("settings_cloud_opened");
-  }, [providerAuthStore, route.tab]);
-
-  useEffect(() => {
     providerAuthStore.syncFromOptions();
   }, [
     providerAuthStore,
@@ -1856,6 +1878,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     extensionsStore.syncFromOptions();
   }, [
     activeClient,
+    chatEngine.baseUrl,
+    chatEngine.client,
     connectionsStore,
     extensionsStore,
     openworkServerStore,
@@ -1866,7 +1890,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   ]);
 
   useEffect(() => {
-    if (!activeClient) {
+    if (route.tab !== "cloud-providers" && route.tab !== "ai") return;
+    void providerAuthStore.runCloudProviderSync("settings_cloud_opened");
+  }, [chatEngine.baseUrl, providerAuthStore, route.tab]);
+
+  useEffect(() => {
+    if (!chatEngine.client) {
       setProviders([]);
       setProviderDefaults({});
       setProviderConnectedIds([]);
@@ -1874,8 +1903,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       return;
     }
     void providerAuthStore.refreshProviders();
-    void connectionsStore.refreshMcpServers();
-  }, [activeClient, connectionsStore, providerAuthStore, selectedWorkspace?.id]);
+  }, [chatEngine.baseUrl, chatEngine.client, providerAuthStore, selectedWorkspace?.id]);
+
+  useEffect(() => {
+    if (activeClient) void connectionsStore.refreshMcpServers();
+  }, [activeClient, connectionsStore, selectedWorkspace?.id]);
 
   const selectedWorkspaceName = selectedWorkspace?.displayNameResolved ?? t("session.workspace_fallback");
   const workspaceOptions = workspaces.map((workspace) => ({
@@ -2346,7 +2378,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             providerStatusLabel={providerStatusLabel}
             providerStatusStyle={providerStatusStyle}
             providerSummary={providerSummary}
-            providerLoadState={activeClient ? providerAuthSnapshot.providerLoadState : { status: "idle", error: null }}
+            providerLoadState={chatEngine.client ? providerAuthSnapshot.providerLoadState : { status: "idle", error: null }}
             onRetryProviders={async () => { await providerAuthStore.refreshProviders({ force: true }); }}
             connectedProviders={connectedProviders}
             disconnectingProviderId={null}
@@ -2363,7 +2395,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             canDisconnectProvider={(provider) =>
               provider.id.trim().toLowerCase() === "opencode" || provider.source !== "env"
             }
-            disabledProviders={activeClient ? hiddenProviders : []}
+            disabledProviders={chatEngine.client ? hiddenProviders : []}
             enablingProviderId={enablingProviderId}
             onEnableProvider={async (providerId) => {
               setEnablingProviderId(providerId);
@@ -2384,14 +2416,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               ...(openWorkModelsEntitled || openWorkModelsAvailable ? ["openwork"] : []),
             ])}
             gatewayProviderIds={gatewayProviderIds}
-            gatewayConnectProviders={gatewayConnectProviders}
-            connectingGatewayProviderId={connectingGatewayProviderId}
-            onCancelGatewayConnect={() => {
-              gatewayConnectAbort.current?.abort();
-              setConnectingGatewayProviderId(null);
-              toast.info("Stopped waiting. Browser sign-in was not revoked. Refresh AI Providers after finishing, or Connect again to retry.");
-            }}
-            onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
+            {...cloudGatewayProps}
             showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
             autoPreferences={visibleAutoPreferences}
             autoSwitchedOff={autoSwitchedOff}
@@ -2411,10 +2436,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 embedded
                 onOpenDen={openProviderCloudPage}
                 onOpenModelConnections={() => { void platform.openLink(denDashboardUrl(readDenSettings().baseUrl, "modelConnections")); }}
-                gatewayConnectProviders={gatewayConnectProviders}
-                liveGatewayProviders={liveGatewayProviders}
-                connectingGatewayProviderId={connectingGatewayProviderId}
-                onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
+                {...cloudGatewayProps}
                 checkDesktopAppRestriction={checkDesktopRestriction}
                 cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
                 connectCloudProvider={providerAuthStore.connectCloudProvider}
@@ -2427,10 +2449,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 openworkServerAvailable={Boolean(openworkServerSnapshot.openworkServerClient)}
                 onOpenAccount={openCloudAccountSettings}
                 refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
-                runCloudProviderSync={providerAuthStore.runCloudProviderSync}
                 serverSync={providerAuthSnapshot.cloudProviderServerSync}
                 shareEmptyState={deviceShare.emptyState}
-                openWorkModelsToggle={openWorkModelsRow.orgRowManaged ? { managed: true } : openWorkModelsRow.orgRowToggle && activeClient ? {
+                openWorkModelsToggle={openWorkModelsRow.orgRowManaged ? { managed: true } : openWorkModelsRow.orgRowToggle && chatEngine.client ? {
                   turnedOff: openWorkModelsRow.orgTurnedOff,
                   busy: openWorkModelsBusy || autoBusy,
                   onToggle: setOrgOpenWorkModelsEnabled,
@@ -2624,7 +2645,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             openworkServerAvailable={Boolean(openworkServerSnapshot.openworkServerClient)}
             onOpenAccount={openCloudAccountSettings}
             refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
-            runCloudProviderSync={providerAuthStore.runCloudProviderSync}
+            {...cloudGatewayProps}
             serverSync={providerAuthSnapshot.cloudProviderServerSync}
           />
         );

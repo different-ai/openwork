@@ -71,6 +71,7 @@ export type OpenworkCloudProviderSyncSkippedProvider = {
   credentialSetId?: string;
   models?: GatewayUsableModel[];
   providerId: string;
+  sourceProviderId?: string;
   name: string;
   reason: string;
   authUrl?: string | null;
@@ -277,6 +278,7 @@ function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSync
       skippedProviders.push({
         cloudProviderId: raw.cloudProviderId,
         providerId: raw.providerId,
+        ...("sourceProviderId" in raw && typeof raw.sourceProviderId === "string" && raw.sourceProviderId.trim() ? { sourceProviderId: raw.sourceProviderId.trim() } : {}),
         name: raw.name,
         reason: raw.reason,
         ...("credentialSetId" in raw && typeof raw.credentialSetId === "string" ? { credentialSetId: raw.credentialSetId } : {}),

@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "bun:test";
 
+import { providerLogoCandidates } from "@openwork/ui/provider-icon";
 import { OpenWorkMark, ProviderIcon } from "../src/react-app/design-system/provider-icon";
 
 function paths(markup: string) {
@@ -94,6 +95,62 @@ describe("other provider icons", () => {
     expect(markup).toContain('<img src="https://cdn.simpleicons.org/googlegemini"');
     expect(markup).not.toContain("<svg");
   });
+
+  const opaqueId = "ipr_01m292yddve0pbd5rnb30rk3ap";
+  const aws = ['>aws</text>', 'fill="currentColor"', 'd="M3.5 16.6c5 3 12 3 17 0"', 'stroke="#FF9900"'];
+  const azure = ['fill="#F25022"', 'fill="#7FBA00"', 'fill="#00A4EF"', 'fill="#FFB900"'];
+  const liteLLM = ['viewBox="0 0 372.14 371.53"', 'd="M296.11,254.16'];
+  const trueFoundry = ['viewBox="0 0 28 28"', 'fill="#5429FF"'];
+
+  test.each([
+    { providerId: "bedrock", providerName: "OpenWork Bedrock", mark: aws },
+    { providerId: "amazon-bedrock", mark: aws },
+    { providerId: "amazon-bedrock-mantle", mark: aws },
+    { providerId: opaqueId, providerName: "Amazon Bedrock", mark: aws },
+    { providerId: opaqueId, providerName: "Team AWS", mark: aws },
+    { providerId: "azure", mark: azure },
+    { providerId: "azure-openai", mark: azure },
+    { providerId: opaqueId, providerName: "Azure OpenAI", mark: azure },
+    { providerId: "litellm", mark: liteLLM },
+    { providerId: opaqueId, providerName: "Team LiteLLM", mark: liteLLM },
+    { providerId: "truefoundry", mark: trueFoundry },
+    { providerId: opaqueId, providerName: "Acme TrueFoundry", mark: trueFoundry },
+  ])("renders an inline provider mark for $providerId / $providerName", ({ mark, ...props }) => {
+    const markup = renderToStaticMarkup(createElement(ProviderIcon, { ...props, size: 24 }));
+    expect(markup).toContain('<svg');
+    expect(markup).toContain('role="img"');
+    expect(markup).toContain('width="24" height="24"');
+    for (const fragment of mark) expect(markup).toContain(fragment);
+    expect(markup).not.toContain('<img');
+    expect(markup).not.toContain('aria-label="OpenWork"');
+  });
+
+  test("an opaque runtime id uses the display name to resolve OpenAI's inline logo", () => {
+    const openai = renderToStaticMarkup(createElement(ProviderIcon, { providerId: "openai" }));
+    const markup = renderToStaticMarkup(createElement(ProviderIcon, {
+      providerId: "ipr_01m292yddve0pbd5rnb30rk3ap", providerName: "OW OpenAI",
+    }));
+    expect(markup).toBe(openai);
+    expect(markup).toContain('d="M22.28 9.82');
+  });
+
+  test.each(["ipr_01m292yddve0pbd5rnb30rk3ap", "lpr_01m292yddve0pbd5rnb30rk3ap"])(
+    "uses the display name's initials for an unbranded runtime id %s", (providerId) => {
+      const markup = renderToStaticMarkup(createElement(ProviderIcon, { providerId, providerName: "Custom Gateway" }));
+      expect(markup).toContain(">CG</div>");
+      expect(markup).not.toContain("<img");
+      expect(markup).not.toContain("<svg");
+    },
+  );
+
+  test.each(["IPR_example-ai", "lpr_example.com", "550e8400-e29b-41d4-a716-446655440000"])(
+    "does not derive logo URLs from opaque id %s", (providerId) => {
+      expect(providerLogoCandidates({ providerId })).toEqual([]);
+      expect(providerLogoCandidates({ providerId, baseUrl: "https://api.example.com/v1" })).toEqual([
+        "https://www.google.com/s2/favicons?sz=64&domain=example.com",
+      ]);
+    },
+  );
 
   test("opaque unrelated providers still use the configured URL's favicon", () => {
     const markup = renderToStaticMarkup(createElement(ProviderIcon, {

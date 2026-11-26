@@ -126,7 +126,53 @@ test("ENG-994: disabling OpenCode Zen on mount keeps a provider another route di
   }
 });
 
-function createLiveProviderStore(view: { generation?: number; baseUrl?: string; token?: string } = {}) {
+test("resolving V2 routing starts a live sync instead of reusing an in-flight V1 sync", async () => {
+  const legacyStarted = Promise.withResolvers<void>();
+  const legacyResult = Promise.withResolvers<void>();
+  let enginePath = "opencode";
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const { pathname, searchParams } = new URL(request.url);
+    if (pathname.endsWith("/inference-providers") && searchParams.get("scope") === "usable") {
+      return Response.json({ inferenceProviders: [] });
+    }
+    switch (pathname) {
+      case "/den-session":
+        return Response.json({ ok: true });
+      case "/experimental/engine-v2-preview/status":
+        return Response.json({
+          enabled: true, running: true, chatRouting: true, liveProviderSync: true,
+          mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [],
+        });
+      case "/cloud-provider-sync/run":
+        legacyStarted.resolve();
+        await legacyResult.promise;
+        return Response.json({ status: "noop" });
+      case "/cloud-provider-sync/status":
+        return Response.json({ hasSession: true, providers: [], reloadPending: false, skippedProviders: [] });
+      default:
+        return Response.json({});
+    }
+  });
+  const store = createLiveProviderStore({ providerBaseUrl: () => `http://localhost:8787/${enginePath}` });
+  try {
+    const legacy = store.runCloudProviderSync("settings_cloud_opened");
+    await legacyStarted.promise;
+    enginePath = "opencode2";
+    const live = store.runCloudProviderSync("settings_cloud_opened");
+    legacyResult.resolve();
+    expect(await legacy).toBeUndefined();
+    expect(await live).toEqual({ outcome: "handled_live" });
+    expect(store.getSnapshot().liveGatewayProviders).toEqual([]);
+    expect(store.getSnapshot().liveGatewaySyncedAt).toBeGreaterThan(0);
+  } finally {
+    legacyResult.resolve();
+    store.dispose();
+    fetch.mockRestore();
+  }
+});
+
+function createLiveProviderStore(view: { generation?: number; baseUrl?: string; token?: string; providerBaseUrl?: () => string } = {}) {
   const server = createOpenworkServerClient({ baseUrl: view.baseUrl ?? "http://localhost:8787", token: view.token, hostToken: "fixture-host" });
   const client = createClientV2("http://localhost:8787/opencode2", "/workspace", {});
   return createProviderAuthStore({
@@ -134,7 +180,8 @@ function createLiveProviderStore(view: { generation?: number; baseUrl?: string; 
     providers: () => [], providerDefaults: () => ({}), providerConnectedIds: () => [], disabledProviders: () => [],
     checkDesktopAppRestriction: () => false,
     selectedWorkspaceDisplay: () => ({ id: "workspace", name: "Workspace", path: "/workspace", preset: "default", workspaceType: "local" }),
-    providerBaseUrl: () => "http://localhost:8787/opencode2", selectedWorkspaceRoot: () => "/workspace",
+    providerBaseUrl: view.providerBaseUrl ?? (() => "http://localhost:8787/opencode2"),
+    selectedWorkspaceRoot: () => "/workspace",
     runtimeWorkspaceId: () => "workspace",
     openworkServer: { getSnapshot: () => ({
       openworkServerStatus: "connected", openworkServerClient: server,
