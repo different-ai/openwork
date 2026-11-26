@@ -3852,7 +3852,7 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
             ) : props.chatPane === "secondary" && snapshot && renderedMessages.length === 0 ? (
               null
             ) : (
-              <extensions.TranscriptFrame sessionId={props.sessionId}>
+              <>
               {snapshot && renderedMessages.length === 0 ? <extensions.Greeting sessionId={props.sessionId} setPrompt={handleMessageListSetPrompt} /> : null}
               <DevProfiler id="MessageList">
                 <OpenTargetProvider
@@ -3929,7 +3929,7 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
                 </OpenTargetProvider>
               </DevProfiler>
               <extensions.TranscriptFooter sessionId={props.sessionId} />
-              </extensions.TranscriptFrame>
+              </>
             )}
             </SessionHistoryBoundary>
             {renderedMessages.length === 0 ? threadQuestionCard : null}

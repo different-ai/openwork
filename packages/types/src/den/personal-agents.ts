@@ -343,13 +343,19 @@ export const sendPersonalAgentChatMessageSchema = z.object({
 }).strict()
 export type SendPersonalAgentChatMessage = z.infer<typeof sendPersonalAgentChatMessageSchema>
 
+export const personalAgentChatPartSchema = z.discriminatedUnion("type", [
+  remoteSessionTranscriptPartSchema.options[0],
+  remoteSessionTranscriptPartSchema.options[1],
+  remoteSessionTranscriptPartSchema.options[2].omit({ startedAt: true, endedAt: true }),
+])
+
 export const personalAgentChatTurnSchema = z.object({
   id: z.string(),
   clientMessageId: z.string(),
   message: z.string(),
   status: z.enum(["running", "succeeded", "failed"]),
   reply: z.string().nullable(),
-  parts: z.array(remoteSessionTranscriptPartSchema).max(REMOTE_SESSION_TRANSCRIPT_PARTS_MAX).optional(),
+  parts: z.array(personalAgentChatPartSchema).max(REMOTE_SESSION_TRANSCRIPT_PARTS_MAX).optional(),
   error: z.string().nullable(),
   createdAt: z.iso.datetime(),
   finishedAt: z.iso.datetime().nullable(),

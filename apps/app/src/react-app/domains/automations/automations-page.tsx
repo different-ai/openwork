@@ -77,7 +77,9 @@ import type { AutomationModelOption, AutomationProviderCatalog } from "./automat
 import { describeAutomationModel } from "./automation-model-options"
 
 import { AutomationRunDetails } from "./automation-run-details"
-import { runUsageLabel } from "./automation-run-summary"
+import { automationRunMessages, showsAutomationExecutionTranscript } from "@/react-app/kernel/automation-run-messages"
+import { AutomationRunTranscript } from "@/react-app/design-system/automation-run-transcript"
+import { runResultData, runUsageLabel } from "./automation-run-summary"
 
 const AUTOMATIONS_PAGE_FAST_POLL_MS = AUTOMATIONS_FAST_POLL_MS
 
@@ -174,6 +176,7 @@ function LoadingState() {
 
 export function AutomationsPage(props: {
   providerCatalog?: AutomationProviderCatalog
+  executionTranscriptEnabled?: boolean
   agentNames?: ReadonlyMap<string, string>
   approvals?: AutomationApprovals
   workspaceId?: string | null
@@ -401,6 +404,11 @@ export function AutomationsPage(props: {
     const connectionFix = selectedReceipt ? automationRunConnectionFix(selectedReceipt.run, selectedReceipt.events, readDenSettings().baseUrl) : null
     const receiptIsLoading = receiptQuery.isLoading || (receiptQuery.isFetching && !selectedReceipt)
     const threadMatches = !selectedThreadId || selectedReceipt?.run.executionThread?.id === selectedThreadId
+    const transcriptMessages = selectedReceipt && threadMatches && showsAutomationExecutionTranscript(props.executionTranscriptEnabled === true, {
+      actionKind: selectedReceipt.revision.action?.kind,
+      hasExecutionThread: Boolean(selectedReceipt.run.executionThread),
+      agentId: selectedReceipt.automation.agentId,
+    }) ? automationRunMessages(selectedReceipt) : []
     const knownRunIds = runs.map((run) => run.id)
     if (selectedReceipt && threadMatches) knownRunIds.push(selectedReceipt.run.id)
     const localSessionRoute = selectedReceipt?.run.executionThread
@@ -733,7 +741,19 @@ export function AutomationsPage(props: {
                       </AlertDescription>
                     </Alert>
                   ) : null}
-                  <AutomationRunDetails key={selectedRunId} events={selectedReceipt.events} pending={pendingForRun} result={selectedReceipt.run.resultSummary}>
+                  <AutomationRunDetails
+                    key={selectedRunId}
+                    events={selectedReceipt.events}
+                    pending={pendingForRun}
+                    result={transcriptMessages.length > 0 && selectedReceipt.run.status === "succeeded" && runResultData(selectedReceipt.run.resultSummary) === null
+                      ? null : selectedReceipt.run.resultSummary}
+                    transcript={transcriptMessages.length > 0 ? <AutomationRunTranscript
+                      scope={JSON.stringify([readDenSettings().baseUrl, organizationId, denAuth.verifiedIdentity?.principalId, selectedReceipt.run.executionThread?.id ?? selectedRunId])}
+                      messages={transcriptMessages}
+                      running={ACTIVE_RUN_STATUSES.has(selectedReceipt.run.status)}
+                      waiting={Boolean(pendingForRun?.length)}
+                    /> : undefined}
+                  >
                     {props.approvals?.renderForRun({ automationId: task.id, selectedRunId, placement: { runId: selectedRunId, executionTarget: selectedReceipt.run.executionTarget }, onOpenRun: selectRun })}
                   </AutomationRunDetails>
                 </div>

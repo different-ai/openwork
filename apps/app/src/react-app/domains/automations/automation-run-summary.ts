@@ -99,19 +99,7 @@ export function runTextPreview(text: string, limit: number, expanded: boolean) {
   return { long, text: long && !expanded ? `${text.slice(0, limit).trimEnd()}…` : text }
 }
 
-export function runResultData(summary: string | null): string | null {
-  if (!summary) return null
-  try {
-    const value: unknown = JSON.parse(summary)
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return null
-  }
-}
-
-export function runMarkdownText(text: string): string {
-  return text.replaceAll('data-openwork-shiki="true"', 'data-openwork-shiki=&quot;true&quot;')
-}
+export { runMarkdownText, runResultData } from "@/react-app/kernel/automation-run-messages"
 
 export function runUsageLabel({ inputTokens, outputTokens, costMicros }: Record<string, unknown>, compact = false): string | null {
   const parts: string[] = []

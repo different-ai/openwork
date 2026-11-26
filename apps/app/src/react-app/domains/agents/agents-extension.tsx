@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, type ComponentType } from "react";
+import { TextComposerSlot, type TextComposerProps } from "@/react-app/kernel/text-composer-slot";
 import { useQuery } from "@tanstack/react-query";
 import type { DenClient } from "@/app/lib/den";
 
@@ -14,7 +15,6 @@ import { AgentPanel } from "./agent-panel";
 import { AgentProposalCard } from "./agent-proposal-card";
 import { AgentSidebarSection } from "./agent-sidebar-section";
 import { AgentTranscriptFooter } from "./agent-transcript-footer";
-import { AgentTranscriptFrame } from "./agent-transcript-frame";
 import type { AgentScope, AgentsRuntime } from "./agents-runtime";
 import { useAgentListQuery } from "./use-agents";
 
@@ -26,7 +26,6 @@ const COMPONENTS = {
   HeaderTitle: AgentHeaderTitle,
   Greeting: AgentGreeting,
   ProposalCard: AgentProposalCard,
-  TranscriptFrame: AgentTranscriptFrame,
   TranscriptFooter: AgentTranscriptFooter,
   Panel: AgentPanel,
 };
@@ -51,13 +50,17 @@ export function useStandingChatFeature(scope: AgentScope | null, client: DenClie
   return standingChatFeature(scope && client && snapshot.isSuccess ? snapshot.data : undefined);
 }
 
-export function usePersonalAgentSessionExtensions(runtime: AgentsRuntime | null, feature: StandingChatFeature): SessionExtensions {
+export function usePersonalAgentSessionExtensions(runtime: AgentsRuntime | null, feature: StandingChatFeature, textComposer: ComponentType<TextComposerProps>): SessionExtensions {
   const chats = useAgentChatStore((state) => state.chats);
   const agents = useAgentListQuery(runtime, true).data;
   return useMemo(() => {
     const renderStandingChat = (sessionId: string) => {
       const mode = standingChatMode(chats, runtime, sessionId, feature);
-      return mode === "workspace" ? null : <AgentStandingChat key={sessionId} sessionId={sessionId} locked={mode === "locked"} />;
+      return mode === "workspace" ? null : (
+        <TextComposerSlot.Provider key={sessionId} value={textComposer}>
+          <AgentStandingChat sessionId={sessionId} locked={mode === "locked"} />
+        </TextComposerSlot.Provider>
+      );
     };
     if (!runtime) {
       return { ...COMPONENTS, renderStandingChat, proposalCards: false, ownedSessionIds: NO_SESSION_IDS, hiddenSidebarSessionIds: NO_SESSION_IDS, composerPlaceholders: NO_PLACEHOLDERS };
@@ -79,5 +82,5 @@ export function usePersonalAgentSessionExtensions(runtime: AgentsRuntime | null,
           : chat.asked ? t("agents.placeholder_answer") : t("agents.placeholder_new"),
       ])),
     };
-  }, [agents, chats, feature, runtime]);
+  }, [agents, chats, feature, runtime, textComposer]);
 }

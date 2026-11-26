@@ -15,7 +15,7 @@ const { PlatformProvider, createDefaultPlatform } = await import("../src/react-a
 const { parseRemoteRead } = await import("../src/lib/remote-session-thread")
 const { remoteTranscriptToUIMessages } = await import("../src/lib/remote-transcript-messages")
 const { RemoteFollowUpComposer } = await import("../src/react-app/domains/session/remote-threads/remote-follow-up-composer")
-const { RemoteTranscriptView } = await import("../src/react-app/domains/session/remote-threads/remote-transcript-view")
+const { RemoteTranscriptView } = await import("../src/components/chat/readonly-transcript-view")
 
 const payload = {
   messages: [

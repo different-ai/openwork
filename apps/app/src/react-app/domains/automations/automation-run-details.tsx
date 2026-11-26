@@ -25,18 +25,21 @@ function TextPreview({ text, limit, markdown = false }: { text: string; limit: n
   </>
 }
 
-export function AutomationRunDetails({ events, pending, result, children }: {
+export function AutomationRunDetails({ events, pending, result, children, transcript }: {
   events: readonly AutomationRunEvent[]
   pending?: readonly { toolName: string; connectionName?: string }[]
   result: string | null
   children?: ReactNode
+  transcript?: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const panelId = useId()
-  const steps = open ? runSteps(events, pending) : []
-  const { visible, remaining } = runToolPreview(runToolSummary(events, pending))
+  const detailEvents = transcript ? events.filter(({ type }) => type === "warning" || type === "usage" || type === "terminal") : events
+  const steps = open ? runSteps(detailEvents, pending) : []
+  const { visible, remaining } = runToolPreview(transcript ? [] : runToolSummary(events, pending))
   const resultData = runResultData(result)
   return <>
+    {transcript}
     {result && <section data-run-result className="min-w-0 space-y-1 text-sm">
       <h3 className="font-medium">Result</h3>
       {resultData !== null ? <p>Finished with structured results.</p> : <TextPreview text={result} limit={1200} markdown />}

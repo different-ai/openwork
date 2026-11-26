@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 
-import { createDenClient } from "../src/app/lib/den";
+import { createDenClient, DenApiError } from "../src/app/lib/den";
 import { PersonalAgentsProvider, type AgentsRuntime } from "../src/react-app/domains/agents/agents-runtime";
 
 function connection(name: string, overrides: Partial<PersonalAgentConnectionTools> = {}): PersonalAgentConnectionTools {
@@ -60,13 +60,19 @@ test.each([false, true])("both summaries open What it can use (compact: %s)", as
   const agent = personalAgentDetailSchema.parse({
     agent: { id: "agent", organizationId: "org", ownerMemberId: "member", name: "Inbox helper", state: "active", currentRevisionId: "revision", createdAt: timestamp, updatedAt: timestamp, archivedAt: null },
     revision: { id: "revision", agentId: "agent", version: 1, brief: "Triage messages", toolPolicy: { tools: {}, connections: {} }, defaultExecutionTarget: "cloud", monthlyBudgetMicros: null, digest: "0123456789abcdef", createdAt: timestamp },
-    routineCount: 0,
+    routineCount: 1,
+    routines: [{ id: "routine", name: "Check messages", state: "active", schedule: { kind: "daily", timezone: "UTC", hour: 9, minute: 0 }, nextDueAt: null, latestRun: null }],
   });
+  const runCalls: Array<{ organizationId: string; agentId: string; routineId: string | undefined }> = [];
   const baseUrl = "https://den.example.test";
   const runtime: AgentsRuntime = {
     denBaseUrl: baseUrl, organizationId: "org", principal: "member", workspaceId: "workspace", selectedSessionId: "agent-chat",
     client: { ...createDenClient({ baseUrl }), getPersonalAgentTools: async () => ({ connections: [] }),
-      getPersonalAgentMemory: async () => ({ notes: "", version: 0, updatedAt: null, updatedBy: null, canEdit: true, routines: [] }) },
+      getPersonalAgentMemory: async () => ({ notes: "", version: 0, updatedAt: null, updatedBy: null, canEdit: true, routines: [] }),
+      runPersonalAgentNow: async (organizationId, agentId, input) => {
+        runCalls.push({ organizationId, agentId, routineId: input.routineId });
+        throw new DenApiError(409, "personal_agent_run_queue_full", "Queue full");
+      } },
     createSession: async () => null, openSession: () => {}, sessionState: async () => "open", renameSession: () => {},
   };
   const cache = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity } } });
@@ -101,6 +107,10 @@ test.each([false, true])("both summaries open What it can use (compact: %s)", as
   expect(document.body.querySelector(panelSummary) ?? container.querySelector(panelSummary)).toBeNull();
   await click("[data-agent-settings-back]");
   expect(element(panelSummary).textContent).toContain("It’ll ask when it needs one.");
+  await click("[data-agent-run-now]");
+  await act(async () => { await Bun.sleep(20); });
+  expect(runCalls).toEqual([{ organizationId: "org", agentId: "agent", routineId: "routine" }]);
+  expect(element("[data-agent-panel] [role='status']").textContent).toContain("several runs waiting");
   await click(panelSummary);
   expect(element("[data-agent-settings] h3").textContent).toBe("What it can use");
 });

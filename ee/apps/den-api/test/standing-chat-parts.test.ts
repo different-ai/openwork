@@ -13,7 +13,7 @@ test("standing chat projects only the caller's assistant steps and redacts conne
   ])
   assert.deepEqual([...history], [["first", [
     { type: "text", text: "I’ll check." },
-    { type: "tool", id: "call", name: "calendar", status: "completed", input: null, output: null, error: null, truncated: false, startedAt: 100, endedAt: 200 },
+    { type: "tool", id: "call", name: "calendar", status: "completed", input: null, output: null, error: null, truncated: false },
     { type: "text", text: "**Agenda ready**" },
   ]]])
 })

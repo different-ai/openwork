@@ -79,6 +79,8 @@ type EditorProps = {
   pastedText?: PastedTextToken[];
   attachments?: ComposerAttachmentToken[];
   submitDisabled: boolean;
+  readOnly?: boolean;
+  ariaLabel?: string;
   placeholder: string;
   placeholderShortcut?: string;
   onChange: (value: string) => void;
@@ -1204,7 +1206,7 @@ function SyncPlugin(props: {
   return null;
 }
 
-function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void | Promise<void>; disabled: boolean }) {
+function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void | Promise<void>; disabled: boolean; readOnly?: boolean }) {
   const [editor] = useLexicalComposerContext();
   const onSubmitRef = useRef(props.onSubmit);
 
@@ -1213,10 +1215,11 @@ function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void |
   }, [props.onSubmit]);
 
   useEffect(() => {
+    if (props.readOnly !== undefined) editor.setEditable(!props.readOnly);
     return editor.registerCommand(
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
-        if (props.disabled) return false;
+        if (props.disabled || props.readOnly) return false;
         if (event?.isComposing === true || event?.keyCode === 229) return false;
         if (event?.shiftKey) return false;
         const selection = $getSelection();
@@ -1227,7 +1230,7 @@ function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void |
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [editor, props.disabled]);
+  }, [editor, props.disabled, props.readOnly]);
 
   return null;
 }
@@ -1786,6 +1789,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
               data-composer-editor=""
               className="min-h-6 max-h-[min(160px,30dvh)] lg:min-h-[60px] lg:max-h-[280px] w-full resize-none overflow-y-auto bg-transparent text-base leading-6 text-dls-text outline-none placeholder:text-dls-secondary lg:text-[13px] lg:leading-[1.55] [&_p]:min-h-[1.5rem] [&_p]:m-0"
               aria-placeholder={props.placeholder}
+              aria-label={props.ariaLabel}
               placeholder={<span />}
               onPaste={props.onPaste}
               onDrop={props.onDrop}
@@ -1813,7 +1817,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
           pastedText={props.pastedText}
           attachments={props.attachments}
         />
-        <SubmitPlugin onSubmit={props.onSubmit} disabled={props.submitDisabled} />
+        <SubmitPlugin onSubmit={props.onSubmit} disabled={props.submitDisabled} readOnly={props.readOnly} />
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <AttachmentChipPlugin onRemoveAttachment={props.onRemoveAttachment} onExpandAttachment={props.onExpandAttachment} />

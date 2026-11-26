@@ -110,16 +110,17 @@ export function useSaveAgentSettings(runtime: AgentsRuntime, agent: PersonalAgen
 
 type ToolDecision = Exclude<PersonalAgentRequestDecision, "approve">;
 
-export function useDecideAgentToolRequest(runtime: AgentsRuntime, agentId: string, requestId: string) {
+export function useDecideAgentToolRequest(runtime: AgentsRuntime, agentId: string, requestId: string, onDecision?: (request: PersonalAgentRequest, choice: ToolDecision) => void) {
   const { client, organizationId } = runtime;
   const queryClient = useQueryClient();
   const requestsKey = agentRequestsKey(runtime, agentId);
   return useMutation({
     mutationKey: [...requestsKey, "decide-tool", requestId],
     mutationFn: (decision: ToolDecision) => client.decidePersonalAgentRequest(organizationId, agentId, requestId, decision),
-    onSuccess: async (updated) => {
+    onSuccess: async (updated, choice) => {
       await queryClient.cancelQueries({ queryKey: requestsKey });
       queryClient.setQueryData<PersonalAgentRequest[]>(requestsKey, (items) => items?.map((item) => item.id === updated.id ? updated : item));
+      onDecision?.(updated, choice);
     },
     onError: () => toast.error(t("agents.permission_ask_save_failed")),
     onSettled: () => { void queryClient.invalidateQueries({ queryKey: agentsQueryRoot(runtime) }); },

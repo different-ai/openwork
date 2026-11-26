@@ -27,7 +27,6 @@ export function standingChatParts(turnIds: ReadonlySet<string>, messages: readon
     }
     for (const call of message.toolCalls) {
       const result = resultsByTurn.get(message.messageId)?.get(call.id)
-      // The private conversation needs activity labels, not copies of connector arguments or results.
       turn.parts.push({
         type: "tool",
         id: call.id.slice(0, 240),
@@ -37,8 +36,6 @@ export function standingChatParts(turnIds: ReadonlySet<string>, messages: readon
         output: null,
         error: null,
         truncated: false,
-        ...(message.createdAt === undefined ? {} : { startedAt: Math.max(0, Math.round(message.createdAt)) }),
-        ...(result?.createdAt === undefined ? {} : { endedAt: Math.max(0, Math.round(result.createdAt)) }),
       })
     }
     byTurn.set(turn.id, turn)

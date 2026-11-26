@@ -1,17 +1,22 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, LockKeyhole } from "lucide-react";
+import { LockKeyhole } from "lucide-react";
 import type { PersonalAgentStandingChat, SendPersonalAgentChatMessage } from "@openwork/types/den/personal-agents";
 
 import { Button } from "@/components/ui/button";
-import { Message, MessageContent } from "@/components/ui/message";
-import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
 import { t } from "@/i18n";
+import { RemoteTranscriptView } from "@/react-app/design-system/readonly-transcript-view";
+import { useLocal } from "@/react-app/kernel/local-provider";
 
+import { AgentChatDock } from "./agent-chat-dock";
 import { agentChatFor, agentChatKey, useAgentChatStore } from "./agent-chat-store";
+import { agentThreadMessages } from "./agent-thread-messages";
 import { AgentTranscriptFooter } from "./agent-transcript-footer";
 import { useAgentsRuntime, type AgentsRuntime } from "./agents-runtime";
-import { agentsQueryRoot } from "./use-agents";
+import { agentsQueryRoot, useAgentDetail } from "./use-agents";
+
+type ThreadSend = { input: SendPersonalAgentChatMessage; createdAt: number };
 
 export function AgentStandingChat({ sessionId, locked }: { sessionId: string; locked: boolean }) {
   const runtime = useAgentsRuntime();
@@ -22,12 +27,17 @@ export function AgentStandingChat({ sessionId, locked }: { sessionId: string; lo
       {t("agents.chat_unverified")}
     </div>;
   }
-  return <StandingThread key={agentChatKey(runtime, chat.agentId)} runtime={runtime} agentId={chat.agentId} sessionId={sessionId}
+  const threadKey = agentChatKey(runtime, chat.agentId);
+  return <StandingThread key={threadKey} threadKey={threadKey} runtime={runtime} agentId={chat.agentId} sessionId={sessionId}
     name={chat.agentName ?? t("agents.new")} />;
 }
 
-function StandingThread({ runtime, agentId, sessionId, name }: { runtime: AgentsRuntime; agentId: string; sessionId: string; name: string }) {
+function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runtime: AgentsRuntime; agentId: string; sessionId: string; name: string; threadKey: string }) {
   const queryClient = useQueryClient();
+  const local = useLocal();
+  const agent = useAgentDetail(runtime, agentId);
+  const displayName = agent?.agent.name ?? name;
+  const paused = Boolean(agent?.agent.pausedAt);
   const sendInProgress = useRef(false);
   const [text, setText] = useState("");
   const queryKey = [...agentsQueryRoot(runtime), "standing-thread", agentId];
@@ -38,81 +48,62 @@ function StandingThread({ runtime, agentId, sessionId, name }: { runtime: Agents
     refetchInterval: (query) => query.state.data?.turns.some((turn) => turn.status === "running") ? 1_500 : 15_000,
   });
   const send = useMutation({
-    mutationFn: (input: SendPersonalAgentChatMessage) => runtime.client.sendPersonalAgentThreadMessage(runtime.organizationId, agentId, input),
+    mutationFn: ({ input }: ThreadSend) => runtime.client.sendPersonalAgentThreadMessage(runtime.organizationId, agentId, input),
     retry: false,
     onMutate: () => queryClient.cancelQueries({ queryKey }),
     onSuccess: ({ turn }) => {
       setText("");
-      queryClient.setQueryData<PersonalAgentStandingChat>(queryKey, (data) => ({
-        turns: [...(data?.turns.filter((entry) => entry.id !== turn.id) ?? []), turn],
-      }));
+      queryClient.setQueryData<PersonalAgentStandingChat>(queryKey, (data) => {
+        if (data?.turns.some((entry) => entry.clientMessageId === turn.clientMessageId)) return data;
+        return { turns: [...(data?.turns ?? []), turn] };
+      });
     },
     onSettled: () => {
       sendInProgress.current = false;
       void queryClient.invalidateQueries({ queryKey: agentsQueryRoot(runtime) });
     },
   });
-  const turns = thread.data?.turns ?? [];
-  const running = turns.some((turn) => turn.status === "running");
-  const canSend = !thread.isError && !thread.isPending && !running && !send.isPending && text.trim().length > 0;
-  const label = t("agents.placeholder_message", { name });
-  const submitted = send.variables;
-  const confirmed = submitted && turns.some((turn) => turn.clientMessageId === submitted.clientMessageId);
-  const pending = send.isPending && !confirmed ? submitted : null;
+  const running = thread.data?.turns.some((turn) => turn.status === "running") ?? false;
+  const submitted = send.variables?.input;
+  const confirmed = submitted && thread.data?.turns.some((turn) => turn.clientMessageId === submitted.clientMessageId);
+  const pending = send.isPending && !confirmed ? send.variables : undefined;
   const uncertain = send.isError && !confirmed;
+  const messages = useMemo(() => agentThreadMessages(thread.data?.turns ?? [], pending ? { ...pending.input, createdAt: pending.createdAt } : null), [thread.data?.turns, pending]);
+  const draft = confirmed && send.isError && text.trim() === submitted?.message ? "" : text;
+  const disabled = thread.isPending || thread.isError || running || paused;
   function submit() {
-    if (!canSend || sendInProgress.current) return;
-    const message = text.trim();
-    if (confirmed && send.isError && message === submitted?.message) {
-      setText("");
-      send.reset();
-      return;
-    }
+    const message = draft.trim();
+    if (disabled || send.isPending || sendInProgress.current || !message || message.length > 16_000) return;
     sendInProgress.current = true;
-    send.mutate({ message, clientMessageId: uncertain && submitted?.message === message ? submitted.clientMessageId : crypto.randomUUID() });
+    send.mutate({
+      input: { message, clientMessageId: uncertain && submitted?.message === message ? submitted.clientMessageId : crypto.randomUUID() },
+      createdAt: Date.now(),
+    });
   }
 
   return <div data-agent-thread className="flex h-full min-h-0 flex-col">
     <div role="log" aria-label={t("agents.chat_transcript")} className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto px-3 sm:px-5">
-      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-5 py-4">
-        {thread.isPending && <p role="status" className="text-center text-sm text-dls-secondary">{t("agents.chat_loading")}</p>}
-        {!thread.isPending && !thread.isError && !turns.length && !pending && <p className="px-2 text-sm text-dls-secondary md:px-10">{t("agents.chat_empty", { name })}</p>}
-        {turns.map((turn) => <div key={turn.id} className="flex flex-col gap-4 px-2 md:px-10">
-          <UserLine text={turn.message} />
-          {turn.reply && <Message data-message-role="assistant">
-            <MessageContent markdown className="w-full min-w-0 bg-transparent p-0">{turn.reply}</MessageContent>
-          </Message>}
-          {turn.status === "failed" && <p role="status" className="text-sm text-dls-secondary">{t("agents.chat_reply_failed")}</p>}
-        </div>)}
-        {pending && <div className="px-2 md:px-10"><UserLine text={pending.message} /></div>}
-        {(running || pending) && <p role="status" className="px-2 text-sm text-dls-secondary md:px-10">{t("agents.chat_replying", { name })}</p>}
+      <div className="w-full shrink-0 py-4">
+        {thread.isPending ? <div role="status" aria-label={t("agents.chat_loading")} className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-2 md:px-10">
+          <Skeleton className="h-9 w-40 self-end rounded-2xl" />
+          <Skeleton className="h-4 w-56 max-w-full" />
+        </div> : !thread.isError && messages.length === 0 ?
+          <p className="mx-auto w-full max-w-3xl px-2 text-sm text-dls-secondary md:px-10">{t("agents.chat_empty", { name: displayName })}</p> : null}
+        <RemoteTranscriptView threadKey={threadKey} messages={messages} running={running || Boolean(pending)}
+          showThinking={local.prefs.showThinking} developerMode={false} />
         <AgentTranscriptFooter sessionId={sessionId} scoped />
       </div>
     </div>
-    <form className="mx-auto w-full max-w-[720px] px-4 pb-4 pt-2 sm:px-5" onSubmit={(event) => { event.preventDefault(); submit(); }}>
-      {thread.isError && <div role="alert" className="mb-2 flex items-center justify-between gap-3 px-2 text-sm text-dls-secondary">
-        {t("agents.chat_load_failed")}
-        <Button variant="ghost" size="sm" type="button" onClick={() => void thread.refetch()}>{t("common.retry")}</Button>
-      </div>}
-      {uncertain && <p role="alert" className="mb-2 px-2 text-sm text-dls-secondary">{t("agents.chat_send_failed")}</p>}
-      <div className="relative">
-        <Textarea aria-label={label} placeholder={label} value={confirmed && send.isError && text === submitted?.message ? "" : text}
-          maxLength={16_000} readOnly={send.isPending} className="max-h-48 rounded-2xl pe-14"
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-            event.preventDefault();
-            submit();
-          }} />
-        <Button type="submit" size="icon-sm" disabled={!canSend || (confirmed && send.isError && text === submitted?.message)} aria-label={t("agents.chat_send")}
-          className="absolute bottom-2 end-2 rounded-full"><ArrowUp aria-hidden="true" className="size-4" /></Button>
-      </div>
-    </form>
+    <AgentChatDock sessionId={sessionId} name={displayName} draft={draft} onDraftChange={setText}
+      onSend={submit} disabled={disabled} sending={send.isPending}
+      notice={<>
+        {thread.isError && <div role="alert" className="mb-2 flex items-center justify-between gap-3 px-2 text-sm text-dls-secondary">
+          {t("agents.chat_load_failed")}
+          <Button variant="ghost" size="sm" type="button" onClick={() => void thread.refetch()}>{t("common.retry")}</Button>
+        </div>}
+        {uncertain && <p role="alert" className="mb-2 px-2 text-sm text-dls-secondary">{t("agents.chat_send_failed")}</p>}
+        {paused && <p role="status" className="mb-2 px-2 text-sm text-dls-secondary">{t("agents.panel_admin_paused")}</p>}
+      </>}
+    />
   </div>;
-}
-
-function UserLine({ text }: { text: string }) {
-  return <Message data-message-role="user" className="justify-end">
-    <MessageContent className="max-w-[85%] whitespace-pre-wrap rounded-3xl bg-muted px-4 py-2.5">{text}</MessageContent>
-  </Message>;
 }
