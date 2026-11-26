@@ -29,7 +29,7 @@ async function requestViews(access: PersonalAgentAccess, memberId: string, rows:
     connectionName: row.kind === "tool" ? row.connection_name : null, toolName: row.kind === "tool" ? row.tool_name : null,
     toolTitle: row.kind === "tool" ? row.tool_title : null, summary: row.kind === "change" ? row.summary : null,
     change: row.kind === "change" ? row.change : null, decidedBy: row.decided_by_member_id ? personOrUnknown(people, row.decided_by_member_id) : null,
-    decidedAt: row.decided_at?.getTime() ?? null, createdAt: row.created_at.getTime(),
+    decidedAt: row.decided_at?.toISOString() ?? null, createdAt: row.created_at.toISOString(),
     canDecide: decisions(access, memberId, row, row.kind === "tool" && row.status === "pending" && access.role === "owner" && await toolApprovalRequiresAsk(row)),
   })))
 }

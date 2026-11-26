@@ -20,7 +20,7 @@ export const TOOL_PERMISSION_WRITTEN_RULES_MAX_LENGTH = 4_000
 export const TOOL_PERMISSION_RULES_MAX_PER_ORGANIZATION = 5_000
 
 const idSchema = z.string().trim().min(1).max(160)
-const timestampSchema = z.number().int().nonnegative()
+const timestampSchema = z.string().datetime({ offset: true })
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 const toolNameSchema = z.string().min(1).max(128).refine((name) => !LONE_SURROGATE.test(name), "Expected well-formed text")
 

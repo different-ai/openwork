@@ -51,10 +51,10 @@ export async function readPersonalAgentMemory(access: PersonalAgentAccess): Prom
   return {
     notes: memory?.notes ?? "",
     version: memory?.version ?? 0,
-    updatedAt: memory?.updated_at.getTime() ?? null,
+    updatedAt: memory?.updated_at.toISOString() ?? null,
     updatedBy,
     canEdit: access.state === "active" && canManagePersonalAgent(access.role),
-    routines: routines.map((routine) => ({ ...routine, updatedAt: routine.updatedAt.getTime() })),
+    routines: routines.map((routine) => ({ ...routine, updatedAt: routine.updatedAt.toISOString() })),
   }
 }
 

@@ -22,9 +22,9 @@ const denyMcpDispatch: MiddlewareHandler<{ Variables: Variables }> = async (c, n
   await next()
 }
 
-function metadata(operationId: string, summary: string, schema: typeof toolPermissionsSchema | typeof toolApprovalListSchema | typeof toolApprovalSchema, options: { validates?: boolean; conflict?: string } = {}) {
+function metadata(operationId: string, summary: string, description: string, schema: typeof toolPermissionsSchema | typeof toolApprovalListSchema | typeof toolApprovalSchema, options: { validates?: boolean; conflict?: string } = {}) {
   return describeRoute({
-    operationId, summary, tags: ["Tool permissions"], security: [{ bearerAuth: [] }, { denApiKey: [] }],
+    operationId, summary, description, tags: ["Tool permissions"], security: [{ bearerAuth: [] }, { denApiKey: [] }],
     responses: {
       200: jsonResponse("Success.", schema),
       ...(options.validates ? { 400: jsonResponse("Invalid request.", invalidRequestSchema) } : {}),
@@ -57,7 +57,7 @@ export function registerToolPermissionRoutes<T extends { Variables: Variables }>
   }
 
   app.get("/v1/org/tool-permissions",
-    metadata("getOrganizationToolPermissions", "Read the organization's tool rules", toolPermissionsSchema, { validates: true }),
+    metadata("getOrganizationToolPermissions", "Read the organization's tool rules", "Admins only. Returns the organization's rules for which tools are allowed, need approval, or are blocked, for the organization, teams and members, and the written rules every run follows. Pass connectionId for one connection.", toolPermissionsSchema, { validates: true }),
     orgMemberRoute(), gate, denyMcpDispatch, admin, queryValidator(toolPermissionsQuerySchema), async (c) => {
       const { organization } = c.get("organizationContext")
       const { connectionId } = c.req.valid("query")
@@ -68,7 +68,7 @@ export function registerToolPermissionRoutes<T extends { Variables: Variables }>
     })
 
   app.put("/v1/org/tool-permissions/rule",
-    metadata("setOrganizationToolPermissionRule", "Set or remove one tool rule", toolPermissionsSchema, { validates: true, conflict: "The organization has reached its tool rule limit." }),
+    metadata("setOrganizationToolPermissionRule", "Set or remove one tool rule", "Admins only. Sets one tool's rule for the organization, a team or a member, or removes it. Returns the rules for that connection.", toolPermissionsSchema, { validates: true, conflict: "The organization has reached its tool rule limit." }),
     orgMemberRoute(), gate, denyMcpDispatch, admin, jsonValidator(setToolPermissionRuleSchema), async (c) => {
       const { organization, currentMember } = c.get("organizationContext")
       const { subject, connectionId, toolName, rule } = c.req.valid("json")
@@ -92,7 +92,7 @@ export function registerToolPermissionRoutes<T extends { Variables: Variables }>
     })
 
   app.put("/v1/org/tool-permissions/written-rules",
-    metadata("setOrganizationWrittenToolRules", "Set the organization's written tool rules", toolPermissionsSchema, { validates: true }),
+    metadata("setOrganizationWrittenToolRules", "Set the organization's written tool rules", "Admins only. Replaces the written rules, in the admin's own words, that every run follows first.", toolPermissionsSchema, { validates: true }),
     orgMemberRoute(), gate, denyMcpDispatch, admin, jsonValidator(setToolPermissionWrittenRulesSchema), async (c) => {
       const { organization, currentMember } = c.get("organizationContext")
       await writeOrganizationWrittenToolRules(organization.id, c.req.valid("json").rules, currentMember.id)
@@ -101,14 +101,14 @@ export function registerToolPermissionRoutes<T extends { Variables: Variables }>
     })
 
   app.get("/v1/tool-approvals",
-    metadata("listToolApprovals", "List your pending chat and Automation tool approvals from the last 30 days", toolApprovalListSchema),
+    metadata("listToolApprovals", "List your pending chat and Automation tool approvals from the last 30 days", "Returns the tool calls from your chats and Automations that are waiting for your approval, newest first, from the last 30 days.", toolApprovalListSchema),
     orgMemberRoute(), gate, denyMcpDispatch, async (c) => {
       const { organization, currentMember } = c.get("organizationContext")
       return c.json({ items: await listPendingMemberToolApprovals(organization.id, currentMember.id) })
     })
 
   app.post("/v1/tool-approvals/:approvalId/decision",
-    metadata("decideToolApproval", "Allow once or deny your pending tool approval", toolApprovalSchema, { validates: true, conflict: "Someone already decided this." }),
+    metadata("decideToolApproval", "Allow once or deny your pending tool approval", "Allows a waiting tool call once, or denies it. Only the person who was asked can decide; a 409 means it was already decided.", toolApprovalSchema, { validates: true, conflict: "Someone already decided this." }),
     orgMemberRoute(), gate, denyMcpDispatch, paramValidator(approvalIdSchema), jsonValidator(decideToolApprovalSchema), async (c) => {
       const { organization, currentMember } = c.get("organizationContext")
       const { approvalId } = c.req.valid("param")

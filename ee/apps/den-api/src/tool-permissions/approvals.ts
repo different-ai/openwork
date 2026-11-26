@@ -83,7 +83,7 @@ export async function claimOrRequestToolApproval(input: PendingToolApproval): Pr
 export function toolApprovalView(row: ToolApprovalRow): ToolApproval {
   return { id: row.id, context: { kind: row.context_kind, id: row.context_id, label: row.context_label }, runId: row.run_id,
     connectionId: row.connection_id, connectionName: row.connection_name, toolName: row.tool_name, toolTitle: row.tool_title,
-    status: row.status, createdAt: row.created_at.getTime() }
+    status: row.status, createdAt: row.created_at.toISOString() }
 }
 
 export async function listPendingMemberToolApprovals(organizationId: string, memberId: string): Promise<ToolApproval[]> {

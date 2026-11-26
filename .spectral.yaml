@@ -315,3 +315,30 @@ overrides:
       - "**/*.json#/paths/~1v1~1remote-sessions~1bound"
     rules:
       ow-list-pagination: "off"
+  # Agent lists read whole by the agent screens, each bounded by design:
+  # an agent's routines (the 100 newest), the people it is shared with (at
+  # most the organization's members), your newest runs (limit, at most 50),
+  # and its open requests (pending plus the last 7 days, at most 50). They are
+  # snapshots, not paged collections.
+  - files:
+      - "**/*.json#/paths/~1v1~1personal-agents~1%7Bid%7D~1routines"
+      - "**/*.json#/paths/~1v1~1personal-agents~1%7Bid%7D~1shares"
+      - "**/*.json#/paths/~1v1~1personal-agents~1%7Bid%7D~1runs"
+      - "**/*.json#/paths/~1v1~1personal-agents~1%7Bid%7D~1requests"
+    rules:
+      ow-list-pagination: "off"
+  # The admin agent list is one snapshot of the 200 newest active agents with
+  # the organization's agent policy and this month's total, read whole by the
+  # admin page. Paging it needs that total computed for the whole
+  # organization first; until then it stays a bounded snapshot.
+  - files:
+      - "**/*.json#/paths/~1v1~1org~1personal-agents"
+    rules:
+      ow-list-pagination: "off"
+  # A member's tool approvals still waiting for them, from the last 30 days.
+  # Each one blocks a run until decided, so the list stays short and is read
+  # whole by the desktop's approval prompt.
+  - files:
+      - "**/*.json#/paths/~1v1~1tool-approvals"
+    rules:
+      ow-list-pagination: "off"

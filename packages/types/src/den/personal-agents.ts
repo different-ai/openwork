@@ -10,7 +10,7 @@ import {
 } from "@openwork/types/automations"
 
 const idSchema = z.string().trim().min(1).max(160)
-const timestampSchema = z.number().int().nonnegative()
+const timestampSchema = z.string().datetime({ offset: true })
 
 export const PERSONAL_AGENT_NAME_MAX_LENGTH = 120
 export const PERSONAL_AGENT_BRIEF_MAX_LENGTH = 20_000
@@ -458,6 +458,7 @@ export type PersonalAgentEvent = z.infer<typeof personalAgentEventSchema>
 
 export const personalAgentEventListSchema = z.object({
   items: z.array(personalAgentEventSchema),
+  nextCursor: z.string().nullable().describe("Pass as cursor to read older changes; null when there are no more."),
 }).meta({ ref: "PersonalAgentEventList" })
 export type PersonalAgentEventList = z.infer<typeof personalAgentEventListSchema>
 

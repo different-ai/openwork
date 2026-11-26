@@ -40,10 +40,10 @@ function mapAgent(row: AgentRow): PersonalAgent {
     name: row.name,
     state: row.state,
     currentRevisionId: row.current_revision_id,
-    createdAt: row.created_at.getTime(),
-    updatedAt: row.updated_at.getTime(),
-    archivedAt: row.archived_at?.getTime() ?? null,
-    pausedAt: row.paused_at?.getTime() ?? null,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+    archivedAt: row.archived_at?.toISOString() ?? null,
+    pausedAt: row.paused_at?.toISOString() ?? null,
   }
 }
 
@@ -57,7 +57,7 @@ function mapRevision(row: RevisionRow, toolPolicy: PersonalAgentToolPolicy): Per
     defaultExecutionTarget: row.default_execution_target,
     monthlyBudgetMicros: row.monthly_budget_micros,
     digest: row.digest.slice(0, 64),
-    createdAt: row.created_at.getTime(),
+    createdAt: row.created_at.toISOString(),
   }
 }
 
@@ -143,7 +143,7 @@ async function details(rows: Awaited<ReturnType<typeof personalAgentAccessRows>>
     return {
       agent: mapAgent(agent), revision: mapRevision(revision, toolPolicies.get(agent.id) ?? EMPTY_PERSONAL_AGENT_TOOL_POLICY), routineCount: agentRoutines.length,
       role, owner: personOrUnknown(people, agent.owner_member_id),
-      sharedWith: agentShares.map((share) => ({ ...personOrUnknown(people, share.member_id), role: share.role, createdAt: share.created_at.getTime() })),
+      sharedWith: agentShares.map((share) => ({ ...personOrUnknown(people, share.member_id), role: share.role, createdAt: share.created_at.toISOString() })),
       routines: agentRoutines, spend: usage, openRequestCount: requests.get(agent.id) ?? 0,
       audience, canShare: canManagePersonalAgent(role) && sharingAllowed,
       listed: directlyListed || withChat.has(agent.id) || audience.autoAddOrganization
@@ -345,7 +345,7 @@ export const personalAgentRepository = {
     const people = await personalAgentPeople(access.organizationId, [access.ownerMemberId, ...rows.map((row) => row.member_id)])
     return {
       owner: personOrUnknown(people, access.ownerMemberId),
-      items: rows.map((row) => ({ ...personOrUnknown(people, row.member_id), role: row.role, createdAt: row.created_at.getTime() })),
+      items: rows.map((row) => ({ ...personOrUnknown(people, row.member_id), role: row.role, createdAt: row.created_at.toISOString() })),
     }
   },
 
@@ -387,7 +387,7 @@ export const personalAgentRepository = {
 
   async chat(caller: PersonalAgentCaller, agentId: string, workspaceId: string): Promise<PersonalAgentChat | null> {
     const [row] = await db.$primary.select().from(PersonalAgentChatTable).where(chatFilter(caller, agentId, workspaceId)).limit(1)
-    return row ? { agentId: row.agent_id, workspaceId: row.workspace_id, sessionId: row.session_id, updatedAt: row.updated_at.getTime() } : null
+    return row ? { agentId: row.agent_id, workspaceId: row.workspace_id, sessionId: row.session_id, updatedAt: row.updated_at.toISOString() } : null
   },
 
   async setChat(caller: PersonalAgentCaller, agentId: string, chat: SetPersonalAgentChat): Promise<PersonalAgentChat> {
@@ -401,7 +401,7 @@ export const personalAgentRepository = {
       session_id: chat.sessionId,
       updated_at: updatedAt,
     }).onDuplicateKeyUpdate({ set: { session_id: chat.sessionId, updated_at: updatedAt } })
-    return { ...chat, agentId, updatedAt: updatedAt.getTime() }
+    return { ...chat, agentId, updatedAt: updatedAt.toISOString() }
   },
 
   async runDefinition(agentRevisionId: string): Promise<{

@@ -401,7 +401,7 @@ test("share changes and removal are recorded without storing a brief or instruct
   assert.equal(field(refusal, "error"), "personal_agent_change_stale")
   const requests = personalAgentRequestListSchema.parse(await expectStatus(asDana("GET", `${path}/requests`), 200)).items
   assert.equal(requests.find((request) => request.id === stale.id)?.status, "pending")
-  const events = await listPersonalAgentEvents({ organizationId: orgId, agentId, limit: 50 })
+  const { items: events } = await listPersonalAgentEvents({ organizationId: orgId, agentId, limit: 50 })
   assert.deepEqual(events.filter((event) => event.action.startsWith("share.")).reverse().map(({ action, detail }) => [action, detail]), [
     ["share.added", { memberName: "Sam Okafor", role: "manager" }],
     ["share.added", { memberName: "Priya Nair", role: "collaborator" }],

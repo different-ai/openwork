@@ -42,7 +42,7 @@ export function recordRunApproval(previous: { allowed: boolean; claimed: boolean
 
 export function approvalRows<T extends { approval: ToolApproval }>(pending: readonly ToolApproval[], decided: readonly T[]) {
   return [...decided, ...pending.filter((approval) => !decided.some((row) => row.approval.id === approval.id)).map((approval) => ({ approval }))]
-    .sort((a, b) => b.approval.createdAt - a.approval.createdAt || a.approval.id.localeCompare(b.approval.id));
+    .sort((a, b) => Date.parse(b.approval.createdAt) - Date.parse(a.approval.createdAt) || a.approval.id.localeCompare(b.approval.id));
 }
 
 export type AutomationApprovalResult = { kind: "denied" | "skipped" | "failed" | "waiting" | "allowed" } | { kind: "started"; runId: string };

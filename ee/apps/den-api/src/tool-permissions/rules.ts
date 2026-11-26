@@ -124,7 +124,7 @@ export async function listOrganizationToolRules(organizationId: string, connecti
     if (kind === "agent") return []
     const name = kind === "organization" ? organization : kind === "team" ? team ?? "Team" : member ?? "Member"
     return [{ id: row.id, subject: { kind, id: kind === "organization" ? null : row.subject_id, name: name.slice(0, 160) },
-      connectionId: row.connection_id, toolName: row.tool_name, rule: row.rule, updatedAt: row.updated_at.getTime() }]
+      connectionId: row.connection_id, toolName: row.tool_name, rule: row.rule, updatedAt: row.updated_at.toISOString() }]
   })
 }
 

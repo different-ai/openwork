@@ -23,7 +23,7 @@ export function AgentTranscriptFooter(props: { sessionId: string }) {
   const requests = (requestsQuery.data ?? []).filter((request) => {
     if (request.kind !== "tool" || request.status !== "pending" || !request.connectionId || !request.toolName) return true;
     return agent.revision.toolPolicy.tools[request.connectionId]?.[request.toolName] !== "block";
-  }).sort((a, b) => a.createdAt - b.createdAt);
+  }).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   const runQueueMessage = actions.runNow.variables?.agentId === agentId ? agentRunQueueMessage(actions.runNow.error) : null;
   if (!visibleRuns.length && !requests.length && !runsQuery.isError && !requestsQuery.isError && !runQueueMessage) return null;
 

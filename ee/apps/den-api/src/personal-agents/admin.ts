@@ -27,6 +27,7 @@ import { listPersonalAgentEvents, recordPersonalAgentEvent, type PersonalAgentEv
 import { personalAgentRepository } from "./repository.js"
 import { personalAgentRoutineSummaries } from "./routine-summaries.js"
 import { personalAgentSpend } from "./spend.js"
+import type { KeysetCursor } from "../list-pagination.js"
 
 export class PersonalAgentAdminInputError extends Error {}
 
@@ -77,7 +78,7 @@ async function latestRunOfAnyone(routineIds: readonly string[]): Promise<Map<str
       finishedAt: AutomationRunTable.finished_at,
     }).from(AutomationRunTable).where(eq(AutomationRunTable.automation_id, normalizeDenTypeId("automation", routineId)))
       .orderBy(desc(AutomationRunTable.created_at), desc(AutomationRunTable.id)).limit(1)
-    latest.set(routineId, run ? { id: run.id, status: run.status, createdAt: run.createdAt.getTime(), finishedAt: run.finishedAt?.getTime() ?? null } : null)
+    latest.set(routineId, run ? { id: run.id, status: run.status, createdAt: run.createdAt.toISOString(), finishedAt: run.finishedAt?.toISOString() ?? null } : null)
   }
   return latest
 }
@@ -112,7 +113,7 @@ async function adminItems(organizationId: string, agents: AgentRow[]): Promise<P
   for (const share of shares) {
     let entries = sharedWith.get(share.agent_id)
     if (!entries) sharedWith.set(share.agent_id, entries = [])
-    entries.push({ ...personOrUnknown(people, share.member_id), role: share.role, createdAt: share.created_at.getTime() })
+    entries.push({ ...personOrUnknown(people, share.member_id), role: share.role, createdAt: share.created_at.toISOString() })
   }
   return agents.map((agent) => {
     const agentSpend = spend.get(agent.id)
@@ -125,10 +126,10 @@ async function adminItems(organizationId: string, agents: AgentRow[]): Promise<P
         name: agent.name,
         state: agent.state,
         currentRevisionId: agent.current_revision_id,
-        createdAt: agent.created_at.getTime(),
-        updatedAt: agent.updated_at.getTime(),
-        archivedAt: agent.archived_at?.getTime() ?? null,
-        pausedAt: agent.paused_at?.getTime() ?? null,
+        createdAt: agent.created_at.toISOString(),
+        updatedAt: agent.updated_at.toISOString(),
+        archivedAt: agent.archived_at?.toISOString() ?? null,
+        pausedAt: agent.paused_at?.toISOString() ?? null,
       },
       owner: personOrUnknown(people, agent.owner_member_id),
       sharedWith: sharedWith.get(agent.id) ?? [],
@@ -308,7 +309,7 @@ export async function setAdminPersonalAgentPolicy({ organizationId, memberId }: 
   return getAdminPersonalAgentPolicy(organizationId)
 }
 
-export async function listAdminPersonalAgentEvents(organizationId: string, query: { limit: number; agentId?: string }) {
+export async function listAdminPersonalAgentEvents(organizationId: string, query: { limit: number; agentId?: string; cursor?: KeysetCursor }) {
   if (query.agentId !== undefined && !await findAgent(organizationId, query.agentId)) return undefined
-  return { items: await listPersonalAgentEvents({ organizationId, ...query }) }
+  return listPersonalAgentEvents({ organizationId, ...query })
 }
