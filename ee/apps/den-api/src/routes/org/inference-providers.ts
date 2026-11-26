@@ -16,6 +16,7 @@ import { bindProviderGrantAuditTarget, loadProviderAudit, providerAuditMutation,
 import { recheckAuditEntitlement } from "../../audit/capture.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
+import { markFeaturesUsed } from "../../feature-usage.js"
 import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import { gatewayMemberConnections } from "../../llm/gateway-member-connections.js"
@@ -56,7 +57,7 @@ import { credentialPromptResponseFields, gatewayCredentialShape, gatewayProvider
 import { GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomCreateRequestSchema, gatewayCustomDiscoverRequestSchema, gatewayCustomDiscoverResponseSchema, gatewayCustomProviderStatusSchema, gatewayCustomTestRequestSchema, gatewayCustomTestResponseSchema, gatewayCustomTestStep, gatewayCustomUpdateRequestSchema, isGatewayCustomProviderId, type GatewayCustomModel, type GatewayCustomProviderSettings, type GatewayCustomTestResponse } from "@openwork/types/den/gateway-custom-providers"
 import { discoverCustomProviderModels } from "../../llm/custom-provider-discovery.js"
 import { checkCustomBaseUrl, customCatalogProvider, customProviderConfig, readCustomProviderSettings, sameCustomOrigin } from "../../llm/gateway-custom-provider.js"
-import { gatewayProviderSettingsSchema, patchGatewayProvider, removeGatewayAccessGrant, removeGatewayCredentialSet, removeGatewayModelGroup, removeGatewayProvider } from "../../llm/gateway-provider-writes.js"
+import { normalizedBedrockGuardrailSettings, requireBedrockGuardrailWrite, gatewayProviderSettingsSchema, patchGatewayProvider, removeGatewayAccessGrant, removeGatewayCredentialSet, removeGatewayModelGroup, removeGatewayProvider } from "../../llm/gateway-provider-writes.js"
 
 const paramsSchema = idParamSchema("inferenceProviderId", "inferenceProvider")
 const groupParams = paramsSchema.extend(idParamSchema("groupId", "gatewayModelGroup").shape)
@@ -580,6 +581,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       }
       const catalog = await gatewayCatalog(input.providerId, [input.model])
       const settings = Object.fromEntries(Object.entries(input.settings ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0))
+      await requireBedrockGuardrailWrite(actor.organization.id, input.settings)
       validateGatewaySettings(catalog.config, settings)
       await liveMember(db, actor, false)
       const now = new Date()
@@ -604,7 +606,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const catalog = await gatewayCatalog(input.providerId, input.modelIds)
       validateGatewaySettings(catalog.config, input.settings ?? {})
       const now = new Date()
-      const provider: GatewayProvider = { id: normalizeDenTypeId("inferenceProvider", providerAuditRequests.get(c.req.raw)?.providerId ?? createDenTypeId("inferenceProvider")), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], pinned_model_ids: [], provider_config: catalog.config, settings: input.settings ?? {}, credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
+      const provider: GatewayProvider = { id: normalizeDenTypeId("inferenceProvider", providerAuditRequests.get(c.req.raw)?.providerId ?? createDenTypeId("inferenceProvider")), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: catalog.catalog.id, name: input.name, model_ids: [...new Set(input.modelIds)], pinned_model_ids: [], provider_config: catalog.config, settings: normalizedBedrockGuardrailSettings(input.settings ?? {}), credential_mode: input.credentialMode ?? "org", oauth_client_id: null, oauth_client_secret: null, status: input.status ?? "active", created_at: now, updated_at: now }
       await db.transaction(async (tx) => {
         if (input.shareFromDevice) {
           await lockUsageOrganization(tx, actor.organization.id)
@@ -617,6 +619,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         if (capture) await recheckAuditEntitlement(tx, actor.organization.id)
         const member = await liveMember(tx, actor, true)
         await requireLiveManage(tx, actor)
+        await requireBedrockGuardrailWrite(actor.organization.id, input.settings, tx)
         await providerAuditMutation(tx, capture, async () => {
           await tx.insert(GatewayProviderTable).values(provider)
           await writeGatewayModels(tx, provider, catalog.models)
@@ -624,6 +627,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
           defaultSetId = (await defaultMatrix(tx, provider, { ...input, credential }, member.id, { awaitKey: true })).setId
         })
       })
+      if (input.settings?.guardrailIdentifier !== undefined || input.settings?.guardrailVersion !== undefined) markFeaturesUsed({ organizationId: actor.organization.id, memberId: actor.currentMember.id, keys: ["bedrockGuardrails"] })
       const prompt = await pendingKeyPrompt(provider, defaultSetId)
       return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), ...prompt }, 201)
     } catch (error) { return respond(c, error) }
@@ -656,6 +660,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       const trusted = await trustedProviderCatalog(before)
       const provider = await providerTransaction(c, (tx, existing) => patchGatewayProvider(tx, existing, trusted, input))
+      if (input.settings?.guardrailIdentifier !== undefined || input.settings?.guardrailVersion !== undefined) markFeaturesUsed({ organizationId: actor.organization.id, memberId: actor.currentMember.id, keys: ["bedrockGuardrails"] })
       return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }) })
     } catch (error) { return respond(c, error) }
   })

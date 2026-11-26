@@ -116,6 +116,17 @@ To browse, filter and export these events, see [Audit logs](/cloud/audit-logs).
 
 Audit payloads avoid bearer tokens, API key secrets, SCIM tokens, SAML certificates, and OIDC client secrets. Sensitive access changes also emit structured `[audit-alert]` log lines so operators can route SSO, SCIM, API-key, role, invitation, and member-change events into alerting. For private deployments, export audit data and audit-alert logs through the deployment's database or logging pipeline into the organization's retention and SIEM process.
 
+## Model and runtime controls
+
+These controls address different boundaries; configuring one does not turn the others on:
+
+- [Model access and teams](/ai-gateway/users-and-teams) control which Gateway models a member can invoke.
+- [Desktop policies](/cloud/share-with-your-team/desktop-policies) govern supported desktop configuration, including locally added providers.
+- [Agent permissions](/cloud/share-with-your-team/agent-permissions) govern agent tool use, not the model provider's content policy.
+- [Bedrock guardrails (Preview)](/cloud/security-controls/bedrock-guardrails) describes an off-by-default Preview provider control for AWS Runtime inference routed through AI Gateway, with independent IAM enforcement. It is not a generally available security control and does not cover every provider, direct desktop connections or tool traffic.
+
+Review the actual client route, provider, AWS principal and effective rollout state before treating a model-content policy as enforced. A successful credential diagnostic or a saved provider setting alone is not proof.
+
 ## Availability and failover
 
 OpenWork Cloud treats Den API as the logical control plane for identity, RBAC, hosted workers, shared providers, and organization policy. The hosted deployment avoids making that logical control plane a single physical chokepoint:

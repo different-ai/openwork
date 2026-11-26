@@ -32,6 +32,54 @@ export function parseBedrockConverseJsonUsage(body: unknown): ParsedUsage {
 
 export type EventStreamFrame = { headers: Map<string, string>; payload: Uint8Array }
 
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit++) crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+/** Encode an AWS event-stream frame, including both required CRC32 checksums. */
+export function encodeEventStreamFrame(headers: ReadonlyMap<string, string>, payload: Uint8Array): Uint8Array {
+  const parts: Uint8Array[] = []
+  let headersLength = 0
+  for (const [name, value] of headers) {
+    const nameBytes = encoder.encode(name)
+    const valueBytes = encoder.encode(value)
+    if (nameBytes.length > 255 || valueBytes.length > 65535) throw new Error("Event stream header is too long.")
+    const part = new Uint8Array(nameBytes.length + valueBytes.length + 4)
+    part[0] = nameBytes.length
+    part.set(nameBytes, 1)
+    part[1 + nameBytes.length] = 7
+    new DataView(part.buffer).setUint16(2 + nameBytes.length, valueBytes.length)
+    part.set(valueBytes, 4 + nameBytes.length)
+    parts.push(part)
+    headersLength += part.length
+  }
+  const totalLength = preludeLength + headersLength + payload.length + messageCrcLength
+  const bytes = new Uint8Array(totalLength)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(0, totalLength)
+  view.setUint32(4, headersLength)
+  view.setUint32(8, crc32(bytes.subarray(0, 8)))
+  let offset = preludeLength
+  for (const part of parts) { bytes.set(part, offset); offset += part.length }
+  bytes.set(payload, offset)
+  view.setUint32(totalLength - messageCrcLength, crc32(bytes.subarray(0, totalLength - messageCrcLength)))
+  return bytes
+}
+
+/** Validate both CRC32 checksums on a complete AWS event-stream frame. */
+export function eventStreamFrameChecksumsValid(bytes: Uint8Array): boolean {
+  if (bytes.length < preludeLength + messageCrcLength) return false
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  if (view.getUint32(0) !== bytes.length) return false
+  return view.getUint32(8) === crc32(bytes.subarray(0, 8))
+    && view.getUint32(bytes.length - messageCrcLength) === crc32(bytes.subarray(0, bytes.length - messageCrcLength))
+}
+
 function headerValueLength(type: number, view: DataView, offset: number) {
   switch (type) {
     case 0:
@@ -76,7 +124,7 @@ function parseHeaders(bytes: Uint8Array) {
   return headers
 }
 
-export function readEventStreamFrames(buffer: Uint8Array, onFrame: (frame: EventStreamFrame) => void): Uint8Array | null {
+export function readEventStreamFrames(buffer: Uint8Array, onFrame: (frame: EventStreamFrame, bytes: Uint8Array) => void): Uint8Array | null {
   let rest = buffer
   while (rest.byteLength >= preludeLength) {
     const view = new DataView(rest.buffer, rest.byteOffset, rest.byteLength)
@@ -86,7 +134,7 @@ export function readEventStreamFrames(buffer: Uint8Array, onFrame: (frame: Event
     if (rest.byteLength < totalLength) break
     const headers = parseHeaders(rest.subarray(preludeLength, preludeLength + headersLength))
     if (!headers) return null
-    onFrame({ headers, payload: rest.subarray(preludeLength + headersLength, totalLength - messageCrcLength) })
+    onFrame({ headers, payload: rest.subarray(preludeLength + headersLength, totalLength - messageCrcLength) }, rest.subarray(0, totalLength))
     rest = rest.subarray(totalLength)
   }
   return rest
