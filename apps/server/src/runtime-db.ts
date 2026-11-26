@@ -39,12 +39,39 @@ export function runtimeStorageDir(config: Pick<ServerConfig, "configPath">): str
   return dirname(runtimeDbPath(config));
 }
 
+/**
+ * How long a runtime.sqlite connection waits for another connection's lock
+ * before failing with SQLITE_BUSY ("database is locked"). Several connections
+ * (workspace KV stores, v2 session homes, read-only config inspections, other
+ * processes) share runtime.sqlite, so a zero timeout makes reads fail whenever
+ * a write happens to be committing.
+ */
+export const RUNTIME_SQLITE_BUSY_TIMEOUT_MS = 5000;
+
+type PragmaExecutor = { exec: (sql: string) => unknown };
+
+/** Applies only the busy timeout; safe on read-only connections. */
+export function applyRuntimeSqliteBusyTimeout(sqlite: PragmaExecutor): void {
+  sqlite.exec(`PRAGMA busy_timeout = ${RUNTIME_SQLITE_BUSY_TIMEOUT_MS}`);
+}
+
+/**
+ * Configures a writable runtime.sqlite connection: wait on locks instead of
+ * failing immediately, and use WAL so readers are not blocked by writers.
+ */
+export function configureRuntimeSqlite(sqlite: PragmaExecutor): void {
+  applyRuntimeSqliteBusyTimeout(sqlite);
+  sqlite.exec("PRAGMA journal_mode = WAL");
+  sqlite.exec("PRAGMA synchronous = NORMAL");
+}
+
 export async function openRuntimeSqliteDatabase(path: string): Promise<RuntimeSqliteDatabase> {
   await ensureDir(dirname(path));
   if (typeof process.versions.bun === "string") {
     const { Database } = await import("bun:sqlite");
     const { drizzle } = await import("drizzle-orm/bun-sqlite");
     const sqlite = new Database(path, { create: true });
+    configureRuntimeSqlite(sqlite);
     return {
       kind: "bun",
       sqlite,
@@ -55,6 +82,7 @@ export async function openRuntimeSqliteDatabase(path: string): Promise<RuntimeSq
 
   const { DatabaseSync } = await importNodeSqlite();
   const sqlite = new DatabaseSync(path);
+  configureRuntimeSqlite(sqlite);
   return {
     kind: "node",
     sqlite,
