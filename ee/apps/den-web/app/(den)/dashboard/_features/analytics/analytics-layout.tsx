@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { ArrowUpRight, BarChart3, Blocks, Bot, ScrollText } from "lucide-react";
 import { DenButton } from "../../../_components/ui/button";
-import { UnseenDot, underlineTabClassName } from "../../../_components/ui/tabs";
+import { underlineTabClassName } from "../../../_components/ui/tabs";
 import { DenPageHeader } from "../../../_components/ui/page-header";
 import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS, DASHBOARD_PAGE_CLASS } from "../../../_components/ui/dashboard-styles";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
@@ -12,17 +12,9 @@ import { RowListSkeleton } from "../computers/computer-rows";
 import { getAnalyticsRoute, getLibraryUsageRoute, getWorkbotUsageRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
-import { useFeatureIntroUnseen, type FeatureIntroKey } from "../feature-intros";
 
 type AnalyticsView = "adoption" | "library" | "workbot" | "workflows";
 type AnalyticsViewLink = { id: AnalyticsView; label: string; href: string; icon: typeof BarChart3 };
-
-const ANALYTICS_VIEW_INTROS: Record<AnalyticsView, FeatureIntroKey | null> = {
-  adoption: "analytics",
-  library: "analytics.library",
-  workbot: null,
-  workflows: "analytics.workflow-runs",
-};
 
 export const analyticsSurfaceClass = `analytics-surface ${AUTOMATION_CARD_CLASS}`;
 export const analyticsPageClass = `${DASHBOARD_PAGE_CLASS} grid gap-6`;
@@ -33,7 +25,6 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
 }) {
   const { orgContext } = useOrgDashboard();
   const libraryUsage = useLibraryUsageAvailable();
-  const introUnseen = useFeatureIntroUnseen();
   const adoption: AnalyticsViewLink = { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 };
   const library: AnalyticsViewLink = { id: "library", label: "Plugins & connectors", href: getLibraryUsageRoute(orgSlug), icon: Blocks };
   const workbot: AnalyticsViewLink = { id: "workbot", label: "Workbot", href: getWorkbotUsageRoute(orgSlug), icon: Bot };
@@ -53,7 +44,6 @@ export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }:
       {pages.map(({ id, label, href, icon: Icon }) => <Link key={id} href={href} aria-current={active === id ? "page" : undefined}
         className={`-mb-px focus-visible:outline-offset-4 ${underlineTabClassName(active === id)}`}>
         <Icon className="h-4 w-4" aria-hidden="true" />{label}
-        {active !== id && introUnseen(ANALYTICS_VIEW_INTROS[id]) ? <UnseenDot /> : null}
       </Link>)}
     </nav>
   </header>;

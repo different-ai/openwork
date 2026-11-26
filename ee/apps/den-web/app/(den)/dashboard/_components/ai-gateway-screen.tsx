@@ -13,8 +13,6 @@ import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { canOpenGatewayArea, gatewayAreaLockedMessage, type GatewayDashboardArea } from "../_lib/gateway-dashboard-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
-import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
 import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
 import { GatewaySpendBreakdown } from "./gateway-spend-breakdown";
 import { getProviderIconSlug } from "./llm-provider-data";
@@ -38,15 +36,6 @@ const AI_GATEWAY_TABS: readonly TabItem<AiGatewayTab>[] = [
   { value: "api-keys", label: "API Keys", icon: KeyRound },
   { value: "openwork-models", label: "OpenWork Models", icon: Sparkles },
 ];
-
-const AI_GATEWAY_TAB_INTROS: Record<AiGatewayTab, FeatureIntroKey> = {
-  overview: "ai-gateway.overview",
-  "ai-providers": "ai-gateway.ai-providers",
-  limits: "ai-gateway.limits",
-  "users-and-teams": "ai-gateway.users-and-teams",
-  "api-keys": "ai-gateway.api-keys",
-  "openwork-models": "ai-gateway.openwork-models",
-};
 
 const GATEWAY_TAB_AREAS: Record<Exclude<AiGatewayTab, "openwork-models">, GatewayDashboardArea> = {
   overview: "overview",
@@ -77,15 +66,13 @@ function AiGatewayOverview({ orgId }: { orgId: string }) {
     );
   }
 
+  if (inferenceProviders.length === 0) return <AiGatewayNoUsage orgSlug={orgSlug} />;
+
   return (
-    <FeatureIntroGate introKey="ai-gateway.overview" facts={{ providers: inferenceProviders.length }}>
-      {inferenceProviders.length === 0 ? <AiGatewayNoUsage orgSlug={orgSlug} /> : (
-        <>
-          <GatewayUsageSection orgId={orgId} />
-          <GatewaySpendBreakdown orgId={orgId} orgSlug={orgSlug} />
-        </>
-      )}
-    </FeatureIntroGate>
+    <>
+      <GatewayUsageSection orgId={orgId} />
+      <GatewaySpendBreakdown orgId={orgId} orgSlug={orgSlug} />
+    </>
   );
 }
 
@@ -127,12 +114,9 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   );
   const router = useRouter();
   const searchParams = useSearchParams();
-  const introUnseen = useFeatureIntroUnseen();
-  const introsEnabled = useFeatureIntroRuntime().enabled;
   const requestedTab = searchParams.get("tab") === "auto-router" ? "ai-providers" : searchParams.get("tab");
   const nestedContent = providerContent ?? pageContent;
   const nestedTab = providerContent !== undefined ? "ai-providers" : pageTab;
-  const gatewayIntroFacts = useAiGatewayIntroFacts(introsEnabled && nestedContent === undefined);
   const defaultTab = AI_GATEWAY_TABS.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
   const tab = nestedContent !== undefined && nestedTab
     ? nestedTab
@@ -149,13 +133,13 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
     router.push(query ? `${route}?${query}` : route, { scroll: false });
   }
 
-  const page = (
+  return (
     <DashboardPageTemplate
       title="AI Gateway"
       description={null}
     >
       <div data-testid="ai-gateway-tabs" className="mb-6">
-        <UnderlineTabs tabs={AI_GATEWAY_TABS.map((item) => ({ ...item, unseen: introUnseen(AI_GATEWAY_TAB_INTROS[item.value]) }))} activeTab={tab} onChange={setTab} />
+        <UnderlineTabs tabs={AI_GATEWAY_TABS} activeTab={tab} onChange={setTab} />
       </div>
       <div
         key={tab}
@@ -202,7 +186,4 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
       </div>
     </DashboardPageTemplate>
   );
-
-  if (nestedContent !== undefined) return page;
-  return <FeatureIntroGate introKey="ai-gateway" facts={gatewayIntroFacts}>{page}</FeatureIntroGate>;
 }

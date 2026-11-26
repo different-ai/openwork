@@ -29,8 +29,6 @@ import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgLimitDialog } from "../../_components/org-limit-dialog";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { FeatureIntroGate, useFeatureIntro, useFeatureIntroUnseen, type FeatureIntroResolution } from "../_features/feature-intros";
-import type { MembersFacts } from "../_features/feature-intros/intros/members";
 import { UnderlineTabs } from "../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
@@ -160,7 +158,6 @@ export function ManageMembersScreen() {
   const canStartSeatCheckout = access.canStartSeatCheckout;
 
   const searchParams = useSearchParams();
-  const introUnseen = useFeatureIntroUnseen();
   useEffect(() => {
     const tab = searchParams.get("tab");
     if (tab === "roles" || tab === "teams") setActiveTab(tab);
@@ -308,23 +305,10 @@ export function ManageMembersScreen() {
     }
   }, [access.canManageRoles]);
 
-  const inviteRequested = searchParams.get("invite") === "1";
-  const newTeamRequested = searchParams.get("newTeam") === "1";
   const editTeamRequested = searchParams.get("editTeam");
-  const [focusInvite, setFocusInvite] = useState(false);
   useEffect(() => {
-    if (!orgContext || (!inviteRequested && !newTeamRequested && !editTeamRequested)) return;
-    if (inviteRequested && access.canInviteMembers) {
-      setActiveTab("members");
-      setShowInviteForm(true);
-      setFocusInvite(true);
-    }
-    if (newTeamRequested && access.canManageTeams) {
-      setActiveTab("teams");
-      setEditingTeamId(null);
-      setShowTeamForm(true);
-    }
-    const team = editTeamRequested ? orgContext.teams.find((entry) => entry.id === editTeamRequested) : undefined;
+    if (!orgContext || !editTeamRequested) return;
+    const team = orgContext.teams.find((entry) => entry.id === editTeamRequested);
     if (team) {
       setActiveTab("teams");
       if (!team.managedByScim && access.canManageTeams && (!team.grantsOrganizationAdmin || access.canManageAdminTeams)) {
@@ -335,17 +319,10 @@ export function ManageMembersScreen() {
       }
     }
     const url = new URL(window.location.href);
-    for (const param of ["invite", "newTeam", "editTeam"]) url.searchParams.delete(param);
-    if (team || (newTeamRequested && access.canManageTeams)) url.searchParams.set("tab", "teams");
+    url.searchParams.delete("editTeam");
+    if (team) url.searchParams.set("tab", "teams");
     window.history.replaceState(null, "", url);
-  }, [orgContext, inviteRequested, newTeamRequested, editTeamRequested, access.canInviteMembers, access.canManageTeams, access.canManageAdminTeams]);
-  useEffect(() => {
-    if (!focusInvite || !showInviteForm) return;
-    const input = document.querySelector<HTMLInputElement>('[data-testid="invite-email"]');
-    if (!input) return;
-    input.focus();
-    setFocusInvite(false);
-  }, [focusInvite, showInviteForm]);
+  }, [orgContext, editTeamRequested, access.canManageTeams, access.canManageAdminTeams]);
 
   if (orgBusy && !orgContext) {
     return (
@@ -572,14 +549,6 @@ export function ManageMembersScreen() {
     </MembersFormDialog>
   );
 
-  const membersIntroFacts: MembersFacts = {
-    people: orgContext.members.length,
-    pendingInvites: orgContext.invitations.filter((invitation) => invitation.status === "pending").length,
-    teams: orgContext.teams.length,
-    ...(access.canViewPermissions && !organizationRoles.loading && !organizationRoles.error ? { customRoles: roles.filter((role) => role.kind === "custom").length } : {}),
-  };
-  const teamFormOpen = showTeamForm || Boolean(editingTeamId);
-
   const everyoneRow = (agentPermissionsColumn || desktopPolicyScreenRemoved(orgContext)) && ("everyone".includes(teamFilter.trim().toLocaleLowerCase())) ? (
     <TeamsListRow
       testId="team-row-everyone"
@@ -610,7 +579,7 @@ export function ManageMembersScreen() {
         ? <DenButton size="sm" variant="secondary" icon={Plus} href={getNewRoleRoute(orgSlug)} data-testid="roles-create">Create role</DenButton>
         : <DenButton size="sm" variant="secondary" icon={Lock} disabled title={permissionLockReason("permissions.manage")}>Create role</DenButton>;
 
-  const page = (
+  return (
     <DashboardPageTemplate
       icon={Users}
       title="Members"
@@ -662,13 +631,13 @@ export function ManageMembersScreen() {
         onChange={chooseTab}
         tabs={[
           { value: "members", label: "Members", icon: User, count: tabCounts.members },
-          { value: "teams", label: "Teams", icon: Users, count: tabCounts.teams, unseen: introUnseen("members.teams") },
-          ...([{ value: "roles" as const, label: "Roles", icon: ShieldCheck, unseen: introUnseen("members.roles") }]),
+          { value: "teams", label: "Teams", icon: Users, count: tabCounts.teams },
+          ...([{ value: "roles" as const, label: "Roles", icon: ShieldCheck }]),
         ]}
       />
 
       {shownTab === "roles" ? (
-        <RolesTab showIntro headerOwnsAction />
+        <RolesTab headerOwnsAction />
       ) : null}
 
       {inviteForm}
@@ -929,108 +898,91 @@ export function ManageMembersScreen() {
       ) : null}
 
       {activeTab === "teams" ? (
-        <MembersTeamsIntroSlot facts={teamFormOpen ? null : { teams: orgContext.teams.length }}>
-          {(intro) => intro.size === "box" ? (
-            <div data-testid="teams-intro">
-              {everyoneRow ? (
-                <div className="@container min-w-0" role="table" aria-label="Teams" data-testid="teams-list">
-                  <TeamsListHeader columns={teamListColumns} agentPermissions={agentPermissionsColumn} />
-                  {everyoneRow}
-                </div>
-              ) : null}
-              {intro.element}
-            </div>
-          ) : (
-            <div>
-              <MemberListToolbar collection="teams" value={teamFilter} onChange={setTeamFilter} />
+        <div>
+          <MemberListToolbar collection="teams" value={teamFilter} onChange={setTeamFilter} />
 
-              <div className="@container min-w-0" role="table" aria-label="Teams" data-testid="teams-list">
-                <TeamsListHeader columns={teamListColumns} agentPermissions={agentPermissionsColumn} />
+          <div className="@container min-w-0" role="table" aria-label="Teams" data-testid="teams-list">
+            <TeamsListHeader columns={teamListColumns} agentPermissions={agentPermissionsColumn} />
 
-                {everyoneRow}
+            {everyoneRow}
 
-                {visibleTeams.length === 0 ? (
-                  <div className="border-b border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" role="status">
-                    {teamFilter.trim() ? "No teams match your filter." : "No teams yet."}
-                  </div>
-                ) : (
-                  visibleTeams.map((team) => {
-                    const names = teamMemberNames.get(team.id) ?? [];
-                    const role = team.grantsOrganizationAdmin || access.canViewPermissions
-                        ? teamRoleLabel(teamRoleState(team), roles) ?? BUILT_IN_ROLES.member.label
-                        : "—";
-                    const canEdit = !team.managedByScim && access.canManageTeams && (!team.grantsOrganizationAdmin || access.canManageAdminTeams);
-                    return (
-                      <TeamsListRow
-                        key={team.id}
-                        testId="team-row"
-                        columns={teamListColumns}
-                        icon={Users}
-                        name={team.name}
-                        href={access.canViewTeams ? getTeamRoute(orgSlug, team.id) : undefined}
-                        badge={team.managedByScim ? (
-                          <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">Managed by SCIM</span>
-                        ) : null}
-                        subtitle={names.length > 0 ? names.join(", ") : team.memberIds.length > 0 ? peopleCount(team.memberIds.length) : "No members yet"}
-                        lanes={(
-                          <>
-                            <TeamsListLane testId="team-row-role" title={role}>{role}</TeamsListLane>
-                            {agentPermissionsColumn ? <TeamAgentPermissionsCell summary={agentPolicies.isSuccess ? teamOverrideSummary(agentPolicies.data.teams.find((policy) => policy.scopeId === team.id)) : undefined} failed={agentPolicies.isError} /> : null}
-                            <TeamsListLane testId="team-row-members" tone="muted">{peopleCount(team.memberIds.length)}</TeamsListLane>
-                          </>
-                        )}
-                        action={canEdit ? (
-                          <ItemMenu
-                            label={`Actions for ${team.name}`}
-                            entries={[
-                              {
-                                label: "Edit",
-                                onSelect: () => {
-                                  setShowTeamForm(false);
-                                  setEditingTeamId(team.id);
-                                  setTeamNameDraft(team.name);
-                                  setTeamMemberDraft(team.memberIds);
-                                },
-                              },
-                              {
-                                label: "Delete",
-                                destructive: true,
-                                disabled: mutationBusy === "delete-team",
-                                confirm: {
-                                  title: `Delete ${team.name}?`,
-                                  description: `${team.memberIds.length > 0 ? `${peopleCount(team.memberIds.length)} ${team.memberIds.length === 1 ? "loses" : "lose"}` : "Nobody loses"} this team's ${teamLosses({ agentPermissions: agentPermissionsColumn })}. This cannot be undone.`,
-                                  action: "Delete team",
-                                },
-                                onSelect: async () => {
-                                  setPageError(null);
-                                  await deleteTeam(team.id);
-                                  if (editingTeamId === team.id) resetTeamEditor();
-                                },
-                              },
-                            ]}
-                          />
-                        ) : (
-                          <TeamsListLocked
-                            reason={team.managedByScim
-                              ? "Managed by your identity provider"
-                              : access.canManageTeams ? permissionLockReason("teams.manage_admin") : permissionLockReason("teams.manage")}
-                          />
-                        )}
-                      />
-                    );
-                  })
-                )}
+            {visibleTeams.length === 0 ? (
+              <div className="border-b border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" role="status">
+                {teamFilter.trim() ? "No teams match your filter." : "No teams yet."}
               </div>
-            </div>
-          )}
-        </MembersTeamsIntroSlot>
+            ) : (
+              visibleTeams.map((team) => {
+                const names = teamMemberNames.get(team.id) ?? [];
+                const role = team.grantsOrganizationAdmin || access.canViewPermissions
+                    ? teamRoleLabel(teamRoleState(team), roles) ?? BUILT_IN_ROLES.member.label
+                    : "—";
+                const canEdit = !team.managedByScim && access.canManageTeams && (!team.grantsOrganizationAdmin || access.canManageAdminTeams);
+                return (
+                  <TeamsListRow
+                    key={team.id}
+                    testId="team-row"
+                    columns={teamListColumns}
+                    icon={Users}
+                    name={team.name}
+                    href={access.canViewTeams ? getTeamRoute(orgSlug, team.id) : undefined}
+                    badge={team.managedByScim ? (
+                      <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">Managed by SCIM</span>
+                    ) : null}
+                    subtitle={names.length > 0 ? names.join(", ") : team.memberIds.length > 0 ? peopleCount(team.memberIds.length) : "No members yet"}
+                    lanes={(
+                      <>
+                        <TeamsListLane testId="team-row-role" title={role}>{role}</TeamsListLane>
+                        {agentPermissionsColumn ? <TeamAgentPermissionsCell summary={agentPolicies.isSuccess ? teamOverrideSummary(agentPolicies.data.teams.find((policy) => policy.scopeId === team.id)) : undefined} failed={agentPolicies.isError} /> : null}
+                        <TeamsListLane testId="team-row-members" tone="muted">{peopleCount(team.memberIds.length)}</TeamsListLane>
+                      </>
+                    )}
+                    action={canEdit ? (
+                      <ItemMenu
+                        label={`Actions for ${team.name}`}
+                        entries={[
+                          {
+                            label: "Edit",
+                            onSelect: () => {
+                              setShowTeamForm(false);
+                              setEditingTeamId(team.id);
+                              setTeamNameDraft(team.name);
+                              setTeamMemberDraft(team.memberIds);
+                            },
+                          },
+                          {
+                            label: "Delete",
+                            destructive: true,
+                            disabled: mutationBusy === "delete-team",
+                            confirm: {
+                              title: `Delete ${team.name}?`,
+                              description: `${team.memberIds.length > 0 ? `${peopleCount(team.memberIds.length)} ${team.memberIds.length === 1 ? "loses" : "lose"}` : "Nobody loses"} this team's ${teamLosses({ agentPermissions: agentPermissionsColumn })}. This cannot be undone.`,
+                              action: "Delete team",
+                            },
+                            onSelect: async () => {
+                              setPageError(null);
+                              await deleteTeam(team.id);
+                              if (editingTeamId === team.id) resetTeamEditor();
+                            },
+                          },
+                        ]}
+                      />
+                    ) : (
+                      <TeamsListLocked
+                        reason={team.managedByScim
+                          ? "Managed by your identity provider"
+                          : access.canManageTeams ? permissionLockReason("teams.manage_admin") : permissionLockReason("teams.manage")}
+                      />
+                    )}
+                  />
+                );
+              })
+            )}
+          </div>
+        </div>
       ) : null}
 
     </DashboardPageTemplate>
   );
-
-  if (showInviteForm || teamFormOpen) return page;
-  return <FeatureIntroGate introKey="members" facts={membersIntroFacts}>{page}</FeatureIntroGate>;
 }
 
 function MembersFormDialog({ open, title, onClose, testId, children }: { open: boolean; title: string; onClose: () => void; testId: string; children: ReactNode }) {
@@ -1048,10 +1000,6 @@ function MembersFormDialog({ open, title, onClose, testId, children }: { open: b
       </Dialog.Portal>
     </Dialog.Root>
   );
-}
-
-function MembersTeamsIntroSlot({ facts, children }: { facts: Pick<MembersFacts, "teams"> | null; children: (intro: FeatureIntroResolution) => ReactNode }) {
-  return <>{children(useFeatureIntro("members.teams", facts))}</>;
 }
 
 function TeamAgentPermissionsCell({ summary, failed }: { summary: string | null | undefined; failed: boolean }) {

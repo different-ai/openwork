@@ -53,9 +53,6 @@ import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
 import { pluginQueryKeys } from "./plugin-data";
 import { useOrgLlmProviders } from "./llm-provider-data";
-import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen } from "../_features/feature-intros";
-import { LIBRARY_TAB_INTROS } from "../_features/feature-intros/intros/library";
-import { libraryIntroFacts } from "./library-intro-facts";
 
 const FILTER_AFTER = 10;
 
@@ -193,9 +190,7 @@ function LibraryContent() {
   const [addOpen, setAddOpen] = useState(searchParams.get("add") === "1");
   const [query, setQuery] = useState("");
   const filter = parseLibraryFilter(searchParams.get("show"));
-  const introsEnabled = useFeatureIntroRuntime().enabled;
-  const introUnseen = useFeatureIntroUnseen();
-  const personal = useOrgLlmProviders(filter === "models" || introsEnabled ? orgContext?.organization.id ?? null : null);
+  const personal = useOrgLlmProviders(filter === "models" ? orgContext?.organization.id ?? null : null);
   const personalProviders = personal.llmProviders.filter(provider => provider.source !== "openwork" && provider.createdByOrgMembershipId === orgContext?.currentMember.id);
   const addKeyHref = `${getLibraryRoute(orgSlug)}/model-providers/new`;
   const onlyNeedsSignIn = parseNeedsSignIn(searchParams.get("status"));
@@ -235,11 +230,7 @@ function LibraryContent() {
     ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query) && (!onlyNeedsSignIn || provider.state === "needs_signin"))
     : [];
   const hasModels = (models.data ?? []).length > 0;
-  const personalPending = introsEnabled && !personal.loaded && !personal.error;
-  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels && personalProviders.length === 0 && !personalPending;
-  const introFacts = introsEnabled && !library.error && !models.error && !personal.error && personal.loaded
-    ? libraryIntroFacts({ items: library.data, models: models.data?.length, personalModels: personalProviders.length })
-    : null;
+  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels && personalProviders.length === 0;
   const showFilter = items.length + (models.data ?? []).length + personalProviders.length > FILTER_AFTER || query !== "";
 
   const mineKeys = new Set(groups.mine.map((item) => `${item.type}:${item.id}`));
@@ -258,7 +249,7 @@ function LibraryContent() {
 
   const listBody = (
     <>
-      {library.isLoading || (personalPending && items.length === 0 && !hasModels) ? <LibraryCompactSurface><LibraryCompactSkeleton label="Loading your Library" /></LibraryCompactSurface> : null}
+      {library.isLoading ? <LibraryCompactSurface><LibraryCompactSkeleton label="Loading your Library" /></LibraryCompactSurface> : null}
 
       {filter === "models" && personalRows.length > 0 ? (
         <LibraryCompactSurface>
@@ -288,7 +279,7 @@ function LibraryContent() {
         </p>
       ) : null}
 
-      {filter === "models" && !models.isLoading && !models.error && !hasModels && !personal.busy && !personal.error && !personalPending && personalProviders.length === 0 ? (
+      {filter === "models" && !models.isLoading && !models.error && !hasModels && !personal.busy && !personal.error && personalProviders.length === 0 ? (
         <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" data-testid="library-models-empty">
           Your organization hasn't given you any models yet.
         </p>
@@ -296,13 +287,13 @@ function LibraryContent() {
 
       {filter === "workflows" && !library.isLoading && items.every((item) => item.type !== "workflow") ? <WorkflowsEmpty /> : null}
 
-      {(filter !== "workflows" || items.some((item) => item.type === "workflow")) && !library.isLoading && !models.isLoading && !personalPending && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && personalRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
+      {(filter !== "workflows" || items.some((item) => item.type === "workflow")) && !library.isLoading && !models.isLoading && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && personalRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
         <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">{query.trim() || onlyNeedsSignIn ? "Nothing matches." : "Nothing here yet."}</p>
       ) : null}
     </>
   );
 
-  const page = (
+  return (
     <ItemPage testId="library-screen" wide>
       <DenPageHeader
         title="My Library"
@@ -325,7 +316,7 @@ function LibraryContent() {
       {(!empty || filter === "models") && !library.error ? (
         <>
           <div className="flex flex-wrap items-end" data-testid="library-compact-toolbar">
-            <UnderlineTabs tabs={LIBRARY_FILTERS.map((tab) => ({ ...tab, unseen: tab.value === "all" || tab.value === "workflows" ? false : introUnseen(LIBRARY_TAB_INTROS[tab.value]) }))} activeTab={filter} onChange={setFilter} className="min-w-0 flex-1" />
+            <UnderlineTabs tabs={LIBRARY_FILTERS} activeTab={filter} onChange={setFilter} className="min-w-0 flex-1" />
             {showFilter ? (
               <div className="w-full border-b border-gray-200 pb-2 pt-3 sm:w-auto sm:pl-4 sm:pt-0" data-library-filter>
                 <FilterInput value={query} onChange={setQuery} className="w-full sm:w-56" />
@@ -335,9 +326,7 @@ function LibraryContent() {
 
           {filter === "models" ? <MemberGatewayApiKeysSection /> : null}
 
-          {filter === "all" || filter === "workflows"
-            ? listBody
-            : <FeatureIntroGate introKey={LIBRARY_TAB_INTROS[filter]} facts={introFacts}>{listBody}</FeatureIntroGate>}
+          {listBody}
         </>
       ) : null}
 
@@ -345,6 +334,4 @@ function LibraryContent() {
       <MemberApiKeyDialog target={signIn.apiKeyTarget} onClose={signIn.closeApiKey} />
     </ItemPage>
   );
-
-  return <FeatureIntroGate introKey="library" facts={introFacts}>{page}</FeatureIntroGate>;
 }

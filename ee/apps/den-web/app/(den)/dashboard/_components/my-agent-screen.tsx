@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute, getLibraryRoute } from "../../_lib/den-org";
-import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useLibrary, type LibraryConnectionItem, type LibraryItem } from "./library-data";
@@ -41,7 +40,6 @@ export function MyAgentScreen() {
   const { orgSlug, orgContext } = useOrgDashboard();
   const orgId = orgContext?.organization.id ?? "";
   const available = myAgentAvailable(orgContext);
-  useFeatureIntro("my-bot", orgContext ? {} : null);
   const readiness = useWorkbotReadiness(orgId || null, available);
   const off = readiness.data?.enabled === false;
   const agent = useMyAgent(orgId, available && !off);

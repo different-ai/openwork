@@ -15,7 +15,6 @@ import { useDenToast } from "../../_components/den-toast";
 import { FilterInput } from "../../_components/item-list";
 import { TeamsListLocked } from "../../_components/teams-list-row";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
-import { FeatureIntroGate } from "../feature-intros/feature-intro-gate";
 import { AddComputerDialog, ComputerActionButtons, ComputerMenu, type ComputerActionSet } from "./computer-action-controls";
 import { disconnectLocked, disconnectOwnerName, disconnectTeamConfirm, disconnectedLine, removeConfirm, teamComputerActions } from "./computer-actions";
 import { ComputerDetail } from "./computer-detail";
@@ -196,38 +195,36 @@ function ComputersList({ orgId, canDisconnectComputers }: { orgId: string; canDi
     <AddComputerDialog open={adding} onClose={() => setAdding(false)} />
     <RemoteAccessSetting orgId={orgId} />
     {query.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-[13px]"><p>{query.error.message}{data ? " Showing the last known list." : ""}</p><DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Try again</DenButton></div> : null}
-    <FeatureIntroGate introKey="computers" facts={data && !filtered ? { computers: data.total + data.staleHidden + data.instancesTotal } : null}>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2" role="group" aria-label="Computer filters">
-        <FilterInput className="w-64 max-w-full" placeholder="Filter by name or owner" value={search} onChange={(value) => setSearch(value.slice(0, 160))} />
-        <div className="flex flex-wrap items-center gap-2">
-          {filtered ? <DenButton size="sm" variant="ghost" onClick={clear}>Clear filters</DenButton> : null}
-          <DenSegmented aria-label="Kind of computer" options={KIND_OPTIONS} value={filters.kind}
-            onChange={(kind) => narrow({ kind, provider: kind === "vm" ? latestFilters.current.provider : "all" })} />
-          {showProvider ? <div className="w-36"><DenSelect size="sm" aria-label="Provider" data-testid="computers-provider" value={filters.provider} onChange={(event) => narrow({ provider: parseDeviceProvider(event.target.value) })}>
-            <option value="all">Any provider</option>
-            {VIRTUAL_PROVIDERS.map((provider) => <option key={provider} value={provider}>{PROVIDER_LABELS[provider]}</option>)}
-          </DenSelect></div> : null}
-          <div className="w-36"><DenSelect size="sm" aria-label="Status" data-testid="computers-status" value={filters.availability} onChange={(event) => narrow({ availability: parseDeviceAvailability(event.target.value) })}>
-            <option value="all">Any status</option>
-            {REMOTE_DEVICE_AVAILABILITIES.map((availability) => <option key={availability} value={availability}>{REMOTE_DEVICE_AVAILABILITY_LABELS[availability]}</option>)}
-          </DenSelect></div>
-        </div>
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2" role="group" aria-label="Computer filters">
+      <FilterInput className="w-64 max-w-full" placeholder="Filter by name or owner" value={search} onChange={(value) => setSearch(value.slice(0, 160))} />
+      <div className="flex flex-wrap items-center gap-2">
+        {filtered ? <DenButton size="sm" variant="ghost" onClick={clear}>Clear filters</DenButton> : null}
+        <DenSegmented aria-label="Kind of computer" options={KIND_OPTIONS} value={filters.kind}
+          onChange={(kind) => narrow({ kind, provider: kind === "vm" ? latestFilters.current.provider : "all" })} />
+        {showProvider ? <div className="w-36"><DenSelect size="sm" aria-label="Provider" data-testid="computers-provider" value={filters.provider} onChange={(event) => narrow({ provider: parseDeviceProvider(event.target.value) })}>
+          <option value="all">Any provider</option>
+          {VIRTUAL_PROVIDERS.map((provider) => <option key={provider} value={provider}>{PROVIDER_LABELS[provider]}</option>)}
+        </DenSelect></div> : null}
+        <div className="w-36"><DenSelect size="sm" aria-label="Status" data-testid="computers-status" value={filters.availability} onChange={(event) => narrow({ availability: parseDeviceAvailability(event.target.value) })}>
+          <option value="all">Any status</option>
+          {REMOTE_DEVICE_AVAILABILITIES.map((availability) => <option key={availability} value={availability}>{REMOTE_DEVICE_AVAILABILITY_LABELS[availability]}</option>)}
+        </DenSelect></div>
       </div>
-      {data && filters.device && !devices.some((device) => device.id === filters.device) ? <div className={`mb-4 border-y ${hairline} py-4`}>
-        <ComputerDetail orgId={orgId} deviceId={filters.device} onClose={() => toggle(filters.device)} actions={detailActions} />
-      </div> : null}
-      <div className="min-w-0">
-        {!data ? query.isPending ? <RowListSkeleton rows={5} /> : null
-          : devices.length ? <TeamComputerRows devices={devices} now={now} openId={filters.device} onToggle={toggle}
-              action={(device) => <TeamComputerControl device={device} set={actionsFor(device)} canDisconnectComputers={canDisconnectComputers} actionsReported={data.actionsReported} />}
-              detail={(device) => <ComputerDetail orgId={orgId} deviceId={device.id} actions={detailActions} />} />
-            : <p className={`border-y ${hairline} py-6 text-[13px] ${secondaryText}`}>{filtered ? "No computers match these filters." : "No computers yet. Sign in to OpenWork on a computer with this organization and it appears here."}</p>}
-      </div>
-      {data ? <StaleComputersLine hidden={data.staleHidden} shown={filters.stale} onShow={() => narrow({ stale: true })} onHide={() => narrow({ stale: false })} /> : null}
-      {data && pages > 1 ? <nav aria-label="Computer pages" className={`mt-4 flex items-center justify-end gap-3 text-xs ${secondaryText}`}>
-        <span>Page {data.page} of {pages}</span><DenButton size="sm" variant="secondary" disabled={query.isFetching || data.page <= 1} onClick={() => apply({ page: data.page - 1, device: "" })}>Previous</DenButton><DenButton size="sm" variant="secondary" disabled={query.isFetching || data.page >= pages} onClick={() => apply({ page: data.page + 1, device: "" })}>Next</DenButton>
-      </nav> : null}
-      {data ? <RegisteredInstances instances={data.instances} total={data.instancesTotal} filtered={Boolean(filters.search.trim())} page={data.instancePage} pageSize={data.instancePageSize} busy={query.isFetching} onPage={(instancePage) => apply({ instancePage })} now={now} /> : null}
-    </FeatureIntroGate>
+    </div>
+    {data && filters.device && !devices.some((device) => device.id === filters.device) ? <div className={`mb-4 border-y ${hairline} py-4`}>
+      <ComputerDetail orgId={orgId} deviceId={filters.device} onClose={() => toggle(filters.device)} actions={detailActions} />
+    </div> : null}
+    <div className="min-w-0">
+      {!data ? query.isPending ? <RowListSkeleton rows={5} /> : null
+        : devices.length ? <TeamComputerRows devices={devices} now={now} openId={filters.device} onToggle={toggle}
+            action={(device) => <TeamComputerControl device={device} set={actionsFor(device)} canDisconnectComputers={canDisconnectComputers} actionsReported={data.actionsReported} />}
+            detail={(device) => <ComputerDetail orgId={orgId} deviceId={device.id} actions={detailActions} />} />
+          : <p className={`border-y ${hairline} py-6 text-[13px] ${secondaryText}`}>{filtered ? "No computers match these filters." : "No computers yet. Sign in to OpenWork on a computer with this organization and it appears here."}</p>}
+    </div>
+    {data ? <StaleComputersLine hidden={data.staleHidden} shown={filters.stale} onShow={() => narrow({ stale: true })} onHide={() => narrow({ stale: false })} /> : null}
+    {data && pages > 1 ? <nav aria-label="Computer pages" className={`mt-4 flex items-center justify-end gap-3 text-xs ${secondaryText}`}>
+      <span>Page {data.page} of {pages}</span><DenButton size="sm" variant="secondary" disabled={query.isFetching || data.page <= 1} onClick={() => apply({ page: data.page - 1, device: "" })}>Previous</DenButton><DenButton size="sm" variant="secondary" disabled={query.isFetching || data.page >= pages} onClick={() => apply({ page: data.page + 1, device: "" })}>Next</DenButton>
+    </nav> : null}
+    {data ? <RegisteredInstances instances={data.instances} total={data.instancesTotal} filtered={Boolean(filters.search.trim())} page={data.instancePage} pageSize={data.instancePageSize} busy={query.isFetching} onPage={(instancePage) => apply({ instancePage })} now={now} /> : null}
   </section>;
 }

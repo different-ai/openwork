@@ -19,8 +19,6 @@ import { DenButton } from "../../_components/ui/button";
 import { connectorNeedsFirstCheck, connectorReadinessState, connectorReadinessNote } from "./connector-readiness";
 import { useCheckMcpConnection, useRefreshUncheckedConnections } from "./mcp-connections-data";
 import { getOrgAccessFlags } from "../../_lib/den-org";
-import { FeatureIntroGate, useFeatureIntroRuntime } from "../_features/feature-intros";
-import { useConnectorsIntroFacts } from "./connectors-intro-facts";
 import { connectorSetupUnfinished, finishSetupHref } from "./admin-connectors";
 import { type ExternalMcpConnection, isNativeProviderConnectionId, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
 
@@ -61,7 +59,6 @@ export function AdminConnectorsScreen() {
   const needle = query.trim().toLowerCase();
   const visible = needle ? all.filter((connection) => connection.name.toLowerCase().includes(needle)) : all;
   const empty = !connections.isLoading && !connections.error && all.length === 0;
-  const introFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
 
   const refreshUnchecked = useRefreshUncheckedConnections();
   const requested = useRef(new Set<string>());
@@ -158,7 +155,7 @@ export function AdminConnectorsScreen() {
     );
   }
 
-  const page = (
+  return (
     <ItemPage testId="admin-connectors" wide>
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3" data-testid="connectors-compact-toolbar">
         <h1 className="text-xl font-semibold tracking-tight text-[var(--dls-text-primary)]">Connectors</h1>
@@ -203,6 +200,4 @@ export function AdminConnectorsScreen() {
       ) : null}
     </ItemPage>
   );
-
-  return <FeatureIntroGate introKey="connectors" facts={introFacts}>{page}</FeatureIntroGate>;
 }

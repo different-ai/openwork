@@ -544,7 +544,7 @@ export function OrgSettingsScreen() {
           </div>
         </ItemSection>
 
-        <section id="allowed-email-domains" aria-label="Allowed email domains" className="scroll-mt-6">
+        <section aria-label="Allowed email domains">
           <ItemSection variant="rule" title="Allowed email domains">
           <div className="flex min-h-12 flex-wrap items-center justify-between gap-3 border-b border-[var(--den-list-line)] py-2">
             <span className="font-medium text-[var(--dls-text-primary)]">Only people with these email domains can join</span>

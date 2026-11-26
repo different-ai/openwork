@@ -126,7 +126,6 @@ export type DenPlugin = {
   createdByOrgMembershipId: string | null;
   updatedAt: string;
   requiresProvider: "any" | "github" | "bitbucket";
-  builtIn?: boolean;
 };
 
 export function getPluginCategoryLabel(category: PluginCategory): string {
@@ -722,7 +721,6 @@ function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown):
     apps,
     authoredApps,
     author: "Connected repository",
-    builtIn: isBuiltInExtension(pluginItem),
     category: derivePluginCategory({ agents, apps, authoredApps, commands, hooks, mcps, skills, workflows }),
     commands,
     createdAt: asString(pluginItem.createdAt) ?? new Date().toISOString(),
@@ -798,18 +796,8 @@ export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
 
 export type DenPluginSummary = Pick<DenPlugin, "id" | "name" | "slug" | "description" | "status" | "createdByOrgMembershipId"> & {
   accessIncluded: boolean;
-  builtIn: boolean;
   updatedAt?: string;
 };
-
-function isBuiltInExtension(item: Record<string, unknown>): boolean {
-  const extension = item.extension;
-  if (!extension || typeof extension !== "object") return false;
-  const manifest = "manifest" in extension ? extension.manifest : null;
-  if (!manifest || typeof manifest !== "object") return false;
-  const source = "source" in manifest ? manifest.source : null;
-  return Boolean(source && typeof source === "object" && "origin" in source && source.origin === "builtin");
-}
 
 function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | null {
   const id = asString(item.id);
@@ -817,7 +805,6 @@ function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | n
   if (!id || !name) return null;
   return {
     accessIncluded: Array.isArray(item.access),
-    builtIn: isBuiltInExtension(item),
     updatedAt: asString(item.updatedAt) ?? undefined,
     createdByOrgMembershipId: asString(item.createdByOrgMembershipId),
     description: asString(item.description) ?? "",

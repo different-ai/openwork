@@ -26,26 +26,6 @@ plan locks (SSO on Team, SCIM on Enterprise) and the same SSO test pop-up.
 - **Old links:** `/dashboard/sso` and `/dashboard/scim` redirect to the
   matching tab and keep any other query parameters. The SSO test return page (`/sso/test/complete`) talks to the opener window
   and is unaffected.
-- **Feature intros**: the page explains
-  itself while nothing is set up. Keys `auth-security`, `auth-security.sso`,
-  `auth-security.scim` in
-  `ee/apps/den-web/app/(den)/dashboard/_features/feature-intros/intros/auth-security.tsx`.
-  - No SSO connection and no SCIM connector: full-screen intro. The action is
-    **Set up single sign-on** (straight to the SSO form via `?tab=sso&setup=1`),
-    **Upgrade to Team** on the Free plan for people who manage billing, or a
-    lock with who can change it.
-  - SSO tab: box when there is no connection; banner while a saved connection
-    is not on yet (**Verify your domain** or **Test and turn on SSO**).
-  - SCIM tab: box when there is no connector (**Create a SCIM connector**,
-    **Set up single sign-on first** when SSO isn't on, **Talk to us about
-    Enterprise** without the plan); banner when a connector exists but nobody
-    has synced yet (**Connect your identity provider**).
-
-![Free plan, nothing set up: full-screen intro with Upgrade to Team](./auth-security-intro-free-plan.png)
-
-![SSO tab with a saved connection whose domain isn't verified yet](./auth-security-sso-tab.png)
-
-![SCIM tab before SSO is on: box with Set up single sign-on first](./auth-security-scim-tab.png)
 
 ## For whom
 
@@ -55,8 +35,8 @@ without them never saw these entries and still don't.
 ## Try it locally
 
 Start den-api (`pnpm dev:den:api`) and open **Settings › Auth & Security**. To see the plan locks, also set
-`DEN_PLAN_GATING_ENABLED=true`; an organization on the Free plan then gets the
-Upgrade to Team intro, and one whose `organization.metadata.plan.tier` is
+`DEN_PLAN_GATING_ENABLED=true`; an organization on the Free plan sees the plan restrictions,
+and one whose `organization.metadata.plan.tier` is
 `enterprise` gets both tabs unlocked.
 
 ## What to watch

@@ -30,8 +30,6 @@ import { WorkbotProactiveHealthSection } from "./workbot-proactive-health";
 import { AGENT_HEALTH_ANCHOR } from "./workbot-agent-scope";
 import { WorkbotSettingsTabs } from "./workbot-settings-tabs";
 import { workbotSettingsParts, workbotSettingsTabForHash, type WorkbotSettingsTab } from "./workbot-settings-tabs-model";
-import { FeatureIntroGate, useFeatureIntroRuntime } from "../_features/feature-intros";
-import { useWorkbotIntroFacts } from "./workbot-intro-facts";
 
 function availabilityLabel(settings: WorkbotSettings, id: string): string {
   if (!settings.runnerReachable) return "Couldn't check";
@@ -93,7 +91,6 @@ export function WorkbotSettingsScreen() {
 
   const settings = query.data;
   const current = settings ? effectiveWorkbotModel(settings) : null;
-  const introFacts = useWorkbotIntroFacts(useFeatureIntroRuntime().enabled, settings);
   useEffect(() => {
     setDraft(current ?? "");
   }, [current]);
@@ -128,7 +125,7 @@ export function WorkbotSettingsScreen() {
     }
   }
 
-  const page = (
+  return (
     <div data-testid="workbot-settings-screen">
       <DashboardPageTemplate
         title="Workbot"
@@ -166,7 +163,7 @@ export function WorkbotSettingsScreen() {
               )}
             />
           ) : (
-            <div id="workbot-default-model" className="scroll-mt-6 divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-section="workbot-default-model">
+            <div className="divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-section="workbot-default-model">
               <SettingsRow label="Default model" labelId={labelId}>
                 {!settings ? (
                   <DenSkeleton className="h-10 w-80 max-w-full" data-testid="workbot-model-skeleton" />
@@ -293,6 +290,4 @@ export function WorkbotSettingsScreen() {
       </DashboardPageTemplate>
     </div>
   );
-
-  return <FeatureIntroGate introKey="workbot" facts={introFacts}>{page}</FeatureIntroGate>;
 }

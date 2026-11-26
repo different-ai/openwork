@@ -12,8 +12,6 @@ import { AUTOMATION_CARD_CLASS } from "../../../_components/ui/dashboard-styles"
 import { FilterInput } from "../../_components/item-list";
 import { ListRow, RowList } from "../computers/computer-rows";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
-import { libraryUsageIntroFacts } from "../../_components/analytics-intro-facts";
-import { useFeatureIntro } from "../feature-intros";
 import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsPageHeader, analyticsPageClass, analyticsSurfaceClass } from "../analytics/analytics-layout";
 import { StatCard } from "../analytics/stat-card";
 import {
@@ -104,8 +102,6 @@ export function LibraryUsageScreen() {
   const since = report ? countingSinceLabel(report, now) : null;
   const nothingRecorded = report ? !report.trackingSince && report.items.every((row) => row.uses === 0) : false;
   const focusedItem = report && focus && "itemId" in focus ? report.items.find((row) => row.id === focus.itemId) ?? null : null;
-  const intro = useFeatureIntro("analytics.library", focus ? null : libraryUsageIntroFacts(kind, report));
-  const introBanner = intro.size === "banner";
 
   return (
     <div className={`${analyticsPageClass} min-w-0`} data-testid="library-usage">
@@ -132,16 +128,15 @@ export function LibraryUsageScreen() {
             : <div className={analyticsSurfaceClass} data-testid="library-usage-item-missing">
               <AnalyticsEmptyState title={`This ${copy.noun} is no longer in your library`} action={<DenButton variant="secondary" href={usageHref({ item: null })}>{`All ${copy.plural}`}</DenButton>} />
             </div>
-          ) : intro.size === "box" || intro.size === "fullscreen" ? intro.element : summary.total === 0 ? <KindEmpty kind={kind} /> : (
+          ) : summary.total === 0 ? <KindEmpty kind={kind} /> : (
             <>
-              {introBanner ? intro.element : null}
               {usage.isError ? <DenNotice tone="neutral" presentation="inline" message="Couldn't refresh. Showing the last counts." action={<DenButton variant="secondary" size="sm" onClick={() => void usage.refetch()}>Retry</DenButton>} /> : null}
 
-              {nothingRecorded ? (introBanner ? null : (
+              {nothingRecorded ? (
                 <div className={analyticsSurfaceClass} data-testid="library-usage-no-usage">
                   <AnalyticsEmptyState title="No usage yet" />
                 </div>
-              )) : (
+              ) : (
                 <div className={`grid gap-3 sm:grid-cols-2 ${tracksFailures ? "lg:grid-cols-4" : "lg:grid-cols-3"}`} data-testid="library-usage-summary">
                   <StatCard title="In use" value={`${summary.used} of ${summary.total}`} />
                   <StatCard title="Uses" value={summary.uses.toLocaleString()} />

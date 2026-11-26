@@ -23,12 +23,7 @@ export function ssoConnectionState(connection: DenOrgSsoConnection): { label: st
 
 type Selection = { kind: "list" } | { kind: "new" } | { kind: "connection"; id: string; token: string | null };
 
-export type SsoConnectionsManagerProps = {
-  setupMode?: boolean;
-  onConnectionsChange?: (connections: DenOrgSsoConnection[]) => void;
-};
-
-export function SsoConnectionsManager({ setupMode = false, onConnectionsChange }: SsoConnectionsManagerProps) {
+export function SsoConnectionsManager() {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [connections, setConnections] = useState<DenOrgSsoConnection[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +42,6 @@ export function SsoConnectionsManager({ setupMode = false, onConnectionsChange }
       if (!isCurrent()) return;
       setConnections(next);
       setError(null);
-      onConnectionsChange?.(next);
     } catch (nextError) {
       if (isReauthRequiredError(nextError)) throw nextError;
       if (isCurrent()) setError(nextError instanceof Error ? nextError.message : "Failed to load SSO connections.");
@@ -64,17 +58,12 @@ export function SsoConnectionsManager({ setupMode = false, onConnectionsChange }
     };
   }, [orgId]);
 
-  useEffect(() => {
-    if (setupMode && connections?.length === 0 && access.canManageSso) setSelection({ kind: "new" });
-  }, [setupMode, connections?.length, access.canManageSso]);
-
   function replaceConnection(connection: DenOrgSsoConnection | null, id: string) {
     const current = connections ?? [];
     const next = connection
       ? current.some((entry) => entry.id === id) ? current.map((entry) => entry.id === id ? connection : entry) : [...current, connection]
       : current.filter((entry) => entry.id !== id);
     setConnections(next);
-    onConnectionsChange?.(next);
   }
 
   function backToList() {

@@ -1,5 +1,6 @@
 "use client";
 
+import { LockKeyhole } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
 import { DenButton } from "../../../app/(den)/_components/ui/button";
@@ -7,17 +8,14 @@ import { DenInput } from "../../../app/(den)/_components/ui/input";
 import { DenNotice } from "../../../app/(den)/_components/ui/notice";
 import { DenSelect } from "../../../app/(den)/_components/ui/select";
 import { DenSwitch } from "../../../app/(den)/_components/ui/switch";
-import { FeatureIntroBox, FeatureIntroFullscreen, FeatureIntroLockedAction } from "../../../app/(den)/dashboard/_features/feature-intros/feature-intro-views";
-import { supportTriageIntro } from "../../../app/(den)/dashboard/_features/feature-intros/intros/support-triage";
 import { sendAdmin } from "../admin-request";
 import { useAdminReport } from "../use-admin-report";
-import { categoryLabels, parseThreads, TriageThreads } from "./threads";
+import { categoryLabels, parseThreads, TriageThreadExample, TriageThreads } from "./threads";
 
 const root = "/v1/admin/support-triage";
 const limit = 25;
 const settingsSchema = z.object({ enabledAt: z.string().nullable(), plainConfigured: z.boolean(), slackConfigured: z.boolean(), leadsSlackConfigured: z.boolean(), jevConfigured: z.boolean() });
 const parseSettings = (payload: unknown) => settingsSchema.safeParse(payload).data ?? null;
-const cta = supportTriageIntro.ctas[0] ?? null;
 const plainPermissions = ["thread:read", "thread:setPriority", "thread:setStatus", "customer:read", "timeline:read", "workspace:read",
   "labelType:read", "labelType:create", "label:create", "label:read"];
 
@@ -59,6 +57,24 @@ function CredentialSetting({ kind, configured, disabled, run }: { kind: keyof ty
   </details>;
 }
 
+function TriageGuide({ showSetup, compact = false }: { showSetup: boolean; compact?: boolean }) {
+  return <section aria-label="About support triage" className={compact ? "max-w-xl space-y-3 py-4" : "grid gap-6 border-b border-border py-6 lg:grid-cols-2"}>
+    <div className="space-y-3">
+      <h2 className="text-sm font-semibold">Triage new support threads</h2>
+      <p className="text-sm text-muted-foreground">Surface product bugs and enterprise leads in Plain without sorting every thread by hand.</p>
+      {!compact ? <p className="text-sm text-muted-foreground">Job requests and unsolicited pitches are marked Done. Unclear threads stay untouched for you to review. Only threads received after you turn on triage are included.</p> : null}
+      <div className="flex flex-wrap gap-2">
+        {showSetup ? <DenButton href="#triage-settings" size="sm">Set up triage</DenButton> : null}
+        <DenButton href="https://github.com/different-ai/openwork/blob/dev/docs/support-triage.md" target="_blank" rel="noreferrer" size="sm" variant="ghost">Read the docs</DenButton>
+      </div>
+    </div>
+    <figure className="m-0 space-y-2" aria-label="Example support threads">
+      <figcaption className="text-xs text-muted-foreground">Example</figcaption>
+      <div inert><TriageThreadExample /></div>
+    </figure>
+  </section>;
+}
+
 export function SupportTriagePage() {
   const [revision, setRevision] = useState(0);
   const [category, setCategory] = useState("");
@@ -74,7 +90,6 @@ export function SupportTriagePage() {
   const disabled = busy || settings.status !== "ready";
   const unfilteredEmpty = threads.status === "ready" && !threads.data.total && !category;
   const firstSetup = unfilteredEmpty && data && !data.plainConfigured && !data.enabledAt;
-  const introControls = { intro: supportTriageIntro, cta, note: null, onCtaClick: () => {} };
 
   async function run(method: "PUT" | "POST", path: string, body: unknown, success: string) {
     setFeedback(undefined);
@@ -100,7 +115,7 @@ export function SupportTriagePage() {
         <DenButton variant="secondary" size="sm" onClick={refresh}>Refresh</DenButton>
       </div>
     </header>
-    {firstSetup || help ? <FeatureIntroFullscreen {...introControls} /> : null}
+    {firstSetup || help ? <TriageGuide showSetup /> : null}
     <section id="triage-settings" aria-labelledby="triage-settings-heading" className="max-w-2xl">
       <h2 id="triage-settings-heading" className="border-b border-border pb-2 text-sm font-semibold">Triage settings</h2>
       {settings.status !== "ready" && settings.status !== "loading" ? <DenNotice presentation="inline" message={data ? "Couldn’t verify settings. Showing the last loaded values." : "Couldn’t load settings."}
@@ -117,7 +132,7 @@ export function SupportTriagePage() {
         <CredentialSetting kind="leads" configured={data.leadsSlackConfigured} disabled={disabled} run={run} />
         <div id="triage-readiness" className="flex min-h-11 flex-wrap items-center justify-between gap-2 border-b border-border py-1 text-sm">
           <span>Jev classification</span>
-          {data.jevConfigured ? <span className="text-muted-foreground">Configured</span> : <FeatureIntroLockedAction reason="Deployment operator must configure Jev" />}
+          {data.jevConfigured ? <span className="text-muted-foreground">Configured</span> : <span className="inline-flex items-center gap-1.5 text-muted-foreground"><LockKeyhole className="size-4" aria-hidden />Deployment operator must configure Jev</span>}
         </div>
         {feedback ? <DenNotice presentation="inline" {...feedback} /> : null}
       </> : null}
@@ -133,7 +148,7 @@ export function SupportTriagePage() {
       {threads.status !== "ready" && threads.status !== "loading" ? <DenNotice presentation="inline" message={threads.data ? "Couldn’t verify threads. Showing the last loaded results." : "Couldn’t load threads."}
         action={<DenButton size="sm" variant="secondary" onClick={refresh}>Try again</DenButton>} /> : null}
       {!threads.data && threads.status === "loading" ? <div role="status" aria-label="Loading threads" className="h-36 animate-pulse rounded-md bg-muted motion-reduce:animate-none" /> : null}
-      {unfilteredEmpty && !help ? <FeatureIntroBox {...introControls} cta={data?.enabledAt ? null : cta} /> : null}
+      {unfilteredEmpty && !help ? <TriageGuide showSetup={!data?.enabledAt} compact /> : null}
       {threads.data && !unfilteredEmpty ? <>
         <TriageThreads threads={threads.data.threads} />
         {offset || threads.data.total > limit ? <div className="flex items-center justify-end gap-2">

@@ -15,8 +15,7 @@ import { DenButton } from "../../../_components/ui/button";
 import { DenNotice } from "../../../_components/ui/notice";
 import { DenSegmented } from "../../../_components/ui/segmented";
 import { SECTION_TITLE_CLASS } from "../../../_components/ui/dashboard-styles";
-import { analyticsHasActivity, analyticsUsageIntroFacts } from "../../_components/analytics-intro-facts";
-import { useFeatureIntro } from "../feature-intros";
+import { analyticsHasActivity } from "./analytics-activity";
 
 function formatDuration(ms: number | null): string {
   if (ms === null) return "—";
@@ -79,8 +78,6 @@ export function AnalyticsScreen() {
 
   const projectScoped = projectValue.length > 0;
   const noActivity = data !== undefined && !projectScoped && !isError && !analyticsHasActivity(data);
-  const intro = useFeatureIntro("analytics", analyticsUsageIntroFacts({ included: orgContext ? !locked : null, data, projectScoped }));
-  const introShown = intro.size === "fullscreen";
   const weekly = data?.weekly ?? [];
   const dailyAvailable = Array.isArray(data?.daily);
   const activeGranularity: Granularity = dailyAvailable ? granularity : "week";
@@ -97,9 +94,9 @@ export function AnalyticsScreen() {
     <div className={analyticsPageClass}>
       <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="adoption"
         title="Usage & adoption"
-        action={!locked && !isError && !introShown ? <RefreshButton refreshing={isFetching} onRefresh={() => void refetch()} /> : null} />
+        action={!locked && !isError ? <RefreshButton refreshing={isFetching} onRefresh={() => void refetch()} /> : null} />
 
-      {introShown ? <div className="-mx-4 -mt-4 md:-mx-8 md:-mt-8">{intro.element}</div> : locked ? (
+      {locked ? (
         <EnterprisePlanNotice feature="Usage analytics" detail="Team usage is unavailable on this plan." />
       ) : isError && !data ? <AnalyticsErrorState title="Couldn't load analytics" onRetry={() => void refetch()} retrying={isFetching} />
       : isLoading ? <AnalyticsLoading label="Loading analytics" /> : noActivity ? (

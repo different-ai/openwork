@@ -17,7 +17,6 @@ import {
     permissionLockReason,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { useFeatureIntro } from "../_features/feature-intros";
 import { useConfigAreas } from "./config-blobs/config-blobs-data";
 import {
     ConfigTokenFields,
@@ -77,7 +76,6 @@ export function ApiKeysScreen() {
     const [createdKey, setCreatedKey] = useState<string | null>(null);
     const [createdKeyName, setCreatedKeyName] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
-    const [loadedOrgId, setLoadedOrgId] = useState<string | null>(null);
     const searchParams = useSearchParams();
     const configAreasQuery = useConfigAreas(orgId, Boolean(orgContext));
     const configAreas = configAreasQuery.data ? configAreasQuery.data.areas : null;
@@ -116,7 +114,6 @@ export function ApiKeysScreen() {
 
             if (isCurrent()) {
                 setApiKeys(parseOrgApiKeysPayload(payload));
-                setLoadedOrgId(orgId);
             }
         } catch (nextError) {
             if (isReauthRequiredError(nextError)) {
@@ -314,11 +311,6 @@ export function ApiKeysScreen() {
         }
     }
 
-    const intro = useFeatureIntro(
-        "api-keys",
-        access.canViewApiKeys && loadedOrgId === orgId && orgId && !error ? { apiKeys: apiKeys.length } : null,
-    );
-
     const newRequested = searchParams.get("new") === "1";
     useEffect(() => {
         if (!orgContext || !newRequested) return;
@@ -348,8 +340,6 @@ export function ApiKeysScreen() {
             </DashboardPageTemplate>
         );
     }
-
-    if (intro.size === "fullscreen" && !showCreateForm && !createdKey) return intro.element;
 
     return (
         <DashboardPageTemplate

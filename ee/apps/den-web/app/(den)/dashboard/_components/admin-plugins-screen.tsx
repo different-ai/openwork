@@ -7,10 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, Search, X } from "lucide-react";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenButton } from "../../_components/ui/button";
-import { getNewPluginRoute, getOrgAccessFlags, getPluginRoute } from "../../_lib/den-org";
+import { getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { FeatureIntroGate } from "../_features/feature-intros";
-import { visibleCountFact } from "../_features/feature-intros/model";
 import { managedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
@@ -19,7 +17,6 @@ import { LibraryCompactRow } from "./library-compact";
 import { PluginLogo } from "./item-logo";
 import { draftFromPluginGrants } from "./item-sharing";
 import { usePluginAccess } from "./plugin-access-data";
-import { pluginsSetUpById } from "./plugins-intro-facts";
 import { isDirectoryScrollOverflow, pluginDirectoryRange, shouldAutoLoadPluginPage } from "./plugin-directory-window";
 import { type DenPluginSummary, pluginDetailQueryOptions, useArchivePlugin, usePluginDirectory } from "./plugin-data";
 
@@ -219,19 +216,6 @@ export function AdminPluginsScreen() {
   const legacyMember = orgContext?.members.find((member) => member.id === memberId);
   const empty = firstPage?.total === 0 && !q && !teamId && !memberId && !ownerId;
   const filtered = Boolean(q || teamId || memberId || ownerId);
-  const teamPlugins = firstPage ? firstPage.items.filter((item) => !item.builtIn) : [];
-  const builtInCount = firstPage ? firstPage.items.length - teamPlugins.length : 0;
-  const setUpById = firstPage ? pluginsSetUpById(teamPlugins, orgContext?.currentMember.id ?? null) : null;
-  const setUpByMember = setUpById ? orgContext?.members.find((member) => member.id === setUpById) : undefined;
-  const seesAllPlugins = getOrgAccessFlags(
-    orgContext?.currentMember.role ?? "member",
-    orgContext?.currentMember.isOwner ?? false,
-    orgContext?.currentMember.permissions,
-  ).canManageAllShared;
-  const introFacts = !firstPage ? null : filtered ? {} : {
-    plugins: visibleCountFact(Math.max(0, (firstPage.total ?? firstPage.items.length) - builtInCount), seesAllPlugins),
-    setUpBy: setUpByMember ? setUpByMember.user.name || setUpByMember.user.email : null,
-  };
   const createAction = <LinkButton variant="secondary" size="sm" href={getNewPluginRoute(orgSlug)}><Plus className="h-4 w-4" aria-hidden />Create a plugin</LinkButton>;
 
   function setFilters(next: { name: string; teamId: string | null; memberId: string | null; ownerId?: string | null }) {
@@ -251,7 +235,7 @@ export function AdminPluginsScreen() {
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
   }, [search, q, teamId, memberId, ownerId, router, searchParams]);
 
-  const page = (
+  return (
     <ItemPage testId="admin-plugins" wide>
       <DenPageHeader size="compact" title="Plugins" action={empty ? undefined : createAction} />
       {!empty ? <div className="flex flex-wrap items-center gap-2" data-testid="plugin-directory-toolbar">
@@ -264,6 +248,4 @@ export function AdminPluginsScreen() {
       <DirectoryResults key={`${orgId}:${q}:${teamId}:${memberId}:${ownerId}`} plugins={plugins} filtered={filtered} />
     </ItemPage>
   );
-
-  return <FeatureIntroGate introKey="plugins" facts={introFacts}>{page}</FeatureIntroGate>;
 }

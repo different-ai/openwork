@@ -15,7 +15,6 @@ import {
   getPluginsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { useFeatureIntro, useFeatureIntroRuntime } from "../_features/feature-intros";
 import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
@@ -29,7 +28,6 @@ import { receivedStatus } from "./library-view";
 import { usePluginAccess } from "./plugin-access-data";
 import { type DenPlugin, pluginQueryKeys, usePlugin } from "./plugin-data";
 import { PluginPageSkeleton } from "./plugin-skeletons";
-import { pluginSharedBeyondOwnerWithCollections, usePluginCollectionGrants } from "./plugins-intro-facts";
 import { WhoCanUseIt } from "./who-can-use-it";
 import { SkillPreview, skillTitle } from "./skill-preview";
 export { skillTitle } from "./skill-preview";
@@ -141,19 +139,6 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const [savingAccess, setSavingAccess] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
   const back = mode === "admin" ? { href: getPluginsRoute(orgSlug), label: "Plugins" } : { href: getLibraryRoute(orgSlug), label: "My Library" };
-  const introsEnabled = useFeatureIntroRuntime().enabled;
-  const collectionGrants = usePluginCollectionGrants(
-    (plugin.data?.marketplaces ?? []).map((collection) => collection.id),
-    introsEnabled && mode === "admin" && Boolean(plugin.data),
-  );
-  const accessIntro = useFeatureIntro("plugins.access", mode === "admin" && plugin.data && access.data && collectionGrants && orgContext ? {
-    plugins: 1,
-    sharedBeyondOwner: pluginSharedBeyondOwnerWithCollections(draftFromPluginGrants(access.data), plugin.data.createdByOrgMembershipId, collectionGrants),
-    canEditAccess: plugin.data.createdByOrgMembershipId === orgContext.currentMember.id
-      || libraryItems?.some(item => item.type === "plugin" && item.id === pluginId && item.role === "manager") === true
-      || getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageAllShared,
-  } : null);
-
   if (plugin.isLoading) {
     return <PluginPageSkeleton back={back} mode={mode} compact />;
   }
@@ -246,10 +231,9 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
         )}
       />
 
-      {accessIntro.size === "banner" ? accessIntro.element : null}
 
       {mode === "admin" && orgContext && draft ? (
-        <section id="who-can-use-it" className="flex scroll-mt-6 flex-col gap-2.5">
+        <section className="flex flex-col gap-2.5">
           <SectionTitle title="Who can use it" />
           <WhoCanUseIt
             value={draft}

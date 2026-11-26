@@ -8,7 +8,6 @@ import {
 } from "@openwork/types/den/managed-deployments";
 import { AlertTriangle, CheckCircle2, CircleDashed, Copy, ExternalLink, LockKeyhole, X, XCircle } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
-import { useSearchParams } from "next/navigation";
 import { z } from "zod";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -20,7 +19,6 @@ import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConfirmDialog } from "./item-list";
-import { useFeatureIntro } from "../_features/feature-intros";
 import { assistantSettingsState, deploymentStatus, providerName, readinessMessage, type DeploymentTone, type ProviderReadiness } from "./managed-deployments-state";
 import { ManagedDeploymentAssistants } from "./managed-deployment-assistants";
 import { ManagedDeploymentConfigurationDialog } from "./managed-deployment-configuration-dialog";
@@ -158,34 +156,10 @@ export function ManagedDeploymentsScreen() {
     onResult: (deployment, next) => { replace(deployment); setLaunch(next); setCopied(false); setActionError(null); },
   } : null;
 
-  const intro = useFeatureIntro(
-    "deployments",
-    enabled && access.canViewDeployments && !loading && !error && configuration ? { deployments: deployments.length, cloudReady: available } : null,
-  );
-
-  const searchParams = useSearchParams();
-  const newRequested = searchParams.get("new") === "1";
-  useEffect(() => {
-    if (!newRequested || loading) return;
-    if (enabled && access.canManageDeployments && available) { setActionError(null); setDialogOpen(true); }
-    const url = new URL(window.location.href);
-    url.searchParams.delete("new");
-    window.history.replaceState(null, "", url);
-  }, [newRequested, loading, enabled, access.canManageDeployments, available]);
-
   const createDialog = (
     <CreateDeploymentDialog open={dialogOpen} onOpenChange={setDialogOpen} configuration={configuration} assistantsAvailable={assistantsAvailable} runReauthableAction={runReauthableAction}
       onCreated={(item) => { replace(item); setSelectedId(item.id); setLaunch(null); setDialogOpen(false); }} />
   );
-
-  if (intro.size === "fullscreen") {
-    return (
-      <section className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-6 p-4 sm:p-6" data-testid="managed-deployments-screen">
-        {intro.element}
-        {createDialog}
-      </section>
-    );
-  }
 
   const locked = !enabled ? "Deployments aren't turned on for this workspace. Ask your OpenWork contact to enable them."
     : !access.canViewDeployments ? permissionLockReason("deployments.view") : null;

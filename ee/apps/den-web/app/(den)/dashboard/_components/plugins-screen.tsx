@@ -19,11 +19,8 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenInput } from "../../_components/ui/input";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { getNewPluginRoute, getOrgAccessFlags, getPluginRoute } from "../../_lib/den-org";
+import { getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { FeatureIntroGate, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
-import { PluginSourcesIntro } from "./plugin-sources-intro";
-import { pluginDirectoryIntroFacts } from "./plugins-intro-facts";
 import { useIntegrations } from "./integration-data";
 import {
   type DenPlugin,
@@ -47,14 +44,6 @@ const PLUGIN_TABS = [
   { value: "sources" as const, label: "Sources", icon: GitFork },
 ];
 
-const PLUGIN_TAB_INTROS: Record<PluginView, FeatureIntroKey> = {
-  plugins: "plugins",
-  agents: "plugins.agents",
-  commands: "plugins.commands",
-  hooks: "plugins.hooks",
-  mcps: "plugins.mcps",
-  sources: "plugins.sources",
-};
 
 function parsePluginView(value: string | null): PluginView | null {
   return PLUGIN_TABS.find((tab) => tab.value === value)?.value ?? null;
@@ -73,16 +62,15 @@ export function PluginsScreen() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
-  const { orgSlug, orgContext } = useOrgDashboard();
+  const { orgSlug } = useOrgDashboard();
   const { data: pluginsData, isLoading, error } = usePlugins();
-  const { data: connectionsData, isLoading: integrationsLoading, error: integrationsError } = useIntegrations();
+  const { data: connectionsData, isLoading: integrationsLoading } = useIntegrations();
   const plugins = pluginsData ?? [];
   const connections = connectionsData ?? [];
   const hasAnyIntegration = connections.length > 0;
   const viewParam = parsePluginView(searchParams.get("view"));
   const [activeView, setActiveViewState] = useState<PluginView>(viewParam ?? "plugins");
   const [query, setQuery] = useState("");
-  const introUnseen = useFeatureIntroUnseen();
 
   useEffect(() => {
     if (viewParam) setActiveViewState(viewParam);
@@ -192,15 +180,6 @@ export function PluginsScreen() {
   };
 
   const searchPlaceholder = SEARCH_PLACEHOLDERS[activeView];
-  const seesAllPlugins = getOrgAccessFlags(
-    orgContext?.currentMember.role ?? "member",
-    orgContext?.currentMember.isOwner ?? false,
-    orgContext?.currentMember.permissions,
-  ).canManageAllShared;
-  const introFacts = !pluginsData || !connectionsData || error || integrationsError
-    ? null
-    : pluginDirectoryIntroFacts(pluginsData, connectionsData, seesAllPlugins);
-
   const catalog = isLoading || integrationsLoading ? (
     <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
       Loading plugin catalog...
@@ -317,7 +296,7 @@ export function PluginsScreen() {
       <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-col gap-4">
           <UnderlineTabs
-            tabs={PLUGIN_TABS.map((tab) => ({ ...tab, count: tabCounts[tab.value], unseen: introUnseen(PLUGIN_TAB_INTROS[tab.value]) }))}
+            tabs={PLUGIN_TABS.map((tab) => ({ ...tab, count: tabCounts[tab.value] }))}
             activeTab={activeView}
             onChange={setActiveView}
             showZeroCounts
@@ -349,14 +328,7 @@ export function PluginsScreen() {
         />
       ) : null}
 
-      {activeView === "sources" ? (
-        <>
-          <PluginSourcesIntro githubSources={integrationsLoading || integrationsError ? null : connections.filter((connection) => connection.provider === "github").length} />
-          <IntegrationsPanel />
-        </>
-      ) : (
-        <FeatureIntroGate introKey={PLUGIN_TAB_INTROS[activeView]} facts={introFacts}>{catalog}</FeatureIntroGate>
-      )}
+      {activeView === "sources" ? <IntegrationsPanel /> : catalog}
     </DashboardPageTemplate>
   );
 }

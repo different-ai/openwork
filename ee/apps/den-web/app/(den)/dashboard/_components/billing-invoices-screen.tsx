@@ -11,7 +11,6 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { formatMoneyMinor, getRequestError, requestJson } from "../../_lib/den-flow";
 import { getBillingRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
-import { FeatureIntroGate } from "../_features/feature-intros/feature-intro-gate";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { BillingInvoiceRow, BillingInvoiceRowSkeleton } from "./billing-invoice-row";
 
@@ -100,8 +99,6 @@ export function BillingInvoicesScreen() {
     void loadFirstPage();
   }, [activeOrgId, canSeeInvoices]);
 
-  const introFacts = state.kind === "ready" ? { invoices: state.invoices.length } : null;
-
   return (
     <div data-testid="billing-invoices-screen">
       <DashboardPageTemplate title="Invoices" description={null}>
@@ -127,35 +124,33 @@ export function BillingInvoicesScreen() {
             action={<DenButton variant="secondary" size="sm" icon={RefreshCw} onClick={() => void loadFirstPage()}>Try again</DenButton>}
           />
         ) : (
-          <FeatureIntroGate introKey="billing.invoices" facts={introFacts}>
-            <DenCard className="!p-0" data-testid="billing-invoices-card">
-              <ul className="m-0 list-none divide-y divide-gray-100 p-0 py-1" aria-busy={state.kind === "loading"}>
-                {state.kind === "loading"
-                  ? SKELETON_ROWS.map((row) => <BillingInvoiceRowSkeleton key={row} />)
-                  : state.invoices.map((invoice) => (
-                      <BillingInvoiceRow
-                        key={invoice.id}
-                        date={formatInvoiceDate(invoice.createdAt)}
-                        number={invoice.number}
-                        amount={formatMoneyMinor(invoice.total, invoice.currency)}
-                        status={invoice.status}
-                        href={invoice.hostedInvoiceUrl}
-                      />
-                    ))}
-              </ul>
-              {state.kind === "ready" && state.invoices.length === 0 ? (
-                <p className="px-6 py-5 text-[13px] text-gray-500">No invoices yet. Stripe sends one when a paid plan starts.</p>
-              ) : null}
-              {state.kind === "ready" && state.nextCursor ? (
-                <div className="flex flex-col items-center gap-2 border-t border-gray-100 px-6 py-3">
-                  {loadMoreError ? <p className="text-[13px] text-red-600" role="alert">{loadMoreError}</p> : null}
-                  <DenButton variant="ghost" size="sm" loading={loadingMore} onClick={() => void loadMore()}>
-                    {loadMoreError ? "Try again" : "Show older invoices"}
-                  </DenButton>
-                </div>
-              ) : null}
-            </DenCard>
-          </FeatureIntroGate>
+          <DenCard className="!p-0" data-testid="billing-invoices-card">
+            <ul className="m-0 list-none divide-y divide-gray-100 p-0 py-1" aria-busy={state.kind === "loading"}>
+              {state.kind === "loading"
+                ? SKELETON_ROWS.map((row) => <BillingInvoiceRowSkeleton key={row} />)
+                : state.invoices.map((invoice) => (
+                    <BillingInvoiceRow
+                      key={invoice.id}
+                      date={formatInvoiceDate(invoice.createdAt)}
+                      number={invoice.number}
+                      amount={formatMoneyMinor(invoice.total, invoice.currency)}
+                      status={invoice.status}
+                      href={invoice.hostedInvoiceUrl}
+                    />
+                  ))}
+            </ul>
+            {state.kind === "ready" && state.invoices.length === 0 ? (
+              <p className="px-6 py-5 text-[13px] text-gray-500">No invoices yet. Stripe sends one when a paid plan starts.</p>
+            ) : null}
+            {state.kind === "ready" && state.nextCursor ? (
+              <div className="flex flex-col items-center gap-2 border-t border-gray-100 px-6 py-3">
+                {loadMoreError ? <p className="text-[13px] text-red-600" role="alert">{loadMoreError}</p> : null}
+                <DenButton variant="ghost" size="sm" loading={loadingMore} onClick={() => void loadMore()}>
+                  {loadMoreError ? "Try again" : "Show older invoices"}
+                </DenButton>
+              </div>
+            ) : null}
+          </DenCard>
         )}
       </DashboardPageTemplate>
     </div>

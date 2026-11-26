@@ -10,7 +10,6 @@ import { DenNotice } from "../../_components/ui/notice";
 import { autoRouterModelName, type AutoRouter, type AutoRouterRoutingState } from "@openwork/types/den/auto-router";
 import { getAiGatewayProviderRoute, getAiGatewaySmartRouterRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { FeatureIntroGate, useFeatureIntro } from "../_features/feature-intros";
 import { useAutoRouters } from "./auto-router-data";
 import { assignmentIsEmpty, assignmentSummary } from "./auto-router-model";
 import { AddSmartRouterButton } from "./auto-router-screen";
@@ -188,54 +187,46 @@ export function GatewayProvidersSection() {
   const routing = smartRouters.data?.routing ?? "unknown";
   const canAddSmartRouter = smartRouters.data?.canEdit === true;
   const empty = !busy && !error && inferenceProviders.length === 0;
-  const loaded = !busy && !error;
-  const smartRouterIntro = useFeatureIntro(
-    "ai-gateway.smart-routers",
-    loaded && smartRouters.data ? { providers: inferenceProviders.length, smartRouters: smartRouters.data.routers.length } : null,
-  );
 
   return (
     <div>
       {error ? <DenNotice message="Could not load your providers. Your saved configuration has not changed." tone="error" presentation="inline" className="mb-6" action={<DenButton size="sm" variant="secondary" onClick={() => void reloadProviders()}>Retry</DenButton>} /> : null}
 
       {empty ? <div className="mb-6"><GatewayWhoCanUseModels /></div> : null}
-      <FeatureIntroGate introKey="ai-gateway.ai-providers" facts={loaded ? { providers: inferenceProviders.length } : null}>
-        {empty ? <EmptyState orgSlug={orgSlug} /> : (
-          <>
-            {smartRouterIntro.size === "banner" ? <div className="mb-6">{smartRouterIntro.element}</div> : null}
-            <GatewayWhoCanUseModels />
+      {empty ? <EmptyState orgSlug={orgSlug} /> : (
+        <>
+          <GatewayWhoCanUseModels />
 
-            <section aria-labelledby="gateway-providers-heading" className="mt-8">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <h2 id="gateway-providers-heading" className="sr-only">Providers</h2>
-                <FilterInput value={query} onChange={setQuery} className="w-64 max-w-full" />
-                <div className="flex flex-wrap items-center gap-2">
-                  {canAddSmartRouter ? <AddSmartRouterButton missingKey={routing === "missing_key"} /> : null}
-                  <Link href={getNewAiGatewayProviderRoute(orgSlug)} data-testid="gateway-provider-create" className={buttonVariants({ variant: "secondary", size: "sm" })}>
-                    <Plus className="h-4 w-4" aria-hidden="true" />
-                    Add a provider
-                  </Link>
-                </div>
+          <section aria-labelledby="gateway-providers-heading" className="mt-8">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h2 id="gateway-providers-heading" className="sr-only">Providers</h2>
+              <FilterInput value={query} onChange={setQuery} className="w-64 max-w-full" />
+              <div className="flex flex-wrap items-center gap-2">
+                {canAddSmartRouter ? <AddSmartRouterButton missingKey={routing === "missing_key"} /> : null}
+                <Link href={getNewAiGatewayProviderRoute(orgSlug)} data-testid="gateway-provider-create" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  Add a provider
+                </Link>
               </div>
-              <RowList label="Providers" busy={busy} header={<RowListHeader lead="Provider">
-                <RowLaneLabel lane={GATEWAY_LANE.models}>Models</RowLaneLabel>
-                <RowLaneLabel lane={GATEWAY_LANE.audience}>Who can use it</RowLaneLabel>
-                <RowLaneLabel lane={GATEWAY_LANE.status}>Status</RowLaneLabel>
-                <span role="columnheader" className={`shrink-0 ${GATEWAY_LANE.open}`}><span className="sr-only">Manage</span></span>
-              </RowListHeader>}>
-                {busy && inferenceProviders.length === 0 ? <RowListSkeleton rows={3} />
-                  : filtered.length === 0 && filteredRouters.length === 0 ? !error && !busy ? <RowListNote>No providers match that filter. Try another name.</RowListNote> : null
-                  : (
-                    <>
-                      {filteredRouters.map((router) => <SmartRouterRow key={router.id} router={router} routing={routing} orgSlug={orgSlug} />)}
-                      {filtered.map((provider) => <ProviderRow key={provider.id} provider={provider} orgSlug={orgSlug} orgContext={orgContext} />)}
-                    </>
-                  )}
-              </RowList>
-            </section>
-          </>
-        )}
-      </FeatureIntroGate>
+            </div>
+            <RowList label="Providers" busy={busy} header={<RowListHeader lead="Provider">
+              <RowLaneLabel lane={GATEWAY_LANE.models}>Models</RowLaneLabel>
+              <RowLaneLabel lane={GATEWAY_LANE.audience}>Who can use it</RowLaneLabel>
+              <RowLaneLabel lane={GATEWAY_LANE.status}>Status</RowLaneLabel>
+              <span role="columnheader" className={`shrink-0 ${GATEWAY_LANE.open}`}><span className="sr-only">Manage</span></span>
+            </RowListHeader>}>
+              {busy && inferenceProviders.length === 0 ? <RowListSkeleton rows={3} />
+                : filtered.length === 0 && filteredRouters.length === 0 ? !error && !busy ? <RowListNote>No providers match that filter. Try another name.</RowListNote> : null
+                : (
+                  <>
+                    {filteredRouters.map((router) => <SmartRouterRow key={router.id} router={router} routing={routing} orgSlug={orgSlug} />)}
+                    {filtered.map((provider) => <ProviderRow key={provider.id} provider={provider} orgSlug={orgSlug} orgContext={orgContext} />)}
+                  </>
+                )}
+            </RowList>
+          </section>
+        </>
+      )}
     </div>
   );
 }

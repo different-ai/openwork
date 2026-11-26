@@ -13,7 +13,6 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useMcpConnections } from "./mcp-connections-data";
 import { PluginCreateForm } from "./plugin-create-form";
-import { PluginsSetupIntro } from "./plugins-intro-facts";
 
 export function LibraryPluginCreateScreen() {
   const router = useRouter();
@@ -45,7 +44,6 @@ export function AdminPluginCreateScreen() {
 
   return (
     <ItemPage testId="plugin-create">
-      <PluginsSetupIntro introKey="plugins.new" />
       <ItemHeader compact back={{ href: getPluginsRoute(orgSlug), label: "Plugins" }} title="Create a plugin" />
       <PluginCreateForm
         connections={connections}
