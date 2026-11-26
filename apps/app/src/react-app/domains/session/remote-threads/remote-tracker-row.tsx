@@ -23,12 +23,16 @@ export function RemoteTrackerRow({ start, owner, startedAt, onKind, onOpen }: {
   const [stopping, setStopping] = useState(false)
   const [stoppedHere, setStoppedHere] = useState(false)
   const [now, setNow] = useState(() => Date.now())
-  const view = remoteThreadView(start, entry, now, stoppedHere)
+  const stale = entry?.stale ?? false
+  const view = remoteThreadView(start, entry, stale ? entry?.checkedAt ?? now : now, stoppedHere)
+  const ticking = view.active && !stale
   useEffect(() => {
-    if (!view.active) return
-    const interval = window.setInterval(() => setNow(Date.now()), 1_000)
+    if (!ticking) return
+    const update = () => setNow(Date.now())
+    update()
+    const interval = window.setInterval(update, 1_000)
     return () => window.clearInterval(interval)
-  }, [view.active])
+  }, [ticking])
   const kind: RemoteTrackerKind = view.state === "waiting" ? "attention"
     : view.state === "idle" ? "done"
     : view.state === "error" ? view.stopped ? "stopped" : "error"
@@ -52,10 +56,11 @@ export function RemoteTrackerRow({ start, owner, startedAt, onKind, onOpen }: {
       status={{
         kind,
         elapsed: view.elapsed,
-        workingNote: view.state === "starting" ? "starting" : null,
+        workingNote: stale ? "reconnecting" : view.state === "starting" ? "starting" : null,
         waitingFor: view.waitingFor,
         stopping,
-        shimmer: kind === "working",
+        shimmer: view.state === "running" && !stale,
+        lastChecked: view.lastChecked,
       }}
       onOpen={onOpen ? () => onOpen(start) : undefined}
       openLabel={t("session.remote_task_tracker_open", { title: view.title, computer: view.computer })}

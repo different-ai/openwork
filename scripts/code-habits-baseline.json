@@ -106,7 +106,6 @@
     "apps/app/src/react-app/domains/session/panel/use-browser-presentation.ts": 9,
     "apps/app/src/react-app/domains/session/panel/use-side-panel-tabs.ts": 2,
     "apps/app/src/react-app/domains/session/remote-threads/remote-session-surface.tsx": 1,
-    "apps/app/src/react-app/domains/session/remote-threads/remote-thread-answer-card.tsx": 1,
     "apps/app/src/react-app/domains/session/remote-threads/remote-thread-store.ts": 2,
     "apps/app/src/react-app/domains/session/remote-threads/remote-tracker-row.tsx": 2,
     "apps/app/src/react-app/domains/session/remote-threads/use-remote-thread-conversation.ts": 4,

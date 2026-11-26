@@ -1,10 +1,11 @@
-import { useCallback, type ReactNode } from "react"
+import { useCallback } from "react"
 import type { UIMessage } from "ai"
 
 import { UntrustedMarkdown } from "@/components/markdown/untrusted-markdown"
 import { MessageList } from "@/components/chat/message-list"
 import { MessageListProvider } from "@/components/chat/message-list-provider"
 import type { ChatToolReconnectResult } from "@/components/tools/error-attribution"
+import { OpenTargetProvider } from "@/lib/target-provider"
 
 export function RemoteTranscriptView({
   threadKey,
@@ -12,14 +13,14 @@ export function RemoteTranscriptView({
   running,
   showThinking,
   developerMode,
-  children,
+  waiting = false,
 }: {
   threadKey: string
   messages: UIMessage[]
   running: boolean
   showThinking: boolean
   developerMode: boolean
-  children?: ReactNode
+  waiting?: boolean
 }) {
   const scope = `remote:${threadKey}`
   const noop = useCallback(() => {}, [])
@@ -44,12 +45,13 @@ export function RemoteTranscriptView({
       onMcpReopenAuthorization={reopen}
     >
       <UntrustedMarkdown>
-        <MessageList
-          messages={messages}
-          status={running ? "streaming" : "ready"}
-          activityStatus={running ? "thinking" : "idle"}
-        />
-        {children}
+        <OpenTargetProvider>
+          <MessageList
+            messages={messages}
+            status={running || waiting ? "streaming" : "ready"}
+            activityStatus={waiting ? "waiting" : running ? "thinking" : "idle"}
+          />
+        </OpenTargetProvider>
       </UntrustedMarkdown>
     </MessageListProvider>
   )

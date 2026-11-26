@@ -24,7 +24,7 @@ const payload = {
       id: "msg_reply", role: "assistant", createdAt: 1_100, completedAt: 44_000, text: "The repo has two files.", toolCalls: [],
       parts: [
         { type: "tool", id: "prt_ls", name: "bash", status: "completed", input: "{\"command\":\"ls\",\"description\":\"List files\"}", output: "a\nb", error: null, truncated: false },
-        { type: "text", text: "The repo has two files." },
+        { type: "text", text: "The repo has **two files**." },
       ],
     },
     { id: "msg_user_2", role: "user", createdAt: 50_000, text: "Read the notes", toolCalls: [] },
@@ -64,11 +64,25 @@ test("a finished remote turn renders through the chat renderer, folded to Worked
     const folds = container.querySelectorAll<HTMLElement>("[data-testid='completed-work-rail']")
     expect(folds.length).toBe(1)
     expect(fold?.textContent).toContain("Worked for 43s")
-    expect(container.textContent).toContain("The repo has two files.")
+    expect(container.querySelector("strong")?.textContent).toBe("two files")
     expect(container.textContent).toContain("missing-notes.md")
     expect(container.textContent).toContain("There are no notes.")
     // Read only: the turns carry no branch action.
     expect(container.querySelector("[aria-label='Branch in new chat']")).toBeNull()
+  })
+})
+
+test("a pending remote tool uses the workspace waiting row rather than appearing completed", async () => {
+  const outcome = parseRemoteRead({ messages: [payload.messages[0], {
+    id: "msg_waiting", role: "assistant", text: "", toolCalls: [], parts: [
+      { type: "tool", id: "prt_waiting", name: "bash", status: "running", input: '{"command":"pnpm test"}' },
+    ],
+  }] })
+  if (outcome.kind !== "page") throw new Error("expected a page")
+  await render(<RemoteTranscriptView threadKey="command:cmd_waiting" messages={remoteTranscriptToUIMessages(outcome.page.messages, { running: true })} waiting running={false} showThinking={false} developerMode={false} />, (container) => {
+    expect(container.querySelector('[data-tool-lifecycle="waiting"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="completed-work-rail"]')).toBeNull()
+    expect(container.querySelector('[data-message-role="user"]')?.textContent).toContain("Check the repo")
   })
 })
 

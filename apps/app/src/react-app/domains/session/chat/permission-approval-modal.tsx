@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { Check, ChevronRight, Clock3, RefreshCcw, ShieldCheck, XCircle } from "lucide-react";
 import { useMemo } from "react";
+import type { RemoteSessionPending } from "@openwork/types/automations";
 
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
@@ -23,12 +24,17 @@ type PermissionDetail = {
 };
 
 type PermissionApprovalModalProps = {
+  busy?: boolean;
+} & ({
   permission: PendingPermission;
   sourceTitle?: string;
-  busy?: boolean;
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject", remember?: "always") => void;
   safeStringify?: (value: unknown) => string;
-};
+} | {
+  remotePermission: Extract<RemoteSessionPending, { kind: "permission" }>;
+  computer: string;
+  onDecision: (decision: "once" | "reject") => void;
+});
 
 const metadataDetailKeys: Array<{ key: string; labelKey: string; multiline?: boolean }> = [
   { key: "command", labelKey: "session.permission_detail_command", multiline: true },
@@ -233,36 +239,45 @@ export function permissionCanRemember(permission: PendingPermission): boolean {
 }
 
 export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
-  const fileSend = permissionFileSend(props.permission);
-  const canRemember = fileSend ? fileSend.remember.includes("session") : permissionCanRemember(props.permission);
+  const local = "permission" in props ? props : null;
+  const remote = "remotePermission" in props ? props : null;
+  const permission = local?.permission;
+  const fileSend = permission ? permissionFileSend(permission) : null;
+  const canRemember = fileSend ? fileSend.remember.includes("session") : Boolean(permission && permissionCanRemember(permission));
   const canAlways = fileSend?.remember.includes("always") === true;
-  const presentation = useMemo(() => describePermissionRequest(props.permission), [props.permission]);
-  const metadata =
-    props.permission.metadata && typeof props.permission.metadata === "object"
-      ? props.permission.metadata
-      : {};
+  const presentation = useMemo(() => permission ? describePermissionRequest(permission) : null, [permission]);
+  const metadata = permission?.metadata ?? {};
   const hasMetadata = Object.keys(metadata).length > 0;
-  const Icon = presentation.isDoomLoop ? RefreshCcw : ShieldCheck;
+  const Icon = presentation?.isDoomLoop ? RefreshCcw : ShieldCheck;
+  const respond = (decision: "once" | "reject") => {
+    if (remote) remote.onDecision(decision);
+    else if (local) local.respondPermission?.(local.permission.id, decision);
+  };
 
   return (
-    <div className="overflow-hidden border-b border-dls-border bg-transparent">
+    <div data-permission-approval="" className="overflow-hidden border-b border-dls-border bg-transparent">
         <div className={`flex flex-col gap-3 px-4 py-3 ${canAlways ? "" : "sm:flex-row sm:items-center sm:justify-between"}`}>
           <div className="flex min-w-0 items-start gap-3">
             <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
               <Icon size={16} strokeWidth={1.9} />
             </div>
             <div className="min-w-0">
-              <div className="text-[13px] font-medium leading-5 text-dls-text">{presentation.title}</div>
-              <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{presentation.message}</div>
-              {props.sourceTitle ? (
+              <div className="text-[13px] font-medium leading-5 text-dls-text">{presentation?.title ?? remote?.remotePermission.title}</div>
+              <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{presentation?.message ?? remote?.remotePermission.detail}</div>
+              {local?.sourceTitle ? (
                 <div
                   data-permission-source="child-session"
                   className="mt-1 text-[12px] font-medium leading-5 text-amber-11"
                 >
-                  {t("session.permission_requested_by", { session: props.sourceTitle })}
+                  {t("session.permission_requested_by", { session: local.sourceTitle })}
                 </div>
               ) : null}
-              {presentation.note ? (
+              {remote ? (
+                <div className="mt-1 text-[12px] leading-5 text-dls-secondary">
+                  {t("session.remote_answer_permission_on", { computer: remote.computer })}
+                </div>
+              ) : null}
+              {presentation?.note ? (
                 <div className="mt-1 text-[12px] leading-5 text-dls-secondary">{presentation.note}</div>
               ) : null}
             </div>
@@ -274,8 +289,8 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
               variant="outline"
               size="sm"
               className="border-red-7/25 text-red-11 hover:bg-red-1/40"
-              onClick={() => props.respondPermission?.(props.permission.id, "reject")}
-              disabled={props.busy || !props.respondPermission}
+              onClick={() => respond("reject")}
+              disabled={props.busy || !(remote || local?.respondPermission)}
             >
               <XCircle data-icon="inline-start" />
               {t("session.deny")}
@@ -283,8 +298,8 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
             <Button
               type="button"
               size="sm"
-              onClick={() => props.respondPermission?.(props.permission.id, "once")}
-              disabled={props.busy || !props.respondPermission}
+              onClick={() => respond("once")}
+              disabled={props.busy || !(remote || local?.respondPermission)}
             >
               <Clock3 data-icon="inline-start" />
               {t("session.allow_once")}
@@ -294,8 +309,8 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => props.respondPermission?.(props.permission.id, "always")}
-                disabled={props.busy || !props.respondPermission}
+                onClick={() => local?.respondPermission?.(local.permission.id, "always")}
+                disabled={props.busy || !(remote || local?.respondPermission)}
               >
                 <Check data-icon="inline-start" />
                 {fileSend ? t("session.file_send_allow_chat") : t("session.allow_for_session")}
@@ -306,8 +321,8 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => props.respondPermission?.(props.permission.id, "always", "always")}
-                disabled={props.busy || !props.respondPermission}
+                onClick={() => local?.respondPermission?.(local.permission.id, "always", "always")}
+                disabled={props.busy || !(remote || local?.respondPermission)}
               >
                 <ShieldCheck data-icon="inline-start" />
                 {t("session.file_send_allow_always")}
@@ -316,6 +331,10 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
           </div>
         </div>
 
+        {remote?.remotePermission.command ? (
+          <pre className="mx-4 mb-3 max-h-32 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-lg bg-dls-hover/45 px-3 py-2 text-[12px] leading-5 text-dls-text">{remote.remotePermission.command}</pre>
+        ) : null}
+        {presentation ? (
         <div className="border-t border-dls-border px-4 py-3">
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
             <div>
@@ -343,11 +362,12 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
                 <ChevronRight size={14} className="text-dls-secondary transition-transform group-open:rotate-90" />
               </summary>
               <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-dls-hover/45 px-3 py-2 text-[11px] leading-5 text-dls-secondary">
-                {stringifyMetadata(metadata, props.safeStringify)}
+                {stringifyMetadata(metadata, local?.safeStringify)}
               </pre>
             </details>
           ) : null}
         </div>
+        ) : null}
     </div>
   );
 }

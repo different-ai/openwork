@@ -1,264 +1,110 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
+import { useRef, useState } from "react"
 import type { RemoteSessionAnswerInput, RemoteSessionPending } from "@openwork/types/automations"
 
-import { markFeatureUsed } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { Input } from "@/components/ui/input"
 import { t } from "@/i18n"
-import { questionAnswer, questionAnswerReady } from "@/lib/remote-session-answers"
-import { cn } from "@/lib/utils"
-import { isQuestionCollapseChord, QUESTION_COLLAPSE_PANEL_CLASS, questionCollapseChordLabel } from "@/react-app/domains/session/modals/question-collapse"
+import { PermissionApprovalPanel } from "../chat/permission-approval-modal"
+import { QuestionPanel } from "../modals/question-modal"
+import { useDesktopFeature } from "../status/use-desktop-feature"
+import { answerRemoteThread } from "./remote-thread-actions"
+import type { RemoteThreadEntry } from "./remote-thread-store"
+import type { useRemoteThreadConversation } from "./use-remote-thread-conversation"
 
 type Failure = { code: string; message: string; retryable: boolean }
 export type RemoteAnswerSubmit = (answer: RemoteSessionAnswerInput) => Promise<Failure | null>
 
-export function RemoteThreadAnswerCard({ pending, computer, onAnswer, collapsible = false }: { pending: RemoteSessionPending; computer: string; onAnswer: RemoteAnswerSubmit; collapsible?: boolean }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [answered, setAnswered] = useState<string | null>(null)
-  const last = useRef<RemoteSessionAnswerInput | null>(null)
+type Conversation = ReturnType<typeof useRemoteThreadConversation>
+
+export function RemoteThreadAnswerSlot({ entry, conversation }: { entry: RemoteThreadEntry; conversation: Conversation }) {
+  const collapsible = useDesktopFeature("questionMinimize")
+  const { view, page } = conversation
+  if (!view.waitingFor) return null
+  const pending = page?.pending
+  const summary = entry.status?.pending
+  return (
+    <div className="mx-auto w-full max-w-3xl shrink-0" data-remote-session-question-slot="">
+      {pending?.kind === view.waitingFor && (!summary || (pending.kind === summary.kind && pending.requestId === summary.requestId)) ? (
+        <RemoteThreadAnswerCard
+          key={`${entry.start.key}:${pending.kind}:${pending.requestId}`}
+          pending={pending}
+          computer={view.computer}
+          collapsible={collapsible}
+          onAnswer={(answer) => answerRemoteThread(entry, answer)}
+        />
+      ) : (
+        <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground" data-remote-thread-waiting={view.waitingFor}>
+          {t("session.remote_task_answer_there", { computer: view.computer })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function RemoteThreadAnswerCard({ pending, computer, onAnswer, collapsible = false }: {
+  pending: RemoteSessionPending
+  computer: string
+  onAnswer: RemoteAnswerSubmit
+  collapsible?: boolean
+}) {
+  const [attempt, setAttempt] = useState<{
+    answer: RemoteSessionAnswerInput
+    failure?: Failure
+    delivered?: boolean
+  } | null>(null)
+  const submitting = useRef(false)
+  const current = attempt?.answer.requestId === pending.requestId ? attempt : null
+  const busy = Boolean(current && !current.failure)
+  const blocked = busy || current?.failure?.retryable === false
+  if (current?.delivered) return null
 
   async function submit(answer: RemoteSessionAnswerInput) {
-    last.current = answer
-    setBusy(true)
-    setError(null)
-    const failure = await onAnswer(answer)
-    setBusy(false)
-    if (failure) setError(failure.message)
-    else setAnswered(answer.requestId)
+    if (submitting.current || blocked) return
+    submitting.current = true
+    setAttempt({ answer })
+    try {
+      const failure = await onAnswer(answer)
+      setAttempt(failure ? { answer, failure } : { answer, delivered: true })
+    } finally {
+      submitting.current = false
+    }
   }
 
-  if (answered === pending.requestId) return null
-
-  const footerError = error ? (
-    <div className="flex items-center gap-2 text-xs text-red-11" role="alert" data-remote-answer-error="">
-      <span className="min-w-0 flex-1">{t("session.remote_answer_failed", { reason: error })}</span>
-      {last.current ? (
-        <Button variant="ghost" size="xs" disabled={busy} onClick={() => { if (last.current) void submit(last.current) }}>
-          {t("session.remote_task_retry")}
-        </Button>
-      ) : null}
-    </div>
-  ) : null
-
-  return pending.kind === "permission"
-    ? <PermissionCard key={pending.requestId} pending={pending} computer={computer} busy={busy} error={footerError} onSubmit={submit} />
-    : <QuestionCard key={pending.requestId} pending={pending} computer={computer} busy={busy} error={footerError} onSubmit={submit} collapsible={collapsible} />
-}
-
-type CardProps<Kind extends RemoteSessionPending["kind"]> = {
-  pending: Extract<RemoteSessionPending, { kind: Kind }>
-  computer: string
-  busy: boolean
-  error: ReactNode
-  onSubmit: (answer: RemoteSessionAnswerInput) => Promise<void>
-}
-
-const CARD = "flex shrink-0 flex-col gap-2 border-t border-border bg-background px-3 py-3 outline-none"
-
-function Label({ children }: { children: ReactNode }) {
-  return <span className="text-xs text-muted-foreground">{children}</span>
-}
-
-function Chord({ children }: { children: ReactNode }) {
-  return <span className="text-xs text-muted-foreground">{children}</span>
-}
-
-function typing(event: KeyboardEvent) {
-  return event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement
-}
-
-function PermissionCard({ pending, computer, busy, error, onSubmit }: CardProps<"permission">) {
-  const decide = (decision: "once" | "reject") => { if (!busy) void onSubmit({ kind: "permission", requestId: pending.requestId, decision }) }
+  const decide = (decision: "once" | "reject") => void submit({ kind: "permission", requestId: pending.requestId, decision })
   return (
     <div
-      className={CARD}
-      data-remote-answer="permission"
+      data-remote-answer={pending.kind}
       role="group"
-      aria-label={t("session.remote_answer_permission_on", { computer })}
+      aria-label={t(pending.kind === "permission" ? "session.remote_answer_permission_on" : "session.remote_answer_question_on", { computer })}
       onKeyDown={(event) => {
-        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-          event.preventDefault()
-          decide("once")
-        }
+        if (pending.kind !== "permission" || event.repeat || event.nativeEvent.isComposing || event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return
+        event.preventDefault()
+        decide("once")
       }}
     >
-      <Label>{t("session.remote_answer_permission_on", { computer })}</Label>
-      <span className="text-sm font-medium text-foreground">{pending.title}</span>
-      {pending.detail ? <span className="text-sm text-muted-foreground">{pending.detail}</span> : null}
-      {pending.command ? (
-        <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius)] bg-muted px-2.5 py-2 font-mono text-xs text-foreground">{pending.command}</pre>
-      ) : null}
-      {error}
-      <div className="flex items-center gap-2">
-        <Chord>{t("session.remote_answer_allow_chord")}</Chord>
-        <span className="flex-1" />
-        <Button variant="ghost" size="sm" disabled={busy} onClick={() => decide("reject")}>{t("session.remote_answer_deny")}</Button>
-        <Button size="sm" disabled={busy} onClick={() => decide("once")}>{t("session.remote_answer_allow_once")}</Button>
-      </div>
-    </div>
-  )
-}
-
-function QuestionCard({ pending, computer, busy, error, onSubmit, collapsible }: CardProps<"question"> & { collapsible: boolean }) {
-  const [collapsed, setCollapsed] = useState(false)
-  const [index, setIndex] = useState(0)
-  const [answers, setAnswers] = useState<string[][]>([])
-  const [selected, setSelected] = useState<string[]>([])
-  const [custom, setCustom] = useState("")
-  const question = pending.questions[index]
-  const total = pending.questions.length
-  useEffect(() => {
-    setSelected([])
-    setCustom("")
-  }, [index])
-  if (!question) return null
-  const answer = questionAnswer(selected, custom, question.custom)
-  const ready = questionAnswerReady(question, answer)
-  const lastQuestion = index === total - 1
-
-  const choose = (label: string) => {
-    if (busy) return
-    setSelected((current) => question.multiple
-      ? current.includes(label) ? current.filter((item) => item !== label) : [...current, label]
-      : [label])
-    if (!question.multiple) setCustom("")
-  }
-  const next = () => {
-    if (!ready || busy) return
-    const all = [...answers.slice(0, index), answer]
-    if (lastQuestion) {
-      void onSubmit({ kind: "question", requestId: pending.requestId, answers: all })
-      return
-    }
-    setAnswers(all)
-    setIndex(index + 1)
-  }
-  const changeCollapsed = (next: boolean) => {
-    if (next) markFeatureUsed("questionMinimize")
-    setCollapsed(next)
-  }
-  const minimized = collapsible && collapsed
-
-  const details = (
-    <>
-      <span className="text-sm font-medium text-foreground">{question.question || question.header}</span>
-      {question.header && question.question && question.header !== question.question
-        ? <span className="text-sm text-muted-foreground">{question.header}</span>
-        : null}
-      {question.options.length > 0 ? (
-        <div className="flex flex-col" role={question.multiple ? "group" : "radiogroup"}>
-          {question.options.map((option, position) => {
-            const isSelected = selected.includes(option.label)
-            return (
-              <button
-                key={`${position}:${option.label}`}
-                type="button"
-                role={question.multiple ? "checkbox" : "radio"}
-                aria-checked={isSelected}
-                aria-label={option.label}
-                disabled={busy}
-                data-remote-answer-option={option.label}
-                className={cn(
-                  "flex w-full items-baseline gap-2.5 rounded-[var(--radius)] px-2 py-1.5 text-start text-sm transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none disabled:opacity-60",
-                  isSelected && "bg-muted",
-                )}
-                onClick={() => choose(option.label)}
-              >
-                <span className="w-3 shrink-0 text-xs tabular-nums text-muted-foreground">{position + 1}</span>
-                <span className="flex min-w-0 flex-col">
-                  <span className={cn("text-foreground", isSelected && "font-medium")}>{option.label}</span>
-                  {option.description && option.description !== option.label
-                    ? <span className="text-xs text-muted-foreground">{option.description}</span>
-                    : null}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-      ) : null}
-      {question.custom ? (
-        <Input
-          value={custom}
-          disabled={busy}
-          aria-label={t("session.remote_answer_other")}
-          placeholder={t("session.remote_answer_other")}
-          className="h-8 text-sm"
-          onChange={(event) => {
-            setCustom(event.target.value)
-            if (!question.multiple && event.target.value.trim()) setSelected([])
-          }}
-        />
-      ) : null}
-      {error}
-      <div className="flex items-center gap-2">
-        <Chord>{t(question.options.length > 1 ? "session.remote_answer_choose_chord" : "session.remote_answer_next_chord", { count: Math.min(question.options.length, 9) })}</Chord>
-        <span className="flex-1" />
-        <Button size="sm" disabled={!ready || busy} onClick={next}>
-          {t(lastQuestion ? "session.remote_answer_send" : "session.remote_answer_next")}
-        </Button>
-      </div>
-    </>
-  )
-
-  const card = (
-    <div
-      className={CARD}
-      data-remote-answer="question"
-      data-question-collapsed={collapsible ? String(collapsed) : undefined}
-      role="group"
-      aria-label={t("session.remote_answer_question_on", { computer })}
-      onKeyDown={(event) => {
-        if (collapsible && !event.repeat && isQuestionCollapseChord(event)) {
-          event.preventDefault()
-          changeCollapsed(!collapsed)
-          return
-        }
-        if (minimized) return
-        if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-          event.preventDefault()
-          next()
-          return
-        }
-        if (typing(event) || event.metaKey || event.ctrlKey || event.altKey) return
-        const number = Number.parseInt(event.key, 10)
-        const option = Number.isInteger(number) && number >= 1 ? question.options[number - 1] : undefined
-        if (option) {
-          event.preventDefault()
-          choose(option.label)
-        }
-      }}
-    >
-      {collapsible ? (
-        <div className="flex items-center gap-2">
-          <span className="flex min-w-0 flex-1 items-baseline gap-2">
-            {minimized ? <span className="min-w-0 truncate text-sm font-medium text-foreground">{question.header || question.question}</span> : null}
-            <span className="shrink-0 text-xs text-muted-foreground" role={minimized ? "status" : undefined}>
-              {minimized
-                ? t("question_modal.collapsed_status")
-                : total > 1
-                  ? t("question_modal.question_counter", { current: index + 1, total })
-                  : t("session.remote_answer_question_on", { computer })}
-            </span>
-          </span>
-          <CollapsibleTrigger render={<Button variant="ghost" size="xs" className="text-muted-foreground aria-expanded:text-muted-foreground aria-expanded:hover:text-foreground" />} data-question-collapse-toggle="">
-            {minimized ? t("question_modal.expand") : t("question_modal.collapse")}
-            <span className="text-[11px] font-normal text-muted-foreground" aria-hidden="true">{questionCollapseChordLabel()}</span>
-          </CollapsibleTrigger>
-        </div>
+      {pending.kind === "permission" ? (
+        <PermissionApprovalPanel remotePermission={pending} computer={computer} busy={blocked} onDecision={decide} />
       ) : (
-        <Label>
-          {total > 1
-            ? t("question_modal.question_counter", { current: index + 1, total })
-            : t("session.remote_answer_question_on", { computer })}
-        </Label>
+        <>
+          <p className="px-4 pt-2 text-xs text-muted-foreground">{t("session.remote_answer_question_on", { computer })}</p>
+          <QuestionPanel
+            key={pending.requestId}
+            requestId={`remote:${pending.requestId}`}
+            questions={pending.questions}
+            busy={blocked}
+            collapsible={collapsible}
+            variant={collapsible ? "composer" : "thread"}
+            onReply={(answers) => submit({ kind: "question", requestId: pending.requestId, answers })}
+          />
+        </>
       )}
-      {collapsible ? <CollapsibleContent className={QUESTION_COLLAPSE_PANEL_CLASS}><div className="flex flex-col gap-2">{details}</div></CollapsibleContent> : details}
+      {current?.failure ? (
+        <div className="flex items-center gap-2 px-4 py-2 text-xs text-red-11" role="alert" data-remote-answer-error="">
+          <span className="min-w-0 flex-1">{t("session.remote_answer_failed", { reason: current.failure.message })}</span>
+          {current.failure.retryable ? (
+            <Button variant="ghost" size="xs" onClick={() => void submit(current.answer)}>{t("session.remote_task_retry")}</Button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
-
-  return collapsible
-    ? <Collapsible open={!collapsed} onOpenChange={(open) => changeCollapsed(!open)}>{card}</Collapsible>
-    : card
 }

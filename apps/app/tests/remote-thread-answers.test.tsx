@@ -42,38 +42,41 @@ function key(target: Element, init: KeyboardEventInit) {
   target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }))
 }
 
-test("a question reads as text with numbered options; a number key chooses and Enter sends", async () => {
+function button(container: HTMLElement, label: string) {
+  const control = [...container.querySelectorAll("button")].find((candidate) => candidate.textContent?.trim() === label)
+  if (!control) throw new Error(`Missing button: ${label}`)
+  return control
+}
+
+test("a remote question uses the workspace question panel and submits to the remote request", async () => {
   const sent: RemoteSessionAnswerInput[] = []
   await render(<RemoteThreadAnswerCard pending={question} computer="Studio Mac" onAnswer={async (answer) => { sent.push(answer); return null }} />, async (container) => {
-    const card = container.querySelector("[data-remote-answer=question]")
-    expect(card?.textContent).toContain("Question from Studio Mac")
-    expect(card?.textContent).toContain("Which branch should I release from?")
-    expect(card?.querySelectorAll("svg").length).toBe(0)
-    expect(card?.querySelector("a")).toBeNull()
-    const send = [...(card?.querySelectorAll("button") ?? [])].find((button) => button.textContent === "Send answer")
-    expect(send?.hasAttribute("disabled")).toBe(true)
-    await act(async () => { if (card) key(card, { key: "2" }) })
-    expect(card?.querySelector("[data-remote-answer-option=main]")?.getAttribute("aria-checked")).toBe("true")
-    await act(async () => { if (card) key(card, { key: "Enter" }) })
+    expect(container.textContent).toContain("Question from Studio Mac")
+    expect(container.querySelector("[data-question-variant=thread]")?.textContent).toContain("Which branch should I release from?")
+    expect(container.querySelector("a")).toBeNull()
+    expect(button(container, "Submit").disabled).toBe(true)
+    const main = button(container, "main")
+    await act(async () => { main.click() })
+    expect(main.getAttribute("aria-checked")).toBe("true")
+    expect(sent).toEqual([])
+    await act(async () => { button(container, "Submit").click() })
     expect(sent).toEqual([{ kind: "question", requestId: "que_1", answers: [["main"]] }])
     expect(container.querySelector("[data-remote-answer]")).toBeNull()
   })
 })
 
-test("a failed answer stays on the card with the reason and a retry", async () => {
+test("an unconfirmed permission cannot be sent again from the old card", async () => {
   let attempts = 0
-  await render(<RemoteThreadAnswerCard pending={question} computer="Studio Mac" onAnswer={async () => {
+  await render(<RemoteThreadAnswerCard pending={permission} computer="Studio Mac" onAnswer={async () => {
     attempts++
-    return attempts === 1 ? { code: "stale_request", message: "That question is no longer pending.", retryable: false } : null
+    return { code: "desktop_request_pending", message: "Check the task before answering again.", retryable: false }
   }} />, async (container) => {
-    const card = container.querySelector("[data-remote-answer=question]")
-    await act(async () => { container.querySelector<HTMLButtonElement>("[data-remote-answer-option=dev]")?.click() })
-    await act(async () => { if (card) key(card, { key: "Enter" }) })
-    expect(container.querySelector("[data-remote-answer-error]")?.textContent).toContain("Couldn't send your answer: That question is no longer pending.")
-    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent === "Try again")
-    await act(async () => { retry?.click() })
-    expect(attempts).toBe(2)
-    expect(container.querySelector("[data-remote-answer]")).toBeNull()
+    await act(async () => { button(container, "Allow once").click() })
+    expect(container.querySelector("[data-remote-answer-error]")?.textContent).toContain("Check the task before answering again.")
+    expect(container.textContent).not.toContain("Try again")
+    expect(button(container, "Allow once").disabled).toBe(true)
+    expect(button(container, "Deny").disabled).toBe(true)
+    expect(attempts).toBe(1)
   })
 })
 
@@ -82,7 +85,9 @@ test("a permission names its command; ⌘Enter allows once and Deny rejects, nev
   await render(<RemoteThreadAnswerCard pending={permission} computer="Studio Mac" onAnswer={async (answer) => { sent.push(answer); return { code: "x", message: "Try later", retryable: true } }} />, async (container) => {
     const card = container.querySelector("[data-remote-answer=permission]")
     expect(card?.textContent).toContain("Permission on Studio Mac")
-    expect(card?.querySelector("pre")?.textContent).toBe("pnpm test")
+    expect(card?.querySelector("[data-permission-approval] pre")?.textContent).toBe("pnpm test")
+    expect(card?.textContent).not.toContain("Allow for this session")
+    expect(card?.textContent).not.toContain("Always allow")
     await act(async () => { if (card) key(card, { key: "Enter", metaKey: true }) })
     const deny = [...container.querySelectorAll("button")].find((button) => button.textContent === "Deny")
     await act(async () => { deny?.click() })

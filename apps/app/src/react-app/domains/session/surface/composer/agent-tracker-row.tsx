@@ -17,26 +17,25 @@ export type AgentTrackerStatus = {
   waitingFor?: "permission" | "question" | null
   stopping?: boolean
   shimmer?: boolean
+  lastChecked?: string | null
 }
 
-export function agentTrackerStatusText(status: AgentTrackerStatus): { visible: string; spoken: string | null } {
-  if (status.stopping) return { visible: t("session.subagent_tracker_stopping"), spoken: null }
+export function agentTrackerStatusText(status: AgentTrackerStatus): string {
+  if (status.stopping) return t("session.subagent_tracker_stopping")
   switch (status.kind) {
     case "attention":
-      return { visible: status.waitingFor === "permission" ? t("session.subagent_permission_needed") : t("session.subagent_question_pending"), spoken: null }
+      return status.waitingFor === "permission" ? t("session.subagent_permission_needed") : t("session.subagent_question_pending")
     case "stopped":
-      return { visible: t("session.subagent_tracker_stopped"), spoken: null }
+      return t("session.subagent_tracker_stopped")
     case "error":
-      return { visible: t("session.subagent_tracker_error"), spoken: null }
+      return t("session.subagent_tracker_error")
     case "done":
-      return { visible: t("session.subagent_tracker_done"), spoken: null }
+      return t("session.subagent_tracker_done")
     case "working":
-      if (status.workingNote === "retrying") return { visible: t("session.subagent_tracker_retrying"), spoken: null }
-      if (status.workingNote === "reconnecting") return { visible: t("session.subagent_tracker_reconnecting"), spoken: null }
-      if (status.workingNote === "starting") return { visible: t("session.subagent_tracker_starting"), spoken: null }
-      return status.elapsed
-        ? { visible: status.elapsed, spoken: t("session.subagent_tracker_working_prefix") }
-        : { visible: t("session.remote_task_status_working"), spoken: null }
+      if (status.workingNote === "retrying") return t("session.subagent_tracker_retrying")
+      if (status.workingNote === "reconnecting") return t("session.subagent_tracker_reconnecting")
+      if (status.workingNote === "starting") return t("session.subagent_tracker_starting")
+      return t("session.subagent_tracker_working_prefix")
   }
 }
 
@@ -59,8 +58,14 @@ export function AgentTrackerRow(props: AgentTrackerRowProps) {
   const attention = status.kind === "attention"
   const settled = status.kind === "done" || status.kind === "stopped"
   const review = attention ? props.onReview ?? props.onOpen : undefined
-  const nameClass = cn("shrink-0 font-medium", settled ? "text-gray-11" : "text-gray-12")
-  const taskClass = cn("min-w-0 truncate @max-[480px]/composer:hidden", settled ? "text-gray-8" : "text-gray-9")
+  const nameClass = cn("min-w-0 max-w-1/2 shrink-0 truncate font-medium", settled ? "text-gray-11" : "text-gray-12")
+  const taskClass = cn("min-w-0 truncate", settled ? "text-gray-8" : "text-gray-9")
+  const identity = (
+    <>
+      <span className={nameClass} data-subagent-tracker-agent="" title={props.name}>{props.name}</span>
+      <span data-subagent-tracker-task className={taskClass} title={props.task}>{props.task}</span>
+    </>
+  )
 
   return (
     <div
@@ -78,27 +83,28 @@ export function AgentTrackerRow(props: AgentTrackerRowProps) {
           onClick={props.onOpen}
           className="flex min-w-0 flex-1 cursor-pointer items-baseline gap-2 text-start"
         >
-          <span className={nameClass} data-subagent-tracker-agent="">{props.name}</span>
-          <span data-subagent-tracker-task className={taskClass}>{props.task}</span>
+          {identity}
         </button>
       ) : (
         <span className="flex min-w-0 flex-1 items-baseline gap-2">
-          <span className={nameClass} data-subagent-tracker-agent="">{props.name}</span>
-          <span data-subagent-tracker-task className={taskClass}>{props.task}</span>
+          {identity}
         </span>
       )}
       <span
-        data-subagent-tracker-status
-        className={cn(
-          "shrink-0 text-xs tabular-nums",
-          attention ? "font-medium text-amber-11"
-            : status.kind === "error" ? "text-red-11"
-            : "text-gray-9",
-          status.shimmer && !status.stopping && "ow-text-shimmer",
-        )}
+        className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap text-xs tabular-nums text-gray-9"
+        title={status.lastChecked ?? undefined}
       >
-        {text.spoken ? <span className="sr-only">{text.spoken} </span> : null}
-        {text.visible}
+        <span
+          data-subagent-tracker-status
+          className={cn(
+            attention ? "font-medium text-amber-11" : status.kind === "error" && "text-red-11",
+            status.shimmer && !status.stopping && "ow-text-shimmer",
+          )}
+        >
+          {text}
+        </span>
+        {status.elapsed ? <span data-subagent-tracker-elapsed="">{status.elapsed}</span> : null}
+        {status.lastChecked ? <span className="sr-only">{status.lastChecked}</span> : null}
       </span>
       <span className="flex w-[92px] shrink-0 items-center justify-end gap-0.5 max-sm:w-auto">
         {review ? (

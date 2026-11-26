@@ -151,7 +151,7 @@ export function BuiltAppPreviewSync({
     }
   }, [messages, mcpAppOrigin, readOnly, sessionId, panelSessionId, active]);
   return <LatestBuiltAppPartsContext.Provider value={latestParts}>
-    <BuiltAppCatalogSync messages={messages} />
+    {mcpAppOrigin ? <BuiltAppCatalogSync messages={messages} /> : null}
     {children}
   </LatestBuiltAppPartsContext.Provider>;
 }

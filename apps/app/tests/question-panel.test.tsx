@@ -278,10 +278,10 @@ describe("minimizing a question from another computer (questionMinimize)", () =>
       await settle(250);
       expect(collapsed(container)).toBe("true");
       expect(container.textContent).toContain("Waiting for your answer");
-      expect(container.querySelector("[data-remote-answer-option]")).toBeNull();
+      expect(container.querySelector("button[aria-pressed]")).toBeNull();
 
       await click(button(container, "Show question"));
-      expect(container.querySelector('[data-remote-answer-option="Unit tests"]')?.getAttribute("aria-checked")).toBe("true");
+      expect(button(container, "Unit tests").getAttribute("aria-pressed")).toBe("true");
       expect(customInput(container).value).toBe("also lint");
       await click(button(container, "Send"));
       expect(sent).toEqual([{ kind: "question", requestId: "que_remote", answers: [["Unit tests", "also lint"]] }]);

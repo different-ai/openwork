@@ -40,9 +40,7 @@ function canAutoRetry(): boolean {
   return typeof navigator === "undefined" || navigator.onLine !== false
 }
 
-export function useRemoteThreadConversation(entry: RemoteThreadEntry, options: {
-  foldTask?: boolean
-} = {}) {
+export function useRemoteThreadConversation(entry: RemoteThreadEntry) {
   const liveSyncEnabled = useDesktopFeature("remoteSessionLiveSync")
   const { verifiedIdentity } = useDenAuth()
   const draftScope = verifiedIdentity?.organizationId === entry.organizationId ? cloudSessionDraftScope(verifiedIdentity) : null
@@ -185,21 +183,16 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry, options: {
   const transcript = activePage?.messages ?? []
   const running = view.state === "running"
   const prompt = entry.start.prompt?.trim() ?? ""
-  const foldTask = options.foldTask === true
   const messages = useMemo(() => {
-    const shown = activePage ? remoteTranscriptToUIMessages(activePage.messages, { running }) : []
-    const first = shown[0]
-    const firstText = first?.role === "user" ? first.parts.map((part) => part.type === "text" ? part.text : "").join("").trim() : null
+    const shown = activePage ? remoteTranscriptToUIMessages(activePage.messages, { running: running || view.waitingFor !== null }) : []
     const pendingSent = activePage
       ? sent.filter((followUp) => !activePage.messages.some((message) => message.role === "user" && message.text.trim() === followUp.text))
       : sent
     return [
-      ...(activePage
-        ? foldTask && prompt && firstText === prompt ? shown.slice(1) : shown
-        : prompt && !foldTask ? [userTurn(`${entry.start.key}:prompt`, prompt)] : []),
+      ...(activePage ? shown : prompt ? [userTurn(`${entry.start.key}:prompt`, prompt)] : []),
       ...pendingSent.map((followUp) => userTurn(followUp.id, followUp.text)),
     ]
-  }, [activePage, running, entry.start.key, prompt, foldTask, sent])
+  }, [activePage, running, view.waitingFor, entry.start.key, prompt, sent])
 
   useLayoutEffect(() => {
     const element = scroller.current
