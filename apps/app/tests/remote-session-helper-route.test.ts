@@ -3,8 +3,8 @@ import { consumeChildReturn, prepareChildReturn, registerChildDraftPersistence, 
 import { isRemoteSessionRouteId, remoteSessionRouteId, remoteThreadKeyFromRouteId } from "../src/lib/remote-session-route"
 import {
   parseRemoteHelperOrigin,
-  remoteHelperDraft,
-  saveRemoteHelperDraft,
+  rememberRemoteHelperOrigin,
+  remoteHelperOrigin,
 } from "../src/react-app/domains/session/remote-threads/remote-helper-navigation"
 import { workspaceSessionRoute } from "../src/react-app/shell/workspace-routes"
 
@@ -36,13 +36,6 @@ test("Esc from a task returns to its chat at the same pane, scroll and row, with
   unregister()
 })
 
-test("the task's follow-up draft survives leaving and coming back", () => {
-  saveRemoteHelperDraft("command:rsc_draft", "also check the changelog")
-  expect(remoteHelperDraft("command:rsc_draft")).toBe("also check the changelog")
-  saveRemoteHelperDraft("command:rsc_draft", "")
-  expect(remoteHelperDraft("command:rsc_draft")).toBe("")
-})
-
 test("a stored task origin is read back only when it is complete", () => {
   const origin = {
     start: { key: "command:rsc_1", ref: { commandId: "rsc_1" }, toolCallId: "call_1", title: "Check the notes", prompt: null,
@@ -54,4 +47,8 @@ test("a stored task origin is read back only when it is complete", () => {
   expect(parseRemoteHelperOrigin({ ...origin, owner: { workspaceId: "ws_1" } })).toBeNull()
   expect(parseRemoteHelperOrigin({ ...origin, start: { ...origin.start, target: "elsewhere" } })).toBeNull()
   expect(parseRemoteHelperOrigin("nope")).toBeNull()
+  rememberRemoteHelperOrigin(origin, "cloud:member:org")
+  expect(remoteHelperOrigin(origin.start.key, "cloud:member:org")).toEqual(origin)
+  expect(remoteHelperOrigin(origin.start.key, "cloud:another:org")).toBeNull()
+  expect(remoteHelperOrigin(origin.start.key, null)).toBeNull()
 })

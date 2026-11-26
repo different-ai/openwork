@@ -3,6 +3,8 @@ import {
   DEFAULT_REMOTE_SESSION_ACCESS_MODE,
   remoteSessionAccessModeSchema,
   remoteSessionPendingSummarySchema,
+  remoteSessionReadResultSchema,
+  remoteSessionThreadStatusSchema,
   remoteSessionWaitingForSchema,
   type RemoteSessionAccessMode,
 } from "@openwork/types/automations"
@@ -124,6 +126,8 @@ export const remoteSessionAttachRequestSchema = z.object({
   computerId: z.string().trim().min(1).max(160),
   workspaceId: idSchema,
   sessionId: idSchema,
+  originSessionId: idSchema.optional(),
+  originWorkspaceId: idSchema.optional(),
 })
 export type RemoteSessionAttachRequest = z.infer<typeof remoteSessionAttachRequestSchema>
 
@@ -158,3 +162,44 @@ export type RemoteSessionAttachErrorCode = (typeof REMOTE_SESSION_ATTACH_ERROR_C
  * under the organization's opt-in, or the organization's ceiling is `off`.
  */
 export const REMOTE_ACCESS_OFF_ERROR = "remote_access_off"
+
+export const boundRemoteSessionSchema = z.object({
+  threadKey: z.string().max(280),
+  commandId: z.string().max(160),
+  parentSessionId: idSchema.nullable(),
+  parentWorkspaceId: idSchema.nullable(),
+  title: z.string().max(240),
+  prompt: z.string().max(1000).nullable(),
+  target: z.enum(["cloud", "desktop"]),
+  status: remoteSessionThreadStatusSchema,
+  activeSince: z.number().int().min(0),
+  updatedAt: z.number().int().min(0),
+  tailUpdatedAt: z.number().int().min(0).nullable(),
+}).meta({ ref: "BoundRemoteSession" })
+export type BoundRemoteSession = z.infer<typeof boundRemoteSessionSchema>
+
+export const boundRemoteSessionsResponseSchema = z.object({
+  sessions: z.array(boundRemoteSessionSchema).max(100),
+}).meta({ ref: "BoundRemoteSessionsResponse" })
+export type BoundRemoteSessionsResponse = z.infer<typeof boundRemoteSessionsResponseSchema>
+
+export const remoteSessionTailResponseSchema = z.object({
+  threadKey: z.string().max(280),
+  tail: remoteSessionReadResultSchema.nullable(),
+  updatedAt: z.number().int().min(0).nullable(),
+  expiresAt: z.number().int().min(0).nullable(),
+}).meta({ ref: "RemoteSessionTailResponse" })
+export type RemoteSessionTailResponse = z.infer<typeof remoteSessionTailResponseSchema>
+
+export const remoteSessionStreamSnapshotEventSchema = z.object({
+  type: z.literal("snapshot"),
+  sessions: z.array(boundRemoteSessionSchema).max(100),
+})
+export type RemoteSessionStreamSnapshotEvent = z.infer<typeof remoteSessionStreamSnapshotEventSchema>
+
+export const remoteSessionStreamUpdateEventSchema = z.object({
+  type: z.literal("update"),
+  sessions: z.array(boundRemoteSessionSchema).max(100),
+  tails: z.record(z.string(), remoteSessionReadResultSchema).optional(),
+})
+export type RemoteSessionStreamUpdateEvent = z.infer<typeof remoteSessionStreamUpdateEventSchema>

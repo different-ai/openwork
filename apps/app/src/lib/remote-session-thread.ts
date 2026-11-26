@@ -93,6 +93,186 @@ export function remoteThreadFromToolPart(part: DynamicToolUIPart): RemoteThreadS
   }
 }
 
+export type RemoteThreadActivity = {
+  start: RemoteThreadStart
+  kind: "create" | "interaction" | "observed"
+}
+
+function buildThreadStart(input: {
+  toolCallId: string
+  commandId: string | null
+  sessionId: string | null
+  targetCloud: boolean
+  title: string
+  prompt: string | null
+  workspaceId: string | null
+  computerId: string | null
+}): RemoteThreadStart | null {
+  const ref: RemoteThreadRef | null = input.commandId
+    ? { commandId: input.commandId }
+    : input.targetCloud && input.sessionId ? { sessionId: input.sessionId } : null
+  if (!ref) return null
+  return {
+    key: remoteThreadKey(ref),
+    ref,
+    toolCallId: input.toolCallId,
+    title: input.title,
+    prompt: input.prompt,
+    target: input.commandId ? "desktop" : "cloud",
+    sessionId: input.sessionId,
+    workspaceId: input.workspaceId,
+    computerId: input.computerId,
+  }
+}
+
+export function remoteThreadActivitiesFromToolPart(part: DynamicToolUIPart): RemoteThreadActivity[] {
+  if (part.state !== "output-available") return []
+  const created = remoteThreadFromToolPart(part)
+  if (created) return [{ start: created, kind: "create" }]
+  const call = capabilityCall(part)
+  if (!call) return []
+  const result = toolResult(part.output)
+  if (result && typeof result.error === "string") return []
+
+  if (call.name === "remote-session:status") {
+    const found = new Map<string, RemoteThreadActivity>()
+    const resultThreads = Array.isArray(result?.threads) ? result.threads : []
+    const bodyThreads = Array.isArray(call.body.threads) ? call.body.threads : []
+    const inputKindByRef = new Map<string, "desktop" | "cloud">()
+    for (const item of bodyThreads) {
+      if (!isRecord(item)) continue
+      const commandId = text(item.commandId)
+      const sessionId = text(item.sessionId)
+      if (commandId) {
+        inputKindByRef.set(commandId, "desktop")
+        const start = buildThreadStart({
+          toolCallId: part.toolCallId,
+          commandId,
+          sessionId: null,
+          targetCloud: false,
+          title: "Task",
+          prompt: null,
+          workspaceId: null,
+          computerId: null,
+        })
+        if (start) found.set(start.key, { start, kind: "observed" })
+      } else if (sessionId) {
+        inputKindByRef.set(sessionId, "cloud")
+        const start = buildThreadStart({
+          toolCallId: part.toolCallId,
+          commandId: null,
+          sessionId,
+          targetCloud: true,
+          title: "Task",
+          prompt: null,
+          workspaceId: null,
+          computerId: null,
+        })
+        if (start) found.set(start.key, { start, kind: "observed" })
+      }
+    }
+    const unknownRefs = new Set<string>()
+    for (const item of resultThreads) {
+      if (!isRecord(item)) continue
+      const refValue = text(item.ref)
+      if (!refValue) continue
+      const itemError = isRecord(item.error) ? text(item.error.code) : null
+      if (item.state === "error" && (itemError === "unknown_command" || itemError === "unknown_session")) {
+        unknownRefs.add(refValue)
+        continue
+      }
+      const target = item.target === "cloud" || item.target === "desktop" ? item.target : inputKindByRef.get(refValue) ?? null
+      const commandId = target === "desktop" ? refValue : null
+      const sessionId = target === "cloud" ? refValue : text(item.sessionId)
+      const rawTitle = text(item.title)
+      const start = buildThreadStart({
+        toolCallId: part.toolCallId,
+        commandId,
+        sessionId,
+        targetCloud: target === "cloud",
+        title: rawTitle && rawTitle !== "Remote session" ? rawTitle : "Task",
+        prompt: null,
+        workspaceId: text(item.workspaceId),
+        computerId: text(item.computerId),
+      })
+      if (start) found.set(start.key, { start, kind: "observed" })
+    }
+    return [...found.values()].filter((activity) => {
+      const refId = "commandId" in activity.start.ref ? activity.start.ref.commandId : activity.start.ref.sessionId
+      return !unknownRefs.has(refId)
+    })
+  }
+
+  if (call.name === "remote-session:attach" || call.name === "remote-session:send" || call.name === "remote-session:answer" || call.name === "remote-session:read" || call.name === "remote-session:stop") {
+    const commandId = text(result?.commandId) ?? text(call.body.commandId)
+    const sessionId = text(result?.sessionId) ?? text(call.body.sessionId)
+    const targetCloud = result?.target === "cloud"
+    const rawTitle = text(result?.title) ?? text(call.body.title)
+    const title = rawTitle && rawTitle !== "Remote session" ? rawTitle : "Task"
+    const start = buildThreadStart({
+      toolCallId: part.toolCallId,
+      commandId,
+      sessionId,
+      targetCloud,
+      title,
+      prompt: null,
+      workspaceId: text(result?.workspaceId) ?? text(call.body.workspaceId),
+      computerId: text(result?.computerId) ?? text(call.body.computerId),
+    })
+    if (!start) return []
+    const kind = call.name === "remote-session:attach" || call.name === "remote-session:send" || call.name === "remote-session:answer"
+      ? "interaction"
+      : "observed"
+    return [{ start, kind }]
+  }
+
+  return []
+}
+
+export function remoteSessionOutputMatchesCall(call: DynamicToolUIPart, output: unknown): boolean {
+  const parsedCall = capabilityCall(call)
+  if (!parsedCall) return false
+  const result = toolResult(output)
+  if (!result || typeof result.error === "string") return false
+  if (parsedCall.name === "remote-session:create") {
+    return !("requestId" in result) && !("answeredRequestId" in result) && (Boolean(text(result.commandId)) || (result.target === "cloud" && Boolean(text(result.sessionId))))
+  }
+  if (parsedCall.name === "remote-session:attach") {
+    return (result.state === "attached" || result.state === "queued") && Boolean(text(result.commandId))
+  }
+  if (parsedCall.name === "remote-session:send") {
+    return (result.state === "accepted" || result.state === "sent" || typeof result.messageId === "string")
+      && (Boolean(text(result.commandId)) || Boolean(text(result.sessionId)))
+  }
+  if (parsedCall.name === "remote-session:answer") {
+    return result.state === "answered" || typeof result.answeredRequestId === "string"
+  }
+  if (parsedCall.name === "remote-session:status") {
+    return Array.isArray(result.threads)
+  }
+  if (parsedCall.name === "remote-session:read") {
+    return Array.isArray(result.messages) || "session" in result
+  }
+  return false
+}
+
+export function mergeRemoteThreadStart(base: RemoteThreadStart, incoming: RemoteThreadStart): RemoteThreadStart {
+  const title = base.title !== "Task" ? base.title : incoming.title
+  const prompt = !base.prompt
+    ? incoming.prompt
+    : incoming.prompt && incoming.prompt.length > base.prompt.length
+      ? incoming.prompt
+      : base.prompt
+  return {
+    ...base,
+    title,
+    prompt,
+    sessionId: base.sessionId ?? incoming.sessionId,
+    workspaceId: base.workspaceId ?? incoming.workspaceId,
+    computerId: base.computerId ?? incoming.computerId,
+  }
+}
+
 export type RemoteThreadFollowUp = {
   toolCallId: string
   commandId: string | null
@@ -103,7 +283,7 @@ export type RemoteThreadFollowUp = {
 export function remoteThreadFollowUpFromToolPart(part: DynamicToolUIPart): RemoteThreadFollowUp | null {
   if (part.state !== "output-available") return null
   const call = capabilityCall(part)
-  if (call?.name !== "remote-session:send") return null
+  if (call?.name !== "remote-session:send" && call?.name !== "remote-session:answer") return null
   const result = toolResult(part.output)
   if (!result || typeof result.error === "string" || result.state === "pending") return null
   const commandId = text(result.commandId)

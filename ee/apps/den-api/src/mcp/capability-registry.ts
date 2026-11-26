@@ -79,6 +79,7 @@ import {
   type RemoteSessionAction,
 } from "./remote-session-capabilities.js"
 import { followRemoteSession } from "./remote-session-events.js"
+import { eventThreadForPrincipal } from "../mcp-events/context.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import {
   executeSlackSendAsBot,
@@ -748,21 +749,25 @@ const remoteSessionSource: CapabilitySource = {
         message: "Remote sessions require an active organization membership.",
       })
     }
-    if (parsed.action === "attach") {
-    }
-    const run = async () => followRemoteSession({
-      principal: ctx.principal,
-      organizationId: ctx.organizationId,
-      action: parsed.action,
-      result: await executeRemoteSessionCapability({
-        action: parsed.action,
+    const run = async () => {
+      const hostedThread = (parsed.action === "create" || parsed.action === "attach")
+        ? await eventThreadForPrincipal(ctx.principal).catch(() => null)
+        : null
+      return followRemoteSession({
+        principal: ctx.principal,
         organizationId: ctx.organizationId,
-        userId: ctx.principal.userId,
-        hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
-        body: input.body,
-        headlessRunTokenId: headlessRunTokenId(ctx.principal.payload),
-      }),
-    })
+        action: parsed.action,
+        result: await executeRemoteSessionCapability({
+          action: parsed.action,
+          organizationId: ctx.organizationId,
+          userId: ctx.principal.userId,
+          hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
+          body: input.body,
+          headlessRunTokenId: headlessRunTokenId(ctx.principal.payload),
+          ...(hostedThread ? { originSessionId: hostedThread.sessionId } : {}),
+        }),
+      })
+    }
     const auditAction = remoteSessionAuditActions[parsed.action]
     if (!auditAction || !ctx.audit) return run()
     try {

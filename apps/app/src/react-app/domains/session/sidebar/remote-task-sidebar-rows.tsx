@@ -4,7 +4,8 @@ import { SidebarMenuSubButton, SidebarMenuSubItem } from "@/components/ui/sideba
 import { remoteSessionRouteId } from "@/lib/remote-session-route";
 import { cn } from "@/lib/utils";
 import { rememberRemoteHelperOrigin } from "../remote-threads/remote-helper-navigation";
-import { useRemoteThreadStore } from "../remote-threads/remote-thread-store";
+import { useRemoteHelperScope } from "../remote-threads/use-remote-helper-scope";
+import { useRemoteThreadOrganization, useRemoteThreadStore } from "../remote-threads/remote-thread-store";
 import { remoteThreadStatusWord, remoteThreadView } from "../remote-threads/remote-thread-view";
 import { sidebarRowPaddingInlineStart } from "./sidebar-lanes";
 
@@ -24,9 +25,12 @@ export function parseRemoteTaskRows(key: string): RemoteTaskRow[] {
 }
 
 function useRemoteTaskRowsKey(sessionId: string): string {
+  const organizationId = useRemoteThreadOrganization();
   return useRemoteThreadStore((state) => {
+    if (!organizationId) return "[]";
     const rows: [string, string, string, boolean][] = [];
     for (const entry of Object.values(state.threads)) {
+      if (entry.organizationId !== organizationId) continue;
       if (!Object.values(entry.owners).some((owner) => owner.sessionId === sessionId)) continue;
       const view = remoteThreadView(entry.start, entry, 0);
       rows.push([entry.start.key, view.title, remoteThreadStatusWord(view.state, view.stopped), view.state === "waiting"]);
@@ -42,6 +46,7 @@ export function RemoteTaskSidebarRows({ sessionId, sessionTitle, depth = 0, onOp
   onOpen: (routeId: string) => void;
 }) {
   const key = useRemoteTaskRowsKey(sessionId);
+  const scope = useRemoteHelperScope();
   const routeSessionId = useParams<{ sessionId?: string }>().sessionId;
   if (key === "[]") return null;
   return parseRemoteTaskRows(key).map((row) => {
@@ -58,7 +63,7 @@ export function RemoteTaskSidebarRows({ sessionId, sessionTitle, depth = 0, onOp
           onClick={() => {
             const entry = useRemoteThreadStore.getState().threads[row.threadKey];
             const owner = entry ? Object.values(entry.owners).find((candidate) => candidate.sessionId === sessionId) : undefined;
-            if (entry && owner) rememberRemoteHelperOrigin({ start: entry.start, owner, parentTitle: sessionTitle });
+            if (entry && owner) rememberRemoteHelperOrigin({ start: entry.start, owner, parentTitle: sessionTitle }, scope);
             onOpen(routeId);
           }}
         >

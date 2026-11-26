@@ -22,6 +22,8 @@ export const CHAT_REPLY = "I started the demo videos on your other computer.";
 export const CHAT_TITLE = "Launch prep";
 export const COMPUTER_LABEL = "Studio computer";
 export const LATEST_STEP = "Read script.md";
+export const INITIAL_TAIL = "I found the launch script and started staging the demo videos.";
+export const LIVE_TAIL = "The first demo video is staged and ready for review.";
 export const STEER = "Use the new logo in the intro.";
 export const DRAFT = "Also export a square version";
 export const PARENT_DRAFT = "Next, the launch email";
@@ -68,7 +70,7 @@ function transcript(startedAt: number, followUps: readonly string[], stopped: bo
  * fixture: its session keeps working until it is stopped, records each
  * follow-up it is sent, and reports the step it ran last.
  */
-async function startRunner(seed: Seed, input: { apiUrl: string; member: Parameters<Seed["api"]>[0]; orgId: string }) {
+export async function startRunner(seed: Seed, input: { apiUrl: string; member: Parameters<Seed["api"]>[0]; orgId: string; liveSync?: boolean }) {
   const runnerId = `oc_runner_${"6".repeat(32)}`;
   const workspaceId = "oc_workspace_demo_videos";
   const issued = await seed.api(input.member, "/v1/session-runners/token", {
@@ -101,7 +103,8 @@ async function startRunner(seed: Seed, input: { apiUrl: string; member: Paramete
     async create() { return { sessionId, workspaceId }; },
     async send(_receipt, prompt) {
       // The first send is the task itself; anything after it is the person steering.
-      if (prompt.prompt !== TASK_PROMPT && !followUps.includes(prompt.prompt)) followUps.push(prompt.prompt);
+      // Keep every delivery so the proof can detect duplicate sends of the same text.
+      if (prompt.prompt !== TASK_PROMPT) followUps.push(prompt.prompt);
       return { messageId: prompt.messageId, alreadyPresent: false };
     },
     async stop(_receipt, input) {
@@ -124,12 +127,32 @@ async function startRunner(seed: Seed, input: { apiUrl: string; member: Paramete
     },
   };
   let journal: Journal = emptyJournal();
+  const transport = createRemoteSessionTransport({ baseUrl: input.apiUrl, token: () => token, timeoutMs: 10_000 });
+  let liveUpdate = false;
+  let deliveredCommandId: string | null = null;
+  let lastObservedAt = 0;
   const runner = createSessionRunner({
     adapter,
     store: { async load() { return structuredClone(journal); }, async save(next) { journal = structuredClone(next); } },
-    transport: createRemoteSessionTransport({ baseUrl: input.apiUrl, token: () => token, timeoutMs: 10_000 }),
+    transport: !input.liveSync ? transport : { ...transport, async report(commandId, progress, signal) {
+      deliveredCommandId = commandId;
+      return await reportTail(progress, signal);
+    } },
   });
-  const transport = createRemoteSessionTransport({ baseUrl: input.apiUrl, token: () => token, timeoutMs: 10_000 });
+  async function reportTail(progress: Awaited<ReturnType<HarnessAdapter["observe"]>>, signal?: AbortSignal) {
+    if (!deliveredCommandId) throw new Error("Studio computer has not accepted the task.");
+    const messages = transcript(startedAt, followUps, stopped);
+    messages.splice(2, 0, { id: "msg_initial_tail", role: "assistant", createdAt: startedAt + 6000, text: INITIAL_TAIL, truncated: false, toolCalls: [], error: null });
+    if (liveUpdate) messages.push({ id: "msg_live_tail", role: "assistant", createdAt: Date.now(), text: LIVE_TAIL, truncated: false, toolCalls: [], error: null });
+    lastObservedAt = Math.max(Date.now(), lastObservedAt + 1);
+    // Send the tail on the same runner progress endpoint as the desktop.
+    const response = await runnerFetch(`/v1/remote-session-commands/${deliveredCommandId}/session`, {
+      method: "POST", signal, body: JSON.stringify({ ...progress, observedAt: lastObservedAt, messageCount: messages.length,
+        tail: { title: TASK_TITLE, status: progress.status, waitingFor: null, lastError: null, messageCount: messages.length, from: "end", messages, nextCursor: null },
+      }),
+    });
+    if (!response.ok) throw new Error(`Studio computer progress was rejected: ${response.status} ${await response.text()}`);
+  }
   const reads: string[] = [];
   let running = true;
   const loop = (async () => {
@@ -160,7 +183,11 @@ async function startRunner(seed: Seed, input: { apiUrl: string; member: Paramete
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   })();
-  return { reads: () => [...reads], followUps: () => [...followUps], stops: () => [...stops], async stop() { running = false; await loop; } };
+  return {
+    reads: () => [...reads], followUps: () => [...followUps], stops: () => [...stops],
+    async publishLiveUpdate() { liveUpdate = true; await reportTail(await adapter.observe({ sessionId, workspaceId }, AbortSignal.timeout(10_000))); },
+    async stop() { running = false; await loop; },
+  };
 }
 
 /**

@@ -117,7 +117,7 @@ import type { ActivityResource } from "@/react-app/kernel/activity-types";
 import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
-import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
+import { remoteThreadAttentionBySession, setRemoteSessionLiveSync, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { CreatedSkillSharingProvider } from "./created-skill-sharing-provider";
 import { RemoteSessionHeader, RemoteSessionSurface } from "@/react-app/domains/session/remote-threads/remote-session-surface";
 import { isRemoteSessionRouteId, remoteSessionRouteId } from "@/lib/remote-session-route";
@@ -896,6 +896,8 @@ export function SessionRoute() {
   }, [seedWorkspaceActivitySessions, workspaceSessionGroups]);
 
   const attentionLocale = currentLocale();
+  const remoteSessionLiveSyncEnabled = useDesktopFeature("remoteSessionLiveSync");
+  setRemoteSessionLiveSync(remoteSessionLiveSyncEnabled);
   const remoteAttentionKey = useRemoteThreadAttentionKey();
   const sideChats = useWorkbenchStore((state) => state.sideChats);
   const inlineSuggestions = useDesktopFeature("composerInlineSuggestions");

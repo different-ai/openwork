@@ -1,8 +1,6 @@
 /** @jsxImportSource react */
 import {
-  createContext,
   useCallback,
-  use,
   useEffect,
   useMemo,
   useRef,
@@ -55,12 +53,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { t } from "@/i18n";
+import { DenAuthContext, publishVerifiedDenIdentity, type DenAuthStatus, type DenAuthStore } from "@/react-app/kernel/den-auth-context";
 
-export type DenAuthStatus =
-  | "checking"
-  | "signed_in"
-  | "unavailable"
-  | "signed_out";
+export { useDenAuth, type DenAuthStatus, type DenAuthStore } from "@/react-app/kernel/den-auth-context";
 
 const authDiagnosticReasons: Record<DenAuthStatus, ConnectionDiagnosticReason> = {
   checking: "den_auth_checking",
@@ -132,17 +127,6 @@ export function shouldRetryDenAuthOnSignal(input: {
   return input.now - input.lastAttemptAt >= DEN_AUTH_SIGNAL_RETRY_COOLDOWN_MS;
 }
 
-export type DenAuthStore = {
-  status: DenAuthStatus;
-  user: DenUser | null;
-  verifiedIdentity: { principalId: string; organizationId: string } | null;
-  error: string | null;
-  isSignedIn: boolean;
-  refresh: () => Promise<void>;
-};
-
-const DenAuthContext = createContext<DenAuthStore | undefined>(undefined);
-
 type DenAuthProviderProps = {
   children: ReactNode;
 };
@@ -211,6 +195,11 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
   const diagnosticsRef = useRef<ConnectionDiagnosticSource | null>(null);
 
+  const updateVerifiedIdentity = useCallback((next: { principalId: string; organizationId: string } | null) => {
+    setVerifiedIdentity(next);
+    publishVerifiedDenIdentity(next);
+  }, []);
+
   const updateStatus = useCallback((nextStatus: DenAuthStatus) => {
     diagnosticsRef.current?.transition(authDiagnosticReasons[nextStatus]);
     statusRef.current = nextStatus;
@@ -244,13 +233,13 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       || verifiedCredential.organizationId !== organizationId
     ) {
       verifiedCredentialRef.current = null;
-      setVerifiedIdentity(null);
+      updateVerifiedIdentity(null);
     }
 
     if (!token) {
       noteStartupDenSession(null);
       setUser(null);
-      setVerifiedIdentity(null);
+      updateVerifiedIdentity(null);
       setError(null);
       lastSignalRetryAtRef.current = null;
       updateStatus("signed_out");
@@ -279,10 +268,10 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       const principalId = nextUser.id.trim();
       if (confirmedToken === token && principalId && confirmedOrganizationId) {
         verifiedCredentialRef.current = { token, organizationId: confirmedOrganizationId };
-        setVerifiedIdentity({ principalId, organizationId: confirmedOrganizationId });
+        updateVerifiedIdentity({ principalId, organizationId: confirmedOrganizationId });
       } else {
         verifiedCredentialRef.current = null;
-        setVerifiedIdentity(null);
+        updateVerifiedIdentity(null);
       }
       setUser(nextUser);
       setError(null);
@@ -315,7 +304,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         clearDenSession();
         setUser(null);
         verifiedCredentialRef.current = null;
-        setVerifiedIdentity(null);
+        updateVerifiedIdentity(null);
         lastSignalRetryAtRef.current = null;
         clearDesktopSentrySession();
       }
@@ -590,12 +579,4 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       </AlertDialog>
     </DenAuthContext.Provider>
   );
-}
-
-export function useDenAuth(): DenAuthStore {
-  const context = use(DenAuthContext);
-  if (!context) {
-    throw new Error("useDenAuth must be used within a DenAuthProvider");
-  }
-  return context;
 }

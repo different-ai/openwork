@@ -12,23 +12,28 @@ import {
 import { isTaskToolPart, taskChildSessionId, type TaskToolPart } from "@/lib/build-in-tools"
 import { useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
 import { REMOTE_SESSION_STATUS_THREADS_MAX } from "@openwork/types/automations"
-import { readDenSettings } from "@/app/lib/den"
 import {
+  mergeRemoteThreadStart,
   remoteFollowUpMatches,
-  remoteToolCallStartedAt,
   type RemoteThreadFollowUp,
   type RemoteThreadStart,
 } from "@/lib/remote-session-thread"
-import { remoteThreadFollowUpsInParts, remoteThreadStartsInParts } from "@/lib/remote-thread-starts"
+import {
+  remoteThreadActivitiesInParts,
+  remoteThreadFollowUpsInParts,
+} from "@/lib/remote-thread-starts"
 import { RemoteTrackerRow } from "@/react-app/domains/session/remote-threads/remote-tracker-row"
 import {
   REMOTE_THREAD_FOLLOW_MAX_MS,
+  fetchBoundRemoteSessions,
   remoteThreadAwaitingFollowUp,
   reviveRemoteThreads,
+  useRemoteThreadOrganization,
   useRemoteThreadStore,
   type RemoteThreadEntry,
   type RemoteThreadOwner,
 } from "@/react-app/domains/session/remote-threads/remote-thread-store"
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature"
 import { formatElapsedSeconds } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
 import { t } from "@/i18n"
@@ -123,17 +128,21 @@ export function useComposerSubagentParts(
 export type RemoteTrackerTask = { start: RemoteThreadStart; startedAt: number | null }
 
 export function currentTurnRemoteTasks(messages: readonly UIMessage[]): RemoteTrackerTask[] {
-  const seen = new Set<string>()
-  const tasks: RemoteTrackerTask[] = []
+  const tasks = new Map<string, RemoteTrackerTask>()
   for (const message of messages.slice(currentTurnStart(messages))) {
     if (message.role !== "assistant") continue
-    for (const { start, part } of remoteThreadStartsInParts(message.parts)) {
-      if (seen.has(start.key)) continue
-      seen.add(start.key)
-      tasks.push({ start, startedAt: remoteToolCallStartedAt(part) })
+    for (const { start, kind, startedAt } of remoteThreadActivitiesInParts(message.parts)) {
+      if (kind !== "create" && kind !== "interaction") continue
+      const existing = tasks.get(start.key)
+      tasks.set(
+        start.key,
+        existing
+          ? { start: mergeRemoteThreadStart(existing.start, start), startedAt: latest(existing.startedAt, startedAt) }
+          : { start, startedAt },
+      )
     }
   }
-  return tasks
+  return [...tasks.values()]
 }
 
 export type ConversationRemoteTasks = {
@@ -148,22 +157,41 @@ function latest(left: number | null, right: number | null): number | null {
 
 export function conversationRemoteTasks(messages: readonly UIMessage[], now = Date.now()): ConversationRemoteTasks {
   const turnStart = currentTurnStart(messages)
-  const current = currentTurnRemoteTasks(messages)
-  const currentKeys = new Set(current.map((task) => task.start.key))
+  const currentMap = new Map<string, RemoteTrackerTask>()
+  for (const task of currentTurnRemoteTasks(messages)) currentMap.set(task.start.key, task)
   const earlier = new Map<string, RemoteTrackerTask>()
   const allFollowUps: RemoteThreadFollowUp[] = []
   const followUps: RemoteThreadFollowUp[] = []
   messages.forEach((message, index) => {
     if (message.role !== "assistant") return
     if (index < turnStart) {
-      for (const { start, part } of remoteThreadStartsInParts(message.parts)) {
-        if (!currentKeys.has(start.key) && !earlier.has(start.key)) earlier.set(start.key, { start, startedAt: remoteToolCallStartedAt(part) })
+      for (const { start, kind, startedAt } of remoteThreadActivitiesInParts(message.parts)) {
+        if (kind !== "create" && kind !== "interaction") continue
+        const currentTask = currentMap.get(start.key)
+        if (currentTask) {
+          currentMap.set(start.key, {
+            start: kind === "create" ? mergeRemoteThreadStart(start, currentTask.start) : mergeRemoteThreadStart(currentTask.start, start),
+            startedAt: latest(currentTask.startedAt, startedAt),
+          })
+          continue
+        }
+        const existing = earlier.get(start.key)
+        earlier.set(
+          start.key,
+          existing
+            ? {
+                start: kind === "create" ? mergeRemoteThreadStart(start, existing.start) : mergeRemoteThreadStart(existing.start, start),
+                startedAt: latest(existing.startedAt, startedAt),
+              }
+            : { start, startedAt },
+        )
       }
     }
     const sent = remoteThreadFollowUpsInParts(message.parts)
     allFollowUps.push(...sent)
     if (index >= turnStart) followUps.push(...sent)
   })
+  const current = [...currentMap.values()]
   const candidates = [...earlier.values()]
     .map((task) => ({
       ...task,
@@ -196,38 +224,45 @@ export function selectComposerRemoteTasks(
     Boolean(entry && organizationId && entry.organizationId === organizationId && remoteEntryListed(entry, tasks.followUps, now))
   const listed = tasks.earlier.filter((task) => listable(threads[task.start.key]))
   const known = new Set([...tasks.earlier, ...tasks.current].map((task) => task.start.key))
-  const ownerKey = owner ? `${owner.workspaceId}:${owner.sessionId}` : null
-  const followed = ownerKey === null ? [] : Object.values(threads)
-    .filter((entry) => !known.has(entry.start.key) && Object.hasOwn(entry.owners, ownerKey) && listable(entry))
+  const owned = !owner ? [] : Object.values(threads)
+    .filter((entry) => !known.has(entry.start.key)
+      && Object.values(entry.owners).some((candidate) => candidate.sessionId === owner.sessionId)
+      && listable(entry))
     .sort((left, right) => (left.activeSince ?? left.firstSeenAt) - (right.activeSince ?? right.firstSeenAt))
     .map((entry) => ({ start: entry.start, startedAt: entry.activeSince }))
-  return [...followed, ...listed.reverse(), ...tasks.current]
+  return [...owned, ...listed.reverse(), ...tasks.current]
 }
 
 const NO_FOLLOW_UPS: readonly RemoteThreadFollowUp[] = []
+const EMPTY_REMOTE_TASKS: ConversationRemoteTasks = { current: [], earlier: [], followUps: [] }
 
 export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: RemoteThreadOwner): RemoteTrackerTask[] {
+  const liveSyncEnabled = useDesktopFeature("remoteSessionLiveSync")
   const tasks = useMemo<ConversationRemoteTasks>(
-    () => conversationRemoteTasks(messages),
-    [messages],
+    () => (liveSyncEnabled ? EMPTY_REMOTE_TASKS : conversationRemoteTasks(messages)),
+    [liveSyncEnabled, messages],
   )
-  const organizationId = readDenSettings().activeOrgId?.trim() || null
+  const organizationId = useRemoteThreadOrganization()
   const { workspaceId, sessionId } = owner
   const earlierSignature = tasks.earlier.map((task) => task.start.key).join("\n")
   const latestTasks = useRef(tasks)
   latestTasks.current = tasks
   useEffect(() => {
+    if (liveSyncEnabled) {
+      if (organizationId && sessionId) void fetchBoundRemoteSessions(sessionId)
+      return
+    }
     if (!earlierSignature || !organizationId) return
     const store = useRemoteThreadStore.getState()
     const stops = latestTasks.current.earlier.map((task) => store.watch(task.start, { owner: { workspaceId, sessionId }, organizationId, startedAt: task.startedAt }))
     return () => { for (const stop of stops) stop() }
-  }, [earlierSignature, organizationId, workspaceId, sessionId])
+  }, [liveSyncEnabled, earlierSignature, organizationId, workspaceId, sessionId])
   const followUps = tasks.followUps.length > 0 ? tasks.followUps : NO_FOLLOW_UPS
   const matchSignature = useRemoteThreadStore((state) => followUps.length === 0 ? ""
     : Object.values(state.threads).map((entry) => `${entry.start.key}=${entry.status?.sessionId ?? entry.start.sessionId ?? ""}`).sort().join("\n"))
   useEffect(() => {
-    if (followUps.length > 0) reviveRemoteThreads(followUps)
-  }, [followUps, matchSignature])
+    if (!liveSyncEnabled && followUps.length > 0) reviveRemoteThreads(followUps)
+  }, [liveSyncEnabled, followUps, matchSignature])
   const listedSignature = useRemoteThreadStore((state) =>
     selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner).map((task) => task.start.key).join("\n"))
   return useMemo(() => {

@@ -1,18 +1,24 @@
 import type { Hono } from "hono"
+import { streamSSE } from "hono/streaming"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
-import { remoteSessionStatusRequestSchema, remoteSessionStatusResultSchema } from "@openwork/types/automations"
+import { remoteSessionStatusRequestSchema, remoteSessionStatusResultSchema, type RemoteSessionReadResult } from "@openwork/types/automations"
 import {
+  boundRemoteSessionsResponseSchema,
   memberSessionListResponseSchema,
   remoteSessionAttachRequestSchema,
   remoteSessionAttachResponseSchema,
+  remoteSessionStreamSnapshotEventSchema,
+  remoteSessionStreamUpdateEventSchema,
+  remoteSessionTailResponseSchema,
 } from "@openwork/types/den/remote-sessions"
-import { requireAnyFeature, requireFeature } from "../../features.js"
-import { jsonValidator, orgMemberRoute, type OrganizationContextVariables } from "../../middleware/index.js"
-import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { requireFeature } from "../../features.js"
+import { jsonValidator, orgMemberRoute, paramValidator, queryValidator, type OrganizationContextVariables } from "../../middleware/index.js"
+import { invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrganizationContext } from "../../orgs.js"
 import {
   executeRemoteSessionCapability,
+  listBoundRemoteSessions,
   listMemberRemoteSessions,
   remoteSessionAnswerBodySchema,
   remoteSessionReadBodySchema,
@@ -21,8 +27,22 @@ import {
   type RemoteSessionAction,
   type RemoteSessionExecuteDeps,
 } from "../../mcp/remote-session-capabilities.js"
+import { readRemoteSessionTail } from "../../remote-sessions/tails.js"
+import { createSignalWaiter, hasRemoteSessionSignalPubSub, onRemoteSessionUserUpdate } from "../../remote-sessions/work-signal.js"
 
 const WAITING_STATUS_CALLS_PER_MEMBER = 4
+const STREAM_ACTIVE_FALLBACK_MS = 2_000
+const STREAM_IDLE_FALLBACK_MS = 5_000
+const STREAM_REDIS_FALLBACK_MS = 15_000
+const STREAM_KEEPALIVE_MS = 25_000
+
+const boundQuerySchema = z.object({
+  parentSessionId: z.string().trim().min(1).max(240).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+})
+const tailParamsSchema = z.object({
+  threadKey: z.string().trim().min(1).max(280),
+})
 
 const remoteSessionResultSchema = z.object({}).passthrough().meta({ ref: "RemoteSessionResult" })
 const remoteSessionErrorSchema = z.object({
@@ -215,6 +235,152 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
         { organizationId: context.organization.id, userId: context.currentMember.userId },
         options.deps,
       )))
+    },
+  )
+
+  app.get(
+    "/v1/remote-sessions/bound",
+    describeMemberRoute({
+      tags: ["Automations"],
+      summary: "List the member's bound remote sessions",
+      description: "Returns the signed-in member's remote sessions bound to parent chats (optionally filtered by parentSessionId), with their latest status, computer label, and tail timestamp. Feature-gated behind remoteSessionLiveSync.",
+      "x-mcp": false,
+      responses: {
+        200: jsonResponse("Bound remote sessions.", boundRemoteSessionsResponseSchema),
+        401: jsonResponse("Authentication required.", unauthorizedSchema),
+        404: jsonResponse("Organization not found or feature disabled.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("remoteSessionLiveSync"),
+    queryValidator(boundQuerySchema),
+    async (c) => {
+      const context = c.get("organizationContext")
+      if (!context) return c.json({ error: "organization_not_found" }, 404)
+      const query = c.req.valid("query")
+      const sessions = await listBoundRemoteSessions({
+        organizationId: context.organization.id,
+        userId: context.currentMember.userId,
+        ...(query.parentSessionId ? { parentSessionId: query.parentSessionId } : {}),
+        ...(query.limit ? { limit: query.limit } : {}),
+      }, options.deps)
+      c.header("Cache-Control", "no-store")
+      return c.json(boundRemoteSessionsResponseSchema.parse({ sessions }))
+    },
+  )
+
+  app.get(
+    "/v1/remote-sessions/tail/:threadKey",
+    describeMemberRoute({
+      tags: ["Automations"],
+      summary: "Read the stored transcript tail of a remote session",
+      description: "Returns the short-lived Den-stored transcript tail (last 20 messages, 32 KB cap, 24 h expiry) for one of the signed-in member's remote sessions. Feature-gated behind remoteSessionLiveSync.",
+      "x-mcp": false,
+      responses: {
+        200: jsonResponse("The stored tail, or null when none is cached.", remoteSessionTailResponseSchema),
+        401: jsonResponse("Authentication required.", unauthorizedSchema),
+        404: jsonResponse("Organization not found or feature disabled.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("remoteSessionLiveSync"),
+    paramValidator(tailParamsSchema),
+    async (c) => {
+      const context = c.get("organizationContext")
+      if (!context) return c.json({ error: "organization_not_found" }, 404)
+      const threadKey = decodeURIComponent(c.req.valid("param").threadKey)
+      const stored = await readRemoteSessionTail({
+        organizationId: context.organization.id,
+        createdByUserId: context.currentMember.userId,
+        threadKey,
+      })
+      c.header("Cache-Control", "no-store")
+      return c.json(remoteSessionTailResponseSchema.parse({
+        threadKey,
+        tail: stored?.payload ?? null,
+        updatedAt: stored?.updatedAt ?? null,
+        expiresAt: stored?.expiresAt ?? null,
+      }))
+    },
+  )
+
+  app.get(
+    "/v1/remote-sessions/stream",
+    describeMemberRoute({
+      tags: ["Automations"],
+      summary: "Stream live status and tail updates for the member's remote sessions",
+      description: "One server-sent events stream per signed-in window pushing bound remote session status, computer labels, and recent transcript tail updates. Feature-gated behind remoteSessionLiveSync.",
+      "x-mcp": false,
+      responses: {
+        200: textResponse("Server-sent event stream (text/event-stream)."),
+        401: jsonResponse("Authentication required.", unauthorizedSchema),
+        404: jsonResponse("Organization not found or feature disabled.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("remoteSessionLiveSync"),
+    async (c) => {
+      const context = c.get("organizationContext")
+      if (!context) return c.json({ error: "organization_not_found" }, 404)
+      const organizationId = context.organization.id
+      const userId = context.currentMember.userId
+      c.header("Cache-Control", "no-store")
+      return streamSSE(c, async (stream) => {
+        const waiter = createSignalWaiter((wake) => onRemoteSessionUserUpdate(organizationId, userId, wake))
+        let lastKeepaliveAt = Date.now()
+        const seen = new Map<string, { version: string; tailUpdatedAt: number | null }>()
+        try {
+          const initial = await listBoundRemoteSessions({ organizationId, userId, limit: 50 }, options.deps)
+          for (const session of initial) {
+            seen.set(session.threadKey, { version: session.status.version, tailUpdatedAt: session.tailUpdatedAt })
+          }
+          const snapshot = remoteSessionStreamSnapshotEventSchema.parse({ type: "snapshot", sessions: initial })
+          await stream.writeSSE({ event: "snapshot", data: JSON.stringify(snapshot) })
+          let hasActive = initial.some((item) => item.status.state !== "idle" && item.status.state !== "error")
+
+          while (!stream.aborted) {
+            const pollMs = hasRemoteSessionSignalPubSub()
+              ? STREAM_REDIS_FALLBACK_MS
+              : hasActive ? STREAM_ACTIVE_FALLBACK_MS : STREAM_IDLE_FALLBACK_MS
+            await waiter.wait(Math.min(pollMs, Math.max(100, STREAM_KEEPALIVE_MS - (Date.now() - lastKeepaliveAt))), c.req.raw.signal)
+            if (stream.aborted || c.req.raw.signal.aborted) break
+
+            const latest = await listBoundRemoteSessions({ organizationId, userId, limit: 50 }, options.deps)
+            hasActive = latest.some((item) => item.status.state !== "idle" && item.status.state !== "error")
+            const changed = []
+            const tailKeysToRead: string[] = []
+            for (const session of latest) {
+              const previous = seen.get(session.threadKey)
+              const versionChanged = !previous || previous.version !== session.status.version
+              const tailChanged = session.tailUpdatedAt !== null && (!previous || previous.tailUpdatedAt !== session.tailUpdatedAt)
+              if (versionChanged || tailChanged) {
+                changed.push(session)
+                if (tailChanged) tailKeysToRead.push(session.threadKey)
+              }
+              seen.set(session.threadKey, { version: session.status.version, tailUpdatedAt: session.tailUpdatedAt })
+            }
+            if (changed.length > 0) {
+              const tails: Record<string, RemoteSessionReadResult> = {}
+              for (const key of tailKeysToRead.slice(0, 5)) {
+                const stored = await readRemoteSessionTail({ organizationId, createdByUserId: userId, threadKey: key })
+                if (stored) tails[key] = stored.payload
+              }
+              const update = remoteSessionStreamUpdateEventSchema.parse({
+                type: "update",
+                sessions: changed,
+                ...(Object.keys(tails).length > 0 ? { tails } : {}),
+              })
+              await stream.writeSSE({ event: "update", data: JSON.stringify(update) })
+              lastKeepaliveAt = Date.now()
+            } else if (Date.now() - lastKeepaliveAt >= STREAM_KEEPALIVE_MS) {
+              await stream.writeSSE({ event: "keepalive", data: "{}" })
+              lastKeepaliveAt = Date.now()
+            }
+          }
+        } finally {
+          waiter.dispose()
+        }
+      })
     },
   )
 }

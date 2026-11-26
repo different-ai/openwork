@@ -33,6 +33,7 @@ export { default as questionInThread } from "@openwork/features/flags/question-i
 export { default as questionMinimize } from "@openwork/features/flags/question-minimize"
 export { default as remoteComputers } from "@openwork/features/flags/remote-computers"
 export { default as remoteDesktopDeviceLogin } from "@openwork/features/flags/remote-desktop-device-login"
+export { default as remoteSessionLiveSync } from "@openwork/features/flags/remote-session-live-sync"
 export { default as remoteTasksOptIn } from "@openwork/features/flags/remote-tasks-opt-in"
 export { default as sessionTree } from "@openwork/features/flags/session-tree"
 export { default as sideChatFromSelection } from "@openwork/features/flags/side-chat-from-selection"

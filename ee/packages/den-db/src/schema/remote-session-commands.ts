@@ -1,4 +1,4 @@
-import { index, int, json, mediumtext, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { index, int, json, mediumtext, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, timestamps } from "../columns"
 
 export const RemoteSessionCommandTable = mysqlTable(
@@ -19,6 +19,8 @@ export const RemoteSessionCommandTable = mysqlTable(
     target_computer_id: varchar("target_computer_id", { length: 160 }),
     target_workspace_id: varchar("target_workspace_id", { length: 240 }),
     target_session_id: varchar("target_session_id", { length: 240 }),
+    parent_session_id: varchar("parent_session_id", { length: 240 }),
+    parent_workspace_id: varchar("parent_workspace_id", { length: 240 }),
     expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
     claimed_by_runner_id: varchar("claimed_by_runner_id", { length: 160 }),
     claimed_at: timestamp("claimed_at", { fsp: 3 }),
@@ -47,6 +49,30 @@ export const RemoteSessionCommandTable = mysqlTable(
     index("remote_session_command_owner_status").on(table.org_id, table.owner_member_id, table.status),
     index("remote_session_command_status_expires").on(table.status, table.expires_at),
     index("remote_session_command_creator_session").on(table.org_id, table.created_by_user_id, table.session_id),
+    index("remote_session_command_parent").on(table.org_id, table.created_by_user_id, table.parent_session_id),
+  ],
+)
+
+export const RemoteSessionTailTable = mysqlTable(
+  "remote_session_tail",
+  {
+    org_id: denTypeIdColumn("org", "org_id").notNull(),
+    created_by_user_id: denTypeIdColumn("user", "created_by_user_id").notNull(),
+    thread_key: varchar("thread_key", { length: 280 }).notNull(),
+    owner_member_id: denTypeIdColumn("member", "owner_member_id"),
+    command_id: denTypeIdColumn("remoteSessionCommand", "command_id"),
+    runner_id: varchar("runner_id", { length: 160 }),
+    payload: mediumtext("payload").notNull(),
+    byte_size: int("byte_size").notNull(),
+    expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ name: "remote_session_tail_pk", columns: [table.org_id, table.created_by_user_id, table.thread_key] }),
+    index("remote_session_tail_expires").on(table.expires_at),
+    index("remote_session_tail_command").on(table.command_id),
+    index("remote_session_tail_runner").on(table.org_id, table.owner_member_id, table.runner_id),
+    index("remote_session_tail_member").on(table.org_id, table.owner_member_id),
   ],
 )
 

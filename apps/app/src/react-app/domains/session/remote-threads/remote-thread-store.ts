@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useSyncExternalStore } from "react"
+import { denSettingsChangedEvent } from "@/app/lib/den-session-events"
 import type { DynamicToolUIPart } from "ai"
 import { create } from "zustand"
 import {
@@ -7,10 +8,20 @@ import {
   type RemoteSessionStatusResult,
   type RemoteSessionThreadStatus,
 } from "@openwork/types/automations"
+import type { BoundRemoteSession } from "@openwork/types/den/remote-sessions"
 
 import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
-import { remoteFollowUpMatches, type RemoteThreadFollowUp, type RemoteThreadStart } from "@/lib/remote-session-thread"
+import {
+  mergeRemoteThreadStart,
+  parseRemoteRead,
+  remoteFollowUpMatches,
+  type RemoteThreadFollowUp,
+  type RemoteThreadStart,
+  type RemoteTranscriptPage,
+} from "@/lib/remote-session-thread"
 import { remoteThreadFollowUpsInPart } from "@/lib/remote-thread-starts"
+import { clearRemoteHelperOrigins } from "./remote-helper-navigation"
+import { clearRemoteDraftMessageIds } from "./remote-draft-message-id"
 
 const WAIT_MS = REMOTE_SESSION_STATUS_WAIT_MAX_MS
 const MIN_CALL_INTERVAL_MS = 2_000
@@ -39,15 +50,25 @@ export type RemoteThreadEntry = {
   owners: Record<string, RemoteThreadOwner>
   viewers: number
   lastViewedAt: number
+  tailUpdatedAt?: number | null
 }
 
 type RemoteThreadState = {
   threads: Record<string, RemoteThreadEntry>
-  watch: (start: RemoteThreadStart, input: { owner: RemoteThreadOwner; organizationId: string; startedAt: number | null }) => () => void
+  tailsByKey: Record<string, RemoteTranscriptPage>
+  liveHydratedOrgId: string | null
+  watch: (start: RemoteThreadStart, input: { owner?: RemoteThreadOwner | null; organizationId: string; startedAt: number | null }) => () => void
   followedUp: (key: string) => void
   revive: (followUp: RemoteThreadFollowUp) => void
   apply: (result: RemoteSessionStatusResult, keys: readonly string[], checkedAt: number) => void
+  applyBoundSessions: (
+    organizationId: string,
+    sessions: readonly BoundRemoteSession[],
+    options?: { replace?: boolean; tails?: Readonly<Record<string, unknown>>; checkedAt?: number },
+  ) => void
+  setTail: (threadKey: string, page: RemoteTranscriptPage) => void
   markStale: (keys: readonly string[]) => void
+  clearAll: () => void
 }
 
 function settled(entry: RemoteThreadEntry) {
@@ -61,21 +82,128 @@ export function remoteThreadAwaitingFollowUp(entry: RemoteThreadEntry, now: numb
 export function remoteThreadNeedsStatus(entry: RemoteThreadEntry, organizationId: string, now: number): boolean {
   if (entry.organizationId !== organizationId) return false
   if (entry.viewers === 0 && now - entry.lastViewedAt > LINGER_MS) return false
-  if (now - (entry.activeSince ?? entry.firstSeenAt) > FOLLOW_MAX_MS) return false
+  if (entry.viewers === 0 && now - (entry.activeSince ?? entry.firstSeenAt) > FOLLOW_MAX_MS) return false
   if (!entry.status || entry.stale) return true
+  if (entry.viewers > 0 && entry.version === null) return true
   if (!settled(entry)) return true
   return entry.followedUpAt !== null && now - entry.followedUpAt < FOLLOW_UP_GRACE_MS
 }
 
+function activeOrganization() {
+  return readDenSettings().activeOrgId?.trim() || null
+}
+
+function boundToEntry(
+  organizationId: string,
+  session: BoundRemoteSession,
+  existing: RemoteThreadEntry | undefined,
+  checkedAt: number,
+): RemoteThreadEntry {
+  const ref = session.target === "cloud" && session.status.sessionId
+    ? { sessionId: session.status.sessionId }
+    : { commandId: session.commandId }
+  const start: RemoteThreadStart = {
+    key: session.threadKey,
+    ref,
+    toolCallId: existing?.start.toolCallId ?? `den:${session.commandId}`,
+    title: session.title,
+    prompt: session.prompt,
+    target: session.target,
+    sessionId: session.status.sessionId,
+    workspaceId: session.status.workspaceId,
+    computerId: session.status.computerId,
+  }
+  const sameOrg = existing && existing.organizationId === organizationId
+  const owners: Record<string, RemoteThreadOwner> = sameOrg ? { ...existing.owners } : {}
+  if (session.parentSessionId) {
+    const workspaceId = session.parentWorkspaceId ?? ""
+    owners[`${workspaceId}:${session.parentSessionId}`] = { workspaceId, sessionId: session.parentSessionId }
+  }
+  const newTurn = session.status.state !== "idle" && session.status.state !== "error"
+    || (sameOrg && existing.followUpVersion !== null && session.status.version !== existing.followUpVersion)
+  const followedUpAt = sameOrg && existing.followedUpAt !== null && !newTurn ? existing.followedUpAt : null
+  return {
+    start: sameOrg ? mergeRemoteThreadStart(existing.start, start) : start,
+    organizationId,
+    version: session.status.version,
+    status: session.status,
+    stale: false,
+    checkedAt,
+    activeSince: session.activeSince,
+    firstSeenAt: sameOrg ? existing.firstSeenAt : checkedAt,
+    followedUpAt,
+    followUpVersion: sameOrg ? existing.followUpVersion : null,
+    revivedAt: sameOrg ? existing.revivedAt : null,
+    owners,
+    viewers: sameOrg ? existing.viewers : 0,
+    lastViewedAt: sameOrg ? existing.lastViewedAt : checkedAt,
+    tailUpdatedAt: session.tailUpdatedAt,
+  }
+}
+
 export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
   threads: {},
+  tailsByKey: {},
+  liveHydratedOrgId: null,
+  clearAll: () => {
+    set({ threads: {}, tailsByKey: {}, liveHydratedOrgId: null })
+  },
+  setTail: (threadKey, page) => {
+    set((state) => ({ tailsByKey: { ...state.tailsByKey, [threadKey]: page } }))
+  },
+  applyBoundSessions: (organizationId, sessions, options = {}) => {
+    const checkedAt = options.checkedAt ?? Date.now()
+    set((state) => {
+      const threads = options.replace ? {} : { ...state.threads }
+      if (options.replace) {
+        for (const [key, entry] of Object.entries(state.threads)) {
+          if (entry.organizationId === organizationId && entry.viewers > 0) threads[key] = entry
+        }
+      }
+      for (const session of sessions) {
+        threads[session.threadKey] = boundToEntry(organizationId, session, state.threads[session.threadKey], checkedAt)
+      }
+      let tailsByKey = state.tailsByKey
+      if (options.tails) {
+        let copied = false
+        for (const [threadKey, rawTail] of Object.entries(options.tails)) {
+          const parsed = parseRemoteRead(rawTail)
+          if (parsed.kind !== "page") continue
+          if (!copied) {
+            tailsByKey = { ...state.tailsByKey }
+            copied = true
+          }
+          tailsByKey[threadKey] = parsed.page
+        }
+      }
+      return {
+        threads,
+        tailsByKey,
+        liveHydratedOrgId: options.replace ? organizationId : state.liveHydratedOrgId ?? organizationId,
+      }
+    })
+  },
   watch: (start, input) => {
-    const ownerKey = `${input.owner.workspaceId}:${input.owner.sessionId}`
+    const owner = input.owner && input.owner.workspaceId && input.owner.sessionId ? input.owner : null
+    const ownerKey = owner ? `${owner.workspaceId}:${owner.sessionId}` : null
     const now = Date.now()
     set((state) => {
       const current = state.threads[start.key]
-      const entry: RemoteThreadEntry = current
-        ? { ...current, viewers: current.viewers + 1, lastViewedAt: now, owners: { ...current.owners, [ownerKey]: input.owner } }
+      const sameOrg = current && current.organizationId === input.organizationId
+      const owners = sameOrg
+        ? owner && ownerKey ? { ...current.owners, [ownerKey]: owner } : current.owners
+        : owner && ownerKey ? { [ownerKey]: owner } : {}
+      const entry: RemoteThreadEntry = sameOrg
+        ? {
+            ...current,
+            start: mergeRemoteThreadStart(current.start, start),
+            activeSince: input.startedAt !== null && (current.activeSince === null || input.startedAt > current.activeSince)
+              ? input.startedAt
+              : current.activeSince,
+            viewers: current.viewers + 1,
+            lastViewedAt: now,
+            owners,
+          }
         : {
             start,
             organizationId: input.organizationId,
@@ -88,13 +216,13 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
             followedUpAt: null,
             followUpVersion: null,
             revivedAt: null,
-            owners: { [ownerKey]: input.owner },
+            owners,
             viewers: 1,
             lastViewedAt: now,
           }
       return { threads: { ...state.threads, [start.key]: entry } }
     })
-    kick()
+    if (!liveSyncEnabled) kick()
     return () => {
       set((state) => {
         const current = state.threads[start.key]
@@ -110,7 +238,7 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
       if (!current) return state
       return { threads: { ...state.threads, [key]: { ...current, followedUpAt: now, followUpVersion: current.version, activeSince: now } } }
     })
-    kick(true)
+    if (!liveSyncEnabled) kick(true)
   },
   revive: (followUp) => {
     const sentAt = followUp.sentAt
@@ -139,7 +267,14 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
         const newTurn = thread.state !== "idle" && thread.state !== "error"
           || (current.followUpVersion !== null && thread.version !== current.followUpVersion)
         const followedUpAt = current.followedUpAt !== null && newTurn ? null : current.followedUpAt
-        threads[key] = { ...current, version: thread.version, status: thread, stale: false, checkedAt, followedUpAt }
+        const enrichedStart: RemoteThreadStart = {
+          ...current.start,
+          sessionId: thread.sessionId ?? current.start.sessionId,
+          workspaceId: thread.workspaceId ?? current.start.workspaceId,
+          computerId: thread.computerId ?? current.start.computerId,
+          title: thread.title && thread.title !== "Remote session" ? thread.title : current.start.title,
+        }
+        threads[key] = { ...current, start: enrichedStart, version: thread.version, status: thread, stale: false, checkedAt, followedUpAt }
       }
       return { threads }
     })
@@ -156,6 +291,11 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
   },
 }))
 
+let liveSyncEnabled = false
+let streamRunning = false
+let streamController: AbortController | null = null
+let streamWake: (() => void) | null = null
+
 let loopRunning = false
 let inflight: { controller: AbortController; keys: ReadonlySet<string> } | null = null
 let lastKeys: ReadonlySet<string> = new Set()
@@ -164,6 +304,16 @@ let listening = false
 
 function refId(key: string) {
   return key.slice(key.indexOf(":") + 1)
+}
+
+function subscribeDenSettings(notify: () => void) {
+  if (typeof window === "undefined") return () => undefined
+  window.addEventListener(denSettingsChangedEvent, notify)
+  return () => window.removeEventListener(denSettingsChangedEvent, notify)
+}
+
+export function useRemoteThreadOrganization() {
+  return useSyncExternalStore(subscribeDenSettings, activeOrganization, () => null)
 }
 
 function denContext() {
@@ -179,13 +329,23 @@ function canCall() {
   return typeof navigator === "undefined" || navigator.onLine !== false
 }
 
-function keysToCheck(organizationId: string, now: number): string[] {
-  return Object.values(useRemoteThreadStore.getState().threads)
+export function selectRemoteThreadKeysToCheck(
+  threads: Readonly<Record<string, RemoteThreadEntry>>,
+  organizationId: string,
+  now: number,
+): string[] {
+  return Object.values(threads)
     .filter((entry) => remoteThreadNeedsStatus(entry, organizationId, now))
     .sort((left, right) => Number(right.viewers > 0) - Number(left.viewers > 0)
+      || Number(left.checkedAt !== null) - Number(right.checkedAt !== null)
+      || (left.checkedAt ?? 0) - (right.checkedAt ?? 0)
       || (right.activeSince ?? right.firstSeenAt) - (left.activeSince ?? left.firstSeenAt))
     .slice(0, REMOTE_SESSION_STATUS_THREADS_MAX)
     .map((entry) => entry.start.key)
+}
+
+function keysToCheck(organizationId: string, now: number): string[] {
+  return selectRemoteThreadKeysToCheck(useRemoteThreadStore.getState().threads, organizationId, now)
 }
 
 function pause(ms: number) {
@@ -200,20 +360,153 @@ function pause(ms: number) {
   })
 }
 
+function pauseStream(ms: number) {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(done, ms)
+    function done() {
+      clearTimeout(timer)
+      if (streamWake === done) streamWake = null
+      resolve()
+    }
+    streamWake = done
+  })
+}
+
+export function clearPersistedRemoteThreads() {
+  useRemoteThreadStore.getState().clearAll()
+  clearRemoteHelperOrigins()
+  clearRemoteDraftMessageIds()
+}
+
+export function setRemoteSessionLiveSync(enabled: boolean) {
+  if (liveSyncEnabled === enabled) return
+  liveSyncEnabled = enabled
+  queueMicrotask(() => {
+    if (liveSyncEnabled) {
+      inflight?.controller.abort()
+      kickStream(true)
+    } else {
+      streamController?.abort()
+      streamWake?.()
+      kick(true)
+    }
+  })
+}
+
+export async function fetchBoundRemoteSessions(parentSessionId?: string): Promise<void> {
+  if (!liveSyncEnabled) return
+  const context = denContext()
+  if (!context) return
+  try {
+    const sessions = await context.client.getBoundRemoteSessions(context.organizationId, {
+      ...(parentSessionId ? { parentSessionId } : {}),
+      limit: 50,
+    })
+    useRemoteThreadStore.getState().applyBoundSessions(context.organizationId, sessions, {
+      replace: !parentSessionId,
+    })
+  } catch {
+  }
+}
+
+export async function fetchRemoteSessionTail(threadKey: string, signal?: AbortSignal): Promise<RemoteTranscriptPage | null> {
+  if (!liveSyncEnabled) return null
+  const context = denContext()
+  if (!context) return null
+  try {
+    const response = await context.client.getRemoteSessionTail(context.organizationId, threadKey, { signal })
+    if (!response.tail) return null
+    const parsed = parseRemoteRead(response.tail)
+    if (parsed.kind !== "page") return null
+    useRemoteThreadStore.getState().setTail(threadKey, parsed.page)
+    return parsed.page
+  } catch {
+    return null
+  }
+}
+
+function kickStream(restart = false) {
+  listen()
+  if (!liveSyncEnabled) return
+  if (restart) streamController?.abort()
+  streamWake?.()
+  if (!streamRunning) void followStream()
+}
+
+async function followStream() {
+  streamRunning = true
+  let failures = 0
+  try {
+    while (liveSyncEnabled) {
+      const context = denContext()
+      if (!context || !canCall()) return
+      const controller = new AbortController()
+      streamController = controller
+      try {
+        await context.client.openRemoteSessionStream(context.organizationId, {
+          signal: controller.signal,
+          onSnapshot: (event) => {
+            failures = 0
+            useRemoteThreadStore.getState().applyBoundSessions(context.organizationId, event.sessions, { replace: true })
+          },
+          onUpdate: (event) => {
+            failures = 0
+            useRemoteThreadStore.getState().applyBoundSessions(context.organizationId, event.sessions, { tails: event.tails })
+          },
+        })
+      } catch (error) {
+        if (controller.signal.aborted) continue
+        if (error instanceof DenApiError && (error.status === 401 || error.status === 404)) {
+          return
+        }
+        failures += 1
+        const keys = Object.keys(useRemoteThreadStore.getState().threads)
+        if (keys.length > 0) useRemoteThreadStore.getState().markStale(keys)
+      } finally {
+        if (streamController === controller) streamController = null
+      }
+      if (!liveSyncEnabled || !canCall()) return
+      await pauseStream(Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** Math.max(0, failures - 1)))
+    }
+  } finally {
+    streamRunning = false
+  }
+}
+
 function listen() {
   if (listening || typeof window === "undefined") return
   listening = true
   const onChange = () => {
-    if (!canCall()) inflight?.controller.abort()
-    else kick(true)
+    if (!canCall()) {
+      inflight?.controller.abort()
+      streamController?.abort()
+    } else if (liveSyncEnabled) {
+      kickStream(true)
+    } else {
+      kick(true)
+    }
   }
   document.addEventListener("visibilitychange", onChange)
   window.addEventListener("online", onChange)
   window.addEventListener("offline", onChange)
+  window.addEventListener(denSettingsChangedEvent, () => {
+    if (!readDenSettings().authToken?.trim()) {
+      inflight?.controller.abort()
+      streamController?.abort()
+      clearPersistedRemoteThreads()
+      return
+    }
+    inflight?.controller.abort()
+    if (liveSyncEnabled) kickStream(true)
+    else kick(true)
+  })
 }
+
+listen()
 
 function kick(now = false) {
   listen()
+  if (liveSyncEnabled) return
   const context = denContext()
   const keys = context ? keysToCheck(context.organizationId, Date.now()) : []
   const added = keys.some((key) => !lastKeys.has(key))
@@ -227,6 +520,7 @@ async function follow() {
   let failures = 0
   try {
     for (;;) {
+      if (liveSyncEnabled) return
       const context = denContext()
       if (!context) return
       const keys = keysToCheck(context.organizationId, Date.now())
@@ -247,6 +541,7 @@ async function follow() {
           }),
           waitMs,
         }, { signal: controller.signal })
+        if (controller.signal.aborted) continue
         useRemoteThreadStore.getState().apply(result, keys, Date.now())
         const unchecked = result.threads.length > 0 && result.threads.every((thread) => !thread.changed && thread.stale)
         failures = unchecked ? failures + 1 : 0
@@ -272,21 +567,40 @@ async function follow() {
 }
 
 export function useRemoteThread(key: string | null): RemoteThreadEntry | null {
-  return useRemoteThreadStore((state) => key ? state.threads[key] ?? null : null)
+  const organizationId = useRemoteThreadOrganization()
+  return useRemoteThreadStore((state) => {
+    const entry = key ? state.threads[key] : undefined
+    if (!entry) return null
+    if (organizationId) return entry.organizationId === organizationId ? entry : null
+    return readDenSettings().authToken?.trim() ? null : entry
+  })
 }
 
-export function useFollowRemoteThread(start: RemoteThreadStart | null, owner: RemoteThreadOwner, startedAt: number | null) {
+export function useRemoteThreadTail(key: string | null): RemoteTranscriptPage | null {
+  return useRemoteThreadStore((state) => (key ? state.tailsByKey[key] ?? null : null))
+}
+
+export function useRemoteThreadLiveHydrated(): boolean {
+  const organizationId = useRemoteThreadOrganization()
+  return useRemoteThreadStore((state) => Boolean(organizationId && state.liveHydratedOrgId === organizationId))
+}
+
+export function useFollowRemoteThread(start: RemoteThreadStart | null, owner: RemoteThreadOwner | null, startedAt: number | null) {
   const latest = useRef({ start, startedAt })
   latest.current = { start, startedAt }
   const key = start?.key ?? null
-  const { workspaceId, sessionId } = owner
+  const workspaceId = owner?.workspaceId ?? ""
+  const sessionId = owner?.sessionId ?? ""
+  const organizationId = useRemoteThreadOrganization()
   useEffect(() => {
     const current = latest.current
-    if (!key || !current.start) return
-    const organizationId = readDenSettings().activeOrgId?.trim()
-    if (!organizationId) return
-    return useRemoteThreadStore.getState().watch(current.start, { owner: { workspaceId, sessionId }, organizationId, startedAt: current.startedAt })
-  }, [key, workspaceId, sessionId])
+    if (!key || !current.start || !organizationId) return
+    return useRemoteThreadStore.getState().watch(current.start, {
+      owner: workspaceId && sessionId ? { workspaceId, sessionId } : null,
+      organizationId,
+      startedAt: current.startedAt,
+    })
+  }, [key, workspaceId, sessionId, organizationId])
 }
 
 export function reviveRemoteThreads(followUps: readonly RemoteThreadFollowUp[], now = Date.now()) {
@@ -309,10 +623,13 @@ export function useReviveRemoteThread(part: DynamicToolUIPart | null) {
 export type RemoteThreadAttention = { kind: "permission" | "question"; title: string }
 
 export function useRemoteThreadAttentionKey(): string {
+  const organizationId = useRemoteThreadOrganization()
   return useRemoteThreadStore((state) => {
+    if (!organizationId) return "[]"
     const rows: string[][] = []
     for (const entry of Object.values(state.threads)) {
-      if (entry.status?.state !== "waiting") continue
+      if (entry.organizationId !== organizationId) continue
+      if (entry.checkedAt === null || entry.status?.state !== "waiting") continue
       for (const owner of Object.values(entry.owners)) {
         rows.push([owner.sessionId, entry.status.waitingFor ?? "question", entry.status.title ?? entry.start.title])
       }

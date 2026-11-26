@@ -32,6 +32,10 @@ import { startAdminMetricsRefreshLoop } from "./admin-metrics/worker.js"
 import { startComputerFleetSampler } from "./computer-fleet/service.js"
 import { startRunnerFleetSampler } from "./runner-fleet/service.js"
 import { startConfigBlobWorker } from "./config-blobs/worker.js"
+import { configureRemoteSessionSignalRedis } from "./remote-sessions/work-signal.js"
+import { startRemoteSessionTailSweepLoop } from "./remote-sessions/tails.js"
+
+configureRemoteSessionSignalRedis(env.databaseRedisUrl)
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
@@ -54,6 +58,7 @@ const stopAdminMetricsRefreshLoop = startAdminMetricsRefreshLoop()
 const stopRunnerFleetSampler = startRunnerFleetSampler()
 const stopComputerFleetSampler = startComputerFleetSampler()
 const stopConfigBlobWorker = startConfigBlobWorker()
+const stopRemoteSessionTailSweepLoop = startRemoteSessionTailSweepLoop()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
 const toolCacheMaintenance = setInterval(() => {
   const memory = process.memoryUsage()
@@ -105,6 +110,7 @@ async function stopBackgroundLoops() {
     stopRunnerFleetSampler(),
     stopComputerFleetSampler(),
     stopConfigBlobWorker(),
+    stopRemoteSessionTailSweepLoop(),
     automationScheduler.stop(),
   ])
 

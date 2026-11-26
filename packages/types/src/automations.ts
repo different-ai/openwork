@@ -736,6 +736,7 @@ export const remoteSessionCommandSessionReportSchema = z.object({
   messageCount: z.number().int().min(0).optional(),
   latestStep: z.string().max(REMOTE_SESSION_LATEST_STEP_MAX_LENGTH).nullable().optional(),
   pending: remoteSessionPendingSchema.nullable().optional(),
+  tail: z.lazy(() => remoteSessionReadResultSchema).nullable().optional(),
   observedAt: timestampSchema,
 })
 export type RemoteSessionCommandSessionReport = z.infer<typeof remoteSessionCommandSessionReportSchema>
