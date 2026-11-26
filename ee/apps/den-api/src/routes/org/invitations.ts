@@ -208,7 +208,7 @@ export async function createInvitationAction(
   user: InvitationActor,
   input: CreateInvitationInput,
   capture: AuditChangeCapture | null,
-  options: { onSaved?: (invitationId: InvitationId) => void; sendEmail?: boolean; memberId?: typeof MemberTable.$inferSelect.id } = {},
+  options: { onSaved?: (invitationId: InvitationId) => void; sendEmail?: boolean; memberId?: typeof MemberTable.$inferSelect.id; lifetimeDays?: number } = {},
 ) {
 
     const email = input.email.trim().toLowerCase()
@@ -329,7 +329,7 @@ export async function createInvitationAction(
         }
       }
 
-      const expiresAt = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 7)
+      const expiresAt = new Date(now.getTime() + 1000 * 60 * 60 * 24 * (options.lifetimeDays ?? 7))
       const invitationId = existingInvitation?.id ?? createInvitationId()
       const inviteToken = existingInvitation?.inviteToken && existingInvitation.expiresAt > now
         ? existingInvitation.inviteToken

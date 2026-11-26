@@ -250,6 +250,7 @@ async function invite(ctx: ConfigAreaContext, rc: ConfigRouteContext, input: { e
   const response = await createInvitationAction(rc.c, rc.payload, await actorUser(ctx), { email: input.email, role: input.role }, currentAuditChangeCapture(ctx.organizationId), {
     sendEmail: input.sendEmail,
     memberId: preferredMemberId(input.memberId),
+    ...(ctx.features.configPrivateItems ? { lifetimeDays: 90 } : {}),
   })
   const body = await expectRouteOk(response, `Invite ${input.email}`)
   const invitationId = stringField(body, "invitationId")

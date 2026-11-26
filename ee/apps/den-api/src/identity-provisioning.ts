@@ -2,6 +2,7 @@ import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, OrganizationTable, ScimProviderTable, SsoProviderTable } from "@openwork-ee/den-db/schema"
 import { emailDomainMatches } from "./account-linking-policy.js"
 import { db } from "./db.js"
+import { organizationFeatureEnabled } from "./features.js"
 import { getOrganizationEntitlements } from "./entitlements.js"
 import { acceptPendingInvitationForBootstrapMembership, ensureBootstrapMembershipForOrganization } from "./orgs.js"
 import { resolveStoredScimProvider } from "./scim-token-storage.js"
@@ -52,6 +53,17 @@ export async function provisionSsoMembership(input: { organizationId: OrgId; use
   if (invited) return "joined_by_invitation"
 
   if (!await organizationAllowsProvisioning(input.organizationId, "sso")) return "invitation_required"
+
+  if (await organizationFeatureEnabled(input.organizationId, "configPrivateItems")) {
+    const placeholder = await acceptPendingInvitationForBootstrapMembership({
+      organizationId: input.organizationId,
+      userId: input.userId,
+      email: input.email,
+      defaultRole: ORGANIZATION_SSO_JIT_ROLE,
+      afterSsoAdmission: true,
+    })
+    if (placeholder) return "joined_by_invitation"
+  }
 
   await ensureBootstrapMembershipForOrganization({
     organizationId: input.organizationId,

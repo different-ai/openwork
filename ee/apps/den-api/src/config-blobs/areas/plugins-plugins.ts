@@ -31,6 +31,10 @@ import {
   accessSpec,
   adoptItemKey,
   applyAccess,
+  privateImportOwner,
+  privateImportPreflight,
+  canExportCreatorOnly,
+  exportablePrivateCreators,
   ensureItemKeys,
   itemKey,
   exportedRefIds,
@@ -71,6 +75,7 @@ const mcpConnectionSchema = z.object({
 const emptyAccess = { orgWide: null, teams: { viewer: [], editor: [], manager: [] }, members: { viewer: [], editor: [], manager: [] } }
 
 const specSchema = z.object({
+  creatorOnly: z.literal(true).optional(),
   description: z.string().max(65535).nullable().default(null),
   archived: z.boolean().default(false),
   components: z.array(specRefSchema).max(1000).default([]),
@@ -149,7 +154,7 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const { rows: allRows, shared } = await loadSharedPlugins(ctx.db, organizationId)
   const wanted = ids ? new Set(ids) : null
-  const rows = allRows.filter((row) => wanted ? wanted.has(row.id) : shared.ids.has(row.id))
+  const rows = allRows.filter((row) => wanted ? wanted.has(row.id) : ctx.features.configPrivateItems || shared.ids.has(row.id))
   if (rows.length === 0) return []
   const pluginIds = rows.map((row) => row.id)
 
@@ -194,8 +199,13 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
   })
   const componentTitles = new Map(memberships.map((entry) => [entry.object.id, entry.object.title]))
   const names = await loadAudienceNames(ctx.db, organizationId, grants)
+  const creators = ids === null && ctx.features.configPrivateItems ? await exportablePrivateCreators(ctx, grants) : new Set<string>()
 
-  const items = rows.map((row): ConfigItem => {
+  const selected = ids === null && ctx.features.configPrivateItems
+    ? rows.filter((row) => shared.ids.has(row.id) || canExportCreatorOnly(grants.filter((grant) => grant.resourceId === row.id), row.createdByOrgMembershipId, creators, names))
+    : rows
+  const items = selected.map((row): ConfigItem => {
+    const ownGrants = grants.filter((grant) => grant.resourceId === row.id)
     const ownComponents = components.filter((entry) => entry.pluginId === row.id)
       .sort((left, right) => left.object.id.localeCompare(right.object.id))
       .map((entry) => ({ $ref: `plugins.skills/${entry.object.id}`, name: entry.object.title }))
@@ -222,7 +232,8 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
         description: row.description ?? null,
         archived: row.status === "archived",
         components: ownComponents,
-        access: accessSpec(grants.filter((grant) => grant.resourceId === row.id), names),
+        access: accessSpec(ownGrants, names),
+        ...(ctx.features.configPrivateItems && !shared.ids.has(row.id) ? { creatorOnly: true } : {}),
         collections: ownCollections,
         mcpConnections: ownBindings,
         sourceRepositoryUrl: row.sourceRepositoryUrl ?? null,
@@ -334,6 +345,7 @@ export const pluginsPluginsArea = defineConfigArea({
   tables: ["plugin", "plugin_config_object", "plugin_access_grant", "plugin_mcp_requirement_binding", "marketplace_plugin"],
   assignedKeys: true,
   ensureKeys: (ctx, items) => ensureItemKeys("plugin", ctx.organizationId, items),
+  identityOnly: (item) => item.spec.creatorOnly === true,
   naturalKeys: [{
     label: "built-in plugin name",
     get: (item) => item.spec.builtIn === true ? `builtin:${normalizeText(item.name)}` : null,
@@ -341,7 +353,7 @@ export const pluginsPluginsArea = defineConfigArea({
     label: "name",
     get: (item) => item.spec.builtIn === true ? null : normalizeText(item.name) || null,
   }],
-  uniqueAmongCreates: [{ label: "the name", get: (item) => item.name.trim() || null }],
+  uniqueAmongCreates: [{ label: "the name", get: (item) => item.spec.creatorOnly === true ? null : item.name.trim() || null }],
   similarity: (blob, target) => {
     const reasons: string[] = []
     const name = nameSimilarity(blob.name, target.name)
@@ -386,12 +398,18 @@ export const pluginsPluginsArea = defineConfigArea({
     return readPlugins(ctx, ids)
   },
 
-  async preflight(ctx, op) {
+  async preflight(ctx, op, info) {
+    const privacy = privateImportPreflight(ctx, op, info)
+    if (privacy) return privacy
     if (op.kind !== "create") return ownManagerAccessPreflight(ctx, op)
+    const ownerRef = ctx.features.configPrivateItems && op.item.spec.creatorOnly === true
+      ? info.refs?.find((ref) => ref.path === "access.members.manager[0]") : undefined
+    if (ownerRef?.resolution === "planned" || ownerRef?.resolution === "invite") return null
+    const ownerId = ownerRef?.resolution === "target" && ownerRef.id ? ownerRef.id : ctx.actor.memberId
     const name = op.item.name.trim()
     const [existing] = await ctx.db.select({ id: PluginTable.id }).from(PluginTable).where(and(
       eq(PluginTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId)),
-      eq(PluginTable.createdByOrgMembershipId, normalizeDenTypeId("member", ctx.actor.memberId)),
+      eq(PluginTable.createdByOrgMembershipId, normalizeDenTypeId("member", ownerId)),
       eq(PluginTable.name, name),
       eq(PluginTable.status, "active"),
       isNull(PluginTable.deletedAt),
@@ -412,6 +430,7 @@ export const pluginsPluginsArea = defineConfigArea({
       }
 
       const raw: JsonObject = specObject(op.item.spec)
+      const configImportOwnerId = await privateImportOwner(ctx, raw)
       const spec = parseSpec(applySpecSchema, raw)
       const name = op.item.name.trim()
       if (!name) throw new ConfigApplyError("invalid_spec", "A plugin needs a name.", 400, "name")
@@ -426,6 +445,7 @@ export const pluginsPluginsArea = defineConfigArea({
         await requirePluginArchCapability(actor, "plugin.create")
         const created = await log.run({ action: "create", target: "plugin", detail: name }, () => createPlugin({
           context: actor,
+          configImportOwnerId,
           ...(op.preferredId ? { id: normalizeDenTypeId("plugin", op.preferredId) } : {}),
           name,
           ...(itemKey(op.item.key) ? { externalKey: itemKey(op.item.key) } : {}),

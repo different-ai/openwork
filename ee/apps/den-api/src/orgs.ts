@@ -578,6 +578,7 @@ export async function acceptPendingInvitationForBootstrapMembership(input: {
   userId: UserId
   email: string | null
   defaultRole: string
+  afterSsoAdmission?: boolean
 }) {
   const email = input.email?.trim().toLowerCase()
   if (!email) {
@@ -590,7 +591,7 @@ export async function acceptPendingInvitationForBootstrapMembership(input: {
     .where(and(
       eq(InvitationTable.organizationId, input.organizationId),
       eq(InvitationTable.status, "pending"),
-      gt(InvitationTable.expiresAt, new Date()),
+      input.afterSsoAdmission ? undefined : gt(InvitationTable.expiresAt, new Date()),
       sql`lower(${InvitationTable.email}) = ${email}`,
     ))
     .limit(1)
@@ -598,14 +599,14 @@ export async function acceptPendingInvitationForBootstrapMembership(input: {
   const invitation = invitationRows.find((row) => (
     row.organizationId === input.organizationId
     && row.status === "pending"
-    && row.expiresAt > new Date()
+    && (input.afterSsoAdmission || row.expiresAt > new Date())
     && row.email.trim().toLowerCase() === email
   )) ?? null
   if (!invitation) {
     return null
   }
 
-  const accepted = await acceptInvitation(invitation, input.userId, { fallbackRole: input.defaultRole })
+  const accepted = await acceptInvitation(invitation, input.userId, { fallbackRole: input.defaultRole, ...(input.afterSsoAdmission ? { ssoAdmittedEmail: email } : {}) })
   return accepted?.status === "accepted" ? accepted.member : null
 }
 
@@ -655,7 +656,9 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
   return acceptedCount
 }
 
-async function acceptInvitation(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
+type InvitationAcceptanceOptions = { fallbackRole?: string; ssoAdmittedEmail?: string }
+
+async function acceptInvitation(invitation: InvitationRow, userId: UserId, options?: InvitationAcceptanceOptions) {
   const accepted = await acceptInvitationRecord(invitation, userId, options)
   if (accepted?.status === "accepted" && accepted.newlyAccepted) {
     await runPostOrganizationMemberChangeHooks({
@@ -667,7 +670,7 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
   return accepted
 }
 
-async function acceptInvitationRecord(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
+async function acceptInvitationRecord(invitation: InvitationRow, userId: UserId, options?: InvitationAcceptanceOptions) {
   const scimConnections = await db
     .select({ id: ScimProviderTable.id })
     .from(ScimProviderTable)
@@ -716,13 +719,14 @@ async function acceptInvitationRecord(invitation: InvitationRow, userId: UserId,
       .for("update")
     const existingMember = existingMemberRows[0] ?? null
     const invitationStatus = getInvitationStatus(currentInvitation)
-    if (invitationStatus !== "pending") {
+    const expiredSsoPlaceholder = invitationStatus === "expired" && options?.ssoAdmittedEmail === currentInvitation.email.trim().toLowerCase()
+    if (invitationStatus !== "pending" && !expiredSsoPlaceholder) {
       return invitationStatus === "accepted" && existingMember
         ? { status: "accepted" as const, invitation: currentInvitation, member: existingMember, newlyAccepted: false }
         : null
     }
 
-    const role = assignableOrganizationRole(currentInvitation.role)
+    const role = (expiredSsoPlaceholder ? null : assignableOrganizationRole(currentInvitation.role))
       ?? (options?.fallbackRole ? assignableOrganizationRole(options.fallbackRole) : null)
       ?? ORGANIZATION_MEMBER_ROLE
     const joinedAt = new Date()
@@ -733,6 +737,7 @@ async function acceptInvitationRecord(invitation: InvitationRow, userId: UserId,
       .limit(1)
       .for("update")
     const invitedMember = invitedMemberRows[0] ?? null
+    if (expiredSsoPlaceholder && (existingMember || !invitedMember || invitedMember.userId !== null)) return null
     const removedMemberRows = existingMember
       ? []
       : await tx
@@ -831,7 +836,7 @@ async function acceptInvitationRecord(invitation: InvitationRow, userId: UserId,
       }
     }
 
-    if (currentInvitation.teamId) {
+    if (currentInvitation.teamId && !expiredSsoPlaceholder) {
       const teams = await tx
         .select({ id: TeamTable.id, grantsOrganizationAdmin: TeamTable.grantsOrganizationAdmin })
         .from(TeamTable)
