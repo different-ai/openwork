@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isStandingChatSessionId } from "@/react-app/domains/agents/agent-chat-mode";
 import { useLocation, useNavigate, useParams } from "react-router";
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
@@ -156,7 +157,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       .replace(/^\/extensions\/?/, "")
       .replace(/^\/+|\/+$/g, "")
     : "";
-  const workspaceInferenceSessionId = sessionIdForLegacyWorkspaceInference(routeWorkspaceId, selectedSessionId);
+  const agentThreadRoute = selectedSessionId !== null && isStandingChatSessionId(selectedSessionId);
+  const workspaceInferenceSessionId = sessionIdForLegacyWorkspaceInference(routeWorkspaceId, agentThreadRoute ? null : selectedSessionId);
   const legacyWorkspaceInferenceKey = routeWorkspaceId ? "" : workspaceInferenceSessionId;
   const routeWorkspaceIdRef = useRef(routeWorkspaceId);
   routeWorkspaceIdRef.current = routeWorkspaceId;
@@ -1175,7 +1177,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     selectedSessionId &&
       (sessionsByWorkspaceId[selectedWorkspaceId] ?? []).some((session) => session?.id === selectedSessionId),
   );
-  const modernRouteSessionLoadKey = routeWorkspaceId && selectedSessionId && selectedWorkspace && selectedWorkspaceEndpoint
+  const modernRouteSessionLoadKey = !agentThreadRoute && routeWorkspaceId && selectedSessionId && selectedWorkspace && selectedWorkspaceEndpoint
     ? JSON.stringify([
         routeWorkspaceId,
         selectedSessionId,

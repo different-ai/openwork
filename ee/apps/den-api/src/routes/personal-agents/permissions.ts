@@ -92,6 +92,9 @@ export function registerPersonalAgentPermissionsRoutes<T extends { Variables: Ro
       const decided = await decidePersonalAgentRequest(access, member, requestId, c.req.valid("json").decision)
       return decided ? c.json(decided) : c.json(requestNotFound, 404)
     } catch (error) {
+      if (error instanceof Error && error.message === "personal_agent_connector_unavailable") {
+        return c.json({ error: error.message, message: "This connector is no longer available to approve." }, 409)
+      }
       const refused = failure(error)
       if (!refused) throw error
       return c.json(refused.body, refused.status)

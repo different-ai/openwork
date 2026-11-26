@@ -67,7 +67,10 @@ function toolChangeLines(nextPolicy: PersonalAgentToolPolicy, currentPolicy?: Pe
     const connection = connections.get(connectionId);
     const app = connection?.name || t("agents.change_tools_unknown_app");
     const tool = connection?.tools.find((item) => item.name === toolName)?.title || toolName;
-    return [{ key, text: `${tool ? `${app} · ${tool}` : app}: ${access ? labels[access] : t("agents.change_tools_default")}` }];
+    const label = !access ? t("agents.change_tools_default")
+      : toolName || access === "ask" ? labels[access]
+      : access === "allow" ? t("agents.permissions_connection_on") : t("agents.permissions_connection_off");
+    return [{ key, text: `${tool ? `${app} · ${tool}` : app}: ${label}` }];
   });
 }
 

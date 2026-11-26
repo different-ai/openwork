@@ -1,3 +1,4 @@
+import { personalAgentConnectorState } from "./connector-access.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { PersonalAgentToolCatalog, PersonalAgentToolPolicy } from "@openwork/types/den/personal-agents"
 import { externalMcpConnectionReadyForMember, listUsableExternalMcpConnections, type ExternalMcpConnectionRow } from "../capability-sources/external-mcp-connections.js"
@@ -64,13 +65,13 @@ export async function personalAgentToolCatalog(caller: PersonalAgentCaller, poli
       return {
         sharedLogin, canShareLogin,
         connectionId: connection.id, name: connection.name.slice(0, 160), available,
-        blocked: policy.connections[connection.id] === "block", lockedByOrganization: organization.toolPolicy.connections[connection.id] === "block",
+        blocked: personalAgentConnectorState(agent, policy, connection.id) !== "on", lockedByOrganization: organization.toolPolicy.connections[connection.id] === "block",
         tools: tools.map((tool) => {
           const chosen = Object.hasOwn(policy.tools[connection.id] ?? {}, tool.name) ? policy.tools[connection.id][tool.name] : null
           const rule = organizationToolRule(organization, connection.id, tool.name)
           const lockedByOrganization = rule === "block" || evaluateToolPolicy(connection.toolPolicy, tool.name).blocked
           const access = evaluateToolPermission([
-            personalAgentToolRule(policy, connection.id, tool.name), lockedByOrganization ? "block" : rule,
+            personalAgentConnectorState(agent, policy, connection.id) !== "on" ? "block" : personalAgentToolRule(policy, connection.id, tool.name), lockedByOrganization ? "block" : rule,
             ...callerPolicies.map((callerPolicy) => personalAgentToolRule(callerPolicy, connection.id, tool.name)),
           ], !tool.write)
           return { ...tool, chosen, lockedByOrganization, access, organizationRule: rule === "block" ? null : rule }

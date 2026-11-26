@@ -50,9 +50,10 @@ test("personal agent discovery and execution check the flag independently", asyn
       assert.equal(on.contributions.some(({ featureId }) => featureId === "agents"), true);
       const proposal = on.availableAffordances.find(({ id }) => id === "agent.propose");
       assert.deepEqual(proposal?.arguments.find(({ name }) => name === "never"), { name: "never", type: "array", required: false });
+      assert.deepEqual(proposal?.arguments.find(({ name }) => name === "connectorNames"), { name: "connectorNames", type: "array", required: false });
 
       enabled = false;
-      const denied: unknown = JSON.parse(await plugin.tool.openwork_execute.execute({ id: "agent.propose", args }, {}));
+      const denied: unknown = JSON.parse(await plugin.tool.openwork_execute.execute({ id: "agent.propose", args: { ...args, connectorNames: ["Slack"] } }, {}));
       assert.deepEqual(denied, { ok: false, id: "agent.propose", code: "unavailable", error: "Agents are not turned on for this organization." });
       const off = contract.parse(JSON.parse(await plugin.tool.openwork_context.execute())).context;
       assert.equal(off.contributions.some(({ featureId }) => featureId === "agents"), false);
@@ -69,13 +70,20 @@ test("a proposal with never restrictions and weekday names parses", async () => 
   const plugin = await OpenWorkExtensionsPreview();
   const resultSchema = z.object({ ok: z.literal(true), result: z.object({ proposal: personalAgentProposalSchema }) });
   try {
-    const output = await openworkReadTransport.run({
+    await openworkReadTransport.run({
       async get() { return { enabled: true }; },
       async post() { throw new Error("A proposal should not change app state"); },
-    }, () => plugin.tool.openwork_execute.execute({ id: "agent.propose", args }, {}));
-    const { result: { proposal } } = resultSchema.parse(JSON.parse(output));
-    assert.deepEqual(proposal.never, never);
-    assert.deepEqual(proposal.routine.schedule, { kind: "weekly", timezone: "UTC", daysOfWeek: [1, 3], hour: 9, minute: 0 });
+    }, async () => {
+      const connectorNames = ["Slack"];
+      const output = await plugin.tool.openwork_execute.execute({ id: "agent.propose", args: { ...args, connectorNames } }, {});
+      const { result: { proposal } } = resultSchema.parse(JSON.parse(output));
+      assert.deepEqual(proposal.connectorNames, connectorNames);
+      assert.deepEqual(proposal.never, never);
+      assert.deepEqual(proposal.routine.schedule, { kind: "weekly", timezone: "UTC", daysOfWeek: [1, 3], hour: 9, minute: 0 });
+
+      const omitted = await plugin.tool.openwork_execute.execute({ id: "agent.propose", args }, {});
+      assert.deepEqual(resultSchema.parse(JSON.parse(omitted)).result.proposal.connectorNames, []);
+    });
   } finally {
     plugin.dispose();
   }

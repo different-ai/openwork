@@ -1,3 +1,4 @@
+import { agentChatProfileSchema, type AgentChatProfile } from "@openwork-ee/headless-protocol"
 import { randomUUID } from "node:crypto"
 import type { SqlDriver } from "./sql.js"
 import { migrateCells } from "./cells-store.js"
@@ -15,7 +16,7 @@ import {
   type PendingIndexUpdate,
 } from "./storage/index-outbox.js"
 import type { LargeBodyRef } from "./storage/large-bodies.js"
-import { runMigrations } from "./storage/migrations.js"
+import { addColumn, runMigrations } from "./storage/migrations.js"
 import { storageSchema } from "./storage/schema.js"
 import { z } from "zod"
 import type { Usage } from "./model.js"
@@ -37,7 +38,10 @@ import {
   type TurnStatus,
 } from "./types.js"
 
+const storedProfile = z.union([z.literal("standard"), agentChatProfileSchema])
+
 const sessionRow = z.object({
+  profile: storedProfile,
   id: z.string(),
   title: z.string(),
   instructions: z.string(),
@@ -66,6 +70,7 @@ const sessionOptions = z.object({
 type SessionOptions = z.infer<typeof sessionOptions>
 const tableColumns = z.array(z.object({ name: z.string() }).loose())
 const turnRow = z.object({
+  profile: storedProfile.optional(),
   session_id: z.string(),
   message_id: z.string(),
   status: turnStatusSchema,
@@ -88,6 +93,7 @@ const fileRow = z.object({ path: z.string(), size: z.number(), updated_at: z.num
 const countRow = z.object({ n: z.number() })
 
 export type Session = {
+  profile?: AgentChatProfile
   id: string
   title: string
   instructions: string
@@ -111,6 +117,7 @@ export type Session = {
   updatedAt: number
 }
 export type SessionInput = {
+  profile?: AgentChatProfile
   title?: string
   instructions?: string
   repeats?: RepeatLimits
@@ -188,6 +195,7 @@ function serializeOptions(options: SessionOptions) {
 }
 
 export type Turn = {
+  profile?: AgentChatProfile
   sessionId: string
   messageId: string
   status: TurnStatus
@@ -259,6 +267,7 @@ export function parseMessageRow(row: unknown): StoredMessage {
 export function toTurn(row: unknown): Turn {
   const value = turnRow.parse(row)
   return {
+    ...(value.profile === "agent_chat" ? { profile: value.profile } : {}),
     sessionId: value.session_id,
     messageId: value.message_id,
     status: value.status,
@@ -277,7 +286,7 @@ export function toTurn(row: unknown): Turn {
 }
 
 export const TURN_COLUMNS =
-  "session_id, message_id, status, model, model_access_required, error, input_tokens, cached_input_tokens, output_tokens, created_at, updated_at, kind, parent, title, error_detail, execution"
+  "session_id, message_id, status, model, model_access_required, error, input_tokens, cached_input_tokens, output_tokens, created_at, updated_at, kind, parent, title, error_detail, execution, profile"
 
 const CONVERSATION_ROWS = "message_id NOT IN (SELECT message_id FROM turns WHERE session_id = ? AND kind = 'task')"
 
@@ -315,6 +324,10 @@ export class Store {
           placed_at INTEGER NOT NULL
         );
       `) },
+      { version: 6, name: "agent-chat-profile", up: (db) => {
+        addColumn(db, "sessions", "profile", "TEXT NOT NULL DEFAULT 'standard'")
+        addColumn(db, "turns", "profile", "TEXT NOT NULL DEFAULT 'standard'")
+      } },
     ])
   }
 
@@ -428,8 +441,8 @@ export class Store {
     const id = `hs_${randomUUID().replaceAll("-", "")}`
     this.transaction(() => {
       this.db
-        .prepare("INSERT INTO sessions (id, title, instructions, options, owner, ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(id, initialTitle(input), input.instructions ?? "", serializeOptions(optionsOf(input)), input.owner ?? null, input.ref ?? null, at, at)
+        .prepare("INSERT INTO sessions (id, title, instructions, options, owner, ref, created_at, updated_at, profile) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, initialTitle(input), input.instructions ?? "", serializeOptions(optionsOf(input)), input.owner ?? null, input.ref ?? null, at, at, input.profile ?? "standard")
       this.sessionCreated(id)
     })
     const session = this.getSession(id)
@@ -448,11 +461,14 @@ export class Store {
 
   private putSessionRow(id: string, input: SessionInput): { session: Session; created: boolean } {
     const existing = this.getSession(id)
+    if (existing && (input.profile !== existing.profile || (existing.profile === "agent_chat" && input.owner !== undefined && input.owner !== existing.owner))) {
+      throw new Error("session_profile_mismatch")
+    }
     const at = this.now()
     if (!existing) {
       this.db
-        .prepare("INSERT INTO sessions (id, title, instructions, options, owner, ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(id, initialTitle(input), input.instructions ?? "", serializeOptions(optionsOf(input)), input.owner ?? null, input.ref ?? null, at, at)
+        .prepare("INSERT INTO sessions (id, title, instructions, options, owner, ref, created_at, updated_at, profile) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, initialTitle(input), input.instructions ?? "", serializeOptions(optionsOf(input)), input.owner ?? null, input.ref ?? null, at, at, input.profile ?? "standard")
       this.sessionCreated(id)
     } else {
       const options = { ...optionsOf(existing), ...optionsOf(input) }
@@ -488,26 +504,28 @@ export class Store {
     const value = sessionRow.parse(row)
     const parsed = value.options ? sessionOptions.safeParse(JSON.parse(value.options)) : null
     const options: SessionOptions = parsed?.success ? parsed.data : {}
+    const isolated = value.profile === "agent_chat"
     return {
+      ...(value.profile === "agent_chat" ? { profile: value.profile } : {}),
       id: value.id,
       title: value.title,
       instructions: value.instructions,
       repeats: options.repeats ?? null,
-      files: options.files ?? false,
-      computer: options.computer ?? false,
-      desktop: options.desktop ?? false,
-      desktopViews: options.desktopViews ?? null,
-      reactions: options.reactions ?? false,
-      tasks: options.tasks ?? false,
-      documentNavigation: options.documentNavigation ?? false,
-      teachingNavigation: options.teachingNavigation ?? false,
-      browserRecovery: options.browserRecovery ?? false,
+      files: !isolated && options.files === true,
+      computer: !isolated && options.computer === true,
+      desktop: !isolated && options.desktop === true,
+      desktopViews: isolated ? null : options.desktopViews ?? null,
+      reactions: !isolated && options.reactions === true,
+      tasks: !isolated && options.tasks === true,
+      documentNavigation: !isolated && options.documentNavigation === true,
+      teachingNavigation: !isolated && options.teachingNavigation === true,
+      browserRecovery: !isolated && options.browserRecovery === true,
       owner: value.owner ?? null,
       ref: value.ref ?? null,
       timeZone: options.timeZone ?? null,
-      autoTitle: options.autoTitle ?? false,
-      memoryOf: options.memoryScope ? null : options.memoryOf ?? null,
-      memoryScope: options.memoryScope ?? null,
+      autoTitle: !isolated && options.autoTitle === true,
+      memoryOf: isolated || options.memoryScope ? null : options.memoryOf ?? null,
+      memoryScope: isolated ? null : options.memoryScope ?? null,
       createdAt: value.created_at,
       updatedAt: value.updated_at,
     }
@@ -682,11 +700,13 @@ export class Store {
     execution?: Execution
   }): Turn {
     const at = this.now()
+    const profile = this.getSession(input.sessionId)?.profile
+    if (profile === "agent_chat" && (input.kind || input.parent || input.execution || input.attachments?.length)) throw new Error("invalid_agent_chat_turn")
     const attachments = input.attachments?.length ? JSON.stringify(input.attachments) : null
     this.transaction(() => {
       this.db
         .prepare(
-          "INSERT INTO turns (session_id, message_id, status, prompt, model, error, attachments, kind, parent, title, model_access_required, execution, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO turns (session_id, message_id, status, prompt, model, error, attachments, kind, parent, title, model_access_required, execution, created_at, updated_at, profile) VALUES (?, ?, 'queued', ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .run(
           input.sessionId,
@@ -701,6 +721,7 @@ export class Store {
           input.execution ?? null,
           at,
           at,
+          profile ?? "standard",
         )
       this.addHotBytes(input.sessionId, Buffer.byteLength(input.prompt) + (attachments ? Buffer.byteLength(attachments) : 0))
     })
@@ -759,10 +780,12 @@ export class Store {
   }
 
   setResumeGrant(sessionId: string, messageId: string, sealed: string | null) {
+    if (sealed && this.getSession(sessionId)?.profile === "agent_chat") return
     this.db.prepare(`UPDATE turns SET ${RESUME_GRANT_COLUMN} = ? WHERE session_id = ? AND message_id = ?`).run(sealed, sessionId, messageId)
   }
 
   resumeGrantOf(sessionId: string, messageId: string): { sealed: string; holder: string } | null {
+    if (this.getSession(sessionId)?.profile === "agent_chat") return null
     let id = messageId
     for (let hop = 0; hop < 3; hop += 1) {
       const row = this.db.prepare(`SELECT ${RESUME_GRANT_COLUMN}, kind, parent FROM turns WHERE session_id = ? AND message_id = ?`).get(sessionId, id)
@@ -1193,6 +1216,8 @@ export class Store {
   }
 
   importConversation(conversation: ConversationRows) {
+    const profile = storedProfile.parse(conversation.session.profile ?? "standard")
+    if (conversation.turns.some(turn => (turn.profile ?? "standard") !== profile)) throw new Error("session_profile_mismatch")
     const insert = (table: "sessions" | ConversationTable, row: SqlRow) => {
       const names = Object.keys(row)
       if (!names.length || names.some((name) => !/^[a-z_]+$/.test(name))) throw new Error("invalid_column")

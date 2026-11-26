@@ -120,7 +120,8 @@ import { AutomationsPage } from "@/react-app/domains/automations/automations-pag
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
 import { useQueryCacheState } from "@/react-app/infra/query-cache-state";
 import { agentPromptNoteParts } from "@/react-app/domains/agents/agent-prompt-note";
-import { usePersonalAgentSessionExtensions } from "@/react-app/domains/agents/agents-extension";
+import { assertWorkspaceChat } from "@/react-app/domains/agents/agent-chat-mode";
+import { agentFeatureSnapshotKey, usePersonalAgentSessionExtensions, useStandingChatFeature } from "@/react-app/domains/agents/agents-extension";
 import { PersonalAgentsProvider, type AgentScope, type AgentsRuntime } from "@/react-app/domains/agents/agents-runtime";
 import { useAgentNames } from "@/react-app/domains/agents/use-agents";
 import { SessionExtensionsProvider } from "@/react-app/kernel/session-extensions";
@@ -426,8 +427,8 @@ function personalAgentsOrganizationIdNow(snapshot: { scope: AgentScope; token: s
   const { scope, token } = snapshot;
   const settings = readDenSettings();
   if (settings.activeOrgId?.trim() !== scope.organizationId || settings.baseUrl !== scope.denBaseUrl || settings.authToken?.trim() !== token) return null;
-  const features = getReactQueryClient().getQueryData<Record<string, boolean>>(["den", "org-features", scope.organizationId]);
-  return features?.personalAgents === true ? scope : null;
+  const features = getReactQueryClient().getQueryState<Record<string, boolean>>(agentFeatureSnapshotKey(scope));
+  return features?.status === "success" && features.data?.personalAgents === true ? scope : null;
 }
 
 const NO_ORG_FEATURES: Record<string, boolean> = {};
@@ -439,7 +440,6 @@ export function SessionRoute() {
     [agentsDen.ready, agentsDen.organizationId],
   );
   const orgFeatures = useQueryCacheState<Record<string, boolean>>(orgFeaturesKey, NO_ORG_FEATURES);
-  const personalAgentsEnabled = orgFeatures.personalAgents === true;
   const toolPermissionsEnabled = orgFeatures.toolPermissions === true;
   const navigate = useNavigate();
   const location = useLocation();
@@ -486,6 +486,8 @@ export function SessionRoute() {
       principal: personalAgentsIdentity.principalId,
     }
     : null, [denAuth.isSignedIn, denSettings.activeOrgId, denSettings.baseUrl, personalAgentsIdentity, personalAgentsToken]);
+  const standingChatFeature = useStandingChatFeature(personalAgentsScope, agentsDen.client);
+  const personalAgentsEnabled = standingChatFeature === "enabled";
   const personalAgentsSnapshot = useRef<{ scope: AgentScope; token: string } | null>(null);
   personalAgentsSnapshot.current = personalAgentsScope && personalAgentsToken ? { scope: personalAgentsScope, token: personalAgentsToken } : null;
   const retainedArtifactsScope = dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity
@@ -1727,6 +1729,7 @@ export function SessionRoute() {
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
         const generation = getQueuedSendGeneration(targetSessionId);
         const assertCurrent = () => {
+          assertWorkspaceChat(targetSessionId);
           assertQueuedSendCurrent(targetSessionId, generation);
           if (sessionWorkHeld(opencodeBaseUrl, targetSessionId)) throw new Error("This conversation is being archived.");
         };
@@ -1734,6 +1737,7 @@ export function SessionRoute() {
         if (!text && draft.attachments.length === 0) {
           return { outcome: "cancelled", reason: "context_changed" };
         }
+        assertCurrent();
         return reloadCoordinator.withEngineReady(selectedWorkspaceId, async () => {
           assertCurrent();
           await ensurePendingConversationGroup(sessionDraftScope, selectedWorkspaceId, targetSessionId, assignNewSessionGroup);
@@ -2117,6 +2121,7 @@ export function SessionRoute() {
         const targetSessionId = sessionId.trim() || session.sessionId;
         const generation = getQueuedSendGeneration(targetSessionId);
         const assertCurrent = () => {
+          assertWorkspaceChat(targetSessionId);
           assertQueuedSendCurrent(targetSessionId, generation);
           if (sessionWorkHeld(endpoint.opencodeBaseUrl, targetSessionId)) throw new Error("This conversation is being archived.");
         };
@@ -2124,6 +2129,7 @@ export function SessionRoute() {
         if (!targetSessionId || (!text && draft.attachments.length === 0)) {
           return { outcome: "cancelled", reason: "context_changed" };
         }
+        assertCurrent();
         return reloadCoordinator.withEngineReady(workspace.id, async () => {
           assertCurrent();
           await ensurePendingConversationGroup(sessionDraftScope, workspace.id, targetSessionId, assignNewSessionGroup);
@@ -2778,7 +2784,7 @@ export function SessionRoute() {
   }, [endpointForSessionWorkspace, reloadWorkspaceSessions, workspaces]);
 
   const agentsRuntime = useMemo<AgentsRuntime | null>(() => {
-    if (!personalAgentsEnabled || !agentsDen.ready || !agentsDen.client || !personalAgentsScope || !selectedWorkspaceId) return null;
+    if (!personalAgentsEnabled || !agentsDen.ready || !agentsDen.client || !personalAgentsScope) return null;
     return {
       ...personalAgentsScope,
       client: agentsDen.client,
@@ -2799,7 +2805,8 @@ export function SessionRoute() {
       },
     };
   }, [agentsDen.client, agentsDen.ready, handleCreateTaskInWorkspaceWithOpenMode, navigateToWorkspaceSession, opencodeClient, personalAgentsEnabled, personalAgentsScope, renameSessionTitle, selectedSessionId, selectedWorkspaceId]);
-  const agentExtensions = usePersonalAgentSessionExtensions(agentsRuntime);
+  const agentExtensions = usePersonalAgentSessionExtensions(agentsRuntime, standingChatFeature);
+  const standingChatSlot = selectedSessionId ? agentExtensions.renderStandingChat?.(selectedSessionId) : null;
   const approvalsScope = useMemo(() => toolPermissionsEnabled && agentsDen.ready && agentsDen.client && personalAgentsScope
     ? { ...personalAgentsScope, client: agentsDen.client } : null, [agentsDen.client, agentsDen.ready, personalAgentsScope, toolPermissionsEnabled]);
   const automationApprovals = useAutomationApprovals(automationsRouteActive ? approvalsScope : null);
@@ -3984,7 +3991,7 @@ export function SessionRoute() {
       }
       primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? artifactsLabel : automationsRouteActive ? "Automations" : dashboardRouteActive ? artifactsLabel : undefined}
       primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || extensionsMainOpen ? "flat" : undefined}
-      primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation || remoteTaskRouteActive)}
+      primarySlotIsConversation={!activityRouteActive && Boolean(standingChatSlot || pendingConversation || remoteTaskRouteActive)}
       primaryHeader={remoteTaskRouteActive && remoteThreadKey ? <RemoteSessionHeader key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} /> : undefined}
       onOpenRemoteTask={openRemoteTask}
       onStartSideChatWithQuote={sideChatFromSelectionEnabled ? handleStartSideChatWithQuote : undefined}
@@ -4009,7 +4016,7 @@ export function SessionRoute() {
       } : undefined}
       primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : remoteTaskRouteActive && remoteThreadKey ? (
         <RemoteSessionSurface key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} />
-      ) : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
+      ) : standingChatSlot ?? (pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}
           opencodeBaseUrl={opencodeBaseUrl}
@@ -4052,7 +4059,7 @@ export function SessionRoute() {
             onSignIn={() => handleOpenSettings("/settings/cloud-account")}
           />
         </WorkspaceProvider>
-      ) : undefined}
+      ) : undefined)}
       terminalOpen={terminalOpen}
       onTerminalOpenChange={setTerminalOpen}
       onSessionTabsChange={(tabs) => {
@@ -4207,7 +4214,7 @@ export function SessionRoute() {
         openWorkConnectState: sessionMcpMaintenance,
         onOpenDiagnostics: () => handleOpenSettings(developerMode ? "/settings/debug" : "/settings/advanced/agent-access"),
       }}
-      notFoundMessage={activityRouteActive ? null : gatedRouteNotFoundMessage}
+      notFoundMessage={activityRouteActive || standingChatSlot ? null : gatedRouteNotFoundMessage}
       mainContentTakeover={
         activityRouteActive ? null : extensionsMainOpen ? (
           <SettingsSurface
@@ -4215,9 +4222,9 @@ export function SessionRoute() {
             libraryHeaderActionsTarget={libraryHeaderActionsTarget}
             workspaceId={selectedWorkspaceId || undefined}
           />
-        ) : cloudWorkspaceMainContentTakeover
+        ) : standingChatSlot ? null : cloudWorkspaceMainContentTakeover
       }
-      mainContentTitle={extensionsMainOpen ? t("settings.tab_extensions") : cloudWorkspaceMainContentTakeover ? "Cloud workspace" : undefined}
+      mainContentTitle={extensionsMainOpen ? t("settings.tab_extensions") : cloudWorkspaceMainContentTakeover && !standingChatSlot ? "Cloud workspace" : undefined}
       mainContentHeaderActionsRef={extensionsMainOpen ? setLibraryHeaderActionsTarget
         : cloudWorkspaceMainContentTakeover ? undefined
         : dashboardRouteActive ? setDashboardHeaderActionsTarget

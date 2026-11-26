@@ -15,7 +15,7 @@ import { FILE_LIMITS, isMemoryPath, normalizePath } from "./files.js"
 import { localMemory, MemoryUnavailableError, type MemoryResolver } from "./memory.js"
 import type { Runner } from "./runner.js"
 import { scopedCatalogResponse } from "./model-catalog.js"
-import { HEADLESS_MAX_PROMPT_CHARS, type HeadlessModelAccess } from "@openwork-ee/headless-protocol"
+import { agentChatProfileSchema, HEADLESS_MAX_PROMPT_CHARS, type HeadlessModelAccess } from "@openwork-ee/headless-protocol"
 import { modelProbeResponse, type ModelProbe } from "./model-probe.js"
 import { CONVERSATION_TABLES, sqlRow, type SessionInput, type StoredMessage, type Store, type Turn } from "./store.js"
 import { LargeBodyUnavailableError, SegmentError, SessionStorage } from "./storage/index.js"
@@ -24,6 +24,7 @@ import { ACTIVE, DESKTOP_VIEWS, desktopViewSchema, executionSchema, repeatLimits
 
 const createSessionBody = z
   .object({
+    profile: agentChatProfileSchema.optional(),
     title: z.string().max(200).optional(),
     instructions: z.string().max(20_000).optional(),
     repeats: repeatLimitsSchema.optional(),
@@ -45,6 +46,7 @@ const createSessionBody = z
     memoryScope: z.enum(["owner"]).optional(),
   })
   .strict()
+  .refine((body) => body.profile !== "agent_chat" || (body.owner && ![body.files, body.computer, body.desktop, body.desktopViews, body.reactions, body.tasks, body.documentNavigation, body.teachingNavigation, body.sandboxGateway, body.browserRecovery, body.autoTitle, body.memoryOf, body.memoryScope].some(Boolean)), "agent chat cannot enable workspace features and requires an owner")
 const messageIdSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)
 const sessionIdSchema = z.string().regex(/^hs_[A-Za-z0-9_-]{8,96}$/)
 const listQuery = z.object({ owner: z.string().min(1).max(200), limit: z.coerce.number().int().min(1).max(200).default(50) })
@@ -177,6 +179,15 @@ export function createApp(input: {
   app.post("/v1/models", bodyLimit({ maxSize: 8192 }), (c) => scopedCatalogResponse(c.req.raw, input.models))
   app.post("/v1/model-probe", bodyLimit({ maxSize: 8192 }), (c) => modelProbeResponse(c.req.raw, input.modelProbe))
 
+  const workspaceAllowed: MiddlewareHandler = async (c, next) => {
+    if (store.getSession(c.req.param("id") ?? "")?.profile === "agent_chat") return c.json({ error: "agent_chat_workspace_disabled" }, 403)
+    await next()
+  }
+  for (const surface of ["desktop", "computer", "saved-files", "files"]) {
+    app.use(`/v1/sessions/:id/${surface}`, workspaceAllowed)
+    app.use(`/v1/sessions/:id/${surface}/*`, workspaceAllowed)
+  }
+
   app.post("/v1/sessions/:id/desktop/:operation", async (c) => {
     const session = store.getSession(c.req.param("id"))
     if (!session?.computer || !session.desktop) return c.json({ error: "desktop_disabled" }, 403)
@@ -234,6 +245,10 @@ export function createApp(input: {
     if (!id.success) return c.json({ error: "invalid_session_id" }, 400)
     const body = createSessionBody.safeParse(await c.req.json().catch(() => ({})))
     if (!body.success) return c.json({ error: "invalid_request", issues: body.error.issues }, 400)
+    const existing = store.getSession(id.data)
+    if (existing && (existing.profile !== body.data.profile || (existing.profile === "agent_chat" && existing.owner !== body.data.owner))) {
+      return c.json({ error: "session_profile_mismatch" }, 409)
+    }
     const resolved = withMemory(id.data, body.data)
     if (!resolved.ok) return c.json({ error: resolved.error }, 400)
     const { session, created } = store.putSession(id.data, resolved.input)
@@ -506,7 +521,7 @@ export function createApp(input: {
     const body = sendBody.safeParse(await c.req.json().catch(() => null))
     if (!body.success) return c.json({ error: "invalid_request", issues: body.error.issues }, 400)
     const result = runner.send({ sessionId: c.req.param("id"), ...body.data })
-    if (!result.ok) return c.json({ error: result.error }, result.error === "unknown_session" ? 404 : result.error === "unknown_file" || result.error === "model_required" ? 400 : result.error === "model_mismatch" ? 409 : 429)
+    if (!result.ok) return c.json({ error: result.error }, result.error === "unknown_session" ? 404 : result.error === "unknown_file" || result.error === "model_required" || result.error === "invalid_agent_chat_turn" ? 400 : result.error === "model_mismatch" ? 409 : result.error === "agent_chat_unavailable" ? 503 : 429)
     return c.json({ state: result.state, turn: result.turn }, 202)
   })
 

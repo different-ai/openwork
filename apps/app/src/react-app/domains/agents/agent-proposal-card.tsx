@@ -4,7 +4,7 @@ import { toast } from "sonner";
 
 import { parsePersonalAgentProposal } from "@/components/tools/openwork-automation-proposal";
 import type { SessionProposalCardProps } from "@/react-app/kernel/session-extensions";
-import { t } from "@/i18n";
+import { currentLocale, t } from "@/i18n";
 
 import { agentChatFor, agentChatKey, isStandingChat, useAgentChatStore } from "./agent-chat-store";
 import { AgentChoices } from "./agent-choices";
@@ -101,6 +101,13 @@ export function AgentProposalCard(props: SessionProposalCardProps) {
         <span className="truncate font-medium text-dls-text">{proposal.name}</span>
         <span aria-hidden="true">·</span>
         <span className="truncate">{[scheduleInWords(proposal.routine.schedule), zone].filter(Boolean).join(", ")}</span>
+      </p>
+      <p data-agent-proposal-connections className="wrap-anywhere text-xs text-dls-secondary">
+        {t("agents.start_connections", {
+          connections: proposal.connectorNames?.length
+            ? new Intl.ListFormat(currentLocale()).format(proposal.connectorNames)
+            : t("agents.start_connections_none"),
+        })}
       </p>
       <AgentChoices
         title={t("agents.start_question")}

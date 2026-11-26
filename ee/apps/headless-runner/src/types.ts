@@ -79,6 +79,7 @@ export const turnCredentialsSchema = z
     modelApiKey: z.string().min(1).max(4096).optional(),
     modelAccess: headlessModelAccessSchema.optional(),
     mcpToken: z.string().min(1).max(16_384).optional(),
+    agentChatToken: z.string().min(1).max(16_384).optional(),
     readOnly: z.boolean().optional(),
     resumeGrant: z.string().regex(RESUME_GRANT).optional(),
     indexCapability: z.string().regex(INDEX_CAPABILITY).optional(),

@@ -17,6 +17,8 @@ export type PersonalAgentAccess = {
   role: PersonalAgentRole
   state: "active" | "archived"
   pausedAt: number | null
+  legacyConnectorAccess: boolean
+  neverConnectionIds: readonly string[]
 }
 
 export async function personalAgentAccessRows(caller: PersonalAgentCaller, filter: SQL | undefined, limit: number, fresh = false) {
@@ -55,6 +57,8 @@ export async function personalAgentAccess(caller: PersonalAgentCaller, agentId: 
     role: row.role,
     state: row.agent.state,
     pausedAt: row.agent.paused_at?.getTime() ?? null,
+    legacyConnectorAccess: row.agent.legacy_connector_access,
+    neverConnectionIds: row.agent.never_connection_ids ?? [],
   }
 }
 

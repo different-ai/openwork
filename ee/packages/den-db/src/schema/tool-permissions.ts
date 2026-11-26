@@ -1,4 +1,4 @@
-import { index, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { boolean, index, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, timestamps } from "../columns"
 
 /**
@@ -54,10 +54,13 @@ export const ToolApprovalTable = mysqlTable(
     context_id: varchar("context_id", { length: 64 }),
     context_label: varchar("context_label", { length: 160 }),
     run_id: denTypeIdColumn("automationRun", "run_id"),
+    chat_turn_id: denTypeIdColumn("personalAgentChatTurn", "chat_turn_id"),
     connection_id: varchar("connection_id", { length: 160 }).notNull(),
     connection_name: varchar("connection_name", { length: 160 }).notNull(),
     tool_name: varchar("tool_name", { length: 128 }).notNull(),
     tool_title: varchar("tool_title", { length: 240 }).notNull(),
+    connector_access: boolean("connector_access"),
+    owner_requested_at: timestamp("owner_requested_at", { fsp: 3 }),
     status: mysqlEnum("status", ["pending", "denied", "allowed_once", "always_allowed", "used"]).notNull().default("pending"),
     decided_by_member_id: denTypeIdColumn("member", "decided_by_member_id"),
     decided_at: timestamp("decided_at", { fsp: 3 }),

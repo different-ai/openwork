@@ -34,6 +34,7 @@ import { registerPersonalAgentAdminRoutes } from "./admin.js"
 import { registerPersonalAgentAudienceRoutes } from "./audience.js"
 import { registerPersonalAgentMemoryRoutes } from "./memory.js"
 import { registerPersonalAgentPermissionsRoutes } from "./permissions.js"
+import { registerPersonalAgentStandingChatRoutes } from "./standing-chat.js"
 import { personalAgentCaller, personalAgentForbidden, registerPersonalAgentSharingRoutes } from "./sharing.js"
 
 const idParamsSchema = z.object({ id: z.string().min(1).max(160) })
@@ -339,6 +340,7 @@ export function registerPersonalAgentRoutes<T extends { Variables: RouteVariable
       }
     },
   )
+  registerPersonalAgentStandingChatRoutes(app, gate)
   registerPersonalAgentSharingRoutes(app, gate, service)
   registerPersonalAgentMemoryRoutes(app, gate)
   registerPersonalAgentAudienceRoutes(app, gate)

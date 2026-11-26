@@ -25,6 +25,7 @@ import { DEN_MCP_REQUESTED_SCOPE } from "./scopes.js"
 import { getMcpGrantLiveness } from "./grant-liveness.js"
 import { getMcpSessionLiveness } from "./session-liveness.js"
 import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM, isHeadlessRunMcpToken } from "./headless-run-token.js"
+import { personalAgentChatTurnId } from "./workbot-turn-limits.js"
 export { hasActiveMcpSession } from "./session-liveness.js"
 
 export type McpPrincipal = {
@@ -49,6 +50,7 @@ export type McpAuthResourceContext = {
   oauthResources: readonly string[]
   firstPartyResources: readonly string[]
   requestId?: string
+  agentChatOnly?: boolean
 }
 
 const MCP_JWT_SIGNING_ALGORITHMS = [DEN_JWT_SIGNING_ALGORITHM]
@@ -390,6 +392,11 @@ export async function verifyMcpRequest(headers: Headers, optionsInput?: string |
       message,
       referenceId,
     }, bearerChallenge({ metadataUrl: options.metadataUrl, error: "invalid_token", message }))
+  }
+
+  const agentChat = personalAgentChatTurnId(scopes) !== undefined
+  if (agentChat !== (options.agentChatOnly === true) || (agentChat && !isHeadlessRunMcpToken(payload, source))) {
+    return mcpJsonResponse(403, { error: "wrong_mcp_resource", message: "This credential is not valid for this MCP endpoint.", referenceId })
   }
 
   if (!hasAcceptedResource(payload, source, options)) {

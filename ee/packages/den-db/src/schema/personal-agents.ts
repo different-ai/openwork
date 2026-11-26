@@ -23,6 +23,8 @@ export const PersonalAgentTable = mysqlTable(
     admin_monthly_budget_micros: bigint("admin_monthly_budget_micros", { mode: "number", unsigned: true }),
     created_by_member_id: denTypeIdColumn("member", "created_by_member_id"),
     idempotency_key: varchar("idempotency_key", { length: 128 }),
+    legacy_connector_access: boolean("legacy_connector_access").notNull().default(true),
+    never_connection_ids: compatJsonColumn<string[]>("never_connection_ids"),
     ...timestamps,
   },
   (table) => [
@@ -233,6 +235,32 @@ export const personalAgentRelations = relations(PersonalAgentTable, ({ one, many
   }),
   revisions: many(PersonalAgentRevisionTable),
 }))
+
+export const PersonalAgentConversationTable = mysqlTable("personal_agent_conversation", {
+  id: denTypeIdColumn("personalAgentChat", "id").notNull().primaryKey(),
+  organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+  agent_id: denTypeIdColumn("personalAgent", "agent_id").notNull(),
+  member_id: denTypeIdColumn("member", "member_id").notNull(),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("personal_agent_conversation_member").on(table.organization_id, table.agent_id, table.member_id),
+])
+
+export const PersonalAgentChatTurnTable = mysqlTable("personal_agent_chat_turn", {
+  id: denTypeIdColumn("personalAgentChatTurn", "id").notNull().primaryKey(),
+  conversation_id: denTypeIdColumn("personalAgentChat", "conversation_id").notNull(),
+  client_message_id: varchar("client_message_id", { length: 128 }).notNull(),
+  message: encryptedMediumTextColumn("message").notNull(),
+  reply: encryptedMediumTextColumn("reply"),
+  status: mysqlEnum("status", ["running", "succeeded", "failed"]).notNull(),
+  error: varchar("error", { length: 160 }),
+  finished_at: timestamp("finished_at", { fsp: 3 }),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("personal_agent_chat_turn_client_message").on(table.conversation_id, table.client_message_id),
+  index("personal_agent_chat_turn_status").on(table.conversation_id, table.status, table.created_at),
+  index("personal_agent_chat_turn_history").on(table.conversation_id, table.created_at, table.id),
+])
 
 export const personalAgentRevisionRelations = relations(PersonalAgentRevisionTable, ({ one }) => ({
   agent: one(PersonalAgentTable, {

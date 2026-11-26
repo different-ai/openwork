@@ -16,6 +16,27 @@ export function personalAgentRunId(scopes: ReadonlySet<string>): string | undefi
   }
 }
 
+const AGENT_CHAT_TURN_SCOPE_PREFIX = "openwork:personal-agent-chat-turn:"
+
+export function personalAgentChatTurnScope(turnId: string): string {
+  return `${AGENT_CHAT_TURN_SCOPE_PREFIX}${turnId}`
+}
+
+export function personalAgentChatTurnId(scopes: ReadonlySet<string>): string | undefined {
+  for (const scope of scopes) {
+    if (scope.startsWith(AGENT_CHAT_TURN_SCOPE_PREFIX)) return scope.slice(AGENT_CHAT_TURN_SCOPE_PREFIX.length)
+  }
+}
+
+export type PersonalAgentExecution = { kind: "run" | "chat"; id: string }
+
+export function personalAgentExecution(scopes: ReadonlySet<string>): PersonalAgentExecution | undefined {
+  const turnId = personalAgentChatTurnId(scopes)
+  if (turnId !== undefined) return { kind: "chat", id: turnId }
+  const runId = personalAgentRunId(scopes)
+  if (runId !== undefined) return { kind: "run", id: runId }
+}
+
 const AUTOMATION_RUN_SCOPE_PREFIX = "openwork:automation-run:"
 
 export function automationRunScope(runId: string): string {
@@ -32,13 +53,14 @@ export function isWorkbotTurnLimitScope(scope: string): boolean {
   return scope.startsWith(WITHOUT_CONNECTION_SCOPE_PREFIX)
     || scope.startsWith(WITHOUT_TOOL_SCOPE_PREFIX)
     || scope.startsWith(AGENT_RUN_SCOPE_PREFIX)
+    || scope.startsWith(AGENT_CHAT_TURN_SCOPE_PREFIX)
     || scope.startsWith(AUTOMATION_RUN_SCOPE_PREFIX)
     || scope.startsWith(AGENT_TOOL_CHOICE_PREFIX)
     || scope === LIMITED_AGENT_RUN_SCOPE
 }
 
 export function isLimitedAgentRun(scopes: ReadonlySet<string>): boolean {
-  return scopes.has(LIMITED_AGENT_RUN_SCOPE) || personalAgentRunId(scopes) !== undefined
+  return scopes.has(LIMITED_AGENT_RUN_SCOPE) || personalAgentExecution(scopes) !== undefined
 }
 
 export function headlessRunTokenScopes(input: { readOnly?: boolean; scopes?: readonly string[] }): string[] {

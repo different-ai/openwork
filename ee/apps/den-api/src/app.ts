@@ -19,6 +19,7 @@ import { env } from "./env.js"
 import { cachedOrganizationFeatureContext } from "./features.js"
 import { publicRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
+import { registerAgentChatMcpRoutes } from "./mcp/agent-chat.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
 import { registerExternalConnectionProxyRoutes } from "./mcp/external-connection-proxy.js"
 import { registerPublicMcpAppRoutes } from "./mcp/public-app-server.js"
@@ -297,6 +298,7 @@ registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
 registerAgentMcpRoutes(app)
+registerAgentChatMcpRoutes(app)
 registerExternalConnectionProxyRoutes(app)
 registerPublicMcpAppRoutes(app)
 registerAdminMcpRoutes(app)

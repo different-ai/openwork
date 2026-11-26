@@ -161,6 +161,7 @@ export const idTypesMapNameToPrefix = {
   personalAgentShare: "pgs",
   personalAgentRequest: "pgq",
   personalAgentChat: "pgc",
+  personalAgentChatTurn: "pgct",
   personalAgentEvent: "pge",
   personalAgentAudience: "pgu",
   personalAgentSharedLogin: "pgl",

@@ -17,10 +17,12 @@ import {
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { automationRepository, listAgentRoutines } from "../automations/repository.js"
 import { automationService, type AutomationRunNowOptions, type AutomationService } from "../automations/service.js"
-import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
+import { externalMcpConnectionReadyForMember, getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { agentToolLimitScopes } from "../mcp/workbot-turn-limits.js"
 import type { PersonalAgentTransaction } from "./access.js"
 import { recordPersonalAgentEvent } from "./events.js"
+import { personalAgentUsableConnections } from "./permissions-catalog.js"
+import { normalizedPersonalAgentConnectorName } from "./connector-access.js"
 import { personalAgentNeverBlocks } from "./never.js"
 import { personalAgentRepository } from "./repository.js"
 
@@ -66,12 +68,29 @@ export class PersonalAgentService {
   async create(scope: OwnerScope, definition: CreatePersonalAgent): Promise<PersonalAgentDetail> {
     const replay = await personalAgentRepository.replayCreate({ ...scope, definition })
     if (replay) return replay
+    const caller = { organizationId: scope.organizationId, memberId: scope.ownerMemberId }
     const desired = definition.toolPolicy ?? EMPTY_PERSONAL_AGENT_TOOL_POLICY
-    const blocks = await personalAgentNeverBlocks({ organizationId: scope.organizationId, memberId: scope.ownerMemberId }, definition.never ?? [])
-    const tools = { ...desired.tools }
+    const blocks = await personalAgentNeverBlocks(caller, definition.never ?? [])
+    const canonical = await toolPolicyOverOrganizationConnectors(scope.organizationId, desired)
+    const connections: PersonalAgentToolPolicy["connections"] = Object.fromEntries(Object.entries(canonical.connections).filter(([, rule]) => rule === "block"))
+    const tools: PersonalAgentToolPolicy["tools"] = {}
+    const names = new Set(definition.connectorNames?.map(normalizedPersonalAgentConnectorName))
+    const usable = names.size ? await personalAgentUsableConnections(caller) : []
+    for (const name of names) {
+      const matches = usable.filter((connection) => normalizedPersonalAgentConnectorName(connection.name) === name)
+      if (matches.length !== 1) continue
+      const [connection] = matches
+      if (connections[connection.id] === "block" || blocks.connections[connection.id] === "block") continue
+      if (await externalMcpConnectionReadyForMember(connection, normalizeDenTypeId("member", caller.memberId))) connections[connection.id] = "allow"
+    }
+    for (const [id, entries] of Object.entries(canonical.tools)) {
+      const rules = Object.entries(entries).filter(([, rule]) => rule === "block" || connections[id] === "allow")
+      if (rules.length) tools[id] = Object.fromEntries(rules)
+    }
     for (const [id, entries] of Object.entries(blocks.tools)) tools[id] = { ...tools[id], ...entries }
-    const toolPolicy = await toolPolicyOverOrganizationConnectors(scope.organizationId, { connections: { ...desired.connections, ...blocks.connections }, tools })
-    return personalAgentRepository.create({ ...scope, definition, toolPolicy, now: Date.now() })
+    const toolPolicy = await toolPolicyOverOrganizationConnectors(scope.organizationId, { connections: { ...connections, ...blocks.connections }, tools })
+    return personalAgentRepository.create({ ...scope, definition, toolPolicy, legacyConnectorAccess: false,
+      neverConnectionIds: Object.keys(blocks.connections), now: Date.now() })
   }
 
   async update(scope: OwnerScope, agentId: string, changes: UpdatePersonalAgent, actorMemberId?: string, tx?: PersonalAgentTransaction): Promise<PersonalAgentDetail | null> {

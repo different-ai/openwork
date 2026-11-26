@@ -1534,6 +1534,20 @@
       "when": 1795674920497,
       "tag": "0219_agents_and_tool_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 220,
+      "version": "5",
+      "when": 1795728289466,
+      "tag": "0220_agent_connector_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 221,
+      "version": "5",
+      "when": 1795730817749,
+      "tag": "0221_personal_agent_standing_chat",
+      "breakpoints": true
     }
   ]
 }

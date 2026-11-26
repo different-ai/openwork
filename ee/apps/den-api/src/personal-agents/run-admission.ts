@@ -4,6 +4,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { personalAgentToolPolicyBlocks } from "@openwork/automations"
 import { db } from "../db.js"
 import { agentToolLimitScopes, headlessRunTokenScopes, personalAgentRunScope } from "../mcp/workbot-turn-limits.js"
+import { personalAgentConnectorState } from "./connector-access.js"
 import { personalAgentAccess } from "./access.js"
 import { organizationFeatureEnabled } from "../features.js"
 import { readOrganizationWrittenToolRules, readSubjectToolPolicy } from "../tool-permissions/rules.js"
@@ -56,7 +57,8 @@ export async function admitPersonalAgentRun(input: {
     readOrganizationWrittenToolRules(organizationId, { fresh: true }),
   ])
   if (spend.get(agentId)?.overBudget) return { ok: false, code: "execution_failed", message: "This agent reached its budget for the month, so it did not run." }
-  const blocks = [personalAgentToolPolicyBlocks(orgTools), personalAgentToolPolicyBlocks(agentTools)]
+  const blocks = [personalAgentToolPolicyBlocks(orgTools), personalAgentToolPolicyBlocks({ ...agentTools, connections: Object.fromEntries(Object.entries(agentTools.connections)
+    .filter(([id]) => personalAgentConnectorState(access, agentTools, id) === "blocked")) })]
   const connections = new Set(blocks.flatMap((block) => block.connections))
   const toolScopes = new Set<string>()
   for (const tool of blocks.flatMap((block) => block.tools)) {

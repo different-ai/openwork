@@ -1,3 +1,4 @@
+import { personalAgentConnectorAccess } from "../personal-agents/connector-access.js"
 import { recordConnectorCall, toolCallFailed } from "../capability-usage.js"
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server"
 import { AsyncLocalStorage } from "node:async_hooks"
@@ -216,7 +217,15 @@ export function createExternalConnectionProxyServer(input: {
   const withheldTools = toolsWithheld(input.scopes)?.get(connection.id)
   const agentRun = personalAgentRunId(input.scopes) !== undefined
   const withheldConnection = connectionsWithheld(input.scopes)?.has(connection.id)
+  let connectorAccess: ReturnType<typeof personalAgentConnectorAccess> | undefined
+  const readConnectorAccess = () => connectorAccess ??= personalAgentConnectorAccess({
+    scopes: input.scopes, organizationId: connection.organizationId, memberId: input.operation.actingMemberId ?? input.operation.member.orgMembershipId,
+  })
   const listProviderTools = async (calling = false) => {
+    const access = await readConnectorAccess()
+    const state = access?.state(connection.id)
+    const once = state === "off" ? await access?.tools(connection.id) : undefined
+    if (state === "blocked" || (state === "off" && !once?.size)) return []
     const useLiveRules = calling && agentRun
     if (!input.descriptor.capabilities.tools || (!useLiveRules && withheldConnection)) return []
     return (await runtime.listTools(
@@ -227,6 +236,8 @@ export function createExternalConnectionProxyServer(input: {
     )).filter((tool) => (
       !PROXY_GATEWAY_TOOL_NAMES.has(tool.name)
       && !evaluateToolPolicy(connection.toolPolicy, tool.name).blocked
+      && !access?.toolBlocked(connection.id, tool.name)
+      && (state !== "off" || once?.has(tool.name))
       && ((calling && agentRun) || !withheldTools?.has(tool.name))
     ))
   }
@@ -237,10 +248,12 @@ export function createExternalConnectionProxyServer(input: {
     const appTool = appOnlyProxyTool(tool)
     return appTool ? [appTool] : []
   })
-  const appResourceUris = async () => new Set(
-    (await (input.appHostClient ? listAppTools() : listDirectTools()))
-      .map((tool) => externalMcpAppResourceUri(tool)).filter((uri) => uri !== null),
-  )
+  const appResourceUris = async () => {
+    const access = await readConnectorAccess()
+    if (access && access.state(connection.id) !== "on") return new Set<string>()
+    return new Set((await (input.appHostClient ? listAppTools() : listDirectTools()))
+      .map((tool) => externalMcpAppResourceUri(tool)).filter((uri) => uri !== null))
+  }
   const listsChange = input.appHostClient === true || directClient
   const server = new Server(input.descriptor.serverInfo ?? {
     name: connection.name,
@@ -554,6 +567,11 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       teamIds: member.teamIds,
     })
     if (!connection || !granted) return unavailable()
+    const access = await personalAgentConnectorAccess({ scopes: principal.scopes, organizationId, memberId: member.orgMembershipId })
+    const state = access?.state(connection.id)
+    if (state === "blocked" || (state === "off" && !(await access?.tools(connection.id))?.size)) {
+      return c.json(personalAgentPolicyRefusal("This connector is off for this agent."), 403)
+    }
     const useLiveAgentRules = member.personalAgentScopes && await jsonRpcRequestField(c.req.raw, "method") === "tools/call"
     const hold = externalMcpConnectionHold(connection, useLiveAgentRules ? {} : member)
     if (hold) return unavailable(hold.message)

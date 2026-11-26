@@ -56,6 +56,9 @@ export const headlessModelAccessSchema = z.strictObject({
 })
 export type HeadlessModelAccess = z.infer<typeof headlessModelAccessSchema>
 
+export const agentChatProfileSchema = z.literal("agent_chat")
+export type AgentChatProfile = z.infer<typeof agentChatProfileSchema>
+
 export type HeadlessRunnerActor = { userId: string; organizationId: string }
 
 export type HeadlessRunnerDeps = {
@@ -77,6 +80,7 @@ export const runnerTurnSchema = z.object({
   status: z.string(),
   model: z.string().nullable().optional(),
   modelAccessRequired: z.boolean().optional(),
+  profile: agentChatProfileSchema.optional(),
   error: z.string().nullable(),
   usage: z.object({ inputTokens: z.number(), cachedInputTokens: z.number(), outputTokens: z.number() }).optional(),
   createdAt: z.number().optional(),
@@ -404,13 +408,19 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       id: string,
       input: { title?: string; instructions?: string; repeats?: RunnerRepeatLimits } & RunnerCapabilities & RunnerSessionSettings & {
         strict?: boolean
-      } = {},
+      } & ({ profile?: undefined } | { profile: AgentChatProfile; owner: string }) = {},
     ): Promise<RunnerResult<{ id: string; created: boolean }>> {
       const base = {
         ...(input.title ? { title: input.title.slice(0, 200) } : {}),
         ...(input.instructions !== undefined ? { instructions: input.instructions.slice(0, 20_000) } : {}),
       }
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
+      if (input.profile === "agent_chat") {
+        const { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras, profile: input.profile })
+        const saved = z.object({ id: z.literal(id), profile: agentChatProfileSchema }).safeParse(payload)
+        if ((status !== 200 && status !== 201) || !saved.success) return { ok: false, status, error: errorCode(payload, "headless_agent_chat_unavailable") }
+        return { ok: true, value: { id: saved.data.id, created: status === 201 } }
+      }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
       let compatible: Record<string, unknown> = extras
       if (unknownSetting(status, payload) && input.teachingNavigation !== undefined) {
@@ -486,6 +496,24 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       })
       if (response.status !== 200) return { ok: false, status: response.status, error: `headless_file_${response.status}` }
       return { ok: true, value: { content: await response.text() } }
+    },
+
+    async sendAgentChatTurn(input: {
+      sessionId: string
+      messageId: string
+      prompt: string
+      model?: string
+      agentChatToken: string
+      modelAccess?: HeadlessModelAccess
+      interrupt?: boolean
+    }): Promise<RunnerResult<{ state: string }>> {
+      const { sessionId, messageId, prompt, model, agentChatToken, modelAccess, interrupt } = input
+      const { status, payload } = await request(deps, "POST", `${sessionPath(sessionId)}/turns`, {
+        messageId, prompt, model, interrupt, credentials: { agentChatToken, modelAccess },
+      })
+      const accepted = z.object({ state: z.string(), turn: z.object({ profile: agentChatProfileSchema }) }).safeParse(payload)
+      if (status !== 202 || !accepted.success) return { ok: false, status, error: errorCode(payload, "headless_agent_chat_unavailable") }
+      return { ok: true, value: { state: accepted.data.state } }
     },
 
     async sendTurn(

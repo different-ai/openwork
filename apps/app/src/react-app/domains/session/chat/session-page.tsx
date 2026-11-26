@@ -1565,7 +1565,10 @@ export function SessionPage(props: SessionPageProps) {
         >
           <DebugRailProvider>
           <FloatingSlotProvider>
-          {sidebarOnlyChrome ? <MobileChatNavigation /> : <header
+          {sidebarOnlyChrome ? <div className="flex min-w-0 shrink-0 items-end gap-2 pe-2">
+            <MobileChatNavigation />
+            <extensions.HeaderTitle sessionId={props.selectedSessionId}>{null}</extensions.HeaderTitle>
+          </div> : <header
             data-session-header
             data-sidebar-hidden={!shellConfig.sidebar || !sidebarOpen || isMobile}
             className={cn(
@@ -2123,7 +2126,7 @@ export function SessionPage(props: SessionPageProps) {
               </>
             ) : null}
           </ResizablePanelGroup>
-          <extensions.Panel sessionId={props.primaryTitle || props.mainContentTitle ? null : props.selectedSessionId} />
+          <extensions.Panel compact={isMobile} sessionId={props.primaryTitle || props.mainContentTitle ? null : props.selectedSessionId} />
           <aside className={cn("w-10 shrink-0 flex-col items-center gap-1 px-1 py-2 text-muted-foreground mac:titlebar-no-drag", props.developerMode ? "flex" : "hidden", props.primarySurface !== "flat" && "lg:flex")}>
             {isElectronRuntime() && browserPresentation.enabled ? <BrowserRailButton controller={browserPresentation} /> : isElectronRuntime() ? (
               <Button

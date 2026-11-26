@@ -1,13 +1,14 @@
-import { useState } from "react";
 import type { PersonalAgentDetail } from "@openwork/types/den/personal-agents";
 import { BookOpen, Clock, Play, SlidersHorizontal, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { t } from "@/i18n";
 
-import { agentChatFor, agentChatKey, useAgentChatStore } from "./agent-chat-store";
+import { AgentCanUse } from "./agent-can-use";
+import { agentChatFor, agentChatKey, useAgentChatStore, type AgentPanelView } from "./agent-chat-store";
 import { AgentFace } from "./agent-face";
 import { AGENT_PANEL_ID } from "./agent-header";
 import { AgentMemoryView, useAgentMemory } from "./agent-memory";
@@ -17,18 +18,33 @@ import { firstName, scheduleInWords, whenInWords } from "./agent-words";
 import { useAgentsRuntime, type AgentsRuntime } from "./agents-runtime";
 import { agentRunQueueMessage, useAgentActions, useAgentDetail } from "./use-agents";
 
-export function AgentPanel(props: { sessionId: string | null }) {
+export function AgentPanel(props: { sessionId: string | null; compact?: boolean }) {
   const runtime = useAgentsRuntime();
   const chat = useAgentChatStore((state) => agentChatFor(state.chats, runtime, props.sessionId));
   const panelKey = chat ? agentChatKey(chat, chat.sessionId) : null;
-  const open = useAgentChatStore((state) => panelKey !== null && state.panelChatKey === panelKey);
+  const view = useAgentChatStore((state) => panelKey !== null && state.panel?.chatKey === panelKey ? state.panel.view : null);
   const agent = useAgentDetail(runtime, chat?.agentId);
-  if (!runtime || !chat || !agent || !open) return null;
-  return <AgentPanelBody key={panelKey} runtime={runtime} agent={agent} />;
+  if (!runtime || !agent || !panelKey || !view) return null;
+  const content = <AgentPanelBody key={panelKey} runtime={runtime} agent={agent} view={view} compact={props.compact}
+    setView={(next) => useAgentChatStore.getState().setPanel(panelKey, next)} />;
+  if (props.compact) return (
+    <Sheet open onOpenChange={(next) => { if (!next) useAgentChatStore.getState().setPanel(null); }}>
+      <SheetContent id={AGENT_PANEL_ID} data-agent-panel={agent.agent.id} className="w-full gap-5 overflow-y-auto bg-dls-surface px-4 pb-4 pt-2">
+        <SheetTitle className="sr-only">{agent.agent.name}</SheetTitle>
+        {content}
+      </SheetContent>
+    </Sheet>
+  );
+  return <aside id={AGENT_PANEL_ID} data-agent-panel={agent.agent.id} aria-label={agent.agent.name} className="flex w-75 shrink-0 flex-col gap-5 overflow-y-auto border-l border-dls-border bg-dls-surface px-4 pb-4 pt-2">{content}</aside>;
 }
 
-function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: PersonalAgentDetail }) {
-  const [view, setView] = useState<"overview" | "settings" | "memory">("overview");
+function AgentPanelBody({ runtime, agent, view, compact, setView }: {
+  runtime: AgentsRuntime;
+  agent: PersonalAgentDetail;
+  view: AgentPanelView;
+  compact?: boolean;
+  setView: (view: AgentPanelView) => void;
+}) {
   const actions = useAgentActions(runtime);
   const { id: agentId, name, pausedAt } = agent.agent;
   const memoryQuery = useAgentMemory(runtime, agentId);
@@ -43,13 +59,13 @@ function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: Per
   const runQueueMessage = agentRunQueueMessage(actions.runNow.error);
 
   return (
-    <aside id={AGENT_PANEL_ID} data-agent-panel={agentId} aria-label={name} className="hidden w-75 shrink-0 flex-col gap-5 overflow-y-auto border-l border-dls-border bg-dls-surface px-4 pb-4 pt-2 lg:flex">
+    <>
       {view === "settings" ? <AgentSettings runtime={runtime} agent={agent} onBack={() => setView("overview")} />
         : view === "memory" ? <AgentMemoryView runtime={runtime} agentId={agentId} isOwner={isOwner} query={memoryQuery} onBack={() => setView("overview")} /> : <>
         <div className="flex h-8 items-center justify-end">
-          <Button type="button" variant="ghost" size="icon-sm" aria-label={t("agents.panel_close")} onClick={() => useAgentChatStore.getState().setPanel(null)}>
+          {!compact && <Button type="button" variant="ghost" size="icon-sm" aria-label={t("agents.panel_close")} onClick={() => useAgentChatStore.getState().setPanel(null)}>
             <X className="size-4" />
-          </Button>
+          </Button>}
         </div>
         <div className="flex flex-col items-center gap-2">
           <AgentFace name={name} size="lg" />
@@ -59,6 +75,7 @@ function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: Per
             role: agent.role === "manager" ? t("agents.share_manager") : t("agents.share_collaborator"),
           })}</p>}
         </div>
+        <AgentCanUse runtime={runtime} agentId={agentId} placement="panel" onOpen={() => setView("settings")} />
         <div className="flex min-h-12 items-center justify-between gap-3 border-y border-dls-border py-2">
           {paused ? <p className="text-sm font-medium">{t("agents.panel_admin_paused")}</p> : <>
             <span className="min-w-0">
@@ -124,6 +141,6 @@ function AgentPanelBody({ runtime, agent }: { runtime: AgentsRuntime; agent: Per
           <p className="text-xs text-dls-secondary">{t("agents.share_admin_only")}</p>
         )}
       </>}
-    </aside>
+    </>
   );
 }

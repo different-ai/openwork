@@ -20,6 +20,10 @@ import {
   AUTOMATION_SCHEDULE_KINDS,
   AUTOMATION_SCHEDULE_KINDS_HEADER,
 } from "@openwork/types/automations";
+import {
+  personalAgentChatTurnResponseSchema,
+  personalAgentStandingChatSchema,
+} from "@openwork/types/den/personal-agents";
 import type {
   CreatePersonalAgent,
   CreatePersonalAgentChangeRequest,
@@ -41,6 +45,7 @@ import type {
   PersonalAgentShareRole,
   PersonalAgentToolCatalog,
   RunPersonalAgentNow,
+  SendPersonalAgentChatMessage,
   SetPersonalAgentChat,
   UpdatePersonalAgent,
   UpdatePersonalAgentRoutine,
@@ -3665,6 +3670,20 @@ export function createDenClient(options: {
 
     async setPersonalAgentChat(orgId: string, agentId: string, input: SetPersonalAgentChat): Promise<PersonalAgentChatResponse> {
       return requestJson<PersonalAgentChatResponse>(baseUrls, `/v1/personal-agents/${encodeURIComponent(agentId)}/chat`, { method: "PUT", token, organizationId: orgId, body: input });
+    },
+
+    async getPersonalAgentThread(orgId: string, agentId: string, signal?: AbortSignal) {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/personal-agents/${encodeURIComponent(agentId)}/standing-chat`, {
+        method: "GET", token, organizationId: orgId, signal, cache: "no-store",
+      });
+      return personalAgentStandingChatSchema.parse(payload);
+    },
+
+    async sendPersonalAgentThreadMessage(orgId: string, agentId: string, input: SendPersonalAgentChatMessage) {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/personal-agents/${encodeURIComponent(agentId)}/standing-chat`, {
+        method: "POST", token, organizationId: orgId, body: input,
+      });
+      return personalAgentChatTurnResponseSchema.parse(payload);
     },
 
     async getPersonalAgentTools(orgId: string, agentId: string): Promise<PersonalAgentToolCatalog> {

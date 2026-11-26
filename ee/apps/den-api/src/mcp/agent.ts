@@ -29,6 +29,7 @@ import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError, auditUnavailable
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { agentCheckRequestsAvailable, registerAgentCheckRequestTool } from "./agent-check-request.js"
 import { AGENT_NOTE_PROGRESS_TOOL_NAME, AGENT_REMEMBER_TOOL_NAME, registerAgentMemoryTools } from "./agent-memory-tools.js"
+import { AGENT_CONNECTOR_REQUEST_TOOL_NAME, registerAgentConnectorRequestTool } from "./agent-connector-request.js"
 import { HARNESS_FEEDBACK_INSTRUCTIONS, harnessFeedbackAvailable, registerHarnessFeedbackTool } from "./harness-feedback.js"
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
@@ -506,7 +507,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       if (method === "tools/call") {
         if (requestInfo.id === null) return new Response(null, { status: 202 })
         const allowed = new Set<string | null>([SEARCH_CAPABILITIES_TOOL_NAME, EXECUTE_CAPABILITY_TOOL_NAME,
-          EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME, LIST_SKILLS_TOOL_NAME, GET_SKILL_TOOL_NAME, AGENT_REMEMBER_TOOL_NAME, AGENT_NOTE_PROGRESS_TOOL_NAME])
+          EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME, LIST_SKILLS_TOOL_NAME, GET_SKILL_TOOL_NAME, AGENT_REMEMBER_TOOL_NAME, AGENT_NOTE_PROGRESS_TOOL_NAME, AGENT_CONNECTOR_REQUEST_TOOL_NAME])
         const blocked = refusal ?? (allowed.has(requestInfo.toolName) ? null : personalAgentPolicyRefusal(PERSONAL_AGENT_UNAPPROVABLE_WRITE))
         if (blocked) return c.json({ jsonrpc: "2.0", id: requestInfo.id, result: {
           isError: true, content: textContent(JSON.stringify(blocked)), structuredContent: blocked,
@@ -689,6 +690,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
     if (personalRun !== undefined && memberIdentity && organizationFeatures.personalAgents) {
       registerAgentMemoryTools(server, { organizationId, runId: personalRun, memberId: memberIdentity.orgMembershipId })
+      registerAgentConnectorRequestTool(server, { organizationId, execution: { kind: "run", id: personalRun }, member: memberIdentity, scopes: principal.scopes, redirectUriBase })
     }
     if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true })) {
       registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })

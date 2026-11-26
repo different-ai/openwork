@@ -39,11 +39,11 @@ const toolNameSchema = z.string().min(1).max(128).refine((name) => !LONE_SURROGA
 /**
  * What an agent may use of its owner's connections while it runs unattended.
  *
- * An agent starts with every connection the person it runs for has. A tool
- * that only reads is allowed; a tool that can change something asks first.
- * `connections` blocks a whole connection; `tools` sets single tools of a
- * connection that stays allowed to allow, ask or block. A blocked connection
- * wins over its tools.
+ * A tool that only reads is allowed; a tool that can change something asks
+ * first. `connections` turns a connection on or off for the agent without
+ * granting any writes. When no connection choice is stored, the agent uses
+ * the default it was created with. `tools` sets single tools to allow, ask or
+ * block. Turning a connection on does not override other tool rules.
  */
 export const personalAgentToolPolicySchema = z.object({
   connections: z.record(connectionIdSchema, personalAgentAccessSchema).default({}),
@@ -226,11 +226,15 @@ export const personalAgentNeverSchema = z.object({
 }).strict().meta({ ref: "PersonalAgentNever" })
 export type PersonalAgentNever = z.infer<typeof personalAgentNeverSchema>
 
+const agentConnectorNamesSchema = z.array(z.string().trim().min(1).max(255)).max(50).optional()
+  .describe("Exact names of existing connectors the agent needs for the requested job. Omit unrelated services.")
+
 export const createPersonalAgentSchema = z.object({
   name: z.string().trim().min(1).max(PERSONAL_AGENT_NAME_MAX_LENGTH),
   brief: personalAgentBriefSchema,
   toolPolicy: personalAgentToolPolicySchema.optional(),
   never: z.array(personalAgentNeverSchema).max(20).optional(),
+  connectorNames: agentConnectorNamesSchema,
   defaultExecutionTarget: automationExecutionTargetSchema.optional(),
   monthlyBudgetMicros: personalAgentMonthlyBudgetSchema.nullable().optional(),
   idempotencyKey: z.string().trim().min(8).max(128).optional()
@@ -281,6 +285,7 @@ export const personalAgentProposalSchema = z.object({
   name: z.string().trim().min(1).max(PERSONAL_AGENT_NAME_MAX_LENGTH),
   brief: personalAgentBriefSchema,
   never: z.array(personalAgentNeverSchema).max(20).optional(),
+  connectorNames: agentConnectorNamesSchema,
   routine: z.object({
     name: z.string().trim().min(1).max(120),
     instructions: z.string().trim().min(1).max(PERSONAL_AGENT_ROUTINE_INSTRUCTIONS_MAX_LENGTH),
@@ -330,6 +335,30 @@ export const personalAgentChatResponseSchema = z.object({
 }).meta({ ref: "PersonalAgentChatResponse" })
 export type PersonalAgentChatResponse = z.infer<typeof personalAgentChatResponseSchema>
 
+export const sendPersonalAgentChatMessageSchema = z.object({
+  clientMessageId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).transform((value) => value.toLowerCase()),
+  message: z.string().trim().min(1).max(16_000),
+}).strict()
+export type SendPersonalAgentChatMessage = z.infer<typeof sendPersonalAgentChatMessageSchema>
+
+export const personalAgentChatTurnSchema = z.object({
+  id: z.string(),
+  clientMessageId: z.string(),
+  message: z.string(),
+  status: z.enum(["running", "succeeded", "failed"]),
+  reply: z.string().nullable(),
+  error: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+  finishedAt: z.iso.datetime().nullable(),
+})
+export type PersonalAgentChatTurn = z.infer<typeof personalAgentChatTurnSchema>
+
+export const personalAgentStandingChatSchema = z.object({ turns: z.array(personalAgentChatTurnSchema) })
+export type PersonalAgentStandingChat = z.infer<typeof personalAgentStandingChatSchema>
+
+export const personalAgentChatTurnResponseSchema = z.object({ turn: personalAgentChatTurnSchema })
+export type PersonalAgentChatTurnResponse = z.infer<typeof personalAgentChatTurnResponseSchema>
+
 export const setPersonalAgentChatSchema = z.object({
   workspaceId: z.string().trim().min(1).max(240),
   sessionId: z.string().trim().min(1).max(240),
@@ -359,7 +388,7 @@ export type PersonalAgentChange = z.infer<typeof personalAgentChangeSchema>
 export const personalAgentRequestKindSchema = z.enum(["tool", "change"]).meta({ ref: "PersonalAgentRequestKind" })
 export type PersonalAgentRequestKind = z.infer<typeof personalAgentRequestKindSchema>
 
-export const personalAgentRequestStatusSchema = z.enum(["pending", "denied", "allowed_once", "always_allowed", "approved", "used"])
+export const personalAgentRequestStatusSchema = z.enum(["pending", "awaiting_owner", "denied", "allowed_once", "always_allowed", "approved", "used"])
   .meta({ ref: "PersonalAgentRequestStatus" })
 export type PersonalAgentRequestStatus = z.infer<typeof personalAgentRequestStatusSchema>
 
@@ -385,7 +414,8 @@ export const personalAgentRequestSchema = z.object({
   decidedBy: personalAgentPersonSchema.nullable(),
   decidedAt: timestampSchema.nullable(),
   createdAt: timestampSchema,
-  canDecide: z.array(z.enum(["deny", "allow_once", "always_allow", "approve"]))
+  connectorAccess: z.literal(true).optional(),
+  canDecide: z.array(z.enum(["deny", "allow_once", "always_allow", "approve", "turn_on"]))
     .describe("The decisions the caller may make on this request; empty when it is not theirs to decide or already decided."),
 }).meta({ ref: "PersonalAgentRequest" })
 export type PersonalAgentRequest = z.infer<typeof personalAgentRequestSchema>
@@ -401,7 +431,7 @@ export const createPersonalAgentChangeRequestSchema = z.object({
 }).strict().meta({ ref: "CreatePersonalAgentChangeRequest" })
 export type CreatePersonalAgentChangeRequest = z.infer<typeof createPersonalAgentChangeRequestSchema>
 
-export const personalAgentRequestDecisionSchema = z.enum(["deny", "allow_once", "always_allow", "approve"])
+export const personalAgentRequestDecisionSchema = z.enum(["deny", "allow_once", "always_allow", "approve", "turn_on"])
   .meta({ ref: "PersonalAgentRequestDecision" })
 export type PersonalAgentRequestDecision = z.infer<typeof personalAgentRequestDecisionSchema>
 

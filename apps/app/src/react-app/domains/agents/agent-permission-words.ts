@@ -15,8 +15,9 @@ export function toolControlState(tool: Pick<PersonalAgentTool, "access" | "chose
   return { access: tool.access, allowDisabled: false, hint: null };
 }
 
-export function toolAccessSummary(connection: Pick<PersonalAgentConnectionTools, "available" | "lockedByOrganization" | "tools">): string {
+export function toolAccessSummary(connection: Pick<PersonalAgentConnectionTools, "available" | "blocked" | "lockedByOrganization" | "tools">): string {
   if (connection.lockedByOrganization) return t("agents.permissions_admin_blocked");
+  if (connection.blocked) return t("agents.permissions_connection_off");
   if (!connection.available) return t("agents.permissions_not_connected");
   const counts = { allow: 0, ask: 0, block: 0 };
   for (const tool of connection.tools) counts[tool.access] += 1;
