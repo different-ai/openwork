@@ -133,6 +133,9 @@ test("google schema sanitizer survives recursive refs and unions", () => {
   assert.equal(recursive.type, "object")
   assert.deepEqual(sanitizeGeminiSchema({ anyOf: [{ type: "string" }, { type: "number" }] }), { anyOf: [{ type: "string" }, { type: "number" }] })
   assert.deepEqual(sanitizeGeminiSchema({ $ref: "#/nowhere", description: "x" }), { description: "x" })
+  assert.deepEqual(sanitizeGeminiSchema({ type: "string", items: { type: "string" } }), { type: "string" })
+  assert.deepEqual(sanitizeGeminiSchema({ type: ["string", "array"], items: { type: "string" } }), { anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }] })
+  assert.deepEqual(sanitizeGeminiSchema({ items: { type: "string" } }), { items: { type: "string" }, type: "array" })
 })
 
 test("google request: tool calls, named tool results, and thought signature replay", () => {
