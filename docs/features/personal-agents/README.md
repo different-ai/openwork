@@ -64,10 +64,13 @@ access, or the agent was paused or archived.
 ## Memory
 
 Runs start fresh rather than reusing a conversation. Every run reads the
-agent's notes and this routine's last progress for the owner. Memory is data,
-not instructions: organization rules and the brief take precedence. Never
-put passwords in it. Everyone with access can read it, including people
-who got access after a checkpoint was saved.
+agent's notes. A run for the owner also reads this routine's last progress.
+Memory is data, not instructions: organization rules and the brief take
+precedence. Never put passwords in it. Everyone with access can read the
+notes. Routine progress is the owner's only: no one else's run is told it,
+no one else can read it, and it is deleted when the agent moves to another
+owner, because it is written from the owner's own results. A newer run's
+progress is never replaced by an older run finishing late.
 
 Owners and managers can edit the notes in Memory, or ask in chat to add a
 note. A collaborator's chat note becomes a change request for the owner.
@@ -86,7 +89,8 @@ make a lasting change. A block always wins over an approval. Allow once is
 claimed on the first matching tool call, not when the run starts. Later
 calls of that tool in the same run reuse it. A run that never calls the tool
 doesn't spend the approval; an unused approval expires after seven days.
-Approval does not resume the run that asked. Tool permissions are separate
+Approval does not resume the run that asked, and that run cannot use it.
+Only the person the run acted for and the agent's owner decide an approval. Tool permissions are separate
 from the brief revision and saved rules are checked at dispatch, including
 for a run already in progress. Something the person said the agent must never do ("never post in Slack")
 is stored as a Block. Built-in connectors such as Google Workspace, and

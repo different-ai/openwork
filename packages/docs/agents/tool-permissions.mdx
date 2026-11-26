@@ -9,6 +9,8 @@ Tool permissions are in private alpha. OpenWork does not officially support this
 
 Tool permissions are turned on separately for each organization. They work even if your organization doesn't use Agents. They apply to tools in chats, Automations, Workbot, and agents.
 
+![Tool permissions for the Linear connection: each tool set to Allow, Ask or Block, with Create issue blocked for everyone](/images/agents/tool-permissions.png)
+
 ## Set a tool rule
 
 1. In the [OpenWork Cloud dashboard](https://app.openworklabs.com), open **Connectors** and choose a connection.
@@ -29,7 +31,7 @@ If a tool asks, the call doesn't go through. The person it asked sees a card in 
 - For a chat, **Allow once** covers the next try. Ask again in the chat.
 - For an agent, see [Answer a tool request](/agents/permissions#answer-a-tool-request).
 
-A yes doesn't resume the run that asked.
+A yes doesn't resume the run that asked, and that run can't use it. An unused **Allow once** expires after 7 days. Only the person the tool ran for can answer.
 
 ## What's not covered yet
 
