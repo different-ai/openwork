@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { accessForTool, defaultToolAccess, everyoneLabel, rulesForSubject, toolActivityLabel, toolRowAccess, withPendingRule, type PermissionRule } from "./model";
+import { accessForTool, defaultToolAccess, rulesForSubject, toolActivityLabel, toolRowAccess, withPendingRule, type PermissionRule } from "./model";
 
 const organization = { kind: "organization" } as const;
 const team = { kind: "team", id: "support" } as const;
@@ -43,20 +43,13 @@ test("rules are scoped to the exact connection, audience and tool name", () => {
   assert.deepEqual(accessForTool(toolName, "allow", rulesOf(rules)), { rule: null, access: "allow" });
 });
 
-test("Everyone labels distinguish inherited rules, defaults and unknown tool behavior", () => {
-  assert.equal(everyoneLabel(accessForTool(toolName, "ask", rulesOf([]))), "Everyone: Ask (default)");
-  assert.equal(everyoneLabel(accessForTool(toolName, "ask", rulesOf([orgRule("ask")]))), "Everyone: Ask");
-  assert.equal(everyoneLabel(accessForTool(toolName, null, rulesOf([]))), "Everyone: No rule");
-  assert.equal(everyoneLabel(accessForTool(toolName, null, rulesOf([orgRule("block", "*")]))), "Everyone: Block");
-});
-
 function row(rules: readonly PermissionRule[], subject: typeof organization | typeof team | typeof person, fallback: PermissionRule["rule"] | null = "ask") {
   return toolRowAccess({
     toolName,
     fallback,
     ownRules: rulesForSubject(rules, connectionId, subject),
     orgRules: rulesForSubject(rules, connectionId, organization),
-    memberTeamRules: subject.kind === "member" ? [rulesForSubject(rules, connectionId, team)] : [],
+    memberTeams: subject.kind === "member" ? [{ name: "Support", rules: rulesForSubject(rules, connectionId, team) }] : [],
     everyoneSelected: subject.kind === "organization",
   });
 }
@@ -75,7 +68,12 @@ test("team and person defaults ignore their own rules and use applicable inherit
   assert.equal(row([orgRule("block"), ...rules.slice(1)], person).defaultLabel, "Default (Block)");
   assert.equal(row([orgRule("ask"), rule(team, "block", "*")], person).defaultLabel, "Default (Block)");
   assert.equal(row([], team).defaultLabel, "Default (Ask)");
-  assert.equal(row([orgRule("ask")], team, null).defaultLabel, "Default");
+});
+
+test("without a catalog, Default still names a known inherited rule", () => {
+  assert.equal(row([orgRule("ask")], team, null).defaultLabel, "Default (Ask)");
+  assert.equal(row([rule(team, "block")], person, null).defaultLabel, "Default (Block)");
+  assert.equal(row([rule(person, "allow")], person, null).defaultLabel, "Default");
 });
 
 test("the pressed segment is the audience's own rule, or Default after removal", () => {
@@ -87,26 +85,40 @@ test("the pressed segment is the audience's own rule, or Default after removal",
   assert.equal(row(cleared, person).pressed, "default");
 });
 
-test("the secondary line reports an override only when Everyone's rule wins over the saved choice", () => {
-  assert.deepEqual(row([orgRule("block"), rule(team, "allow")], team).notice, {
-    label: "Everyone: Block", overrideLabel: "Everyone: Block. This rule waits until that changes.", overridden: true,
-  });
-  assert.equal(row([orgRule("ask"), rule(person, "allow")], person).notice?.overridden, true);
-  assert.deepEqual(row([orgRule("ask"), rule(person, "block")], person).notice, {
-    label: "Everyone: Ask", overrideLabel: "Everyone: Ask. This rule waits until that changes.", overridden: false,
-  });
-  assert.equal(row([orgRule("ask"), rule(person, "ask")], person).notice?.overridden, false);
-  assert.equal(row([orgRule("ask")], person).notice?.overridden, false);
-  assert.equal(row([orgRule("ask"), rule(team, "block"), rule(person, "allow")], person).notice?.overridden, false);
+test("a saved choice reports whichever stricter rule wins, or that the choice applies", () => {
+  assert.equal(row([orgRule("ask"), rule(person, "allow")], person).notice, "Applies now: Ask, from Everyone.");
+  assert.equal(row([rule(team, "ask"), rule(person, "allow")], person).notice, "Applies now: Ask, from the team Support.");
+  assert.equal(row([orgRule("ask"), rule(team, "block"), rule(person, "allow")], person).notice, "Applies now: Block, from the team Support.");
+  assert.equal(row([orgRule("block"), rule(team, "block"), rule(person, "allow")], person).notice, "Applies now: Block, from Everyone.");
+  assert.equal(row([orgRule("ask"), rule(person, "block")], person).notice, "This rule applies.");
+  assert.equal(row([orgRule("ask"), rule(person, "ask")], person).notice, "This rule applies.");
+  assert.equal(row([rule(person, "allow")], person, "ask").notice, "This rule applies.");
 });
 
-test("locks keep the selected segment while reporting which block needs changing", () => {
+test("Default reports its source, including when the built-in default is unknown", () => {
+  assert.equal(row([orgRule("ask")], team).notice, "From Everyone: Ask.");
+  assert.equal(row([rule(team, "ask")], person).notice, "From the team Support: Ask.");
+  assert.equal(row([], person).notice, "Built-in default: Ask.");
+  assert.equal(row([], person, null).notice, "Built-in default: Unknown.");
+});
+
+test("an Everyone tool lock keeps the saved segment pressed and explains the effective block", () => {
   const locked = row([orgRule("block"), rule(team, "allow")], team);
   assert.equal(locked.pressed, "allow");
-  assert.equal(locked.lockReason, "Blocked for everyone. An admin can change this under Everyone.");
-  assert.equal(row([orgRule("block")], organization).lockReason, null);
-  assert.equal(row([orgRule("block", "*")], organization).lockReason, "Turn off the whole connection block to change this.");
-  assert.equal(row([rule(team, "block", "*")], person).lockReason, "Blocked by a team. An admin can change this under that team.");
+  assert.equal(locked.notice, "Applies now: Block, from Everyone.");
+  assert.equal(locked.lockedByEveryone, true);
+  assert.equal(row([orgRule("block")], team).notice, "From Everyone: Block.");
+  assert.equal(row([orgRule("block")], organization).lockedByEveryone, false);
+  assert.equal(row([orgRule("block", "*")], person).lockedByEveryone, false);
+});
+
+test("a whole-connection block applies without changing the pressed segment or inherited default", () => {
+  const locked = row([orgRule("ask"), rule(team, "block", "*"), rule(team, "allow")], team);
+  assert.equal(locked.pressed, "allow");
+  assert.equal(locked.defaultLabel, "Default (Ask)");
+  assert.equal(locked.notice, "Applies now: Block, from the connection rule.");
+  assert.equal(row([rule(team, "block", "*")], team).notice, "From the connection rule: Block.");
+  assert.equal(row([rule(team, "block", "*")], person).notice, "From the team Support: Block.");
 });
 
 test("a pending edit replaces or removes only the chosen rule, without changing confirmed rules", () => {

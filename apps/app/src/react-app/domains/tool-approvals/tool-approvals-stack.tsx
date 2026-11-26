@@ -16,7 +16,7 @@ export type ToolApprovalsScope = {
   principal: string;
 };
 
-function approvalsKey(scope: ToolApprovalsScope | null) {
+export function approvalsKey(scope: ToolApprovalsScope | null) {
   return [scope?.denBaseUrl, "tool-approvals", scope?.organizationId, scope?.principal] as const;
 }
 

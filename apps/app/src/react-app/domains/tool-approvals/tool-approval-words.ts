@@ -20,14 +20,49 @@ export function approvalsForRun(items: readonly ToolApproval[], automationId: st
   });
 }
 
-export type AutomationApprovalResult = { kind: "denied" | "skipped" | "failed" } | { kind: "started"; runId: string };
+export type RunApprovalPlacement = { runId: string; executionTarget: "cloud" | "desktop" } | { knownRunIds: readonly string[] };
 
-export function automationApprovalResultWords(result: AutomationApprovalResult, context: ToolApproval["context"]) {
+export function approvalsForPlacement(items: readonly ToolApproval[], automationId: string, placement: RunApprovalPlacement) {
+  if ("runId" in placement) return approvalsForRun(items, automationId, placement.runId);
+  return items.filter((item) => {
+    const target = automationApprovalTarget(item);
+    return target?.automationId === automationId && (target.runId === null || !placement.knownRunIds.includes(target.runId));
+  });
+}
+
+export function approvalRunGroup(approval: ToolApproval) {
+  return JSON.stringify([approval.context.id, approval.runId ?? approval.id, approval.runId === null]);
+}
+
+export function recordRunApproval(previous: { allowed: boolean; claimed: boolean }, allow: boolean, hasPending: boolean) {
+  const allowed = previous.allowed || allow;
+  const start = allowed && !hasPending && !previous.claimed;
+  return { allowed, claimed: previous.claimed || start, start };
+}
+
+export function approvalRows<T extends { approval: ToolApproval }>(pending: readonly ToolApproval[], decided: readonly T[]) {
+  return [...decided, ...pending.filter((approval) => !decided.some((row) => row.approval.id === approval.id)).map((approval) => ({ approval }))]
+    .sort((a, b) => b.approval.createdAt - a.approval.createdAt || a.approval.id.localeCompare(b.approval.id));
+}
+
+export type AutomationApprovalResult = { kind: "denied" | "skipped" | "failed" | "waiting" | "allowed" } | { kind: "started"; runId: string };
+
+export async function approvalRestartOptions(placement: RunApprovalPlacement, runId: string | null, loadTarget: (runId: string) => Promise<"cloud" | "desktop">) {
+  if ("runId" in placement) return { executionTarget: placement.executionTarget };
+  return runId ? { executionTarget: await loadTarget(runId) } : {};
+}
+
+export function automationApprovalResultWords(result: AutomationApprovalResult, context: ToolApproval["context"], denied = false) {
   switch (result.kind) {
     case "denied": return { line: t("tool_approvals.automation_denied") };
-    case "skipped": return { line: t("tool_approvals.automation_next_run") };
-    case "failed": return { line: t("tool_approvals.run_failed", { name: automationApprovalName(context) }) };
-    case "started": return { line: t("tool_approvals.automation_started"), open: { label: t("tool_approvals.open_run"), runId: result.runId } };
+    case "waiting": return { line: t("tool_approvals.automation_waiting") };
+    case "allowed": return { line: t("tool_approvals.automation_allowed") };
+    case "skipped": return { line: t(denied ? "tool_approvals.automation_next_run_after_deny" : "tool_approvals.automation_next_run") };
+    case "failed": {
+      const line = t("tool_approvals.run_failed", { name: automationApprovalName(context) });
+      return { line: denied ? `${t("tool_approvals.automation_denied")} ${line}` : line };
+    }
+    case "started": return { line: t(denied ? "tool_approvals.automation_started_after_deny" : "tool_approvals.automation_started"), open: { label: t("tool_approvals.open_run"), runId: result.runId } };
   }
 }
 

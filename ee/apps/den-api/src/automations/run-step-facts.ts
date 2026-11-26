@@ -1,8 +1,14 @@
-import { isDenTypeId } from "@openwork-ee/utils/typeid"
+import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { RunnerMessage } from "../headless-runner/client.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME } from "../mcp/search.js"
 
-export type RunStepOutcome = "done" | "failed" | "blocked" | "asked"
+const TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
+const CONNECTION_LOOKUP_TIMEOUT_MS = 1_500
+
+type RunStepOutcome = "done" | "failed" | "blocked" | "asked"
+type ConnectionId = DenTypeId<"externalMcpConnection">
+export type RunStepCandidate = { connectionId: ConnectionId; tool: string; outcome?: RunStepOutcome }
+type RunStepFacts = { tool: string; connectionName: string; outcome: RunStepOutcome }
 
 type ToolCall = Pick<Extract<RunnerMessage, { role: "assistant" }>["toolCalls"][number], "name" | "input">
 type ToolReply = Pick<Extract<RunnerMessage, { role: "tool" }>, "isError" | "output">
@@ -13,8 +19,8 @@ export function runStepConnector(
 ) {
   if (name !== EXECUTE_CAPABILITY_TOOL_NAME || typeof input.name !== "string") return undefined
   const parsed = parseCapability(input.name)
-  if (!parsed || !isDenTypeId("externalMcpConnection", parsed.connectionId) || !parsed.toolName.trim() || parsed.toolName === "*") return undefined
-  return { connectionId: parsed.connectionId, tool: cappedName(parsed.toolName, 128) }
+  if (!parsed || !isDenTypeId("externalMcpConnection", parsed.connectionId) || !TOOL_NAME.test(parsed.toolName)) return undefined
+  return { connectionId: parsed.connectionId, tool: parsed.toolName }
 }
 
 function cappedName(name: string, length: number): string {
@@ -23,6 +29,35 @@ function cappedName(name: string, length: number): string {
 
 export function runStepConnectionName(name: string): string {
   return cappedName(name, 160)
+}
+
+export async function collectRunStepFacts(
+  steps: ReadonlyMap<number, RunStepCandidate>,
+  loadConnections: (ids: ConnectionId[]) => Promise<readonly { id: ConnectionId; name: string }[]>,
+): Promise<Map<number, RunStepFacts>> {
+  const facts = new Map<number, RunStepFacts>()
+  const ids = [...new Set([...steps.values()].flatMap(({ connectionId, outcome }) => outcome ? [connectionId] : []))]
+  if (!ids.length) return facts
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const timeout = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), CONNECTION_LOOKUP_TIMEOUT_MS)
+      timer.unref()
+    })
+    const rows = await Promise.race([loadConnections(ids), timeout])
+    if (!rows) return facts
+    const names = new Map(rows.map((row) => [row.id, runStepConnectionName(row.name)]))
+    for (const [index, { connectionId, tool, outcome }] of steps) {
+      const connectionName = names.get(connectionId)
+      if (connectionName !== undefined && outcome !== undefined) facts.set(index, { tool, connectionName, outcome })
+    }
+    return facts
+  } catch {
+    return new Map()
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function parseJson(text: string): unknown {
@@ -48,6 +83,7 @@ function textRefusalOutcome(value: unknown): RunStepOutcome | undefined {
 
 export function runStepOutcome(reply: ToolReply | undefined): RunStepOutcome | undefined {
   if (!reply) return undefined
+  if (!reply.isError) return "done"
   const value = reply.output === undefined ? undefined : parseJson(reply.output)
   const direct = refusalOutcome(value) ?? textRefusalOutcome(value)
   if (direct) return direct
@@ -57,5 +93,5 @@ export function runStepOutcome(reply: ToolReply | undefined): RunStepOutcome | u
       if (outcome) return outcome
     }
   }
-  return reply.isError ? "failed" : "done"
+  return "failed"
 }

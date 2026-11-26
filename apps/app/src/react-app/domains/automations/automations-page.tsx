@@ -76,7 +76,7 @@ import { automationRunConnectionFix, automationRunNotice, formatAutomationSchedu
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
 import { describeAutomationModel } from "./automation-model-options"
 
-import { AutomationRunDid, AutomationRunSteps } from "./automation-run-details"
+import { AutomationRunDetails } from "./automation-run-details"
 import { runUsageLabel } from "./automation-run-summary"
 
 const AUTOMATIONS_PAGE_FAST_POLL_MS = AUTOMATIONS_FAST_POLL_MS
@@ -149,7 +149,12 @@ function inputFromDetail(detail: AutomationDetail): CreateAutomation {
 
 type AutomationApprovals = {
   pending: readonly { automationId: string; runId: string | null; toolName: string; connectionName: string }[]
-  renderForRun: (input: { automationId: string; runId: string; onOpenRun: (runId: string) => void }) => ReactNode
+  renderForRun: (input: {
+    automationId: string
+    selectedRunId: string | null
+    placement: { runId: string; executionTarget: AutomationRun["executionTarget"] } | { knownRunIds: readonly string[] }
+    onOpenRun: (runId: string) => void
+  }) => ReactNode
   renderStatus: (completedAt: number) => ReactNode
 }
 
@@ -244,10 +249,9 @@ export function AutomationsPage(props: {
     ))
   }, [listQuery.data, query, showArchived])
 
-  const openAutomation = (automationId: string | null, runId?: string | null) => {
+  const openAutomation = (automationId: string | null) => {
     const next = new URLSearchParams()
     if (automationId) next.set("automation", automationId)
-    if (runId) next.set("run", runId)
     setSearchParams(next)
     setEditing(false)
     setRepairingModel(false)
@@ -397,6 +401,8 @@ export function AutomationsPage(props: {
     const connectionFix = selectedReceipt ? automationRunConnectionFix(selectedReceipt.run, selectedReceipt.events, readDenSettings().baseUrl) : null
     const receiptIsLoading = receiptQuery.isLoading || (receiptQuery.isFetching && !selectedReceipt)
     const threadMatches = !selectedThreadId || selectedReceipt?.run.executionThread?.id === selectedThreadId
+    const knownRunIds = runs.map((run) => run.id)
+    if (selectedReceipt && threadMatches) knownRunIds.push(selectedReceipt.run.id)
     const localSessionRoute = selectedReceipt?.run.executionThread
       ? automationLocalSessionRoute(selectedReceipt.run.executionThread)
       : null
@@ -612,14 +618,15 @@ export function AutomationsPage(props: {
             <Card variant="outline">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2"><History className="size-4" />Run history</CardTitle>
-                <CardDescription>Durable receipts for manual and scheduled runs.</CardDescription>
+                <CardDescription>Manual and scheduled runs, newest first.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2">
+                {props.approvals?.renderForRun({ automationId: task.id, selectedRunId, placement: { knownRunIds }, onOpenRun: selectRun })}
                 {runsQuery.isLoading ? <Skeleton className="h-24 rounded-xl" /> : null}
                 {!runsQuery.isLoading && runs.length === 0 ? <p className="text-sm text-muted-foreground">No runs yet.</p> : null}
                 {runs.map((run) => {
                   const needsYes = pendingForAutomation?.some((approval) => approval.runId === run.id)
-                  const usage = ACTIVE_RUN_STATUSES.has(run.status) ? null : runUsageLabel(run.usage)
+                  const usage = ACTIVE_RUN_STATUSES.has(run.status) ? null : runUsageLabel(run.usage, true)
                   return (
                     <div
                       key={run.id}
@@ -674,16 +681,18 @@ export function AutomationsPage(props: {
               <CardDescription>{selectedRunId ? "What this run did." : "Select a run to see what it did."}</CardDescription>
             </CardHeader>
             <CardContent>
-              {!selectedRunId ? (
-                <div className="py-10 text-center text-sm text-muted-foreground">No run selected.</div>
-              ) : receiptIsLoading ? (
+              {!selectedRunId ? null : receiptIsLoading ? (
                 <Skeleton className="h-48 rounded-xl" />
-              ) : receiptQuery.error || !selectedReceipt ? (
+              ) : !selectedReceipt ? (
                 <Alert variant="warning"><AlertCircle /><AlertDescription>{describeError(receiptQuery.error)}</AlertDescription></Alert>
               ) : !threadMatches ? (
                 <Alert variant="warning"><AlertCircle /><AlertDescription>This Cloud thread no longer matches the selected run.</AlertDescription></Alert>
               ) : (
                 <div className="space-y-4">
+                  {receiptQuery.isRefetchError && <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <p role="status">Couldn’t refresh this run. Showing the last loaded details.</p>
+                    <Button size="xs" variant="ghost" disabled={receiptQuery.isFetching} onClick={() => void receiptQuery.refetch()}>Try again</Button>
+                  </div>}
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant={runVariant(selectedReceipt.run.status)}>{runStatusLabel(selectedReceipt.run)}</Badge>
                     {selectedReceipt.run.executionThread ? (
@@ -724,15 +733,9 @@ export function AutomationsPage(props: {
                       </AlertDescription>
                     </Alert>
                   ) : null}
-                  {selectedReceipt.run.resultSummary ? (
-                    <section data-run-result className="space-y-1">
-                      <h3 className="text-sm font-medium">Result</h3>
-                      <p className="whitespace-pre-wrap wrap-anywhere text-sm">{selectedReceipt.run.resultSummary}</p>
-                    </section>
-                  ) : null}
-                  <AutomationRunDid events={selectedReceipt.events} pending={pendingForRun} />
-                  {props.approvals?.renderForRun({ automationId: task.id, runId: selectedRunId, onOpenRun: selectRun })}
-                  <AutomationRunSteps key={selectedRunId} events={selectedReceipt.events} pending={pendingForRun} />
+                  <AutomationRunDetails key={selectedRunId} events={selectedReceipt.events} pending={pendingForRun} result={selectedReceipt.run.resultSummary}>
+                    {props.approvals?.renderForRun({ automationId: task.id, selectedRunId, placement: { runId: selectedRunId, executionTarget: selectedReceipt.run.executionTarget }, onOpenRun: selectRun })}
+                  </AutomationRunDetails>
                 </div>
               )}
             </CardContent>
@@ -801,14 +804,13 @@ export function AutomationsPage(props: {
           {filteredItems.map((item) => {
             const agentName = item.automation.agentId ? props.agentNames?.get(item.automation.agentId) : undefined;
             const pending = props.approvals?.pending.filter((approval) => approval.automationId === item.automation.id)
-            const pendingRunId = pending?.find((approval) => approval.runId)?.runId
             return <button
               key={item.automation.id}
               type="button"
               data-automation-id={item.automation.id}
               {...(item.automation.state === "needs_attention" ? { "data-automation-needs-attention": true } : {})}
               className="rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/40"
-              onClick={() => openAutomation(item.automation.id, pendingRunId)}
+              onClick={() => openAutomation(item.automation.id)}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">

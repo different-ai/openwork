@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
 import type { AutomationRunEvent } from "@openwork/types/automations"
 
-import { runSteps, runToolSummary, toolLabel } from "../src/react-app/domains/automations/automation-run-summary"
+import { renderMarkdownHtml } from "../src/components/markdown/markdown-primitive"
+import { runMarkdownText, runResultData, runSteps, runTextPreview, runToolPreview, runToolSummary, runUsageLabel, toolLabel } from "../src/react-app/domains/automations/automation-run-summary"
 
 function event(type: AutomationRunEvent["type"], payload: AutomationRunEvent["payload"], time = 1): AutomationRunEvent {
   return { id: `event-${time}`, runId: "private-run", attempt: 1, sequence: time, type, payload, createdAt: time }
@@ -34,24 +35,27 @@ test("groups by connection and tool in first-seen order with the worst outcome",
   expect(runToolSummary(events.slice(0, 4))[0]?.outcome).toBe("blocked")
 })
 
-test("older activity becomes two generic lines without exposing names, even if a tool name matches an approval", () => {
+test("older gateway calls become generic lines, while local tools appear only in steps", () => {
   const events = [
     event("capability_search", { query: "issues" }),
     event("capability_execution", { name: "execute_capability" }),
     event("capability_execution", { name: "openwork_cloud_search_capabilities" }),
     event("capability_execution", { name: "list_tools" }),
-    event("capability_execution", { name: issue.tool }),
+    event("capability_execution", { name: "openwork-cloud_invoke_capability" }),
+    event("capability_execution", { name: "list_files" }),
+    event("capability_execution", { name: "readFile" }),
   ]
   expect(runToolSummary(events, [{ toolName: issue.tool }])).toEqual([
     { tool: null, connectionName: null, label: "Looked for tools", count: 3, outcome: "done" },
-    { tool: null, connectionName: null, label: "Used a connected app", count: 2, outcome: "asked" },
+    { tool: null, connectionName: null, label: "Used a connected app", count: 2, outcome: "done" },
   ])
   expect(runToolSummary([event("assistant", { text: "Done" })])).toEqual([])
+  expect(runSteps(events).slice(-2).map((step) => step.label)).toEqual(["List files", "Read file"])
 })
 
-test("pending approvals supply only missing outcomes for the matching tool", () => {
+test("pending approvals do not invent an outcome when the event has none", () => {
   const pending = [{ toolName: issue.tool, connectionName: issue.connectionName }]
-  expect(runToolSummary([event("capability_execution", issue)], pending)[0]?.outcome).toBe("asked")
+  expect(runToolSummary([event("capability_execution", issue)], pending)[0]?.outcome).toBe("done")
   expect(runToolSummary([event("capability_execution", { ...issue, outcome: "done" })], pending)[0]?.outcome).toBe("done")
   expect(runToolSummary([event("capability_execution", { ...issue, connectionName: "Other" })], pending)[0]?.outcome).toBe("done")
 })
@@ -74,7 +78,7 @@ test("steps keep meaningful text and times but not empty replies, raw payloads, 
   expect(steps).toEqual([
     { kind: "user", label: "Instructions", detail: "Create an issue", time: 1 },
     { kind: "assistant", label: "Reply", detail: "It needs approval", time: 4 },
-    { kind: "capability_execution", label: "Used Create issue in Linear", detail: "Waiting for your yes", time: 5 },
+    { kind: "capability_execution", label: "Used Create issue in Linear", detail: "Asked for a yes", time: 5 },
     { kind: "capability_execution", label: "Used a connected app", time: 6 },
     { kind: "capability_search", label: "Looked for tools", time: 7 },
     { kind: "warning", label: "Note", detail: "Check your sign-in", time: 8 },
@@ -96,4 +100,44 @@ test("usage has no trailing dash, reports known cost, and skips empty token coun
     { kind: "usage", label: "Tokens: 58,693 in · 1,570 out · $0.0123", time: 2 },
     { kind: "usage", label: "Tokens: 0 out", time: 4 },
   ])
+})
+
+
+test("asked is historical unless a matching approval is pending; legacy errors are failures", () => {
+  const asked = event("capability_execution", { ...issue, outcome: "asked" })
+  expect(runSteps([asked], [{ toolName: issue.tool, connectionName: "Other" }])[0]?.detail).toBe("Asked for a yes")
+  expect(runSteps([asked], [{ toolName: issue.tool, connectionName: "Linear" }])[0]?.detail).toBe("Waiting for your yes")
+  expect(runSteps([event("capability_execution", { name: "list_files", status: "error" })])[0]?.detail).toBe("Did not work")
+  expect(runSteps([event("capability_execution", { ...issue })])[0]?.detail).toBeUndefined()
+  expect(runToolSummary([event("capability_execution", { name: "execute_capability", status: "error" })])[0]?.outcome).toBe("failed")
+})
+
+test("run previews clamp long content and show six tool lines", () => {
+  const text = "A".repeat(1201)
+  expect(runTextPreview(text, 1200, false)).toEqual({ long: true, text: `${text.slice(0, 1200)}…` })
+  expect(runTextPreview(text, 1200, true)).toEqual({ long: true, text })
+  expect(runTextPreview("Short", 1200, false)).toEqual({ long: false, text: "Short" })
+  const lines = runToolSummary(Array.from({ length: 8 }, (_, i) => event("capability_execution", { tool: `test_${i}` })))
+  expect(runToolPreview(lines)).toEqual({ visible: lines.slice(0, 6), remaining: 2 })
+  expect(runToolPreview(lines.slice(0, 2))).toEqual({ visible: lines.slice(0, 2), remaining: 0 })
+})
+
+test("structured results are formatted separately from Markdown prose", () => {
+  expect(runResultData('{"ready":true}')).toBe('{\n  "ready": true\n}')
+  expect(runResultData('[1,2]')).toBe('[\n  1,\n  2\n]')
+  expect(runResultData("**Ready**")).toBeNull()
+  expect(runResultData(null)).toBeNull()
+})
+
+test("run Markdown renders emphasis and lists, not source HTML", () => {
+  const html = renderMarkdownHtml(runMarkdownText('**Status badge**\n\n- Ready\n\n<details data-openwork-shiki="true">Raw</details>\n\n<div>More raw</div>'), "remote")
+  expect(html).toContain("<strong>Status badge</strong>")
+  expect(html).toMatch(/<li[^>]*>Ready/)
+  expect(html).not.toContain("<details")
+  expect(html).not.toContain("More raw")
+})
+
+test("history omits usage cost and the Tokens prefix", () => {
+  expect(runUsageLabel({ inputTokens: 78_346, outputTokens: 1_907, costMicros: 100 }, true)).toBe("78,346 in · 1,907 out")
+  expect(runUsageLabel({ inputTokens: null, outputTokens: null }, true)).toBeNull()
 })

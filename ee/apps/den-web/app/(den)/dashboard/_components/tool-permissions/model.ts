@@ -37,44 +37,50 @@ export function rulesForSubject(rules: readonly PermissionRule[], connectionId: 
   return new Map(rules.filter((rule) => rule.connectionId === connectionId && isSubject(rule, subject)).map(({ toolName, rule }) => [toolName, rule]));
 }
 
-export function accessForTool(toolName: string, fallback: ToolPermissionAccess | null, layers: readonly ReadonlyMap<string, ToolPermissionAccess>[]) {
-  const applicable = layers.map((rules) => rules.get(TOOL_PERMISSION_EVERY_TOOL) === "block" ? "block" : rules.get(toolName));
-  const rule = applicable.includes("block") ? "block" : applicable.includes("ask") ? "ask" : applicable.includes("allow") ? "allow" : null;
+const accessPrecedence = ["block", "ask", "allow"] as const;
+
+function ruleForTool(toolName: string, rules: AccessMap) {
+  return rules.get(TOOL_PERMISSION_EVERY_TOOL) === "block" ? "block" : rules.get(toolName);
+}
+
+export function accessForTool(toolName: string, fallback: ToolPermissionAccess | null, layers: readonly AccessMap[]) {
+  const applicable = layers.map((rules) => ruleForTool(toolName, rules));
+  const rule = accessPrecedence.find((access) => applicable.includes(access)) ?? null;
   return { rule, access: rule ?? fallback };
 }
 
-export function everyoneLabel(result: ReturnType<typeof accessForTool>): string {
-  return result.access ? `Everyone: ${accessLabels[result.access]}${result.rule ? "" : " (default)"}` : "Everyone: No rule";
+function toolAccessNotice(ownRule: ToolPermissionAccess | undefined, inheritedRule: ToolPermissionAccess | null, source: string, fallback: ToolPermissionAccess | null) {
+  if (ownRule) {
+    if (inheritedRule && accessPrecedence.indexOf(inheritedRule) < accessPrecedence.indexOf(ownRule)) {
+      return `Applies now: ${accessLabels[inheritedRule]}, from ${source}.`;
+    }
+    return "This rule applies.";
+  }
+  if (inheritedRule) return `From ${source}: ${accessLabels[inheritedRule]}.`;
+  return fallback ? `Built-in default: ${accessLabels[fallback]}.` : "Built-in default: Unknown.";
 }
 
-export function toolRowAccess({ toolName, fallback, ownRules, orgRules, memberTeamRules, everyoneSelected }: {
+export function toolRowAccess({ toolName, fallback, ownRules, orgRules, memberTeams, everyoneSelected }: {
   toolName: string;
   fallback: ToolPermissionAccess | null;
   ownRules: AccessMap;
   orgRules: AccessMap;
-  memberTeamRules: readonly AccessMap[];
+  memberTeams: readonly { name: string; rules: AccessMap }[];
   everyoneSelected: boolean;
 }) {
-  const pressed = ownRules.get(toolName) ?? "default";
-  const organization = accessForTool(toolName, fallback, [orgRules]);
-  const inherited = accessForTool(toolName, fallback, everyoneSelected ? [] : [orgRules, ...memberTeamRules]);
-  const effective = accessForTool(toolName, fallback, [ownRules, orgRules, ...memberTeamRules]);
-  const label = everyoneLabel(organization);
-  const canOverride = !everyoneSelected && (organization.rule === "ask" || organization.rule === "block") && organization.rule === inherited.rule;
-  const blockedForEveryone = !everyoneSelected && organization.rule === "block";
-  const ownConnectionBlocked = ownRules.get(TOOL_PERMISSION_EVERY_TOOL) === "block";
-  const teamConnectionBlocked = memberTeamRules.some((rules) => rules.get(TOOL_PERMISSION_EVERY_TOOL) === "block");
+  const ownRule = ownRules.get(toolName);
+  const inheritedLayers = everyoneSelected ? [] : [{ name: "Everyone", rules: orgRules }, ...memberTeams.map(({ name, rules }) => ({ name: `the team ${name}`, rules }))];
+  const inherited = accessForTool(toolName, fallback, inheritedLayers.map(({ rules }) => rules));
+  const source = inheritedLayers.find(({ rules }) => ruleForTool(toolName, rules) === inherited.rule)?.name ?? "Everyone";
+  const ownConnectionBlocks = ownRules.get(TOOL_PERMISSION_EVERY_TOOL) === "block" && inherited.rule !== "block";
+  const notice = ownConnectionBlocks
+    ? toolAccessNotice(ownRule, "block", "the connection rule", fallback)
+    : toolAccessNotice(ownRule, inherited.rule, source, fallback);
 
   return {
-    pressed,
-    defaultLabel: fallback && inherited.access ? `Default (${accessLabels[inherited.access]})` : "Default",
-    notice: everyoneSelected ? null : {
-      label,
-      overrideLabel: canOverride ? `${label}. This rule waits until that changes.` : null,
-      overridden: canOverride && pressed !== "default" && pressed !== effective.access && organization.rule === effective.access,
-    },
-    lockReason: blockedForEveryone ? "Blocked for everyone. An admin can change this under Everyone."
-      : ownConnectionBlocked ? "Turn off the whole connection block to change this."
-      : teamConnectionBlocked ? "Blocked by a team. An admin can change this under that team." : null,
+    pressed: ownRule ?? "default",
+    defaultLabel: inherited.access ? `Default (${accessLabels[inherited.access]})` : "Default",
+    notice: everyoneSelected ? null : notice,
+    lockedByEveryone: !everyoneSelected && orgRules.get(toolName) === "block",
   };
 }

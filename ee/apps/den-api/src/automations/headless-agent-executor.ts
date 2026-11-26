@@ -23,7 +23,7 @@ import { cloudAutomationRuntime } from "./headless-runtime.js"
 import { organizationCloudModel } from "../workbot/model.js"
 import { headlessRunCostMicros, headlessRunPricing } from "./headless-run-pricing.js"
 import { cloudAgentGatewayCatalog } from "../workbot/gateway-model.js"
-import { runStepConnectionName, runStepConnector, runStepOutcome, type RunStepOutcome } from "./run-step-facts.js"
+import { collectRunStepFacts, runStepConnector, runStepOutcome, type RunStepCandidate } from "./run-step-facts.js"
 
 const POLL_INTERVAL_MS = 2_000
 const RUNNER_UNREACHABLE = { ok: false as const, status: 503, error: "headless_send_unavailable" }
@@ -119,31 +119,21 @@ function usageFromTurn(turn: RunnerTurn, rates: unknown): AutomationUsage {
 async function enrichConnectorEvents(
   organizationId: string,
   events: CloudAgentEvent[],
-  steps: Map<number, NonNullable<ReturnType<typeof runStepConnector>> & { outcome?: RunStepOutcome }>,
+  steps: Map<number, RunStepCandidate>,
 ) {
-  if (!steps.size) return
-  try {
-    const connectionIds = [...new Set([...steps.values()].map((step) => step.connectionId))]
-    const rows = await db.$primary.select({ id: ExternalMcpConnectionTable.id, name: ExternalMcpConnectionTable.name })
+  const facts = await collectRunStepFacts(steps, async (connectionIds) => (
+    db.$primary.select({ id: ExternalMcpConnectionTable.id, name: ExternalMcpConnectionTable.name })
       .from(ExternalMcpConnectionTable).where(and(
         eq(ExternalMcpConnectionTable.organizationId, normalizeDenTypeId("organization", organizationId)),
         inArray(ExternalMcpConnectionTable.id, connectionIds),
       ))
-    const names = new Map(rows.map((row) => [row.id, runStepConnectionName(row.name)]))
-    for (const [index, { connectionId, tool, outcome }] of steps) {
-      const connectionName = names.get(connectionId)
-      if (connectionName === undefined) continue
-      const { payload } = events[index]
-      Object.assign(payload, { tool, connectionName, ...(outcome ? { outcome } : {}) })
-    }
-  } catch {
-    return
-  }
+  ))
+  for (const [index, stepFacts] of facts) Object.assign(events[index].payload, stepFacts)
 }
 
 async function transcriptEvents(organizationId: string, messages: RunnerMessage[], usage: AutomationUsage): Promise<CloudAgentEvent[]> {
   const events: CloudAgentEvent[] = []
-  const steps = new Map<number, NonNullable<ReturnType<typeof runStepConnector>> & { outcome?: RunStepOutcome }>()
+  const steps = new Map<number, RunStepCandidate>()
   for (const message of messages.slice(-100)) {
     const messageId = message.messageId ?? null
     if (message.role === "user") events.push({ type: "user", payload: { messageId, text: message.text.slice(0, 20_000) } })

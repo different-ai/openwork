@@ -4019,7 +4019,9 @@ export function SessionRoute() {
           agentNames={agentNames}
           approvals={approvalsScope ? {
             pending: automationApprovals.pending,
-            renderForRun: (input) => <RunApprovalSlot key={`${approvalsScope.denBaseUrl}:${approvalsScope.organizationId}:${approvalsScope.principal}:${input.runId}`} scope={approvalsScope} items={automationApprovals.items} {...input} />,
+            renderForRun: ({ selectedRunId, ...input }) => <RunApprovalSlot
+              key={JSON.stringify([approvalsScope.denBaseUrl, approvalsScope.organizationId, approvalsScope.principal, input.automationId, selectedRunId, "runId" in input.placement])}
+              scope={approvalsScope} items={automationApprovals.items} claimRestart={automationApprovals.claimRestart} {...input} />,
             renderStatus: (completedAt) => <>
               {completedAt > 0 && <ApprovalRefresh key={completedAt} scope={approvalsScope} completedAt={completedAt} />}
               {automationApprovals.isError && <ApprovalLoadError onRetry={() => void automationApprovals.refetch()} />}
