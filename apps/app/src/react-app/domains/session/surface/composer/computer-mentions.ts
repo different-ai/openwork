@@ -4,11 +4,6 @@ export function isComputerTarget(value: string): value is ComputerTarget {
   return value === "cloud" || value === "desktop";
 }
 
-export const COMPUTER_MENTIONS = [
-  { id: "computer:cloud", kind: "computer", value: "cloud", label: "cloud", description: "Start a task on your cloud computer" },
-  { id: "computer:desktop", kind: "computer", value: "desktop", label: "desktop", description: "Start a task on your connected desktop computer" },
-] satisfies { id: string; kind: "computer"; value: ComputerTarget; label: string; description: string }[];
-
 const SEARCH_FIRST_START = (target: ComputerTarget) =>
   `Use OpenWork Connect search_capabilities to find remote-session:create, then execute it with target "${target}" and the user's task as prompt.`;
 

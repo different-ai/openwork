@@ -107,8 +107,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     return websiteRulesArrival.arrived;
   }
-  /** The address website rules judge: a WebSocket connects to its site over http or https. */
+  /** Judge local object URLs by their web origin and WebSockets by their HTTP counterpart. */
   function websiteAddress(url) {
+    if (String(url).startsWith("blob:")) return URL.parse(url)?.origin ?? url;
     return String(url).replace(/^ws(s?):/i, "http$1:");
   }
   /** What the rules decide for an address; while new rules load, nothing opens. */
@@ -1165,7 +1166,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       runDetachedTask("initialize browser tab", () => view.webContents.loadURL("about:blank"));
     }
     view.webContents.setWindowOpenHandler(({ url: targetUrl, disposition }) => {
-      if (!/^https?:\/\//i.test(targetUrl)) return { action: "deny" };
+      if (!isHttpUrl(targetUrl)) {
+        // Let Chromium resolve a generated file with the opener's blob token.
+        const origin = URL.parse(targetUrl)?.origin;
+        if (!targetUrl.startsWith("blob:") || !origin || !isHttpUrl(origin)
+          || origin !== view.webContents.mainFrame.origin) return { action: "deny" };
+        const decision = websiteDecision(targetUrl);
+        if (decision.effect === "deny" || (decision.effect === "ask" && !websiteApproved(targetUrl))) return { action: "deny" };
+      }
       // The shared all-request policy hook checks popup requests too. Never
       // fall back to an external browser when that policy denies a request.
       return { action: "allow", overrideBrowserWindowOptions: { webPreferences: BROWSER_SECURITY_PREFERENCES }, createWindow: (options) => {

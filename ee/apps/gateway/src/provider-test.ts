@@ -9,9 +9,14 @@ import { lookup } from "node:dns/promises"
 import { isIP } from "node:net"
 import type { Context, Hono } from "hono"
 import { z } from "zod"
+import { bedrockGuardrailIdentifierSchema, bedrockGuardrailVersionSchema, bedrockGuardrailSettingsPaired } from "@openwork/types/den/inference"
 import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
 import type { OrganizationVariables } from "./middleware/org-context.js"
 import type { CatalogProvider, ProviderCatalog } from "@openwork-ee/gateway-catalog"
+
+import { applyBedrockGuardrail, hasBedrockGuardrail } from "@openwork-ee/gateway-upstreams"
+import { BEDROCK_GUARDRAIL_BLOCKED_MESSAGE, normalizeBedrockGuardrailResponse } from "@openwork-ee/gateway-protocols"
+import { bedrockGuardrailsEnabled } from "./features.js"
 
 export const gatewayProviderTestPath = "/api/v1/provider-tests"
 
@@ -30,7 +35,9 @@ const requestSchema = z.object({
     apiVersion: z.string().trim().max(64).optional(),
     region: z.string().trim().max(63).optional(),
     upstreamBaseUrl: z.string().trim().max(2048).optional(),
-  }).strict().default({}),
+    guardrailIdentifier: bedrockGuardrailIdentifierSchema.optional(),
+    guardrailVersion: bedrockGuardrailVersionSchema.optional(),
+  }).strict().refine(bedrockGuardrailSettingsPaired, "Enter both the guardrail ID or ARN and its version, or leave both empty.").default({}),
   credential: z.object({ kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), secret: z.string().min(1).max(65535) }).strict(),
   customModel: gatewayCustomModelSchema.optional(),
 }).strict()
@@ -44,6 +51,7 @@ type Credential =
   | { kind: "gcp_service_account"; serviceAccount: GatewayGcpServiceAccountSecret }
 
 export type ProviderTestDependencies = {
+  bedrockGuardrailsEnabled?: (organizationId: string) => Promise<boolean>
   fetch: typeof fetch
   signingSecret: string | undefined
   catalog: ProviderCatalog
@@ -250,7 +258,7 @@ async function buildCustomCall(input: TestRequest, dependencies: ProviderTestDep
   return { url: `${base.url.href.replace(/\/+$/, "")}/chat/completions`, body: customBody(input.model, input.customModel, "max_tokens") }
 }
 
-export async function runProviderTest(input: TestRequest, dependencies: ProviderTestDependencies): Promise<GatewayProviderTestResult> {
+export async function runProviderTest(input: TestRequest, dependencies: ProviderTestDependencies, guardrailsEnabled = false): Promise<GatewayProviderTestResult> {
   const { model } = input
   const custom = isGatewayCustomProviderId(input.providerId)
   const catalog = custom ? gatewayCustomCatalogProvider : dependencies.catalog.getCatalogProvider(input.providerId)
@@ -299,6 +307,10 @@ export async function runProviderTest(input: TestRequest, dependencies: Provider
     } catch {
       return custom ? failed("address_not_allowed", CUSTOM_ADDRESS_REFUSED, model) : failed("invalid_settings", "These settings don't make a valid provider address.", model)
     }
+    const guarded = applyBedrockGuardrail({ enabled: guardrailsEnabled, settings, family, url: upstream.url, headers: upstream.headers, body: upstream.body })
+    if ("error" in guarded) return failed("bedrock_guardrail_unsupported", guarded.error, model)
+    if (typeof guarded.body !== "string") return failed("invalid_settings", "The provider test requires a JSON request.", model)
+    upstream.body = guarded.body
     if (auth.kind === "header") upstream.headers.set(auth.name, auth.value)
     else signAwsRequest({ method: "POST", url: upstream.url, headers: upstream.headers, body: upstream.body, credentials: auth.credentials, region: auth.region, service: family === "bedrock_mantle" ? bedrockMantleService : bedrockService, now: dependencies.now() })
     try {
@@ -325,7 +337,15 @@ export async function runProviderTest(input: TestRequest, dependencies: Provider
     }
   }
   if (response.ok) {
-    await response.body?.cancel().catch(() => {})
+    if (guardrailsEnabled && family === "bedrock" && hasBedrockGuardrail(settings)) {
+      const checked = await normalizeBedrockGuardrailResponse(response, "converse")
+      if (!checked.ok) {
+        await checked.body?.cancel().catch(() => {})
+        return failed("invalid_guarded_response", "The provider did not return a valid guarded response. Ask your administrator to check the provider.", model, checked.status)
+      }
+      const result: unknown = await checked.json()
+      if (typeof result === "object" && result !== null && Reflect.get(result, "stopReason") === "guardrail_intervened") return failed("bedrock_guardrail_intervened", BEDROCK_GUARDRAIL_BLOCKED_MESSAGE, model, response.status)
+    } else await response.body?.cancel().catch(() => {})
     return { ok: true, model, status: response.status, code: null, message: null }
   }
   if (custom && response.status === 404 && !(providerMessage && (MODEL_MISSING.test(providerMessage) || providerMessage.includes(model)))) {
@@ -351,6 +371,12 @@ export function registerProviderTestRoute(api: Hono<ProviderTestEnv>, dependenci
     try { json = JSON.parse(body) } catch { return c.json({ error: { code: "invalid_json", message: "The request body must be JSON." } }, 400) }
     const parsed = requestSchema.safeParse(json)
     if (!parsed.success) return c.json({ error: { code: "invalid_request", message: "Send providerId, model, settings and an organization credential." } }, 400)
-    return c.json(await runProviderTest(parsed.data, dependencies))
+    let enabled = false
+    if (hasBedrockGuardrail(parsed.data.settings)) {
+      try { enabled = await (dependencies.bedrockGuardrailsEnabled ?? bedrockGuardrailsEnabled)(identity.organizationId) } catch {
+        return c.json(failed("bedrock_guardrail_policy_unavailable", "Your organization's guardrail policy could not be verified. Retry shortly or contact your administrator.", parsed.data.model, 503))
+      }
+    }
+    return c.json(await runProviderTest(parsed.data, dependencies, enabled))
   })
 }

@@ -1,4 +1,7 @@
 import { isDeepStrictEqual } from "node:util"
+import { normalizeBedrockGuardrailResponse } from "@openwork-ee/gateway-protocols"
+import { applyBedrockGuardrail, hasBedrockGuardrail, hasClientBedrockGuardrail } from "@openwork-ee/gateway-upstreams"
+import { bedrockGuardrailsEnabled } from "./features.js"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
@@ -57,6 +60,7 @@ export type LoadGatewayProvider = (input: {
 }) => Promise<GatewayProvider | null>
 
 export type GatewayDependencies = {
+  bedrockGuardrailsEnabled: (organizationId: string) => Promise<boolean>
   checkUsage: CheckGatewayUsage
   fetch: typeof fetch
   insertRequestLog: InsertRequestLog
@@ -136,6 +140,12 @@ function usesLiteLlmEntra(provider: GatewayProvider) {
 
 function gatewayError(status: number, code: string, message: string, extra: JsonObject = {}) {
   return Response.json({ error: { message, type: status >= 500 ? "api_error" : "invalid_request_error", code, ...extra } }, { status })
+}
+
+function clientGuardrailRejection(request: Request, body: unknown): Response | null {
+  return hasClientBedrockGuardrail(request.headers, body)
+    ? gatewayError(400, "unsupported_gateway_resource", "Your organization's guardrail is managed by your administrator. Remove guardrail settings from the client request.")
+    : null
 }
 
 export function genericProviderAuthError(input: {
@@ -402,6 +412,7 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
   if (!isJsonObject(json)) {
     return invalid(415, "unsupported_media_type", "Model invocation bodies must be JSON objects; multipart and file uploads are not supported.")
   }
+  if (hasClientBedrockGuardrail(request.headers, json)) return invalid(400, "unsupported_gateway_resource", "Your organization's guardrail is managed by your administrator. Remove guardrail settings from the client request.")
   if (typeof json.model === "string" && json.model.length > 0 && json.model.length <= 255) requestedModel = json.model
   stream = json.stream === true || stream
   const unsupported = unsupportedGatewayPayload(json, upstream.family, providerId)
@@ -703,6 +714,8 @@ async function readAutoBody(raw: Request): Promise<{ request: Request; body: Jso
   const request = new Request(raw.url, { method: raw.method, headers: raw.headers, body: bytes, signal: raw.signal })
   let body: unknown = null
   try { body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) } catch { return { request, body: null, routerId: null } }
+  const guardrailRejection = clientGuardrailRejection(raw, body)
+  if (guardrailRejection) return { error: guardrailRejection }
   const routerId = isJsonObject(body) ? autoRouterIdFromModel(body.model) : null
   return isJsonObject(body) && routerId ? { request, body, routerId } : { request, body: null, routerId: null }
 }
@@ -715,6 +728,7 @@ function restOfPath(pathname: string, inferenceProviderId: string) {
 export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRouteDependencies) {
   const learnedOutputLimits = createLearnedOutputLimits()
   const dependencies: GatewayDependencies = {
+    bedrockGuardrailsEnabled: input.bedrockGuardrailsEnabled ?? bedrockGuardrailsEnabled,
     checkUsage: input.checkUsage ?? checkGatewayUsage,
     fetch: input.fetch,
     insertRequestLog: input.insertRequestLog,
@@ -1024,9 +1038,26 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       requestBytes: prepared.body === null ? null : Buffer.byteLength(prepared.body),
     })
 
-    const headers = buildUpstreamHeaders(request, resolved.family, catalog?.requestHeaders ?? [], openworkRequestId)
-    if (auth.kind === "header") headers.set(auth.header.name, auth.header.value)
-    else auth.sign({ method, url: prepared.url, headers, body: prepared.body })
+    let guardrailsEnabled = false
+    if (hasBedrockGuardrail(provider.settings)) {
+      try { guardrailsEnabled = await dependencies.bedrockGuardrailsEnabled(identity.organizationId) } catch {
+        return reject(gatewayError(503, "bedrock_guardrail_policy_unavailable", "Your organization's guardrail policy could not be verified. Retry shortly or contact your administrator."), "bedrock_guardrail_policy_unavailable", "Bedrock guardrail policy unavailable")
+      }
+    }
+    let guardrailApplied = false
+    const authenticate = () => {
+      const headers = buildUpstreamHeaders(request, resolved.family, catalog?.requestHeaders ?? [], openworkRequestId)
+      const guarded = applyBedrockGuardrail({ enabled: guardrailsEnabled, settings: provider.settings, family: resolved.family, url: prepared.url, headers, body: prepared.body })
+      if ("error" in guarded) return guarded
+      prepared.body = guarded.body
+      guardrailApplied = guarded.applied
+      if (auth.kind === "header") headers.set(auth.header.name, auth.header.value)
+      else auth.sign({ method, url: prepared.url, headers, body: prepared.body })
+      return { headers }
+    }
+    const authenticated = authenticate()
+    if ("error" in authenticated) return reject(Response.json({ message: authenticated.error, error: { code: "bedrock_guardrail_unsupported", type: "invalid_request_error", message: authenticated.error } }, { status: 400 }), "bedrock_guardrail_unsupported", "Bedrock guardrail could not be applied")
+    const { headers } = authenticated
 
     if (await recorder.whenStarted?.() === false) {
       return reject(gatewayError(503, "request_log_unavailable", REQUEST_LOG_UNAVAILABLE_MESSAGE), "request_log_unavailable", "Request log unavailable")
@@ -1069,11 +1100,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
               provider_output_limit: rejection.limit,
             })
             prepared.body = JSON.stringify(prepared.json)
-            const retryHeaders = buildUpstreamHeaders(request, resolved.family, catalog?.requestHeaders ?? [], openworkRequestId)
-            if (auth.kind === "header") retryHeaders.set(auth.header.name, auth.header.value)
-            else auth.sign({ method, url: prepared.url, headers: retryHeaders, body: prepared.body })
+            const retry = authenticate()
+            if ("error" in retry) throw new Error(retry.error)
             lifetime.signal.throwIfAborted()
-            upstream = await dependencies.fetch(prepared.url, { method, headers: retryHeaders, body: prepared.body, signal: lifetime.signal, redirect: "error" })
+            upstream = await dependencies.fetch(prepared.url, { method, headers: retry.headers, body: prepared.body, signal: lifetime.signal, redirect: "error" })
           } else {
             upstream = new Response(refusal, { status: upstream.status, statusText: upstream.statusText, headers: upstream.headers })
           }
@@ -1204,6 +1234,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         return result.response
       }
 
+      if (guardrailApplied && upstream.ok) upstream = await normalizeBedrockGuardrailResponse(upstream, prepared.url.pathname.split("/").at(-1) ?? "")
       const responseHeaders = relayHeaders(upstream, openworkRequestId)
       if (!upstream.ok) return relayErrorResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
       return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
@@ -1283,6 +1314,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
     }
     if (!isJsonObject(body)) return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    const guardrailRejection = clientGuardrailRejection(c.req.raw, body)
+    if (guardrailRejection) return finish(guardrailRejection)
     return finish(await handleCursorChat({
       request: c.req.raw,
       body,
@@ -1328,6 +1361,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
     const body = await claudeCodeBody(c)
     if (body instanceof Response) return finish(body)
+    const guardrailRejection = clientGuardrailRejection(c.req.raw, body)
+    if (guardrailRejection) return finish(guardrailRejection)
     return finish(await handleClaudeCodeMessages({
       request: c.req.raw,
       body,
@@ -1362,6 +1397,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
     }
     if (!isJsonObject(body)) return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    const guardrailRejection = clientGuardrailRejection(c.req.raw, body)
+    if (guardrailRejection) return finish(guardrailRejection)
     return finish(await handleCodexResponses({
       request: c.req.raw,
       body,

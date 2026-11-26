@@ -58,6 +58,34 @@ one through the same handler, with the request read as Chat Completions and the
 answer written back in the tool's protocol (`src/smart-tools.ts`). Nothing is
 listed without a TypeSafe key or while the feature is off.
 
+## Bedrock guardrails (Preview)
+
+`bedrockGuardrails` is an off-by-default rollout for cloud and self-hosted deployments.
+The Preview implementation attaches an administrator-selected `settings.guardrailIdentifier`
+and `settings.guardrailVersion` to Amazon Bedrock Runtime requests before authentication
+or SigV4 signing. It covers native Converse, ConverseStream, InvokeModel and
+InvokeModelWithResponseStream, translated Auto/Smart and Cursor/Claude Code/Codex
+Converse requests, and the separate provider-test Converse call. Mantle does not
+support this configuration: with the feature on, a configured guardrail must be
+refused, not silently ignored.
+
+The shared `applyBedrockGuardrail` helper lives in `@openwork-ee/gateway-upstreams`;
+Gateway resolves the organization's effective feature from the primary database when
+saved guardrail settings exist. Member overrides cannot disable organization policy. Preserve caller-resource
+rejection, and retain attachment when output-cap retries recreate headers and re-sign
+the request. Invoke operations are not classified as `bedrock_converse`, so Converse-only
+protocol checks are insufficient coverage.
+
+**Off means the pre-feature request stays byte-unchanged**, even if a guardrail reference
+is saved. No configuration also leaves the request unchanged. Keep independent AWS IAM
+enforcement if omission must fail closed: disabling this rollout is not permission to
+send unguarded inference, and AWS refusals must not trigger an unguarded fallback.
+
+See [`docs/features/bedrock-guardrails/README.md`](../../../docs/features/bedrock-guardrails/README.md)
+for the source audit, exact manual AWS validation runbook, rollout cautions and evidence
+requirements. Source implementation is not a claim of live AWS verification or
+general availability.
+
 ## Stable Contracts
 
 The service rename keeps deployment and Models contracts stable. The Gateway

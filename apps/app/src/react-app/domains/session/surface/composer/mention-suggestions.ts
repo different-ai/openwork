@@ -5,7 +5,7 @@ import { filterSessionReferenceCandidates } from "./session-reference-search";
 
 export type MentionItem = {
   id: string;
-  kind: ComposerMentionKind;
+  kind: Exclude<ComposerMentionKind, "computer">;
   value: string;
   label: string;
   description?: string;

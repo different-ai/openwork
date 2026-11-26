@@ -85,6 +85,14 @@
       "development": "./src/providers/bedrock.ts",
       "default": "./src/providers/bedrock.ts"
     },
+    "./providers/bedrock-guardrail": {
+      "types": {
+        "openwork-build": "./dist/types/src/providers/bedrock-guardrail.d.ts",
+        "default": "./src/providers/bedrock-guardrail.ts"
+      },
+      "development": "./src/providers/bedrock-guardrail.ts",
+      "default": "./src/providers/bedrock-guardrail.ts"
+    },
     "./providers/google": {
       "types": {
         "openwork-build": "./dist/types/src/providers/google.d.ts",

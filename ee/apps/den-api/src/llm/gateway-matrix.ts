@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util"
+import { bedrockGuardrailSettingsError } from "@openwork/types/den/inference"
 import { and, asc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -32,6 +33,8 @@ export class GatewayWriteError extends Error {
 }
 
 export function validateGatewaySettings(config: Record<string, unknown>, settings: Record<string, unknown>) {
+  const guardrailError = bedrockGuardrailSettingsError(typeof config.id === "string" ? config.id : "", settings)
+  if (guardrailError) throw new GatewayWriteError(400, "invalid_settings", guardrailError)
   const error = upstreamBaseUrlSettingError(settings) ?? gatewayConfigurationError(config, settings)
   if (error) throw new GatewayWriteError(400, "invalid_settings", error)
   const npm = readProviderConfigNpm(config)

@@ -9,6 +9,7 @@ import { t } from "@/i18n";
 import { useQueryCacheArrayState, useQueryCacheState } from "@/react-app/infra/query-cache-state";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { describeRouteError } from "@/react-app/shell/route-workspaces";
+import { dismissSessionQuestion } from "./session-question-dismissal";
 import { createSessionChildIdsSelector, useSessionActivityStore } from "../status/session-activity-store";
 import {
   permissionKey,
@@ -459,19 +460,15 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       try {
         const directory = workspaceRoot || undefined;
         if (answers === null) {
-          unwrap(
-            await (isOpencodeV2Client(client)
-              ? client.rejectSessionQuestion({ sessionID: pendingQuestion.sessionID, requestID })
-              : client.question.reject({ requestID, directory })),
-          );
+          await dismissSessionQuestion({ client, workspaceId, sessionId: pendingQuestion.sessionID, directory }, requestID);
         } else {
           unwrap(
             await (isOpencodeV2Client(client)
               ? client.replySessionQuestion({ sessionID: pendingQuestion.sessionID, requestID, answers })
               : client.question.reply({ requestID, answers, directory })),
           );
+          settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
         }
-        settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
       } catch (error) {
         toast.error(t("app.error_request_failed"), {
           description: describeRouteError(error),
