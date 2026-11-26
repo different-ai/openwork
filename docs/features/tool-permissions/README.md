@@ -92,3 +92,36 @@ rules, approval and dispatch behavior; `self-hosted-flags-off.api.test.ts`
 for deployment gating; `personal-agent-permissions.api.test.ts` and
 `personal-agent-org-rules.api.test.ts` for agent compatibility. Run each
 file separately.
+
+## Rows, the run panel and approvals
+
+Three presentation rules came out of the first watch-through of the feature,
+with the before and after of each:
+
+- A tool row is one control with four segments, Default, Allow, Ask and
+  Block, that never moves or changes width. Default says what applies
+  without a rule of your own. Messages that are not about one row (the whole
+  connection is blocked, a save failed) use one reserved line under the
+  switch, so rows keep their height.
+
+  ![Tool rule rows before and after](./ux-rows.png)
+
+- The approval for an Automation sits inside the run that asked, on the
+  Automations page, and that run is marked "Needs your yes" in Run history.
+  After Allow once the line stays in place and offers the new run.
+
+  ![The approval card before and after](./ux-approval.png)
+
+- A run shows its result and "What it did" (one line per connector tool with
+  its connection and outcome) first. The step-by-step list, with readable
+  labels and token counts, is behind "Show steps". Nothing raw is shown.
+  This panel is the ordinary Automations page, so it also applies with the
+  feature off; only presentation changed there.
+
+  ![The run panel before and after](./ux-run-panel.png)
+
+  ![The same at narrow widths](./ux-narrow.png)
+
+New headless runs record three small facts per connector step for that list:
+the tool's name, the connection's name and how it ended (done, failed,
+blocked, asked). Never arguments or results. Older runs show generic lines.
