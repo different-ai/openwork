@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ToolApproval } from "@openwork/types/den/tool-permissions";
 
-import { approvalsForSurface, approvalWords } from "../src/react-app/domains/tool-approvals/tool-approval-words";
+import { automationApprovalResultWords, automationApprovalTarget, approvalsForRun, approvalsForSurface, approvalWords } from "../src/react-app/domains/tool-approvals/tool-approval-words";
 
 const chat: ToolApproval = {
   id: "chat-approval", context: { kind: "chat", id: null, label: null }, runId: null,
@@ -36,4 +36,28 @@ test("a surface only displays pending approvals for its own context, never for a
 test("missing names fall back to plain words rather than internal IDs", () => {
   const unnamed = { ...automation, context: { ...automation.context, label: " " }, toolTitle: "", connectionName: "" };
   expect(approvalWords(unnamed).title).toBe("Let this Automation use a tool in a connected app?");
+});
+
+test("an approval appears only on its own Automation and run", () => {
+  const pending = { ...automation, runId: "run-one" };
+  const otherRun = { ...automation, id: "other-run", runId: "run-two" };
+  const otherAutomation = { ...pending, id: "other-automation", context: { ...automation.context, id: "another" } };
+  const items: ToolApproval[] = [pending, otherRun, otherAutomation, automation,
+    { ...pending, id: "old", status: "denied" },
+    { ...chat, runId: "run-one" },
+  ];
+  expect(approvalsForRun(items, "automation", "run-one")).toEqual([pending]);
+  expect(approvalsForRun(items, "automation", "run-two")).toEqual([otherRun]);
+  expect(approvalsForRun(items, "another", "run-one")).toEqual([otherAutomation]);
+  expect(automationApprovalTarget(pending)).toEqual({ automationId: "automation", runId: "run-one", toolName: "send", connectionName: "Slack" });
+  expect(automationApprovalTarget(chat)).toBeNull();
+});
+
+test("a decided approval offers the new run only when it started", () => {
+  expect(automationApprovalResultWords({ kind: "started", runId: "new-run" }, automation.context)).toEqual({
+    line: "Allowed once. Started a new run.", open: { label: "Open it", runId: "new-run" },
+  });
+  expect(automationApprovalResultWords({ kind: "skipped" }, automation.context)).toEqual({ line: "Allowed once. It covers the next run." });
+  expect(automationApprovalResultWords({ kind: "denied" }, automation.context)).toEqual({ line: "Denied." });
+  expect(automationApprovalResultWords({ kind: "failed" }, automation.context)).toEqual({ line: "Couldn't start Daily digest. Your approval still covers its next run." });
 });

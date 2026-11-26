@@ -7,6 +7,7 @@ import { gatewayFixtureEnv, grantGatewayModels, stubPublicModelCatalog } from ".
 
 const restoreCatalog = stubPublicModelCatalog()
 const turns: { sessionId: string; messageId: string; token: string; prompt: string; model: string }[] = []
+const approvalOutputs = new Map<string, string>()
 let hold = false
 const runner = await startFakeHttpServer((request, raw, response) => {
   const url = new URL(request.url ?? "/", "http://runner")
@@ -25,7 +26,11 @@ const runner = await startFakeHttpServer((request, raw, response) => {
   const turn = turns.find((entry) => entry.sessionId === sessionId)
   response.end(JSON.stringify({
     turns: turn ? [{ messageId: turn.messageId, status: hold ? "running" : "completed", model: turn.model, error: null, usage: { inputTokens: 120, cachedInputTokens: 0, outputTokens: 30 } }] : [],
-    messages: [], finalAssistantText: "Checked the tracker.", status: hold ? "running" : "idle",
+    messages: turn && approvalOutputs.has(sessionId) ? [
+      { messageId: turn.messageId, role: "assistant", text: "", toolCalls: [{ id: "fixture-call", name: "execute_capability", input: { name: `mcp:${connectionId}:create_issue`, body: {} } }] },
+      { messageId: turn.messageId, role: "tool", callId: "fixture-call", name: "execute_capability", isError: true, output: approvalOutputs.get(sessionId) },
+    ] : [],
+    finalAssistantText: "Checked the tracker.", status: hold ? "running" : "idle",
   }))
 })
 const tracker = await startFakeMcpServer({ tools: [
@@ -218,7 +223,8 @@ test("a run approval covers one Automation run and written rules precede its tas
   assert.ok(first.scopes.has(`openwork:automation-run:${first.id}`))
   assert.ok(first.prompt.includes(`<organization_rules>\n${written}\n</organization_rules>`))
   assert.ok(first.prompt.indexOf(written) < first.prompt.indexOf(instruction))
-  await execute(first.token, "needs_approval")
+  const refusal = await execute(first.token, "needs_approval")
+  approvalOutputs.set(first.sessionId, refusal.text)
   const approval = await onePending()
   assert.deepEqual(approval.context, { kind: "automation", id: definition.automation.id, label: automationName })
   assert.equal(approval.runId, first.id)
@@ -226,6 +232,12 @@ test("a run approval covers one Automation run and written rules precede its tas
   await execute(first.token, "needs_approval")
   await finish?.()
   finish = undefined
+  const receipt = await status(asSam("GET", `/v1/automation-runs/${first.id}`), 200)
+  const execution = list(field(receipt, "events")).find((event) => event.type === "capability_execution")
+  assert.deepEqual(execution?.payload, {
+    messageId: first.messageId, partId: "fixture-call", callId: "fixture-call", name: "execute_capability", status: "error",
+    tool: "create_issue", connectionName: "Tracker", outcome: "asked",
+  })
   const next = await run()
   await execute(next.token)
   await execute(next.token)

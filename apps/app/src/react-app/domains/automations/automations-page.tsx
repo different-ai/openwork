@@ -26,7 +26,6 @@ import { AgentFace } from "@/react-app/design-system/agent-face"
 import type {
   AutomationDetail,
   AutomationRun,
-  AutomationRunEvent,
   AutomationState,
   CreateAutomation,
 } from "@openwork/types/automations"
@@ -76,6 +75,9 @@ import { automationExecutionThreadRoute, automationExecutionIdentity, automation
 import { automationRunConnectionFix, automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
 import { describeAutomationModel } from "./automation-model-options"
+
+import { AutomationRunDid, AutomationRunSteps } from "./automation-run-details"
+import { runUsageLabel } from "./automation-run-summary"
 
 const AUTOMATIONS_PAGE_FAST_POLL_MS = AUTOMATIONS_FAST_POLL_MS
 
@@ -145,21 +147,14 @@ function inputFromDetail(detail: AutomationDetail): CreateAutomation {
   }
 }
 
-function eventSummary(event: AutomationRunEvent) {
-  const payload = event.payload
-  const preferred = ["message", "text", "summary", "name", "warning", "error"]
-    .flatMap((key) => typeof payload[key] === "string" ? [payload[key]] : [])
-    .at(0)
-  if (preferred) return preferred
-  const serialized = JSON.stringify(payload)
-  return serialized === "{}" ? "No additional details." : serialized
+type AutomationApprovals = {
+  pending: readonly { automationId: string; runId: string | null; toolName: string; connectionName: string }[]
+  renderForRun: (input: { automationId: string; runId: string; onOpenRun: (runId: string) => void }) => ReactNode
+  renderStatus: (completedAt: number) => ReactNode
 }
 
-function usageLabel(run: AutomationRun) {
-  const input = run.usage.inputTokens === null ? "—" : run.usage.inputTokens.toLocaleString()
-  const output = run.usage.outputTokens === null ? "—" : run.usage.outputTokens.toLocaleString()
-  const cost = run.usage.costMicros === null ? "—" : `$${(run.usage.costMicros / 1_000_000).toFixed(4)}`
-  return `${input} input · ${output} output · ${cost}`
+function NeedsYesBadge() {
+  return <Badge variant="outline" data-run-needs-yes>Needs your yes</Badge>
 }
 
 function LoadingState() {
@@ -175,7 +170,7 @@ function LoadingState() {
 export function AutomationsPage(props: {
   providerCatalog?: AutomationProviderCatalog
   agentNames?: ReadonlyMap<string, string>
-  renderApprovals?: (completedAt: number) => ReactNode
+  approvals?: AutomationApprovals
   workspaceId?: string | null
   headerActionsTarget?: HTMLElement | null
   onSignIn?: () => void
@@ -233,7 +228,7 @@ export function AutomationsPage(props: {
     },
   })
 
-  const approvals = props.renderApprovals?.(Math.max(0,
+  const approvalsStatus = props.approvals?.renderStatus(Math.max(0,
     ...(listQuery.data?.items.map((item) => item.latestRun?.finishedAt ?? 0) ?? []),
     ...(runsQuery.data?.items.map((run) => run.finishedAt ?? 0) ?? []),
     receiptQuery.data?.run.finishedAt ?? 0,
@@ -249,9 +244,10 @@ export function AutomationsPage(props: {
     ))
   }, [listQuery.data, query, showArchived])
 
-  const openAutomation = (automationId: string | null) => {
+  const openAutomation = (automationId: string | null, runId?: string | null) => {
     const next = new URLSearchParams()
     if (automationId) next.set("automation", automationId)
+    if (runId) next.set("run", runId)
     setSearchParams(next)
     setEditing(false)
     setRepairingModel(false)
@@ -393,6 +389,9 @@ export function AutomationsPage(props: {
     const modelNeedsAttention = task.needsAttentionReason?.code === "model_access_lost"
       || task.needsAttentionReason?.code === "provider_unavailable"
     const runs = runsQuery.data?.items ?? []
+    const selectRun = (runId: string) => setSearchParams(new URLSearchParams({ automation: task.id, run: runId }))
+    const pendingForAutomation = props.approvals?.pending.filter((approval) => approval.automationId === task.id)
+    const pendingForRun = pendingForAutomation?.filter((approval) => approval.runId === selectedRunId)
     const selectedReceipt = receiptQuery.data?.run.id === selectedRunId ? receiptQuery.data : undefined
     const runNotice = selectedReceipt ? automationRunNotice(selectedReceipt.run) : null
     const connectionFix = selectedReceipt ? automationRunConnectionFix(selectedReceipt.run, selectedReceipt.events, readDenSettings().baseUrl) : null
@@ -458,7 +457,6 @@ export function AutomationsPage(props: {
 
     return (
       <div className="mx-auto max-w-5xl space-y-5 p-6">
-        {approvals}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
             <Button variant="ghost" size="icon" aria-label="Back to Automations" onClick={() => openAutomation(null)}>
@@ -619,56 +617,61 @@ export function AutomationsPage(props: {
               <CardContent className="space-y-2">
                 {runsQuery.isLoading ? <Skeleton className="h-24 rounded-xl" /> : null}
                 {!runsQuery.isLoading && runs.length === 0 ? <p className="text-sm text-muted-foreground">No runs yet.</p> : null}
-                {runs.map((run) => (
-                  <div
-                    key={run.id}
-                    className="flex w-full items-center justify-between gap-3 rounded-xl border border-border p-3 text-left"
-                  >
-                    <span className="min-w-0">
-                      <span className="flex flex-wrap items-center gap-2">
-                        <Badge variant={runVariant(run.status)}>{runStatusLabel(run)}</Badge>
-                        <span className="text-xs text-muted-foreground">{run.trigger}</span>
-                        {run.executionThread ? (
-                          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <ExecutionIcon run={run} />{automationExecutionIdentity(run.executionThread).label}
-                          </span>
-                        ) : null}
+                {runs.map((run) => {
+                  const needsYes = pendingForAutomation?.some((approval) => approval.runId === run.id)
+                  const usage = ACTIVE_RUN_STATUSES.has(run.status) ? null : runUsageLabel(run.usage)
+                  return (
+                    <div
+                      key={run.id}
+                      className="flex w-full items-center justify-between gap-3 rounded-xl border border-border p-3 text-left"
+                    >
+                      <span className="min-w-0">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <Badge variant={runVariant(run.status)}>{runStatusLabel(run)}</Badge>
+                          {needsYes && <NeedsYesBadge />}
+                          <span className="text-xs text-muted-foreground">{run.trigger}</span>
+                          {run.executionThread ? (
+                            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                              <ExecutionIcon run={run} />{automationExecutionIdentity(run.executionThread).label}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="mt-1 block truncate text-xs text-muted-foreground">{formatAutomationTime(run.startedAt ?? run.createdAt)}</span>
                       </span>
-                      <span className="mt-1 block truncate text-xs text-muted-foreground">{formatAutomationTime(run.startedAt ?? run.createdAt)}</span>
-                    </span>
-                    <span className="flex items-center gap-2">
-                      {!ACTIVE_RUN_STATUSES.has(run.status) ? <span className="text-xs text-muted-foreground">{usageLabel(run)}</span> : null}
-                      {ACTIVE_RUN_STATUSES.has(run.status) ? (
+                      <span className="flex items-center gap-2">
+                        {usage && <span className="text-xs text-muted-foreground">{usage}</span>}
+                        {ACTIVE_RUN_STATUSES.has(run.status) ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={busyAction !== null}
+                            onClick={() => void act(`cancel:${run.id}`, async () => {
+                              await client.cancelAutomationRun(organizationId, run.id)
+                            }, "Run cancellation requested")}
+                          >Cancel</Button>
+                        ) : null}
                         <Button
                           type="button"
                           size="sm"
-                          variant="outline"
-                          disabled={busyAction !== null}
-                          onClick={() => void act(`cancel:${run.id}`, async () => {
-                            await client.cancelAutomationRun(organizationId, run.id)
-                          }, "Run cancellation requested")}
-                        >Cancel</Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          if (run.executionThread) navigate(automationExecutionThreadRoute(run.executionThread))
-                          else setSearchParams(new URLSearchParams({ automation: task.id, run: run.id }))
-                        }}
-                      >Open</Button>
-                    </span>
-                  </div>
-                ))}
+                          variant="ghost"
+                          onClick={() => {
+                            if (run.executionThread) navigate(automationExecutionThreadRoute(run.executionThread))
+                            else selectRun(run.id)
+                          }}
+                        >Open</Button>
+                      </span>
+                    </div>
+                  )
+                })}
               </CardContent>
             </Card>
           </div>
 
           <Card variant="outline" className="h-fit">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Monitor className="size-4" />Execution thread</CardTitle>
-              <CardDescription>{selectedRunId ? "Run receipt and event timeline" : "Select a run to inspect its execution thread."}</CardDescription>
+              <CardTitle className="flex items-center gap-2"><Monitor className="size-4" />Run</CardTitle>
+              <CardDescription>{selectedRunId ? "What this run did." : "Select a run to see what it did."}</CardDescription>
             </CardHeader>
             <CardContent>
               {!selectedRunId ? (
@@ -722,26 +725,20 @@ export function AutomationsPage(props: {
                     </Alert>
                   ) : null}
                   {selectedReceipt.run.resultSummary ? (
-                    <div><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Result</p><p className="mt-1 whitespace-pre-wrap text-sm">{selectedReceipt.run.resultSummary}</p></div>
+                    <section data-run-result className="space-y-1">
+                      <h3 className="text-sm font-medium">Result</h3>
+                      <p className="whitespace-pre-wrap wrap-anywhere text-sm">{selectedReceipt.run.resultSummary}</p>
+                    </section>
                   ) : null}
-                  <div className="text-xs text-muted-foreground">{usageLabel(selectedReceipt.run)}</div>
-                  <ol className="space-y-3 border-s border-border ps-4">
-                    {selectedReceipt.events.map((event) => (
-                      <li key={event.id} className="relative">
-                        <span className="absolute -start-[1.2rem] top-1.5 size-2 rounded-full bg-muted-foreground" />
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium">{event.type.replaceAll("_", " ")}</span>
-                          <time className="text-xs text-muted-foreground">{formatAutomationTime(event.createdAt)}</time>
-                        </div>
-                        <p className="mt-1 break-words text-xs text-muted-foreground">{eventSummary(event)}</p>
-                      </li>
-                    ))}
-                  </ol>
+                  <AutomationRunDid events={selectedReceipt.events} pending={pendingForRun} />
+                  {props.approvals?.renderForRun({ automationId: task.id, runId: selectedRunId, onOpenRun: selectRun })}
+                  <AutomationRunSteps key={selectedRunId} events={selectedReceipt.events} pending={pendingForRun} />
                 </div>
               )}
             </CardContent>
           </Card>
         </div>
+        {approvalsStatus}
 
         <ConfirmModal
           open={archiveOpen}
@@ -766,7 +763,6 @@ export function AutomationsPage(props: {
   const newAutomation = <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8">
-      {approvals}
       {props.headerActionsTarget
         ? createPortal(newAutomation, props.headerActionsTarget)
         : props.headerActionsTarget === undefined ? <div className="flex justify-end">{newAutomation}</div> : null}
@@ -804,13 +800,15 @@ export function AutomationsPage(props: {
         <div className="grid gap-3 md:grid-cols-2">
           {filteredItems.map((item) => {
             const agentName = item.automation.agentId ? props.agentNames?.get(item.automation.agentId) : undefined;
+            const pending = props.approvals?.pending.filter((approval) => approval.automationId === item.automation.id)
+            const pendingRunId = pending?.find((approval) => approval.runId)?.runId
             return <button
               key={item.automation.id}
               type="button"
               data-automation-id={item.automation.id}
               {...(item.automation.state === "needs_attention" ? { "data-automation-needs-attention": true } : {})}
               className="rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/40"
-              onClick={() => openAutomation(item.automation.id)}
+              onClick={() => openAutomation(item.automation.id, pendingRunId)}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -831,7 +829,10 @@ export function AutomationsPage(props: {
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>{formatAutomationSchedule(item.revision.schedule)}</span>
-                <span>{item.latestRun ? `Last run: ${runStatusLabel(item.latestRun)}` : `Next: ${formatAutomationTime(item.automation.nextDueAt)}`}</span>
+                <span className="flex flex-wrap items-center gap-2">
+                  <span>{item.latestRun ? `Last run: ${runStatusLabel(item.latestRun)}` : `Next: ${formatAutomationTime(item.automation.nextDueAt)}`}</span>
+                  {pending && pending.length > 0 && <NeedsYesBadge />}
+                </span>
               </div>
             </button>
           })}
@@ -840,6 +841,7 @@ export function AutomationsPage(props: {
       {sharingEnabled && !showArchived ? (
         <SharedAutomationsSection key={organizationId} context={denContext} search={query} refresh={refresh} openAutomation={openAutomation} />
       ) : null}
+      {approvalsStatus}
     </div>
   )
 }

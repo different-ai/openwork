@@ -9,60 +9,49 @@ import { toolTitle } from "../connector-setup";
 import type { ExternalMcpTool, useMcpConnectionTools } from "../mcp-connections-data";
 import { AudiencePicker, everyone } from "./audience-picker";
 import { useSetToolRule, useToolPermissions } from "./data";
-import { accessChoices, accessForTool, accessLabels, defaultToolAccess, everyoneLabel, rulesForSubject, toolActivityLabel, withPendingRule } from "./model";
+import { accessChoices, accessLabels, defaultToolAccess, rulesForSubject, toolActivityLabel, toolRowAccess, withPendingRule } from "./model";
 
 const muted = "text-[13px] text-[var(--dls-text-secondary)]";
 const errorText = "text-[13px] text-[var(--ow-danger)]";
 const blockAllLabel = "Block this whole connection";
 const saveError = "Could not save this change. Try again.";
 
-type AccessMap = ReadonlyMap<string, ToolPermissionAccess>;
-
-function ToolRow({ name, tool, ownRules, orgRules, layers, everyoneSelected, busy, failed, save }: {
+function ToolRow({ access, name, tool, busy, failed, save }: {
+  access: ReturnType<typeof toolRowAccess>;
   name: string;
   tool?: ExternalMcpTool;
-  ownRules: AccessMap;
-  orgRules: AccessMap;
-  layers: readonly AccessMap[];
-  everyoneSelected: boolean;
   busy: boolean;
   failed: boolean;
   save: (rule: ToolPermissionAccess | null) => void;
 }) {
   const reasonId = useId();
   const title = tool ? toolTitle(tool) : name;
-  const fallback = tool ? defaultToolAccess(tool.annotations) : null;
-  const ownRule = ownRules.get(name);
-  const organization = accessForTool(name, fallback, [orgRules]);
-  const effective = accessForTool(name, fallback, layers);
-  const locked = !everyoneSelected && organization.rule === "block"
-    ? "Blocked for everyone. An admin can change this under Everyone."
-    : ownRules.has(TOOL_PERMISSION_EVERY_TOOL) ? "Turn off the whole connection block to change this." : null;
+  const { pressed, defaultLabel, notice, lockReason } = access;
   return <li data-tool-row={name} className="min-h-11 py-1">
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-      <div className="min-w-0 text-[13px]">
-        <span className="break-words font-medium">{title}</span>
-        {tool ? <span className={`ml-2 ${muted}`}>{toolActivityLabel(tool.annotations)}</span> : null}
-        {!everyoneSelected ? <div className={muted}>{everyoneLabel(organization)}</div> : null}
-        {locked ? <div id={reasonId} className={`flex items-center gap-1.5 ${muted}`}>
-          <Lock className="size-4 shrink-0" strokeWidth={1.5} aria-hidden />{locked}
+    <div className="grid grid-cols-1 items-start gap-x-4 gap-y-1 @[40rem]:grid-cols-[minmax(0,1fr)_23rem]">
+      <div className="min-w-0 text-[13px] @[40rem]:grid @[40rem]:min-h-9 @[40rem]:content-center">
+        <div className="wrap-anywhere">
+          <span className="font-medium">{title}</span>
+          {tool ? <span className={`ml-2 ${muted}`}>{toolActivityLabel(tool.annotations)}</span> : null}
+        </div>
+        {notice ? <div className={`grid ${muted}`}>
+          <span className={`col-start-1 row-start-1 ${notice.overridden ? "invisible" : ""}`}>{notice.label}</span>
+          {notice.overrideLabel ? <span className={`col-start-1 row-start-1 ${notice.overridden ? "" : "invisible"}`}>{notice.overrideLabel}</span> : null}
         </div> : null}
       </div>
-      <div className="flex flex-wrap items-center gap-x-2">
-        {ownRule && ownRule !== effective.access ? <span className={muted}>Saved: {accessLabels[ownRule]}</span> : null}
-        {!effective.rule && fallback ? <span className={muted}>Default</span> : null}
-        <div role="group" aria-label={`Access for ${title}`} aria-describedby={locked ? reasonId : undefined}
-          className="inline-flex items-center rounded-lg bg-[var(--dls-hover)] p-0.5">
-          {accessChoices.map((choice) => <DenButton key={choice} size="xs" data-tool-access={choice} aria-pressed={effective.access === choice}
-            variant={effective.access === choice ? effective.rule ? "plain" : "ghost" : "ghost"}
-            className={effective.access === choice ? "bg-[var(--dls-surface)]" : undefined}
-            disabled={busy || !tool || Boolean(locked)} onClick={() => { if (choice !== ownRule) save(choice); }}>
-            {accessLabels[choice]}
-          </DenButton>)}
-        </div>
-        {ownRule ? <DenButton variant="ghost" size="xs" data-tool-default="" aria-label={`Use the default for ${title}`}
-          disabled={busy} onClick={() => save(null)}>Use the default</DenButton> : null}
+      <div role="group" aria-label={`Access for ${title}`} aria-describedby={lockReason ? reasonId : undefined}
+        className="grid w-full grid-cols-[minmax(6rem,1fr)_repeat(3,minmax(0,1fr))] rounded-lg bg-[var(--dls-hover)] p-0.5">
+        {accessChoices.map((choice) => <DenButton key={choice} size="inline" data-tool-access={choice} data-tool-default={choice === "default" ? "" : undefined}
+          aria-pressed={pressed === choice} variant={pressed === choice ? "plain" : "ghost"}
+          className="aria-pressed:bg-[var(--dls-surface)] focus-visible:z-10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--dls-accent)] motion-reduce:transition-none"
+          disabled={busy || Boolean(lockReason) || (!tool && (choice !== "default" || pressed === "default"))}
+          onClick={() => { if (choice !== pressed) save(choice === "default" ? null : choice); }}>
+          {choice === "default" ? defaultLabel : accessLabels[choice]}
+        </DenButton>)}
       </div>
+      {lockReason ? <div id={reasonId} className={`flex items-center gap-1.5 ${muted} @[40rem]:col-span-2`}>
+        <Lock className="size-4 shrink-0" strokeWidth={1.5} aria-hidden />{lockReason}
+      </div> : null}
     </div>
     {failed ? <p role="alert" className={errorText}>{saveError}</p> : null}
   </li>;
@@ -141,9 +130,13 @@ export function ToolPermissionsSection({ org, connectionId, signedIn, catalog, o
       <DenSkeleton className="h-10 w-full" />
       <DenSkeleton className="h-10 w-full" />
     </div> : null}
-    {permissions.data && names.size > 0 ? <ul className="divide-y divide-[var(--dls-border)] border-y border-[var(--dls-border)]">
-      {[...names].map((name) => <ToolRow key={name} name={name} tool={toolsByName.get(name)} ownRules={ownRules} orgRules={orgRules}
-        layers={layers} everyoneSelected={everyoneSelected} busy={busy} failed={failedTool === name} save={(rule) => save(name, rule)} />)}
+    {permissions.data && names.size > 0 ? <ul className="@container divide-y divide-[var(--dls-border)] border-y border-[var(--dls-border)]">
+      {[...names].map((name) => {
+        const tool = toolsByName.get(name);
+        const access = toolRowAccess({ toolName: name, fallback: tool ? defaultToolAccess(tool.annotations) : null,
+          ownRules, orgRules, memberTeamRules, everyoneSelected });
+        return <ToolRow key={name} name={name} tool={tool} access={access} busy={busy} failed={failedTool === name} save={(rule) => save(name, rule)} />;
+      })}
     </ul> : null}
     {permissions.data && signedIn && catalog.isSuccess && names.size === 0 ? <p className={muted}>This connection has no tools to manage.</p> : null}
   </section>;

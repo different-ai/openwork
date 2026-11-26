@@ -123,7 +123,8 @@ import { usePersonalAgentSessionExtensions } from "@/react-app/domains/agents/ag
 import { PersonalAgentsProvider, type AgentScope, type AgentsRuntime } from "@/react-app/domains/agents/agents-runtime";
 import { useAgentNames } from "@/react-app/domains/agents/use-agents";
 import { SessionExtensionsProvider } from "@/react-app/kernel/session-extensions";
-import { ToolApprovalsStack } from "@/react-app/domains/tool-approvals/tool-approvals-stack";
+import { ApprovalLoadError, ApprovalRefresh, ToolApprovalsStack } from "@/react-app/domains/tool-approvals/tool-approvals-stack";
+import { RunApprovalSlot, useAutomationApprovals } from "@/react-app/domains/tool-approvals/run-approval-slot";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { remoteThreadAttentionBySession, setRemoteSessionLiveSync, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { CreatedSkillSharingProvider } from "./created-skill-sharing-provider";
@@ -2795,6 +2796,7 @@ export function SessionRoute() {
   const agentExtensions = usePersonalAgentSessionExtensions(agentsRuntime);
   const approvalsScope = useMemo(() => toolPermissionsEnabled && agentsDen.ready && agentsDen.client && personalAgentsScope
     ? { ...personalAgentsScope, client: agentsDen.client } : null, [agentsDen.client, agentsDen.ready, personalAgentsScope, toolPermissionsEnabled]);
+  const automationApprovals = useAutomationApprovals(automationsRouteActive ? approvalsScope : null);
   const sessionExtensions = useMemo(() => approvalsScope ? {
     ...agentExtensions,
     renderChatApprovals: (completedAt: number) => <ToolApprovalsStack scope={approvalsScope} surface="chat" completedAt={completedAt} />,
@@ -4015,7 +4017,14 @@ export function SessionRoute() {
         <AutomationsPage
           providerCatalog={automationCatalog}
           agentNames={agentNames}
-          renderApprovals={approvalsScope ? (completedAt) => <ToolApprovalsStack scope={approvalsScope} surface="automation" completedAt={completedAt} /> : undefined}
+          approvals={approvalsScope ? {
+            pending: automationApprovals.pending,
+            renderForRun: (input) => <RunApprovalSlot key={`${approvalsScope.denBaseUrl}:${approvalsScope.organizationId}:${approvalsScope.principal}:${input.runId}`} scope={approvalsScope} items={automationApprovals.items} {...input} />,
+            renderStatus: (completedAt) => <>
+              {completedAt > 0 && <ApprovalRefresh key={completedAt} scope={approvalsScope} completedAt={completedAt} />}
+              {automationApprovals.isError && <ApprovalLoadError onRetry={() => void automationApprovals.refetch()} />}
+            </>,
+          } : undefined}
           workspaceId={selectedWorkspaceId}
           headerActionsTarget={automationsHeaderActionsTarget}
           onSignIn={() => handleOpenSettings("/settings/cloud-account")}

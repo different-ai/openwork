@@ -8,6 +8,29 @@ export function approvalsForSurface(items: readonly ToolApproval[], surface: Too
   return items.filter((item) => item.status === "pending" && item.context.kind === surface);
 }
 
+export function automationApprovalTarget(approval: ToolApproval) {
+  if (approval.status !== "pending" || approval.context.kind !== "automation" || !approval.context.id) return null;
+  return { automationId: approval.context.id, runId: approval.runId, toolName: approval.toolName, connectionName: approval.connectionName };
+}
+
+export function approvalsForRun(items: readonly ToolApproval[], automationId: string, runId: string): ToolApproval[] {
+  return items.filter((item) => {
+    const target = automationApprovalTarget(item);
+    return target?.automationId === automationId && target.runId === runId;
+  });
+}
+
+export type AutomationApprovalResult = { kind: "denied" | "skipped" | "failed" } | { kind: "started"; runId: string };
+
+export function automationApprovalResultWords(result: AutomationApprovalResult, context: ToolApproval["context"]) {
+  switch (result.kind) {
+    case "denied": return { line: t("tool_approvals.automation_denied") };
+    case "skipped": return { line: t("tool_approvals.automation_next_run") };
+    case "failed": return { line: t("tool_approvals.run_failed", { name: automationApprovalName(context) }) };
+    case "started": return { line: t("tool_approvals.automation_started"), open: { label: t("tool_approvals.open_run"), runId: result.runId } };
+  }
+}
+
 export function automationApprovalName(context: ToolApproval["context"]): string {
   return context.label?.trim() || t("tool_approvals.automation_fallback");
 }
