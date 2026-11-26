@@ -338,10 +338,11 @@ export function CloudProvidersView({
     );
   }
 
-
+  const hasLegacyServerFailure = serverSync?.lastRun?.status === "failed"
+    && (liveGatewayProviders === null || rows.some((row) => row.status !== "blocked" && row.imported?.source !== "openwork_gateway"));
   const section = (
     <CloudProvidersSection
-      actionError={actionError ?? (serverSync?.lastRun?.status === "failed" ? "Could not verify providers with Den. Sync again to retry." : null)}
+      actionError={actionError ?? (hasLegacyServerFailure ? "Could not verify providers with Den. Sync again to retry." : null)}
       actionId={actionId}
       busy={busy}
       rows={rows}

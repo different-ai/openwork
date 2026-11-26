@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { spec } from "@openwork/testkit";
 import { expect } from "vitest";
 import type { Seed } from "@openwork/env";
@@ -18,9 +19,10 @@ async function acmeMember(seed: Seed) {
     await startAcmeGateway(stack, den.database.url, { ...gateway, env });
     const provider = await seedAcmeGateway(den.admin, upstream);
     const hostToken = crypto.randomUUID();
+    const workspaceDir = join(seed.tmpPath("acme"), "workspace");
     const { app, workspace } = await signedInAppWeb(seed, {
       den, webPort, as: "member", engine: "v2", name: "settings-ai-gateway-providers",
-      workspacePath: seed.tmpPath("Acme workspace"),
+      workspacePath: workspaceDir,
       env: { OPENWORK_HOST_TOKEN: hostToken, VITE_OPENWORK_HOST_TOKEN: hostToken },
     });
     return {
@@ -56,17 +58,22 @@ test("an Acme member can see which AI Gateway models are ready in Settings", asy
   });
 
   const providerRow = async () => (await probe.dom(providerRows)).elements.find(row => row.text.includes("Acme AI Gateway"));
+  const sectionText = async () => (await probe.dom(organization)).elements[0]?.text ?? "";
   await step("after: Acme's AI Gateway provider shows its brand and one ready model", async () => {
     await user.see({ text: "Acme AI Gateway" }, { timeoutMs: 30_000 });
+    await user.see({ text: "Synced with Den" }, { timeoutMs: 30_000 });
     const row = await providerRow();
     const text = row?.text.replace(/\s+/g, " ").trim() ?? "Provider row not found";
     const branded = (await probe.dom(anthropicMark)).elements.length === 1;
     const ready = ["Ready to use", world.provider.modelName, "1 model"].every(label => text.includes(label));
     const noRawId = !/\bipr_/i.test(text);
-    evidence.recordAssertionEvidence("The provider shows a readable name, one ready model and the Anthropic mark", `Model: ${world.provider.modelName}; ready with 1 model: ${ready}; Anthropic mark: ${branded}; no raw provider ID: ${noRawId}.`, ready && branded && noRawId);
+    const section = await sectionText();
+    const noWarning = !section.includes("Could not verify");
+    evidence.recordAssertionEvidence("The provider shows a readable name, one ready model and the Anthropic mark", `Model: ${world.provider.modelName}; ready with 1 model: ${ready}; Anthropic mark: ${branded}; no raw provider ID: ${noRawId}; no verification warning: ${noWarning}.`, ready && branded && noRawId && noWarning);
     await user.screenshot();
     expect(text).toContain(world.provider.modelName);
     expect(ready && branded && noRawId).toBe(true);
+    expect(section).not.toContain("Could not verify");
   });
 
   await step("after: Sync now keeps the provider verified and ready", async () => {
@@ -75,8 +82,11 @@ test("an Acme member can see which AI Gateway models are ready in Settings", asy
     await user.see({ text: "Synced with Den" }, { timeoutMs: 30_000 });
     const row = await providerRow();
     const ready = Boolean(row?.text.includes("Ready to use") && row.text.includes("1 model"));
-    evidence.recordAssertionEvidence("The provider is ready after refresh", `Synced with Den; Acme AI Gateway still shows Ready to use and 1 model: ${ready}.`, ready);
+    const section = await sectionText();
+    const noWarning = !section.includes("Could not verify");
+    evidence.recordAssertionEvidence("The provider is ready after refresh", `Synced with Den; Acme AI Gateway still shows Ready to use and 1 model: ${ready}; no verification warning: ${noWarning}.`, ready && noWarning);
     await user.screenshot();
     expect(ready).toBe(true);
+    expect(section).not.toContain("Could not verify");
   });
 });

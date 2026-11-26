@@ -151,7 +151,33 @@ test("live OpenAI shows brand and models even when legacy imports fail", async (
   expect(row.querySelector('svg[role="img"] path')?.getAttribute("d")).toStartWith("M22.28 9.82");
   expect(host.textContent).toContain("Synced with Den");
   expect(host.textContent).not.toContain("Not synced with Den yet");
+  expect(host.textContent).not.toContain("Could not verify providers with Den");
   expect(host.textContent).not.toMatch(/ipr_|gwm_/i);
+});
+
+test("a legacy organization provider keeps the sync error visible alongside live Gateway rows", async () => {
+  const rows = await renderProviders([openAI], {
+    cloudOrgProviders: [{
+      id: "lpr_legacy",
+      source: "custom",
+      providerId: "anthropic",
+      name: "Legacy Anthropic",
+      providerConfig: {},
+      hasApiKey: true,
+      models: [],
+      createdAt: null,
+      updatedAt: null,
+    }],
+    liveGatewaySyncedAt: Date.now(),
+    serverSync: {
+      reloadPending: false,
+      skippedProviders: {},
+      lastRun: { at: Date.now(), status: "failed" },
+    },
+  });
+  expect(rows.find((row) => row.textContent.includes("Legacy Anthropic"))?.textContent).toContain("Could not verify with Den");
+  expect(rows.find((row) => row.textContent.includes("OW OpenAI"))?.textContent).toContain("Ready to use");
+  expect(host.textContent).toContain("Could not verify providers with Den. Sync again to retry.");
 });
 
 test("ready and personal Bedrock rows precede admin-blocked providers without double-counting", async () => {
