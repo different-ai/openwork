@@ -30,6 +30,21 @@ const awsVersionedUrl = httpsUrl.refine((value) => {
     && !url.port && versions.length === 1 && Boolean(versions[0]?.trim()) && versions[0] !== "null"
     && [...url.searchParams.keys()].every((key) => key === "versionId")
 }, "Use an immutable regional S3 object version URL.")
+export function isReusableAwsInstallerUrl(input: string): boolean {
+  if (!URL.canParse(input)) return false
+  const url = new URL(input)
+  const versions = url.searchParams.getAll("versionId")
+  const version = versions[0]
+  if (versions.length !== 1 || !version || !/^[A-Za-z0-9_.~+/\-]{1,1024}$/.test(version) || version === "null"
+    || [...url.searchParams.keys()].some((key) => key !== "versionId")) return false
+  url.search = ""
+  const bucket = "[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]"
+  return !/[%\\\s]/.test(url.href)
+    && url.protocol === "https:" && !url.username && !url.password && !url.port && !url.hash
+    && new RegExp(`^${bucket}\\.s3\\.[a-z]{2}(?:-[a-z]+)+-[1-9]\\.amazonaws\\.com$`).test(url.hostname)
+    && /^\/[a-zA-Z0-9/_.,@+=-]*$/.test(url.pathname) && !url.pathname.includes("//")
+}
+
 const stableVersion = z.string().max(80).regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/)
 const atomicCoordinates = releaseSchema.omit({ apiOrigin: true }).extend({ version: stableVersion }).strict()
 const atomicSchemaFor = (provider: Provider) => provider === "gcp"

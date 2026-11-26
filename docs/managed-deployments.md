@@ -285,19 +285,18 @@ preparation verifies the release tag's commit, exact Linux/amd64 image digests
 and OCI source identity, then runs installer and container/bootstrap checks.
 These checks are **not** a real-cloud fresh-install or approved-Update receipt.
 
-Production promotion stays an explicit, protected operator action until a real
-cloud qualification gate is automated. Qualify the exact retained candidate on
-an isolated account, including a fresh install and version-increasing Update,
-and retain the manifest SHA-256 and review URL. Dispatch the workflow from the
-trusted default branch with `promote=true`, that manifest hash, and the trusted
-repository qualification review URL. The URL is the operator's attestation,
-not an automated assertion that its contents passed. The dedicated
-`managed-installer-production` environment must have nonempty required
-reviewers and prevent self-review. The workflow verifies that policy before
-assuming the release role or publishing; an absent/unprotected environment
-fails closed. Do not assume an existing production environment has reviewers,
-or change other deployment environments as part of installer setup.
-A newer release or changed candidate invalidates the earlier review.
+After checks pass, the AWS job publishes the immutable installer objects to S3.
+Publication does not change Den. To set the latest stable AWS installer as the
+default, run **Managed Stable Installer** on `dev` with `provider=aws` and
+`promote=true`, then approve the `managed-installer-production` deployment in
+GitHub. Review the published version and the run's checks before approving.
+That environment must require a reviewer and prevent self-review. A newer
+stable release appearing before approval invalidates the pending promotion.
+
+Before retiring a Den Admin pin, copy its exact effective release coordinates
+into the matching `DEN_MANAGED_DEPLOYMENT_*_RELEASE` environment value. Verify
+that Den advertises the same version after cutover; do not let an older
+environment value silently become the default.
 
 Before enabling promotion, deploy the atomic configuration reader below and
 verify the configuration API from a controlled internal organization. A Render
@@ -308,10 +307,9 @@ reviewed version before handing out new approvals.
 AWS promotion requires explicit operator configuration (never infer an account
 or create public access as a workaround):
 
-- `MANAGED_DEPLOYMENT_AWS_PROMOTION_ENABLED=true`.
 - `MANAGED_DEPLOYMENT_AWS_RELEASE_ROLE_ARN`: a narrowly scoped GitHub OIDC role
   in the release account, trusted only for the repository's
-  `managed-installer-production` environment.
+  `managed-installer-publish` environment, restricted to the default branch.
 - `MANAGED_DEPLOYMENT_AWS_RELEASE_ACCOUNT_ID`,
   `MANAGED_DEPLOYMENT_AWS_RELEASE_BUCKET`, and
   `MANAGED_DEPLOYMENT_AWS_RELEASE_REGION`.
@@ -362,9 +360,9 @@ registry tooling.
 
 On ambiguous publication/configuration/deploy failure, inspect the actual
 objects, selected record and deploy receipt before retrying. No automatic
-rollback or uncertain mutation replay is performed. Disable the promotion
-opt-in to pause future operator promotions; the existing `managedDeployments`
-kill switch blocks launches while authenticated enrollment and health reporting
+rollback or uncertain mutation replay is performed. Leave pending GitHub
+promotion requests unapproved to keep the current default; the existing
+`managedDeployments` kill switch blocks launches while authenticated enrollment and health reporting
 continue. An operator may deliberately restore a prior coordinate record after
 review, but that affects new approvals only—it never rolls back a customer's
 database. Pending approval runs retain their frozen coordinates.

@@ -19,9 +19,8 @@ import { attributeAuditRequest, auditServiceAttribution } from "../../audit/requ
 import { db } from "../../db.js"
 import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { markFeaturesUsed } from "../../feature-usage.js"
-import { type ManagedDeploymentRelease } from "../../managed-deployments/config.js"
+import { awsRelease, gcpRelease, releaseReadiness } from "../../managed-deployments/config.js"
 import { appliedConfiguration, approvalClaimed, configurationChangeRecord, configurationView, heldByCloud, withdrawConfigurationChange, type DeploymentRow, type RunRow } from "../../managed-deployments/configuration.js"
-import { effectiveInstallerReadiness, effectiveInstallerRelease } from "../../managed-deployments/releases.js"
 import { jsonValidator, orgPermissionRoute, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
 import { checkFixedWindowRateLimit, checkRateLimit } from "../../utils/rate-limit.js"
@@ -60,10 +59,6 @@ export function operation(summary: string, description: string, response: z.ZodT
 
 function awsTarget(row: DeploymentRow) {
   return normalizeAwsTargetForView(row.target)
-}
-
-async function releaseFor(row: DeploymentRow): Promise<ManagedDeploymentRelease | null> {
-  return row.provider === "aws" || row.provider === "gcp" ? effectiveInstallerRelease(row.provider) : null
 }
 
 export function launchDetails(row: DeploymentRow, run: RunRow, signIn: AwsSignIn | null = null) {
@@ -134,7 +129,8 @@ async function deploymentViews(rows: DeploymentRow[], signIn: AwsSignIn | null, 
   const history = options.configuration ? await database.select().from(ManagedDeploymentRunTable).where(inArray(ManagedDeploymentRunTable.deployment_id, rows.map((row) => row.id))) : null
   const events = runIds.length ? await database.select().from(ManagedDeploymentEventTable).where(inArray(ManagedDeploymentEventTable.run_id, runIds)).orderBy(asc(ManagedDeploymentEventTable.sequence)) : []
   const health = await database.select().from(ManagedDeploymentHealthTable).where(inArray(ManagedDeploymentHealthTable.deployment_id, rows.map((row) => row.id)))
-  const [aws, gcp] = await Promise.all([effectiveInstallerRelease("aws"), effectiveInstallerRelease("gcp")])
+  const aws = awsRelease()
+  const gcp = gcpRelease()
   return rows.map((row) => {
     const run = runs.find((entry) => entry.id === row.active_run_id) ?? null
     const report = health.find((entry) => entry.deployment_id === row.id) ?? null
@@ -182,8 +178,9 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
     orgPermissionRoute("deployments.view"), requireFeature("managedDeployments"), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
-      const [aws, gcpEnabled] = await Promise.all([effectiveInstallerReadiness("aws"), organizationFeatureEnabled(org.organization.id, GOOGLE_CLOUD_FEATURE)])
-      const gcp = gcpEnabled ? await effectiveInstallerReadiness("gcp") : { provider: "gcp", available: false, version: null, reason: "feature_disabled" }
+      const aws = releaseReadiness("aws")
+      const gcpEnabled = await organizationFeatureEnabled(org.organization.id, GOOGLE_CLOUD_FEATURE)
+      const gcp = gcpEnabled ? releaseReadiness("gcp") : { provider: "gcp", available: false, version: null, reason: "feature_disabled" }
       return c.json(managedDeploymentConfigurationSchema.parse({
         providers: [
           aws,
@@ -221,13 +218,13 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const body = c.req.valid("json")
-      if (body.provider === "aws" && !await effectiveInstallerRelease("aws")) return c.json({ error: "release_not_configured" }, 503)
+      if (body.provider === "aws" && !awsRelease()) return c.json({ error: "release_not_configured" }, 503)
       const id = randomUUID()
       const created = await db.transaction(async (tx) => {
         if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share", userId: org.currentMember.userId })) return launchError("feature_disabled", 404)
         if (body.provider === "gcp") {
           if (!await organizationFeatureEnabled(org.organization.id, GOOGLE_CLOUD_FEATURE, { database: tx, lock: "share" })) return launchError("feature_disabled", 404)
-          if (!await effectiveInstallerRelease("gcp")) return { error: "release_not_configured", status: 503 } as const
+          if (!gcpRelease()) return { error: "release_not_configured", status: 503 } as const
         }
         let target: Record<string, unknown> = body.target
         if (body.provider === "aws") {
@@ -296,7 +293,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const runtimeSettingsChanged = Boolean(changedTarget?.success && storedTarget && target && (storedTarget.runtimeProfile !== target.runtimeProfile || JSON.stringify(storedTarget.assistants) !== JSON.stringify(target.assistants)))
         if (target && (runtimeProfile || assistants || target.runtimeProfile === "gateway" || (storedTarget && assistantsEnabled(storedTarget.assistants)))
           && !await organizationFeatureEnabled(org.organization.id, "managedDeploymentAssistants", { database: tx, lock: "share", userId: org.currentMember.userId })) return launchError("feature_disabled", 404)
-        const release = await releaseFor(row)
+        const release = row.provider === "aws" ? awsRelease() : row.provider === "gcp" ? gcpRelease() : null
         if (!release) return { error: "release_not_configured", status: 503 } as const
         const [active] = row.active_run_id ? await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, row.active_run_id)).limit(1) : []
         const live = active && (heldByCloud(active) || (active.expires_at > now && (active.state === "awaiting_approval" || active.state === "provisioning")))
