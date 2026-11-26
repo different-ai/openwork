@@ -10,7 +10,7 @@ import {
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
-import { featureAvailableOn, mapFeatures, resolveFeature, resolveFeatures, type FeatureKey, type FeatureMap } from "@openwork/features"
+import { featureAvailableOn, mapFeatures, resolveFeatures, type FeatureKey, type FeatureMap } from "@openwork/features"
 import type { MiddlewareHandler } from "hono"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
