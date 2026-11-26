@@ -299,6 +299,8 @@ import { shortcutModelRef, type Shortcut } from "@/react-app/domains/shortcuts/m
 import { decideModelShortcut } from "@/react-app/domains/shortcuts/resolve-model-shortcut";
 import { decideFastToggle } from "@/react-app/domains/shortcuts/fast-toggle";
 import { useModelShortcutKeys } from "@/react-app/domains/shortcuts/use-model-shortcut-keys";
+import { dispatchAppAction, type ShortcutTarget } from "@/react-app/kernel/app-actions";
+import { useAppActionPaletteItems } from "./command-palette-app-actions";
 import { useEngineReload } from "./use-engine-reload";
 import { useSessionGroupSync } from "./use-session-group-sync";
 import { useUiStateStore } from "./ui-state-store";
@@ -3015,7 +3017,9 @@ export function SessionRoute() {
     else apply();
   }, [local.prefs.defaultModel, modelPicker.actionOptions, modelVariantValue, newTaskModel, newTaskVariant, changeNewTaskModel, resolveModelAvailability]);
   applyModelShortcutRef.current = applyModelShortcut;
-  useModelShortcutKeys(applyModelShortcut);
+  const runShortcutTargetRef = useRef<(target: ShortcutTarget) => void>(() => {});
+  const runShortcutTarget = useCallback((target: ShortcutTarget) => runShortcutTargetRef.current(target), []);
+  useModelShortcutKeys(applyModelShortcut, runShortcutTarget);
 
   const toggleFastMode = useCallback(() => {
     const target = captureFavoriteModelTarget(useWorkbenchStore.getState(), favoriteModelScope.current);
@@ -3066,6 +3070,24 @@ export function SessionRoute() {
     onCycleModelSource: () => { cycleFavoriteModel(true); },
     onToggleFastMode: toggleFastMode,
     onToggleArchiveSession: currentSessionArchive?.toggle,
+  });
+  runShortcutTargetRef.current = (target) => {
+    if (target.type === "skill") { dispatchAppAction(target); return; }
+    switch (target.actionId) {
+      case "command-palette.toggle": setCommandPaletteOpen((value) => !value); return;
+      case "session.new": createNewSessionInSelectedWorkspace(); return;
+      case "session-search.open": setSessionSearchOpen((value) => !value); return;
+      case "session.archive.toggle": currentSessionArchive?.toggle(); return;
+      case "terminal.toggle": if (platform.capabilities.terminal) setTerminalOpen((value) => !value); return;
+      case "sidebar.toggle": toggleSidebar(); return;
+      case "settings.computer": handleOpenSettings("/settings/computer"); return;
+      default: dispatchAppAction(target);
+    }
+  };
+  const closeCommandPalette = useCallback(() => setCommandPaletteOpen(false), [setCommandPaletteOpen]);
+  const appActionPaletteItems = useAppActionPaletteItems({
+    run: runShortcutTarget,
+    close: closeCommandPalette,
   });
   useReactRenderWatchdog("SessionRoute", {
     selectedSessionId,
@@ -3448,6 +3470,23 @@ export function SessionRoute() {
     if (!selectedWorkspaceId || !selectedSessionId) return;
     assignSessionToGroup(selectedWorkspaceId, selectedSessionId, groupId);
   }, [assignSessionToGroup, paletteDraftGroupMove, selectedSessionId, selectedWorkspaceId]);
+
+  const currentSessionMenuActions = useMemo(() => {
+    if (!selectedSessionId || !selectedWorkspaceId || !currentSessionForGroupMove) return undefined;
+    const target = { workspaceId: selectedWorkspaceId, sessionId: selectedSessionId, title: currentSessionForGroupMove.title };
+    return buildSessionMenuActions({
+      isPinned: currentSessionPinned,
+      isArchived: currentSessionArchived,
+      groups: paletteSessionGroups,
+      assignedGroupId: selectedWorkspaceGroupState?.assignments[selectedSessionId] ?? null,
+      onAssignGroup: (groupId) => assignSessionToGroup(target.workspaceId, target.sessionId, groupId),
+      onCreateGroup: () => requestSessionDialog({ action: "create-group", workspaceId: target.workspaceId }),
+      onTogglePin: () => sessionManagementStore.getState().togglePin(target.sessionId),
+      onRename: opencodeClient ? () => requestSessionDialog({ action: "rename", target }) : undefined,
+      onArchive: currentSessionArchive?.toggle,
+      onDelete: client ? () => requestSessionDialog({ action: "delete", target }) : undefined,
+    });
+  }, [assignSessionToGroup, client, currentSessionArchive, currentSessionArchived, currentSessionForGroupMove, currentSessionPinned, opencodeClient, paletteSessionGroups, selectedSessionId, selectedWorkspaceGroupState?.assignments, selectedWorkspaceId]);
 
   const sessionSearchPaletteItem = useMemo<PaletteItem>(() => ({
     id: "session-search.open",
@@ -3893,6 +3932,7 @@ export function SessionRoute() {
       sandboxTrialNotice={<SandboxTrialNotice />}
       ref={composerImpressionRef}
       currentSessionArchive={currentSessionArchive}
+      currentSessionMenuActions={currentSessionMenuActions}
       sessionReferenceInventories={sessionReferenceInventories}
       createWorkspaceSessionMetadataCallbacks={createWorkspaceSessionMetadataCallbacks}
       isSessionReferenceCurrent={isSessionReferenceCurrent}
@@ -4330,7 +4370,7 @@ export function SessionRoute() {
       currentSessionGroupId={currentSessionGroupId}
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
       onCreateGroup={selectedWorkspaceId ? () => requestSessionDialog({ action: "create-group", workspaceId: selectedWorkspaceId }) : undefined}
-      extraItems={[...currentSessionActionPaletteItems, ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]), diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
+      extraItems={[...currentSessionActionPaletteItems, ...appActionPaletteItems, ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]), diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}

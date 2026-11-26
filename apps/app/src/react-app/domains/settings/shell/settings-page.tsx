@@ -44,7 +44,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { t } from "../../../../i18n";
-import { isSettingsTabAllowed } from "../../../../app/cloud/desktop-app-restrictions";
+import { isSettingsTabAllowed, type DesktopAppRestrictionChecker } from "../../../../app/cloud/desktop-app-restrictions";
 import type { PlatformCapabilities } from "../../../../app/lib/platform-capabilities";
 import type { SettingsTab } from "../../../../app/types";
 import { isElectronRuntime } from "../../../../app/utils";
@@ -272,17 +272,25 @@ export type SettingsNavGroups = {
   cloud: SettingsTab[];
 };
 
-export function useSettingsNavGroups(developerMode: boolean): SettingsNavGroups {
-  const platform = usePlatform();
-  const checkRestriction = useCheckDesktopRestriction();
+export function getSettingsNavGroups(input: {
+  developerMode: boolean;
+  capabilities: Pick<PlatformCapabilities, "autoUpdate">;
+  checkRestriction: DesktopAppRestrictionChecker;
+}): SettingsNavGroups {
   const allowed = (tabs: SettingsTab[]) =>
-    tabs.filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));
+    tabs.filter((tab) => isSettingsTabAllowed({ tab, checkRestriction: input.checkRestriction }));
   return {
     hub: allowed(["general"]),
     workspace: allowed(getWorkspaceSettingsTabs()),
-    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { desktop: isElectronRuntime() })),
+    global: allowed(getGlobalSettingsTabs(input.developerMode, input.capabilities, { desktop: isElectronRuntime() })),
     cloud: allowed([...CLOUD_SETTINGS_TABS, "devices"]),
   };
+}
+
+export function useSettingsNavGroups(developerMode: boolean): SettingsNavGroups {
+  const platform = usePlatform();
+  const checkRestriction = useCheckDesktopRestriction();
+  return getSettingsNavGroups({ developerMode, capabilities: platform.capabilities, checkRestriction });
 }
 
 type SettingsPageProps = {

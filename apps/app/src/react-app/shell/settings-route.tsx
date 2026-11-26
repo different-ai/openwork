@@ -116,6 +116,7 @@ import { ClaudeImportView } from "@/react-app/domains/settings/pages/claude-impo
 import { AppearanceView } from "@/react-app/domains/settings/pages/appearance-view";
 import { KeyboardShortcutsView } from "@/react-app/domains/settings/pages/keyboard-shortcuts-view";
 import { ComputerUseView } from "@/react-app/domains/settings/pages/computer-use-view";
+import { RememberedFileSends, RememberedFileSharing } from "@/react-app/domains/settings/pages/computer-use-view";
 import { DevicesView } from "@/react-app/domains/settings/pages/devices-view";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
 import {
@@ -2360,6 +2361,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 void connectionsStore.refreshMcpServers();
               }}
             />
+            <RememberedFileSharing />
+            <RememberedFileSends client={openworkClient} />
           </SettingsStack>
         );
       case "ai":
@@ -2737,7 +2740,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           />
         );
       case "computer":
-        return <ComputerUseView fileSends={openworkClient} />;
+        return <ComputerUseView />;
       case "devices":
         return <DevicesView />;
       case "updates":

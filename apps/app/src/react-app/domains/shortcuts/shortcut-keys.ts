@@ -81,6 +81,10 @@ const BUILT_IN_CHORDS: ReadonlyArray<{ chord: string; label: string; os?: Shortc
   { chord: "Mod+Alt+F", label: "Toggle Fast", os: "other" },
 ];
 
+export function builtInChords(os: ShortcutOs): Array<{ chord: string; label: string }> {
+  return BUILT_IN_CHORDS.filter((entry) => !entry.os || entry.os === os).map(({ chord, label }) => ({ chord, label }));
+}
+
 export type ChordProblem =
   | { kind: "needs_modifier" }
   | { kind: "built_in"; label: string };

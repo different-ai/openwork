@@ -6,10 +6,11 @@ import { newSessionDraftOwnerKey } from "./new-session-destination";
 import { usePendingConversationStore } from "./pending-conversation-store";
 import { PendingConversationView } from "./pending-conversation";
 import type { CSSProperties, ReactNode, Ref } from "react";
+import { APP_ACTION_EVENT, appActionFromEvent } from "@/react-app/kernel/app-actions";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
-import { Archive, ArchiveRestore, ArrowLeft, Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, ChevronDown, Cloud, FileText, Laptop, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -39,6 +40,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -61,6 +64,9 @@ import { WorkbenchPaneStatus } from "./workbench-pane-status";
 import { MainSidebarControls } from "../sidebar/sidebar-chrome";
 import { MobileChatActions, MobileChatNavigation } from "./mobile-chat-navigation";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
+import { ActionMenuItems } from "@/components/ui/action-menu-items";
+import type { MenuAction } from "@/components/ui/action-menu-model";
+import { COMPACT_MENU_CONTENT_CLASS } from "../sidebar/compact-menu-style";
 import { captureSessionActionTarget, type SessionActionTarget } from "../sidebar/session-menu-actions";
 import type { SessionArchiveToggle } from "../sidebar/use-session-archive";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
@@ -244,6 +250,7 @@ export type SessionPageProps = {
   sandboxTrialNotice?: ReactNode;
   ref?: Ref<HTMLDivElement>;
   currentSessionArchive?: SessionArchiveToggle;
+  currentSessionMenuActions?: readonly MenuAction[];
   sessionReferenceInventories?: readonly SessionReferenceInventory[];
   createWorkspaceSessionMetadataCallbacks?: (runtime: SessionMetadataRuntime) => SessionMetadataCallbacks;
   isSessionReferenceCurrent?: (reference: SessionReferenceIdentity) => boolean;
@@ -670,6 +677,8 @@ export function SessionPage(props: SessionPageProps) {
   const { isPoppedOut: browserIsPoppedOut, placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
+  const sessionRunsLocally = fileOriginForRuntime({ desktop: isElectronRuntime(), serverUrl: props.openworkServerClient?.baseUrl, sandboxBackend: props.selectedWorkspaceDisplay.sandboxBackend }) === "local";
+  const compactChrome = !isMobile && !props.mainContentHeaderActionsRef && isElectronRuntime();
   const [primaryChatElement, setPrimaryChatElement] = useState<HTMLElement | null>(null);
   const computerUse = isElectronRuntime();
   useComputerEndTurn(props.runtimeSessionStatusById, computerUse);
@@ -1000,6 +1009,11 @@ export function SessionPage(props: SessionPageProps) {
     setCurrentSidePanel("panel");
   }, [artifactFileTargets, hasArtifactTargets, openTab, panelSessionId, selectTab, sessionPanelState, setCurrentSidePanel, sidePanelSessionKey]);
   const showEmptyPanelChooser = useCallback(() => setEmptyFilesPanelKey(null), []);
+  const openArtifactTarget = useCallback((target: OpenTarget) => {
+    if (!panelSessionId) return;
+    openTab(panelSessionId, { id: target.id, type: "artifact", label: target.name, preview: target.preview, target });
+    setCurrentSidePanel("panel");
+  }, [openTab, panelSessionId, setCurrentSidePanel]);
   const removeAccessibleTarget = useCallback((target: OpenTarget) => {
     const nextHiddenIds = new Set(hiddenAccessibleTargetIds);
     nextHiddenIds.add(target.id);
@@ -1029,10 +1043,29 @@ export function SessionPage(props: SessionPageProps) {
       window.removeEventListener("openwork-hide-accessible-target", hide);
     };
   }, [accessibleTargets, openTarget, removeAccessibleTarget]);
+  const runPanelAppAction = useEffectEvent((event: Event) => {
+    const target = appActionFromEvent(event);
+    if (target?.type !== "app") return;
+    if (target.actionId === "panel.toggle") {
+      setCurrentSidePanel(activeSidePanel ? null : "panel");
+      return;
+    }
+    if (target.actionId !== "browser.open") return;
+    if (browserPresentation.enabled && browserPresentation.mode === "floating") {
+      browserPresentation.toggle();
+      return;
+    }
+    void openBrowserRailPane();
+  });
   useEffect(() => {
     const handler = () => setCurrentSidePanel(null);
+    const action = (event: Event) => runPanelAppAction(event);
     window.addEventListener("openwork-close-right-pane", handler);
-    return () => window.removeEventListener("openwork-close-right-pane", handler);
+    window.addEventListener(APP_ACTION_EVENT, action);
+    return () => {
+      window.removeEventListener("openwork-close-right-pane", handler);
+      window.removeEventListener(APP_ACTION_EVENT, action);
+    };
   }, [setCurrentSidePanel]);
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = useState(false);
 
@@ -1210,6 +1243,7 @@ export function SessionPage(props: SessionPageProps) {
     !showWorkspaceSetupEmptyState &&
     !canRenderReactSurface;
   const findButtonSessionId = props.selectedSessionId;
+  const showSessionHeaderFind = Boolean(findButtonSessionId) && !hasMainContentTakeover;
   const currentSessionArchive = props.currentSessionArchive;
   const showArchiveButton = Boolean(
     findButtonSessionId && !props.primarySlot && !hasMainContentTakeover && currentSessionArchive,
@@ -1453,8 +1487,12 @@ export function SessionPage(props: SessionPageProps) {
       workspaceId={props.runtimeWorkspaceId}
       workspaceRoot={props.selectedWorkspaceRoot}
       onOpenTarget={openTarget}
-      isLocalWorkspace={fileOriginForRuntime({ desktop: isElectronRuntime(), serverUrl: props.openworkServerClient?.baseUrl, sandboxBackend: props.selectedWorkspaceDisplay.sandboxBackend }) === "local"}
+      isLocalWorkspace={sessionRunsLocally}
       onClose={closeRightPane}
+      compactChrome={compactChrome}
+      files={compactChrome ? artifactFileTargets : undefined}
+      onOpenFile={compactChrome ? openArtifactTarget : undefined}
+      onOpenBrowser={compactChrome && browserPresentation.enabled && browserPresentation.mode === "floating" ? browserPresentation.toggle : undefined}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
       emptyView={emptyPanelView}
       onShowEmptyChooser={showEmptyPanelChooser}
@@ -1558,6 +1596,7 @@ export function SessionPage(props: SessionPageProps) {
             openWorkConnectState: props.statusBar?.openWorkConnectState,
             onOpenDiagnostics: props.statusBar?.onOpenDiagnostics,
             onSendFeedback: props.onSendFeedback,
+            directSignIn: compactChrome,
           }}
         />
         <SidebarInset
@@ -1604,7 +1643,46 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Back to parent chat</TooltipContent>
                 </Tooltip>
               ) : null}
-              {props.primaryHeader && !hasMainContentTakeover ? null : <extensions.HeaderTitle sessionId={props.primaryTitle || props.mainContentTitle ? null : props.selectedSessionId}>
+              {props.primaryHeader && !hasMainContentTakeover ? null : compactChrome && !props.primaryTitle && !props.mainContentTitle && !showWorkspaceSetupEmptyState ? (
+                <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-[13px] titlebar-no-drag" data-session-header-workspace={workspaceName}>
+                  <span className="max-w-40 shrink-0 truncate px-1 text-dls-secondary">{workspaceName}</span>
+                  <span aria-hidden="true" className="text-dls-secondary/50">/</span>
+                  {!showSessionHeaderFind && !props.currentSessionMenuActions ? (
+                    <h1 data-session-header-title className="truncate px-1.5 text-[13px] font-medium text-dls-text">{selectedSessionTitle || t("session.default_title")}</h1>
+                  ) : <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button variant="ghost" size="sm" className="h-7 min-w-0 gap-1 rounded-lg px-1.5 font-normal text-dls-text" aria-label="Session menu" data-session-header-menu>
+                          <h1 data-session-header-title className="truncate text-[13px] font-medium">{selectedSessionTitle || t("session.default_title")}</h1>
+                          <ChevronDown className="size-3.5 shrink-0 text-dls-secondary" />
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent align="start" className={cn("w-56", COMPACT_MENU_CONTENT_CLASS)}>
+                      {showSessionHeaderFind && findButtonSessionId ? (
+                        <DropdownMenuItem onClick={() => useSessionFindStore.getState().openFind({ sessionId: findButtonSessionId })}>
+                          <TextSearch className="size-4" />
+                          Find in conversation
+                          <DropdownMenuShortcut>{isMacPlatform() ? "⌘F" : "Ctrl+F"}</DropdownMenuShortcut>
+                        </DropdownMenuItem>
+                      ) : null}
+                      {showSessionHeaderFind && props.currentSessionMenuActions ? <DropdownMenuSeparator /> : null}
+                      {props.currentSessionMenuActions ? <ActionMenuItems actions={props.currentSessionMenuActions} variant="dropdown" /> : null}
+                    </DropdownMenuContent>
+                  </DropdownMenu>}
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className="relative ms-1 inline-flex size-6 shrink-0 items-center justify-center text-dls-secondary" data-session-header-origin={sessionRunsLocally ? "local" : "remote"}>
+                          {sessionRunsLocally ? <Laptop className="size-4" strokeWidth={1.5} /> : <Cloud className="size-4" strokeWidth={1.5} />}
+                          <span className={cn("absolute end-0.5 top-0.5 size-1.5 rounded-full ring-2 ring-background", props.clientConnected ? "bg-green-9" : "bg-amber-9")} />
+                        </span>
+                      }
+                    />
+                    <TooltipContent>{sessionRunsLocally ? "Runs on this computer" : "Runs remotely"} · {props.clientConnected ? "Connected" : "Not connected"}</TooltipContent>
+                  </Tooltip>
+                </nav>
+              ) : <extensions.HeaderTitle sessionId={props.primaryTitle || props.mainContentTitle ? null : props.selectedSessionId}>
               <h1 data-session-header-title className={cn("truncate font-medium text-dls-text", !isElectronRuntime() && !props.primaryTitle && !props.mainContentTitle && "max-lg:hidden", props.mainContentHeaderActionsRef ? "text-base leading-6" : "text-[13px]")}>
                 {props.primaryTitle
                   ? props.primaryTitle
@@ -1640,7 +1718,7 @@ export function SessionPage(props: SessionPageProps) {
               <div ref={props.mainContentHeaderActionsRef} className="shrink-0 titlebar-no-drag" />
             ) : <div className="flex shrink-0 items-center gap-1.5 text-gray-10 titlebar-no-drag">
               <DesktopUpdateButton />
-              {!props.primarySlot && findButtonSessionId && !hasMainContentTakeover ? (
+              {!compactChrome && !props.primarySlot && findButtonSessionId && !hasMainContentTakeover ? (
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -1658,7 +1736,7 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Find in conversation ({isMacPlatform() ? "⌘F" : "Ctrl+F"})</TooltipContent>
                 </Tooltip>
               ) : null}
-              {showArchiveButton && currentSessionArchive ? (
+              {!compactChrome && showArchiveButton && currentSessionArchive ? (
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -1678,7 +1756,7 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>{archiveLabel} ({isMacPlatform() ? "⌘⇧E" : "Ctrl+Shift+E"})</TooltipContent>
                 </Tooltip>
               ) : null}
-              {showCloudSignIn ? (
+              {showCloudSignIn && !compactChrome ? (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -2127,7 +2205,8 @@ export function SessionPage(props: SessionPageProps) {
             ) : null}
           </ResizablePanelGroup>
           <extensions.Panel compact={isMobile} sessionId={props.primaryTitle || props.mainContentTitle ? null : props.selectedSessionId} />
-          <aside className={cn("w-10 shrink-0 flex-col items-center gap-1 px-1 py-2 text-muted-foreground mac:titlebar-no-drag", props.developerMode ? "flex" : "hidden", props.primarySurface !== "flat" && "lg:flex")}>
+          {!compactChrome || props.developerMode ? <aside className={cn("w-10 shrink-0 flex-col items-center gap-1 px-1 py-2 text-muted-foreground mac:titlebar-no-drag", props.developerMode ? "flex" : "hidden", props.primarySurface !== "flat" && "lg:flex")}>
+            {!compactChrome ? <>
             {isElectronRuntime() && browserPresentation.enabled ? <BrowserRailButton controller={browserPresentation} /> : isElectronRuntime() ? (
               <Button
                 variant="ghost"
@@ -2163,8 +2242,9 @@ export function SessionPage(props: SessionPageProps) {
                 </span>
               ) : null}
             </Button>
+            </> : null}
             <DebugRailSlot />
-          </aside>
+          </aside> : null}
           </div>
           <BrowserPresentationSurfaces sessionId={sidePanelSessionKey} controller={browserPresentation} />
           {props.developerMode && !canRenderReactSurface ? <SessionDebugPanel

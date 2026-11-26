@@ -46,12 +46,12 @@ const SEEN = "The agent sees the app window it is using, and its content goes to
 
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
-export function ComputerUseView({ fileSends }: { fileSends?: FileSendGrantsClient | null }) {
+export function ComputerUseView() {
   const enabled = isElectronRuntime();
-  return <ComputerUseSettings enabled={enabled} fileSends={fileSends} />;
+  return <ComputerUseSettings enabled={enabled} />;
 }
 
-export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; fileSends?: FileSendGrantsClient | null }) {
+export function ComputerUseSettings({ enabled }: { enabled: boolean }) {
   const [status, setStatus] = useState<ComputerStatus | null>(null);
   const [readError, setReadError] = useState("");
   const [actionError, setActionError] = useState("");
@@ -131,8 +131,6 @@ export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; 
       <LayoutStack>
         <Summary state="off" detail="Computer use isn't turned on in this app." />
         <PrivateValues />
-        <RememberedFileSharing />
-        <RememberedFileSends client={fileSends} />
       </LayoutStack>
     );
   }
@@ -221,8 +219,6 @@ export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; 
         </LayoutSection>
       ) : null}
       <PrivateValues />
-      <RememberedFileSharing />
-      <RememberedFileSends client={fileSends} />
     </LayoutStack>
   );
 }

@@ -1,10 +1,12 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowRight,
   ArrowUpRight,
   BookOpen,
   ChevronDown,
   ChevronUp,
+  KeyRound,
   LogOut,
   MessageCircleMore,
   MoreHorizontal,
@@ -14,6 +16,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { useNavigate } from "react-router";
+import { COMPACT_MENU_CONTENT_CLASS } from "./compact-menu-style";
 
 import {
   DropdownMenu,
@@ -24,6 +27,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { OpenWorkMark } from "@/components/chat/capability-call-line";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { usePlatform } from "../../../kernel/platform";
@@ -196,6 +200,7 @@ export type AccountStatusMenuProps = {
   onOpenAccountSettings?: () => void;
   onOpenDiagnostics?: () => void;
   onSendFeedback?: () => void;
+  directSignIn?: boolean;
 };
 
 export function AccountStatusMenu(props: AccountStatusMenuProps) {
@@ -324,7 +329,26 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   return (
     <div className="flex w-full items-center gap-1">
     <DropdownMenu>
-      <DropdownMenuTrigger
+      {props.directSignIn && !signedIn && !restoringSession ? (
+        <button
+          ref={triggerRef}
+          type="button"
+          data-testid="account-status-menu"
+          data-runtime-state={runtimeStatus?.variant}
+          data-connect-state={connectStatus?.state}
+          className="group flex min-w-0 flex-1 items-center gap-2 rounded-lg ps-1.5 pe-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-lg:min-h-11"
+          onClick={openSignIn}
+        >
+          <span className="flex size-6 shrink-0 items-center justify-center text-sidebar-foreground">
+            <OpenWorkMark className="size-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[12px] font-medium text-sidebar-foreground">Sign in</span>
+            <span className="block truncate text-[10.5px] leading-tight text-muted-foreground">{serverLabel}</span>
+          </span>
+          <ArrowRight size={13} className="shrink-0 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0.5 group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" />
+        </button>
+      ) : <DropdownMenuTrigger
         render={
           <button
             ref={triggerRef}
@@ -364,9 +388,9 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
               ) : null}
           </button>
         }
-      />
+      />}
       <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Account menu"><MoreHorizontal size={14} /></Button>} />
-      <DropdownMenuContent side="top" align="start" className="w-72">
+      <DropdownMenuContent side="top" align="start" className={props.directSignIn ? cn("w-60", COMPACT_MENU_CONTENT_CLASS) : "w-72"}>
         {signedIn ? (
           <div className="px-2 py-1.5 text-[11px] text-muted-foreground">{user.email}</div>
         ) : null}
@@ -378,7 +402,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         ) : null}
 
         {showStatus ? (
-          <div className="mx-1 mb-1 flex flex-col gap-2 rounded-lg bg-muted/50 p-2">
+          <div className={props.directSignIn ? "flex flex-col gap-2 px-2 py-1.5" : "mx-1 mb-1 flex flex-col gap-2 rounded-lg bg-muted/50 p-2"}>
             {props.developerMode ? (
               <>
                 {runtimeStatus ? (
@@ -459,11 +483,13 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
               platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn));
             }}
           >
-            <Sparkles className="size-3.5 text-blue-11" />
-            <span className="flex min-w-0 flex-col">
-              <span>OpenWork Models</span>
-              <span className="text-[10.5px] text-muted-foreground">hosted frontier models</span>
-            </span>
+            <Sparkles className={props.directSignIn ? "size-3.5" : "size-3.5 text-blue-11"} />
+            {props.directSignIn ? "OpenWork Models" : (
+              <span className="flex min-w-0 flex-col">
+                <span>OpenWork Models</span>
+                <span className="text-[10.5px] text-muted-foreground">hosted frontier models</span>
+              </span>
+            )}
           </DropdownMenuItem>
         ) : null}
         {(connectNeedsAttention && !controlSettingsBlocked) || promoVisible ? <DropdownMenuSeparator /> : null}
@@ -491,7 +517,36 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             <LogOut className="size-3.5" />
             Log out
           </DropdownMenuItem>
-        ) : restoringSession ? null : (
+        ) : restoringSession ? null : props.directSignIn ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem closeOnClick={false} aria-expanded={manualAuthOpen} aria-controls="account-manual-auth-panel" onClick={() => setManualAuthOpen((open) => !open)}>
+              <KeyRound className="size-3.5" />
+              {manualAuthOpen ? t("den.hide_signin_code") : t("den.paste_signin_code")}
+            </DropdownMenuItem>
+            {manualAuthOpen ? (
+              <div
+                id="account-manual-auth-panel"
+                className="flex flex-col gap-2 px-2 pb-2 pt-1"
+                onPointerDown={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                <Input
+                  aria-label={t("den.signin_link_label")}
+                  value={pasteCode}
+                  onChange={(event) => manualCode.setCode(event.currentTarget.value)}
+                  placeholder={t("den.signin_link_placeholder")}
+                  className="h-8 text-sm"
+                  disabled={pasteBusy}
+                />
+                <Button type="button" size="sm" disabled={pasteBusy || !pasteCode.trim()} onClick={() => void submitPastedCode()}>
+                  {pasteBusy ? t("den.finishing") : t("den.finish_signin")}
+                </Button>
+                {pasteError ? <p className="text-[11px] text-destructive">{pasteError}</p> : null}
+              </div>
+            ) : null}
+          </>
+        ) : (
           <div
             className="flex flex-col gap-2 px-2 py-2"
             onPointerDown={(event) => event.stopPropagation()}

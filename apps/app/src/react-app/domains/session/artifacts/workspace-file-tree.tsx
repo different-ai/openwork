@@ -35,6 +35,7 @@ type WorkspaceFileTreeProps = {
   selectedPath: string;
   onOpenFile: (entry: OpenworkWorkspaceCatalogEntry) => void;
   fileActions?: readonly WorkspaceFileAction[];
+  className?: string;
 };
 
 function buildFileContextMenu(
@@ -64,7 +65,7 @@ function treePath(entry: OpenworkWorkspaceCatalogEntry) {
   return entry.kind === "dir" ? `${entry.path}/` : entry.path;
 }
 
-export function WorkspaceFileTree({ client, workspaceId, workspaceName, selectedPath, onOpenFile, fileActions }: WorkspaceFileTreeProps) {
+export function WorkspaceFileTree({ client, workspaceId, workspaceName, selectedPath, onOpenFile, fileActions, className }: WorkspaceFileTreeProps) {
   const showNativeMenu = useNativeContextMenu();
   const showNativeMenuRef = useRef(showNativeMenu);
   showNativeMenuRef.current = showNativeMenu;
@@ -80,6 +81,8 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
   entriesByPathRef.current = entriesByPath;
   const fileActionsRef = useRef(fileActions);
   fileActionsRef.current = fileActions;
+  const onOpenFileRef = useRef(onOpenFile);
+  onOpenFileRef.current = onOpenFile;
   const paths = useMemo(() => entries.map(treePath), [entries]);
   const { model } = useFileTree({
     composition: {
@@ -115,7 +118,7 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
     onSelectionChange: (selectedPaths) => {
       const path = selectedPaths.at(-1)?.replace(/\/$/, "");
       const entry = path ? entriesByPathRef.current.get(path) : undefined;
-      if (entry?.kind === "file") onOpenFile(entry);
+      if (entry?.kind === "file") onOpenFileRef.current(entry);
     },
     paths: [],
     search: false,
@@ -134,7 +137,7 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
 
   return (
     <aside
-      className="flex h-full min-h-0 w-40 shrink-0 flex-col border-r border-border bg-muted/20"
+      className={cn("flex h-full min-h-0 w-40 shrink-0 flex-col border-r border-border bg-muted/20", className)}
       data-workspace-file-tree
       data-workspace-file-count={entries.length}
     >
