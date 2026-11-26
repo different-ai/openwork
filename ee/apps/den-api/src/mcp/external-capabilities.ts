@@ -50,7 +50,7 @@ import type { CapabilityMatch, CapabilityToolAnnotations } from "./search.js"
 import { AGENT_SOURCE_BLOCKED_MESSAGE, agentMayUseExternalTool, agentReadAllowlist, type AgentReadAllowlist } from "./agent-read-sources.js"
 import { AGENT_TOOL_WITHHELD_MESSAGE, connectionsWithheld, toolsWithheld, WORKBOT_CONNECTION_WITHHELD_MESSAGE } from "./workbot-turn-limits.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
-import { personalAgentRunId } from "./workbot-turn-limits.js"
+import { personalAgentExecution } from "./workbot-turn-limits.js"
 import { toolPermissionRefusal } from "../tool-permissions/dispatch.js"
 import { personalAgentCredentialMember } from "../personal-agents/shared-logins.js"
 import {
@@ -105,7 +105,7 @@ export async function resolveMcpMemberIdentity(input: {
 export function mcpMemberForToken<T extends McpMemberIdentity>(member: T, scopes: ReadonlySet<string>): T {
   const withheldConnectionIds = connectionsWithheld(scopes)
   const withheldTools = toolsWithheld(scopes)
-  const personalAgentScopes = personalAgentRunId(scopes) === undefined ? undefined : scopes
+  const personalAgentScopes = personalAgentExecution(scopes) === undefined ? undefined : scopes
   if (!withheldConnectionIds && !withheldTools && !personalAgentScopes) return member
   return {
     ...member,
@@ -934,7 +934,7 @@ export async function searchExternalCapabilities(input: {
   const scriptNamespaces = namespaceContext?.namespaces.externalMcp
   const member = input.member
   const selectedConnections = selectExternalMcpSearchConnections(connections, queryTokens, EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT,
-    (connection) => connection.credentialMode === "per_member" && (member.personalAgentScopes || (input.scopes && personalAgentRunId(input.scopes)))
+    (connection) => connection.credentialMode === "per_member" && (member.personalAgentScopes || (input.scopes && personalAgentExecution(input.scopes)))
       ? undefined : cachedSearchTools(connection, member))
   input.reportCoverage?.({
     eligibleConnections: connections.length,
@@ -1512,7 +1512,7 @@ export async function executeExternalCapability(input: {
     const forwardedArguments = isRecord(input.args) ? input.args : {}
     let checked: CheckedTool
     let providerCall: ReturnType<typeof callExternalMcpTool>
-    if (input.requireReadOnly && personalAgentRunId(input.scopes) === undefined) {
+    if (input.requireReadOnly && personalAgentExecution(input.scopes) === undefined) {
       let refusal: ExternalCapabilityFailure | undefined
       let passed!: (value: CheckedTool) => void
       let failed!: (cause: unknown) => void
@@ -1547,7 +1547,7 @@ export async function executeExternalCapability(input: {
       }
     } else {
       const listTools = () => listExternalMcpTools(connection, redirectUri, member, undefined, deadline)
-      const agentMember = personalAgentRunId(input.scopes) === undefined ? null : input.member
+      const agentMember = personalAgentExecution(input.scopes) === undefined ? null : input.member
       let result = check(await (agentMember ? listTools() : cachedExternalToolCatalog(catalogKey, listTools)))
       if (!agentMember && !result.ok && result.error === "unknown_capability") {
         forgetExternalToolCatalog(catalogKey)

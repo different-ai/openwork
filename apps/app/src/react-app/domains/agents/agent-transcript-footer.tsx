@@ -7,7 +7,7 @@ import { AgentRunResult, AgentScheduledRunSummary } from "./agent-run-result";
 import { useAgentsRuntime } from "./agents-runtime";
 import { agentRunQueueMessage, agentRunSource, isActiveRun, useAgentActions, useAgentDetail, useAgentRequestsQuery, useAgentRunsQuery } from "./use-agents";
 
-export function AgentTranscriptFooter(props: { sessionId: string }) {
+export function AgentTranscriptFooter(props: { sessionId: string; scoped?: boolean }) {
   const runtime = useAgentsRuntime();
   const chat = useAgentChatStore((state) => agentChatFor(state.chats, runtime, props.sessionId));
   const agent = useAgentDetail(runtime, chat?.agentId);
@@ -19,7 +19,7 @@ export function AgentTranscriptFooter(props: { sessionId: string }) {
   if (!runtime || !chat || !agent || !agentId) return null;
   const runs = runsQuery.data ?? [];
   const routines = agent.routines.filter((routine) => routine.state !== "archived");
-  const visibleRuns = runs.filter((run) => run.id !== chat.firstRunId).sort((a, b) => a.createdAt - b.createdAt).slice(-5);
+  const visibleRuns = runs.filter((run) => props.scoped || run.id !== chat.firstRunId).sort((a, b) => a.createdAt - b.createdAt).slice(-5);
   const requests = (requestsQuery.data ?? []).filter((request) => {
     if (request.kind !== "tool" || request.status !== "pending" || !request.connectionId || !request.toolName) return true;
     return agent.revision.toolPolicy.tools[request.connectionId]?.[request.toolName] !== "block";
@@ -37,7 +37,7 @@ export function AgentTranscriptFooter(props: { sessionId: string }) {
       })}
       {runsQuery.isError && <p className="text-xs text-dls-secondary">{t("agents.runs_unavailable")}</p>}
       {requests.map((request) => request.kind === "tool" ? (
-        <AgentAskCard key={agentChatKey(runtime, request.id)} runtime={runtime} agent={agent} request={request} onAllowed={() => {
+        <AgentAskCard key={agentChatKey(runtime, request.id)} runtime={runtime} agent={agent} request={request} onAllowed={!request.runId ? undefined : () => {
           if (!request.requestedByCaller) return;
           const previousRun = runs.find((run) => run.id === request.runId);
           const routineId = previousRun?.automationId ?? (request.runId && request.runId === chat.firstRunId ? chat.routineId : null) ?? routines[0]?.id;

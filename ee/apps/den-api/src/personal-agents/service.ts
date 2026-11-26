@@ -65,18 +65,12 @@ export class PersonalAgentService {
     return this.automationOverride ?? automationService
   }
 
-  async create(scope: OwnerScope, definition: CreatePersonalAgent, connectorControls = false): Promise<PersonalAgentDetail> {
+  async create(scope: OwnerScope, definition: CreatePersonalAgent): Promise<PersonalAgentDetail> {
     const replay = await personalAgentRepository.replayCreate({ ...scope, definition })
     if (replay) return replay
     const caller = { organizationId: scope.organizationId, memberId: scope.ownerMemberId }
     const desired = definition.toolPolicy ?? EMPTY_PERSONAL_AGENT_TOOL_POLICY
     const blocks = await personalAgentNeverBlocks(caller, definition.never ?? [])
-    if (!connectorControls) {
-      const tools = { ...desired.tools }
-      for (const [id, entries] of Object.entries(blocks.tools)) tools[id] = { ...tools[id], ...entries }
-      const toolPolicy = await toolPolicyOverOrganizationConnectors(scope.organizationId, { connections: { ...desired.connections, ...blocks.connections }, tools })
-      return personalAgentRepository.create({ ...scope, definition, toolPolicy, legacyConnectorAccess: true, neverConnectionIds: [], now: Date.now() })
-    }
     const canonical = await toolPolicyOverOrganizationConnectors(scope.organizationId, desired)
     const connections: PersonalAgentToolPolicy["connections"] = Object.fromEntries(Object.entries(canonical.connections).filter(([, rule]) => rule === "block"))
     const tools: PersonalAgentToolPolicy["tools"] = {}

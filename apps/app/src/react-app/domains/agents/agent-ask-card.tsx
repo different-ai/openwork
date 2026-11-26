@@ -12,12 +12,12 @@ export function AgentAskCard({ runtime, agent, request, onAllowed }: {
   runtime: AgentsRuntime;
   agent: PersonalAgentDetail;
   request: PersonalAgentRequest;
-  onAllowed: () => void;
+  onAllowed?: () => void;
 }) {
   const decision = useDecideAgentToolRequest(runtime, agent.agent.id, request.id);
   const decide = (choice: Exclude<PersonalAgentRequestDecision, "approve">) => decision.mutate(choice, {
     onSuccess: (updated) => {
-      if (updated.runId && (choice === "turn_on" ? updated.status === "always_allowed" && updated.requestedByCaller : shouldRerunAfterToolDecision(updated, choice))) onAllowed();
+      if (updated.runId && (choice === "turn_on" ? updated.status === "always_allowed" && updated.requestedByCaller : shouldRerunAfterToolDecision(updated, choice))) onAllowed?.();
     },
   });
   if (request.kind !== "tool") return null;
@@ -36,7 +36,9 @@ export function AgentAskCard({ runtime, agent, request, onAllowed }: {
       : toolRequestReceipt(current.toolName || !connectorAccess ? current : { ...current, toolTitle: connection }, name, deniedByYou);
     if (!receipt) return null;
     const Shield = current.status === "denied" ? ShieldX : ShieldCheck;
-    const rerunLine = agent.role === "collaborator" ? null : toolRequestRerunLine(current);
+    const rerunLine = agent.role === "collaborator" ? null : onAllowed ? toolRequestRerunLine(current)
+      : current.requestedByCaller && (current.status === "allowed_once" || current.status === "always_allowed")
+        ? t("agents.chat_permission_next") : null;
     return (
       <div data-agent-ask={current.id} data-agent-ask-receipt={current.status} className="text-xs leading-relaxed text-dls-secondary">
         <p className="flex items-baseline gap-1.5">

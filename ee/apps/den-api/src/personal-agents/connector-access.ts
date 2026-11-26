@@ -3,16 +3,16 @@ import type { PersonalAgentToolPolicy } from "@openwork/types/den/personal-agent
 import { externalMcpConnectionReadyForMember, listUsableExternalMcpConnections } from "../capability-sources/external-mcp-connections.js"
 import { organizationFeatureEnabled } from "../features.js"
 import { listTeamsForMember } from "../member-teams.js"
-import { personalAgentRunId } from "../mcp/workbot-turn-limits.js"
-import { approvedAgentConnectorTools } from "../tool-permissions/approvals.js"
+import { personalAgentExecution } from "../mcp/workbot-turn-limits.js"
+import { agentApprovalContext, approvedAgentConnectorTools } from "../tool-permissions/approvals.js"
 import { readSubjectToolPolicies, readSubjectToolPolicy } from "../tool-permissions/rules.js"
-import { personalAgentDispatchContext } from "./permissions-dispatch.js"
+import { personalAgentExecutionContext } from "./permissions-dispatch.js"
 
 export function normalizedPersonalAgentConnectorName(name: string) {
   return name.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase()
 }
 
-type ConnectorDefaults = { legacyConnectorAccess: boolean; neverConnectionIds: readonly string[] }
+type ConnectorDefaults = { defaultConnectorsOff?: boolean; legacyConnectorAccess: boolean; neverConnectionIds: readonly string[] }
 
 type ConnectorState = "on" | "off" | "blocked"
 
@@ -21,21 +21,21 @@ export function personalAgentConnectorState(agent: ConnectorDefaults, policy: Pi
   if (agent.neverConnectionIds.includes(connectionId) || (agent.legacyConnectorAccess && rule === "block")) return "blocked"
   if (rule === "allow") return "on"
   if (rule === "block") return "off"
-  return agent.legacyConnectorAccess ? "on" : "off"
+  return agent.legacyConnectorAccess && !agent.defaultConnectorsOff ? "on" : "off"
 }
 
 export async function personalAgentConnectorAccess(input: { scopes?: ReadonlySet<string>; organizationId: string; memberId: string }) {
-  const runId = input.scopes && personalAgentRunId(input.scopes)
-  if (runId === undefined) return null
+  const execution = input.scopes && personalAgentExecution(input.scopes)
+  if (!execution) return null
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
-  const context = await personalAgentDispatchContext(runId, organizationId, input.memberId)
+  const context = await personalAgentExecutionContext(execution, organizationId, input.memberId)
   if (!context || context.paused) return { state: (): ConnectorState => "blocked", tools: async () => new Set<string>(), toolBlocked: () => true, canRequest: false }
   const memberId = normalizeDenTypeId("member", context.memberId)
   const [agent, organization, teamAndMember, canRequest] = await Promise.all([
     readSubjectToolPolicy({ organizationId, kind: "agent", id: context.agentId }),
     readSubjectToolPolicy({ organizationId, kind: "organization", id: organizationId }),
     organizationFeatureEnabled(organizationId, "toolPermissions"),
-    organizationFeatureEnabled(organizationId, "personalAgentConnectorControls", { userId: context.userId ?? undefined }),
+    organizationFeatureEnabled(organizationId, "personalAgents", { userId: context.userId ?? undefined }),
   ])
   const teamIds = teamAndMember ? (await listTeamsForMember({ organizationId, memberId })).map(({ id }) => id) : []
   const [teams, member] = await Promise.all([
@@ -50,7 +50,7 @@ export async function personalAgentConnectorAccess(input: { scopes?: ReadonlySet
     toolBlocked: (connectionId: string, toolName: string) => Object.hasOwn(agent.tools[connectionId] ?? {}, toolName) && agent.tools[connectionId][toolName] === "block"
       || tenant.some((entry) => Object.hasOwn(entry.tools[connectionId] ?? {}, toolName) && entry.tools[connectionId][toolName] === "block"),
     tools: async (connectionId: string) => canRequest && state(connectionId) === "off"
-      ? approvedAgentConnectorTools({ organizationId, memberId, connectionId, context: { kind: "agent", id: context.agentId, label: context.agentName, runId } })
+      ? approvedAgentConnectorTools({ organizationId, memberId, connectionId, context: agentApprovalContext(context, execution) })
       : new Set<string>(),
   }
 }

@@ -53,7 +53,7 @@ test("personal agent discovery and execution check the flag independently", asyn
       assert.deepEqual(proposal?.arguments.find(({ name }) => name === "connectorNames"), { name: "connectorNames", type: "array", required: false });
 
       enabled = false;
-      const denied: unknown = JSON.parse(await plugin.tool.openwork_execute.execute({ id: "agent.propose", args }, {}));
+      const denied: unknown = JSON.parse(await plugin.tool.openwork_execute.execute({ id: "agent.propose", args: { ...args, connectorNames: ["Slack"] } }, {}));
       assert.deepEqual(denied, { ok: false, id: "agent.propose", code: "unavailable", error: "Agents are not turned on for this organization." });
       const off = contract.parse(JSON.parse(await plugin.tool.openwork_context.execute())).context;
       assert.equal(off.contributions.some(({ featureId }) => featureId === "agents"), false);

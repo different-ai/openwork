@@ -1541,6 +1541,13 @@
       "when": 1795728289466,
       "tag": "0220_agent_connector_access",
       "breakpoints": true
+    },
+    {
+      "idx": 221,
+      "version": "5",
+      "when": 1795730817749,
+      "tag": "0221_personal_agent_standing_chat",
+      "breakpoints": true
     }
   ]
 }

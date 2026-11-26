@@ -9,8 +9,8 @@ import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/compone
 import { SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { t } from "@/i18n";
 
-import { resolveAgentChatSession } from "./agent-chat-session";
-import { agentChatForAgent, agentChatsInScope, useAgentChatStore, type AgentChat } from "./agent-chat-store";
+import { standingChatSessionId } from "./agent-chat-mode";
+import { agentChatForAgent, agentChatsInScope, isStandingChat, useAgentChatStore, type AgentChat } from "./agent-chat-store";
 import { AgentFace } from "./agent-face";
 import { firstName } from "./agent-words";
 import { useAgentsRuntime } from "./agents-runtime";
@@ -41,27 +41,17 @@ export function AgentSidebarSection() {
     mutationKey: [...agentsQueryRoot(runtime), "open-chat"],
     mutationFn: async (row: AgentRow | null) => {
       if (!runtime) return;
-      const { denBaseUrl, organizationId, principal, workspaceId, client } = runtime;
+      const { denBaseUrl, organizationId, principal, workspaceId } = runtime;
       const store = useAgentChatStore.getState();
       const agentId = row?.agentId;
       if (agentId) {
         const chat = agentChatForAgent(store.chats, runtime, workspaceId, agentId);
-        const { sessionId, source } = await resolveAgentChatSession({
-          localSessionId: chat?.sessionId ?? null,
-          readPointer: async () => (await client.getPersonalAgentChat(organizationId, agentId, workspaceId)).chat?.sessionId ?? null,
-          sessionState: (id) => runtime.sessionState(workspaceId, id),
-          createSession: () => runtime.createSession(workspaceId),
-        });
-        if (!sessionId) return;
+        const sessionId = chat && isStandingChat(chat) ? chat.sessionId : standingChatSessionId(agentId);
         store.open({ denBaseUrl, organizationId, principal, workspaceId, sessionId, agentId, agentName: row.name });
-        if (source === "new") {
+        runtime.openSession(workspaceId, sessionId);
+        if (workspaceId && (!chat || chat.chatLinkPending)) {
           store.save(runtime, sessionId, { chatLinkPending: true });
-          if (row.name) runtime.renameSession(workspaceId, sessionId, row.name);
-        } else {
-          runtime.openSession(workspaceId, sessionId);
-        }
-        if (source === "new" || (source === "local" && chat?.chatLinkPending)) {
-          await client.setPersonalAgentChat(organizationId, agentId, { workspaceId, sessionId });
+          await runtime.client.setPersonalAgentChat(organizationId, agentId, { workspaceId, sessionId });
           store.save(runtime, sessionId, { chatLinkPending: false });
           await queryClient.invalidateQueries({ queryKey: agentListKey(runtime) });
         }
@@ -92,9 +82,11 @@ export function AgentSidebarSection() {
     working: item.routines.some((routine) => isActiveRun(routine.latestRun)),
   });
   const { listed, offered } = agentSidebarGroups(agents ?? []);
-  const sharedLabel = t("agents.shared_with_you", { count: offered.length });
+  const unopened = offered.map(toRow).filter((row) => !row.chat || !isStandingChat(row.chat));
+  const sharedLabel = t("agents.shared_with_you", { count: unopened.length });
   const rows: AgentRow[] = [
     ...listed.map(toRow),
+    ...offered.map(toRow).filter((row) => row.chat && isStandingChat(row.chat)),
     ...agentChatsInScope(chats, runtime)
       .filter((chat) => chat.workspaceId === runtime.workspaceId && chat.agentId === null)
       .sort((a, b) => a.createdAt - b.createdAt)
@@ -138,7 +130,7 @@ export function AgentSidebarSection() {
               </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
-          {offered.length > 0 && (
+          {unopened.length > 0 && (
             <SidebarMenuItem>
               <Popover open={sharingOpen} onOpenChange={setSharingOpen}>
                 <PopoverTrigger render={<SidebarMenuButton type="button" className="text-xs text-muted-foreground" disabled={open.isPending} data-agents-shared />}>
@@ -147,7 +139,7 @@ export function AgentSidebarSection() {
                 </PopoverTrigger>
                 <PopoverContent side="inline-end" align="start" className="w-64 gap-0 rounded-2xl p-1.5">
                   <PopoverTitle className="sr-only">{sharedLabel}</PopoverTitle>
-                  {offered.map(toRow).map((row) => (
+                  {unopened.map((row) => (
                     <Button key={row.key} type="button" variant="ghost" size="sm" className="h-9 justify-start px-2" data-agent-shared-offer={row.agentId} onClick={() => {
                       setSharingOpen(false);
                       open.mutate(row);

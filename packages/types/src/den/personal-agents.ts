@@ -335,6 +335,30 @@ export const personalAgentChatResponseSchema = z.object({
 }).meta({ ref: "PersonalAgentChatResponse" })
 export type PersonalAgentChatResponse = z.infer<typeof personalAgentChatResponseSchema>
 
+export const sendPersonalAgentChatMessageSchema = z.object({
+  clientMessageId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).transform((value) => value.toLowerCase()),
+  message: z.string().trim().min(1).max(16_000),
+}).strict()
+export type SendPersonalAgentChatMessage = z.infer<typeof sendPersonalAgentChatMessageSchema>
+
+export const personalAgentChatTurnSchema = z.object({
+  id: z.string(),
+  clientMessageId: z.string(),
+  message: z.string(),
+  status: z.enum(["running", "succeeded", "failed"]),
+  reply: z.string().nullable(),
+  error: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+  finishedAt: z.iso.datetime().nullable(),
+})
+export type PersonalAgentChatTurn = z.infer<typeof personalAgentChatTurnSchema>
+
+export const personalAgentStandingChatSchema = z.object({ turns: z.array(personalAgentChatTurnSchema) })
+export type PersonalAgentStandingChat = z.infer<typeof personalAgentStandingChatSchema>
+
+export const personalAgentChatTurnResponseSchema = z.object({ turn: personalAgentChatTurnSchema })
+export type PersonalAgentChatTurnResponse = z.infer<typeof personalAgentChatTurnResponseSchema>
+
 export const setPersonalAgentChatSchema = z.object({
   workspaceId: z.string().trim().min(1).max(240),
   sessionId: z.string().trim().min(1).max(240),

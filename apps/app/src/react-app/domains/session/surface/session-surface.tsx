@@ -1127,6 +1127,11 @@ function uncopiedChatReason(error: unknown): string | undefined {
 }
 
 export function SessionSurface(props: SessionSurfaceProps) {
+  const extensions = useSessionExtensions();
+  return extensions.renderStandingChat?.(props.sessionId) ?? <WorkspaceSessionSurface {...props} />;
+}
+
+function WorkspaceSessionSurface(props: SessionSurfaceProps) {
   const SkillSharingProvider = props.skillSharingProvider ?? NoCreatedSkillSharing;
   const extensions = useSessionExtensions();
   const extensionOwnsSession = extensions.ownedSessionIds.has(props.sessionId);

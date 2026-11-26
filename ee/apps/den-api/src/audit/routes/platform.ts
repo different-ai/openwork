@@ -55,6 +55,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   mcp("ALL", "/mcp", "mcp.transport"),
   mcp("ALL", "/mcp/agent", "mcp_agent.transport"),
+  mcp("ALL", "/mcp/agent-chat", "mcp_agent_chat.transport"),
   mcp("ALL", "/mcp/agent/connections/:connectionId", "mcp_agent.connection.proxy"),
   mcp("ALL", "/mcp/admin", "mcp_admin.transport"),
   mcp("ALL", "/mcp/public/apps/:appIdOrName", "mcp_public.app.server"),

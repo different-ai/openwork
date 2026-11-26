@@ -5,9 +5,10 @@ import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.j
 import { personalAgentPeople, personOrUnknown } from "../personal-agents/access.js"
 import { listRequestablePersonalAgentConnections, normalizedPersonalAgentConnectorName, personalAgentConnectorAccess } from "../personal-agents/connector-access.js"
 import { personalAgentRequestEventDetail, recordPersonalAgentEvent } from "../personal-agents/events.js"
-import { personalAgentDispatchContext } from "../personal-agents/permissions-dispatch.js"
+import { personalAgentExecutionContext } from "../personal-agents/permissions-dispatch.js"
 import { personalAgentToolTitle } from "../personal-agents/permissions-policy.js"
-import { CONNECTOR_ONLY_TOOL_NAME, requestAgentConnectorApproval } from "../tool-permissions/approvals.js"
+import type { PersonalAgentExecution } from "./workbot-turn-limits.js"
+import { agentApprovalContext, CONNECTOR_ONLY_TOOL_NAME, requestAgentConnectorApproval } from "../tool-permissions/approvals.js"
 import { cachedSearchTools, listExternalMcpToolsThroughSearchCache, type McpMemberIdentity } from "./external-capabilities.js"
 
 function textContent(text: string): { type: "text"; text: string }[] {
@@ -26,7 +27,7 @@ const outputSchema = z.object({
 export function registerAgentConnectorRequestTool(server: McpServer, input: {
   organizationId: string
   member: McpMemberIdentity
-  runId: string
+  execution: PersonalAgentExecution
   scopes: ReadonlySet<string>
   redirectUriBase: string
 }) {
@@ -44,7 +45,7 @@ export function registerAgentConnectorRequestTool(server: McpServer, input: {
     const organizationId = input.organizationId
     const memberId = input.member.orgMembershipId
     const scope = { organizationId, memberId, scopes: input.scopes }
-    const context = await personalAgentDispatchContext(input.runId, organizationId, memberId)
+    const context = await personalAgentExecutionContext(input.execution, organizationId, memberId)
     if (!context || context.paused) return respond({ ...unavailable, status: "unavailable" })
     const requested = normalizedPersonalAgentConnectorName(connectionName)
     const candidates = (await listRequestablePersonalAgentConnections(scope))
@@ -72,7 +73,7 @@ export function registerAgentConnectorRequestTool(server: McpServer, input: {
       }
     }
     const request = await requestAgentConnectorApproval({ organizationId, memberId,
-      context: { kind: "agent", id: context.agentId, label: context.agentName, runId: input.runId },
+      context: agentApprovalContext(context, input.execution),
       connectionId: connection.id, connectionName: connection.name, toolName, toolTitle,
     })
     if (!request) return respond({ ...unavailable, status: "unavailable" })
@@ -83,7 +84,7 @@ export function registerAgentConnectorRequestTool(server: McpServer, input: {
       })
     }
     return respond({ status: "pending", requestId: request.id, connectionName: connection.name,
-      message: "I asked in this agent’s chat. Finish what you can and say what is waiting. Do not retry in this run.",
+      message: "I asked in this agent’s chat. Finish what you can and say what is waiting. Do not retry in this turn.",
     })
   })
 }

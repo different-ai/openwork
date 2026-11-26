@@ -85,7 +85,7 @@ export const useAgentChatStore = create<AgentChatStore>()(persist((set) => ({
   partialize: (state) => ({ chats: state.chats }),
 }));
 
-export function isStandingChat(chat: AgentChat): boolean {
+export function isStandingChat(chat: Pick<AgentChat, "agentId" | "routineId" | "proposalId">): boolean {
   return chat.agentId !== null && (chat.routineId !== null || chat.proposalId === null);
 }
 

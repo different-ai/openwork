@@ -10,7 +10,7 @@ import { TASK_TOOL_NAMES } from "./tasks.js"
 import { mediaTypeFor, SavedFiles, SAVED_FILE_TOOL_NAMES } from "./saved-files.js"
 import type { Config } from "./config.js"
 import { FILE_TOOL_NAMES } from "./files.js"
-import { remoteMcpConnector } from "./mcp.js"
+import { agentChatMcpConnector, remoteMcpConnector } from "./mcp.js"
 import { anthropicModel, createModelAdapter, openAIModel, openAIResponsesModel } from "./model.js"
 import { gatewayModelCatalog } from "./model-catalog.js"
 import { createModelProbe } from "./model-probe.js"
@@ -115,6 +115,7 @@ export async function createRuntime(config: Config, store: Store, stepHost?: Ste
           reservedNames: new Set([...FILE_TOOL_NAMES, ...SAVED_FILE_TOOL_NAMES, ...REACTION_TOOL_NAMES, ...TASK_TOOL_NAMES, ...(computer?.toolNames ?? []), ...(computer?.desktopTools?.map(tool => tool.name) ?? [])]),
         })
       : undefined,
+    agentChatMcp: config.mcp ? agentChatMcpConnector(config.mcp.url) : undefined,
     limits: config.limits,
     systemPrompt: config.systemPrompt,
     events,

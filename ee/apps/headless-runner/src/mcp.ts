@@ -142,10 +142,24 @@ const toolList = z.object({
   nextCursor: z.string().optional(),
 })
 
+const AGENT_CHAT_TOOLS = ["search_capabilities", "execute_capability", "request_agent_connector_access"]
+
+export const isAgentChatTool = (name: string) => AGENT_CHAT_TOOLS.includes(name)
+
+export function agentChatMcpConnector(origin: string): McpConnector {
+  return remoteMcpConnector({
+    url: new URL("/mcp/agent-chat", origin).toString(),
+    allowlist: AGENT_CHAT_TOOLS,
+    reservedNames: new Set(),
+    redirect: "error",
+  })
+}
+
 export function remoteMcpConnector(options: {
   url: string
   allowlist: string[]
   reservedNames: ReadonlySet<string>
+  redirect?: RequestRedirect
 }): McpConnector {
   return async ({ token, signal, onToolsChanged }) => {
     const client = new Client({ name: "openwork-headless-runner", version: "0.1.0" }, {
@@ -153,7 +167,7 @@ export function remoteMcpConnector(options: {
       ...(onToolsChanged ? { listChanged: { tools: { autoRefresh: false, onChanged: () => onToolsChanged() } } } : {}),
     })
     const transport = new StreamableHTTPClientTransport(new URL(options.url), {
-      requestInit: { headers: { authorization: `Bearer ${token}` } },
+      requestInit: { headers: { authorization: `Bearer ${token}` }, ...(options.redirect ? { redirect: options.redirect } : {}) },
     })
     const connectSignal = AbortSignal.any([signal, AbortSignal.timeout(CONNECT_TIMEOUT_MS)])
     const tools: ToolSpec[] = []

@@ -10,6 +10,7 @@ import { setSubjectToolRule, type ToolPermissionTransaction } from "./rules.js"
 export type ToolApprovalRow = typeof ToolApprovalTable.$inferSelect
 export type ToolApprovalContext =
   | { kind: "agent" | "automation"; id: string; label: string; runId: string }
+  | { kind: "agent"; id: string; label: string; runId: null; chatTurnId: string }
   | { kind: "chat"; id: null; label: null; runId: null }
 export type ToolApprovalKey = { organizationId: string; memberId: string; context: ToolApprovalContext; connectionId: string; toolName: string }
 const table = ToolApprovalTable
@@ -23,6 +24,7 @@ function match(input: ToolApprovalKey) {
   return and(eq(table.organization_id, normalizeDenTypeId("organization", input.organizationId)),
     eq(table.requested_by_member_id, normalizeDenTypeId("member", input.memberId)), eq(table.context_kind, input.context.kind),
     input.context.id === null ? isNull(table.context_id) : eq(table.context_id, input.context.id),
+    "chatTurnId" in input.context ? isNull(table.run_id) : isNull(table.chat_turn_id),
     eq(table.connection_id, input.connectionId), sql`binary ${table.tool_name} = ${input.toolName}`)
 }
 
@@ -49,6 +51,7 @@ async function createPending(tx: ToolPermissionTransaction, input: PendingToolAp
     requested_by_member_id: normalizeDenTypeId("member", input.memberId), context_kind: input.context.kind, context_id: input.context.id,
     context_label: input.context.label?.slice(0, 160) ?? null,
     run_id: input.context.runId === null ? null : normalizeDenTypeId("automationRun", input.context.runId),
+    chat_turn_id: "chatTurnId" in input.context ? normalizeDenTypeId("personalAgentChatTurn", input.context.chatTurnId) : null,
     connection_id: input.connectionId, connection_name: input.connectionName.slice(0, 160), tool_name: input.toolName, tool_title: input.toolTitle.slice(0, 240),
     connector_access: input.connectorAccess ?? null,
   })
@@ -61,23 +64,30 @@ export async function createOrReuseToolApproval(input: PendingToolApproval): Pro
 
 export type AgentConnectorApprovalKey = ToolApprovalKey & { context: Extract<ToolApprovalContext, { kind: "agent" | "automation" }> & { kind: "agent" } }
 
+export function agentApprovalContext(agent: { agentId: string; agentName: string }, execution: { kind: "chat" | "run"; id: string }): AgentConnectorApprovalKey["context"] {
+  const base: { kind: "agent"; id: string; label: string } = { kind: "agent", id: agent.agentId, label: agent.agentName }
+  return execution.kind === "chat" ? { ...base, runId: null, chatTurnId: execution.id } : { ...base, runId: execution.id }
+}
+
 export async function requestAgentConnectorApproval(input: AgentConnectorApprovalKey & { connectionName: string; toolTitle: string }) {
   return db.transaction(async (tx) => await lockMember(tx, input) ? createPending(tx, { ...input, connectorAccess: true }) : null)
 }
 
-function availableInRun(runId: ToolApprovalRow["run_id"]) {
-  return and(eq(table.status, "allowed_once"), runId ? ne(table.run_id, runId) : undefined,
+function availableInExecution(context: ToolApprovalContext) {
+  const differentTurn = "chatTurnId" in context ? ne(table.chat_turn_id, normalizeDenTypeId("personalAgentChatTurn", context.chatTurnId)) : undefined
+  const differentRun = context.runId ? ne(table.run_id, normalizeDenTypeId("automationRun", context.runId)) : undefined
+  return and(eq(table.status, "allowed_once"), differentTurn, differentRun,
     gte(table.decided_at, new Date(Date.now() - 7 * DAY)))
 }
 
 export async function approvedAgentConnectorTools(input: Omit<AgentConnectorApprovalKey, "toolName">) {
-  const runId = normalizeDenTypeId("automationRun", input.context.runId)
+  const runId = input.context.runId ? normalizeDenTypeId("automationRun", input.context.runId) : null
   const rows = await db.$primary.select({ toolName: table.tool_name }).from(table).where(and(
     eq(table.organization_id, normalizeDenTypeId("organization", input.organizationId)),
     eq(table.requested_by_member_id, normalizeDenTypeId("member", input.memberId)),
     eq(table.context_kind, "agent"), eq(table.context_id, input.context.id), eq(table.connection_id, input.connectionId),
     eq(table.connector_access, true), ne(table.tool_name, CONNECTOR_ONLY_TOOL_NAME),
-    or(availableInRun(runId), and(eq(table.status, "used"), eq(table.used_by_run_id, runId))),
+    or(availableInExecution(input.context), runId ? and(eq(table.status, "used"), eq(table.used_by_run_id, runId)) : undefined),
   ))
   return new Set(rows.map(({ toolName }) => toolName))
 }
@@ -90,7 +100,7 @@ async function claim(tx: ToolPermissionTransaction, input: ToolApprovalKey, conn
     const [used] = await tx.select({ id: table.id }).from(table).where(and(scope, eq(table.status, "used"), eq(table.used_by_run_id, runId))).limit(1).for("update")
     if (used) return true
   }
-  const [available] = await tx.select({ id: table.id }).from(table).where(and(scope, availableInRun(runId))).orderBy(table.decided_at, table.id).limit(1).for("update")
+  const [available] = await tx.select({ id: table.id }).from(table).where(and(scope, availableInExecution(input.context))).orderBy(table.decided_at, table.id).limit(1).for("update")
   if (!available) return false
   await tx.update(table).set({ status: "used", used_by_run_id: runId, used_at: new Date() }).where(eq(table.id, available.id))
   return true

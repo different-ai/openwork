@@ -44,7 +44,7 @@ async function requestViews(access: PersonalAgentAccess, memberId: string, rows:
       inArray(MemberTable.id, connectorActors), isNull(MemberTable.removedAt),
     ))
     await Promise.all(members.map(async ({ id, userId }) => {
-      if (userId && await organizationFeatureEnabled(access.organizationId, "personalAgentConnectorControls", { userId })) approvalsEnabledFor.add(id)
+      if (userId && await organizationFeatureEnabled(access.organizationId, "personalAgents", { userId })) approvalsEnabledFor.add(id)
     }))
   }
   return Promise.all(rows.map(async (row) => ({
@@ -145,7 +145,7 @@ async function decidePersonalAgentToolRequest(access: PersonalAgentAccess, membe
       const [member] = await tx.select({ userId: MemberTable.userId }).from(MemberTable).where(and(
         eq(MemberTable.organizationId, approval.organization_id), eq(MemberTable.id, approval.requested_by_member_id), isNull(MemberTable.removedAt),
       )).limit(1).for("share")
-      if (!member?.userId || !await organizationFeatureEnabled(access.organizationId, "personalAgentConnectorControls", {
+      if (!member?.userId || !await organizationFeatureEnabled(access.organizationId, "personalAgents", {
         userId: member.userId, database: tx, lock: "share",
       })) return "disabled"
       if (!isDenTypeId("externalMcpConnection", approval.connection_id)) return "blocked"
@@ -157,7 +157,7 @@ async function decidePersonalAgentToolRequest(access: PersonalAgentAccess, membe
       const rules = await toolApprovalRules(approval, tx, agent.id)
       if (rules.some(({ kind, toolName, rule }) => rule === "block" && (kind !== "agent" || toolName !== CONNECTOR_ONLY_TOOL_NAME))) return "blocked"
       const policy = await readSubjectToolPolicy({ organizationId: access.organizationId, kind: "agent", id: agent.id }, tx)
-      return personalAgentConnectorState({ legacyConnectorAccess: agent.legacy_connector_access, neverConnectionIds: agent.never_connection_ids ?? [] }, policy, approval.connection_id)
+      return personalAgentConnectorState({ defaultConnectorsOff: approval.chat_turn_id !== null, legacyConnectorAccess: agent.legacy_connector_access, neverConnectionIds: agent.never_connection_ids ?? [] }, policy, approval.connection_id)
     }, onAlwaysAllow: (tx) => recordPersonalAgentEvent({
       organizationId: access.organizationId, agentId: access.agentId, actorMemberId: memberId,
       action: "agent.updated", detail: { name: false, brief: false, tools: true, budget: false },

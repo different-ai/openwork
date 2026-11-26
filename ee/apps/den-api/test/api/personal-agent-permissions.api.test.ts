@@ -49,7 +49,7 @@ const connected = await asDana("POST", "/v1/mcp-connections", {
 })
 assert.equal(connected.status, 200, summary(connected))
 const connectionId = text(field(connected.body, "id"), "connection id")
-const created = await asDana("POST", "/v1/personal-agents", { name: "Bug watcher", brief: "Check the bug tracker." })
+const created = await asDana("POST", "/v1/personal-agents", { name: "Bug watcher", brief: "Check the bug tracker.", connectorNames: ["Bug tracker"] })
 assert.equal(created.status, 201, summary(created))
 const agent = personalAgentDetailSchema.parse(created.body)
 const path = `/v1/personal-agents/${agent.agent.id}`
@@ -119,7 +119,7 @@ function providerCalls() {
   return tracker.wire.filter((entry) => entry.rpcMethod === "tools/call").length
 }
 
-test("the shared native dispatch used by direct and Code Mode calls only allows reads", async () => {
+test("new personal agents cannot use built-in connectors through native dispatch", async () => {
   const { Hono } = await import("hono")
   const { z } = await import("zod")
   const { invokeMcpOperation } = await import("../../src/mcp/invoke.js")
@@ -143,10 +143,9 @@ test("the shared native dispatch used by direct and Code Mode calls only allows 
   assert.equal(refused.isError, true)
   assert.equal(field(refused.payload, "error"), "policy_blocked")
   assert.equal(field(refused.payload, "retryable"), false)
-  assert.equal(field(refused.payload, "message"), "Built-in connectors cannot ask first yet, so an agent can only read them.")
+  assert.equal(field(refused.payload, "message"), "Built-in connectors are not available to this agent.")
+  assert.equal((await call("GET")).isError, true)
   assert.equal(calls, 0)
-  assert.equal((await call("GET")).isError, false)
-  assert.equal(calls, 1)
   await db.update(AutomationRunTable).set({ status: "queued" }).where(eq(AutomationRunTable.id, normalizeDenTypeId("automationRun", claim.run.id)))
   const cancelled = await asDana("POST", `/v1/automation-runs/${claim.run.id}/cancel`)
   assert.equal(cancelled.status, 200, summary(cancelled))
@@ -224,7 +223,7 @@ test("agent and organization blocks beat allowances and explicit Ask works on re
   assert.ok(pending)
   const once = await decide(asPriya, pending.id, "allow_once")
   assert.equal(once.status, 200, summary(once))
-  const changed = await asDana("PATCH", path, { toolPolicy: { tools: { [connectionId]: { create_issue: "allow", delete_issue: "block", list_issues: "ask" } } } })
+  const changed = await asDana("PATCH", path, { toolPolicy: { connections: { [connectionId]: "allow" }, tools: { [connectionId]: { create_issue: "allow", delete_issue: "block", list_issues: "ask" } } } })
   assert.equal(changed.status, 200, summary(changed))
   const run = await admitted()
   const calls = providerCalls()
@@ -333,7 +332,7 @@ test("team and member rules apply to an agent run only when toolPermissions is o
   await setSubjectToolRule(team, { connectionId, toolName: "list_issues", rule: "block" }, dana.memberId)
   await setSubjectToolRule(member, { connectionId, toolName: "List_issues", rule: "block" }, dana.memberId)
   await setSubjectToolRule(member, { connectionId, toolName: "list_issues", rule: "ask" }, dana.memberId)
-  const clear = await asDana("PATCH", path, { toolPolicy: {} })
+  const clear = await asDana("PATCH", path, { toolPolicy: { connections: { [connectionId]: "allow" } } })
   assert.equal(clear.status, 200, summary(clear))
   assert.equal((await asDana("PUT", `/v1/org/personal-agents/${agent.agent.id}/budget`, { monthlyBudgetMicros: null })).status, 200)
   const { token } = await admitted()
@@ -362,7 +361,7 @@ test("team and member rules apply to an agent run only when toolPermissions is o
   await assertNoAlwaysAllow()
   await setSubjectToolRule(team, { connectionId, toolName: "list_issues", rule: null }, dana.memberId)
   const { PERSONAL_AGENT_TOOL_POLICY_MAX_TOOLS } = await import("@openwork/types/den/personal-agents")
-  const full = await asDana("PATCH", path, { toolPolicy: { tools: { [connectionId]: Object.fromEntries(
+  const full = await asDana("PATCH", path, { toolPolicy: { connections: { [connectionId]: "allow" }, tools: { [connectionId]: Object.fromEntries(
     Array.from({ length: PERSONAL_AGENT_TOOL_POLICY_MAX_TOOLS }, (_, index) => [`tool_${index}`, "allow"]),
   ) } } })
   assert.equal(full.status, 200, summary(full))
@@ -407,7 +406,7 @@ test("a live token is refused when the organization turns agents off or the rout
 
 test("Priya's live run loses tool and discovery access after share removal or archive", async () => {
   assert.equal((await asDana("PUT", `/v1/org/personal-agents/${agent.agent.id}/budget`, { monthlyBudgetMicros: null })).status, 200)
-  assert.equal((await asDana("PATCH", path, { toolPolicy: { tools: {} } })).status, 200)
+  assert.equal((await asDana("PATCH", path, { toolPolicy: { connections: { [connectionId]: "allow" } } })).status, 200)
   const first = await admitted()
   assert.equal((await execute(first.token, "list_issues")).isError, false)
   assert.equal((await asDana("DELETE", `${path}/shares/${priya.memberId}`)).status, 200)
@@ -430,7 +429,6 @@ test("Priya's live run loses tool and discovery access after share removal or ar
 
 
 test("connector enrollment defaults off; exact named connectors permit reads and still ask for writes", async () => {
-  assert.equal((await den.setFeature(orgId, "personalAgentConnectorControls", true)).status, 200)
   const catalog = async (agentPath: string) => {
     const result = await asDana("GET", `${agentPath}/tools`)
     assert.equal(result.status, 200, summary(result))
@@ -485,7 +483,6 @@ test("connector enrollment defaults off; exact named connectors permit reads and
 })
 
 test("a run requests an off connector, grants an exact tool once, then a manager asks the owner to turn it on", async () => {
-  assert.equal((await den.setFeature(orgId, "personalAgentConnectorControls", true)).status, 200)
   const created = await asDana("POST", "/v1/personal-agents", { name: "Access fixture", brief: "Read issues." })
   assert.equal(created.status, 201, summary(created))
   const agent = `/v1/personal-agents/${personalAgentDetailSchema.parse(created.body).agent.id}`

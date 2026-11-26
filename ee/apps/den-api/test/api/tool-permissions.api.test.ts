@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
+import { eq } from "@openwork-ee/den-db/drizzle"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { AUTOMATION_CLOUD_DEFAULT_MODEL, automationDetailSchema } from "@openwork/types/automations"
 import { toolApprovalListSchema, toolPermissionsSchema, type SetToolPermissionRule } from "@openwork/types/den/tool-permissions"
+import { Hono } from "hono"
+import { z } from "zod"
 import { bootDen, field, list, startFakeHttpServer, startFakeMcpServer, summary, text } from "./harness.js"
 import { gatewayFixtureEnv, grantGatewayModels, stubPublicModelCatalog } from "./gateway-fixture.js"
 
@@ -260,4 +264,101 @@ test("expired pending approvals are hidden, cannot be decided, and do not dedupl
   const fresh = (await pending()).find((row) => row.context.kind === "chat")
   assert.ok(fresh)
   assert.notEqual(fresh.id, old.id)
+})
+
+test("ordinary MCP calls ignore saved tool policy while tool permissions are off, then enforce it again", async () => {
+  await status(den.setFeature(orgId, "personalAgents", false), 200)
+  await status(den.setFeature(orgId, "toolPermissions", true), 200)
+  const direct = await status(admin("POST", "/v1/mcp-connections", {
+    name: "Direct tracker", url: `${tracker.url}/mcp`, authType: "none", exposeDirectly: true,
+    access: { orgWide: true, memberIds: [], teamIds: [] },
+  }), 200)
+  const directId = text(field(direct, "id"), "direct connection id")
+  const savedRule = { ...rule("block", { kind: "member", id: priya.memberId }, "list_issues"), connectionId: directId }
+  await status(admin("PUT", `${path}/rule`, savedRule), 200)
+
+  const outputs = { list_issues: "Listed issues", create_issue: "Created issue" }
+  type Tool = keyof typeof outputs
+  type Refusal = "policy_blocked" | "needs_approval"
+  const gateway = async (tool: Tool, expected?: Refusal, token = priyaToken) => {
+    const before = providerCalls()
+    const result = await den.callMcpTool(token, "execute_capability", { name: `mcp:${directId}:${tool}`, body: {} })
+    assert.equal(result.status, 200, result.raw)
+    assert.equal(result.rpcError, null, result.raw)
+    assert.equal(result.isError, Boolean(expected), result.raw)
+    if (expected) assert.equal(field(result.body, "error"), expected, result.raw)
+    else assert.ok(result.text.includes(outputs[tool]), result.raw)
+    assert.equal(providerCalls() - before, expected ? 0 : 1)
+  }
+  const proxy = async (tool: Tool, expected?: Refusal, token = priyaToken) => {
+    const before = providerCalls()
+    const reply = await den.request(token, "POST", `/mcp/agent/connections/${directId}`, {
+      headers: { accept: "application/json, text/event-stream" },
+      body: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: tool, arguments: {} } },
+    })
+    assert.equal(reply.status, 200, summary(reply))
+    const event = reply.text.split("\n").find((line) => line.startsWith("data:"))
+    const envelope = event ? JSON.parse(event.slice(5)) : reply.body
+    assert.equal(field(envelope, "error"), undefined, reply.text)
+    assert.equal(field(envelope, "result", "isError") === true, Boolean(expected), reply.text)
+    const payload = text(list(field(envelope, "result", "content"))[0]?.text, reply.text)
+    if (expected) assert.equal(field(JSON.parse(payload), "error"), expected, reply.text)
+    else assert.equal(payload, outputs[tool], reply.text)
+    assert.equal(providerCalls() - before, expected ? 0 : 1)
+  }
+
+  // Save an ordinary chat grant, then turn enforcement off without deleting any state.
+  await gateway("create_issue", "needs_approval")
+  const [approval, extra] = await pending(asPriya)
+  assert.ok(approval)
+  assert.equal(extra, undefined)
+  await status(asPriya("POST", `${approvals}/${approval.id}/decision`, { decision: "allow_once" }), 200)
+  const readApprovals = () => db.$primary.select().from(ToolApprovalTable)
+    .where(eq(ToolApprovalTable.connection_id, normalizeDenTypeId("externalMcpConnection", directId)))
+  const savedApprovals = await readApprovals()
+  assert.deepEqual(savedApprovals.map(({ status }) => status), ["allowed_once"])
+
+  await status(den.setFeature(orgId, "toolPermissions", false), 200)
+  await gateway("list_issues")
+  await proxy("list_issues")
+  await gateway("create_issue")
+  await proxy("create_issue")
+  // Sam has no grant for this connection; writes still reach the tracker.
+  await gateway("create_issue", undefined, samToken)
+  await proxy("create_issue", undefined, samToken)
+  assert.deepEqual(await readApprovals(), savedApprovals, "flag-off calls neither consume nor create approvals")
+
+  await status(den.setFeature(orgId, "toolPermissions", true), 200)
+  await gateway("list_issues", "policy_blocked")
+  await proxy("list_issues", "policy_blocked")
+  await proxy("create_issue")
+  assert.deepEqual((await readApprovals()).map(({ status }) => status), ["used"])
+  await gateway("create_issue", "needs_approval")
+  await proxy("create_issue", "needs_approval")
+})
+
+test("ordinary native MCP writes reach the API operation with personal agents off", async () => {
+  await status(den.setFeature(orgId, "personalAgents", false), 200)
+  const principal = await verifyMcpRequest(new Headers({ authorization: `Bearer ${priyaToken}` }))
+  assert.ok(!(principal instanceof Response))
+  const { invokeMcpOperation } = await import("../../src/mcp/invoke.js")
+  const app = new Hono()
+  const calendarPath = "/v1/capabilities/google-workspace/calendar-events"
+  const event = { summary: "Fixture event" }
+  const received: unknown[] = []
+  app.post(calendarPath, async (c) => {
+    received.push(await c.req.json())
+    return c.json({ id: "fixture-event" }, 201)
+  })
+  for (const enabled of [false, true]) {
+    await status(den.setFeature(orgId, "toolPermissions", enabled), 200)
+    const result = await invokeMcpOperation({
+      app, env: {}, principal, nativeConnectionId: "google-workspace", includePayload: true,
+      operation: { name: "calendar", method: "POST", path: calendarPath, operation: {}, inputSchema: z.object({}) },
+      toolInput: { body: event },
+    })
+    assert.equal(result.isError, false)
+    assert.deepEqual(result.payload, { id: "fixture-event" })
+  }
+  assert.deepEqual(received, [event, event])
 })
