@@ -4,6 +4,8 @@ import type { CloudCodingOverview, CloudCodingPushApproval } from "@openwork/typ
 import { renderToStaticMarkup } from "react-dom/server";
 import { CloudCodingApprovalView, type CloudCodingApprovalViewProps } from "./cloud-coding-approval-view";
 import { CloudCodingLinkView, type CloudCodingLinkViewProps } from "./cloud-coding-link-view";
+import { parseGithubCallbackParams } from "./cloud-coding-github-callback-screen";
+import { CloudCodingGithubCallbackView } from "./cloud-coding-github-callback-view";
 import { githubCallbackError } from "./cloud-coding-ui";
 import { CloudCodingView, pullCount, type CloudCodingViewProps } from "./cloud-coding-view";
 
@@ -102,19 +104,49 @@ for (const [reason, copy] of Object.entries({
   not_your_installation: "Your GitHub account can&#x27;t manage that installation. Ask a GitHub owner to connect it.",
   installation_in_use: "That GitHub account is already connected to another OpenWork organization.",
   account_in_use: "That GitHub account is already linked to someone else in this organization.",
+  different_account: "This GitHub link was started from a different OpenWork account or organization. Start again from where you began.",
+  unknown_reason: "GitHub couldn&#x27;t be reached. Try again in a minute.",
   not_allowed: "Only admins can connect GitHub.",
   not_installed: "OpenWork isn&#x27;t installed on a GitHub account you can reach yet. Choose Connect GitHub to install it.",
   not_configured: "GitHub couldn&#x27;t be reached. Try again in a minute.",
   github_error: "GitHub couldn&#x27;t be reached. Try again in a minute.",
 })) {
-  test(`GitHub callback ${reason} shows plain error copy on both pages`, () => {
+  test(`GitHub callback ${reason} shows plain error copy on all three pages`, () => {
     const callbackError = githubCallbackError(reason);
-    for (const html of [main({ overview: disconnected, callbackError }), link({ overview: unlinked, callbackError })]) {
+    const callback = renderToStaticMarkup(<CloudCodingGithubCallbackView phase="error" reason={reason} onBack={noAction} />);
+    for (const html of [main({ overview: disconnected, callbackError }), link({ overview: unlinked, callbackError }), callback]) {
       assert.match(html, /role="alert"/);
       assert.ok(html.includes(copy));
     }
+    assert.deepEqual(buttons(callback), ["Back to Cloud coding"]);
   });
 }
+
+test("the GitHub callback shows a GitHub mark and one skeleton line while working", () => {
+  const html = renderToStaticMarkup(<CloudCodingGithubCallbackView phase="working" onBack={noAction} />);
+  assert.match(html, /cdn\.simpleicons\.org\/github/);
+  assert.equal((html.match(/motion-safe:animate-pulse/g) ?? []).length, 1);
+  assert.match(html, /aria-busy="true"/);
+  assert.doesNotMatch(html, />Loading|role="alert"/);
+  assert.deepEqual(buttons(html), []);
+});
+
+test("a callback missing code or state has no request input and shows the expired link copy", () => {
+  for (const search of ["", "code=example-code", "state=example-state", "code=&state=example-state", "code=example-code&state="]) {
+    const input = parseGithubCallbackParams(new URLSearchParams(search));
+    assert.equal(input, null);
+    const html = renderToStaticMarkup(<CloudCodingGithubCallbackView phase="error" reason="state_invalid" onBack={noAction} />);
+    assert.match(html, /That GitHub link expired\. Try connecting again\./);
+    assert.deepEqual(buttons(html), ["Back to Cloud coding"]);
+  }
+});
+
+test("the GitHub callback accepts a positive installation id and omits setup_action from the input", () => {
+  const parse = (query: string) => parseGithubCallbackParams(new URLSearchParams(`code=example-code&state=example-state${query}`));
+  assert.deepEqual(parse(""), { code: "example-code", state: "example-state" });
+  assert.deepEqual(parse("&installation_id=42&setup_action=install"), { code: "example-code", state: "example-state", installationId: 42 });
+  for (const value of ["", "0", "-1", "1.5", "1e3", "9007199254740992"]) assert.equal(parse(`&installation_id=${value}`), null);
+});
 
 test("connected manager sees the sections in approved order, people and linked pull requests", () => {
   const html = main({ overview, sentMemberIds: ["leo"] });

@@ -10,6 +10,7 @@ const githubErrors: Record<CloudCodingCallbackErrorReason, string> = {
   not_your_installation: "Your GitHub account can't manage that installation. Ask a GitHub owner to connect it.",
   installation_in_use: "That GitHub account is already connected to another OpenWork organization.",
   account_in_use: "That GitHub account is already linked to someone else in this organization.",
+  different_account: "This GitHub link was started from a different OpenWork account or organization. Start again from where you began.",
   not_allowed: "Only admins can connect GitHub.",
   not_installed: "OpenWork isn't installed on a GitHub account you can reach yet. Choose Connect GitHub to install it.",
   not_configured: "GitHub couldn't be reached. Try again in a minute.",

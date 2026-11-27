@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  cloudCodingGithubCallbackInputSchema,
+  cloudCodingGithubCallbackResultSchema,
   cloudCodingInstallCompleteInputSchema,
   cloudCodingInstallStartInputSchema,
   cloudCodingInstallationChoicesSchema,
@@ -9,6 +11,7 @@ import {
   cloudCodingPushDecisionInputSchema,
   cloudCodingRedirectSchema,
   cloudCodingSettingsInputSchema,
+  type CloudCodingGithubCallbackInput,
   type CloudCodingOverview,
   type CloudCodingPushDecisionInput,
   type CloudCodingSettingsInput,
@@ -25,8 +28,16 @@ const approvalKey = (orgId: string, approvalId: string) => ["cloud-coding", orgI
 const approvalPath = (id: string) => `/approvals/${encodeURIComponent(id)}`;
 const emailSentSchema = z.object({ sent: z.literal(true) });
 const noContentSchema = z.null();
+const githubCallbackPath = "/github/callback";
+const githubCallbackFailureSchema = z.object({ error: z.string() });
 
 export class CloudCodingApprovalUnavailable extends Error {}
+
+export class CloudCodingGithubCallbackError extends Error {
+  constructor(readonly reason: string, cause: Error) {
+    super("Couldn't finish connecting GitHub.", { cause });
+  }
+}
 
 function useCloudCodingRequest(orgId: string) {
   const { runReauthableAction } = useOrgDashboard();
@@ -44,9 +55,14 @@ function useCloudCodingRequest(orgId: string) {
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
         cache: "no-store",
         signal: options.signal,
+        referrerPolicy: path === githubCallbackPath ? "no-referrer" : undefined,
       });
       if (!response.ok) {
         const error = getRequestError(payload, response, fallback);
+        if (path === githubCallbackPath) {
+          const failure = githubCallbackFailureSchema.safeParse(payload);
+          throw new CloudCodingGithubCallbackError(failure.data?.error ?? "github_error", error);
+        }
         if (options.approval && response.status === 404) throw new CloudCodingApprovalUnavailable(error.message);
         throw error;
       }
@@ -57,6 +73,24 @@ function useCloudCodingRequest(orgId: string) {
     if (!result.parsed) throw new Error(fallback);
     return result.parsed.data;
   };
+}
+
+export function useCloudCodingGithubCallback(orgId: string, input: CloudCodingGithubCallbackInput | null) {
+  const request = useCloudCodingRequest(orgId);
+  return useQuery({
+    queryKey: ["cloud-coding", "github-callback", input?.code],
+    enabled: input !== null,
+    retry: false,
+    retryOnMount: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: Infinity,
+    gcTime: 10 * 60_000,
+    queryFn: () => request(githubCallbackPath, cloudCodingGithubCallbackResultSchema, "Couldn't finish connecting GitHub.", {
+      method: "POST", body: cloudCodingGithubCallbackInputSchema.parse(input),
+    }),
+  });
 }
 
 export function useCloudCodingOverview(orgId: string) {
