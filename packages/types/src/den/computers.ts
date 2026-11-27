@@ -24,10 +24,14 @@ export const computerFolderSchema = z.string().min(1).max(1024).refine((path) =>
 )
 export type ComputerFolder = z.infer<typeof computerFolderSchema>
 
-const foldersSchema = z.array(computerFolderSchema).max(32).refine(
-  (folders) => new Set(folders).size === folders.length,
-  "List each shared folder only once.",
-)
+function sharedFoldersSchema(max: number) {
+  return z.array(computerFolderSchema).max(max).refine(
+    (folders) => new Set(folders).size === folders.length,
+    "List each shared folder only once.",
+  )
+}
+
+const foldersSchema = sharedFoldersSchema(32)
 
 export const computerGrantScopeSchema = z.strictObject({
   surface: z.literal("sandbox"),
@@ -38,6 +42,7 @@ export type ComputerGrantScope = z.infer<typeof computerGrantScopeSchema>
 export const computerSourceRefSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("workbot") }),
   z.strictObject({ kind: z.literal("computer"), id: z.string() }),
+  z.strictObject({ kind: z.literal("owner") }),
 ])
 export type ComputerSourceRef = z.infer<typeof computerSourceRefSchema>
 
@@ -55,6 +60,10 @@ export const computerActionSchema = z.discriminatedUnion("type", [
     cwd: computerFolderSchema.optional(),
     timeoutMs: z.number().int().min(1).max(120_000).optional(),
   }),
+  z.object({ type: z.literal("read"), path: computerFolderSchema }),
+  z.object({ type: z.literal("write"), path: computerFolderSchema }),
+  z.object({ type: z.literal("list"), path: computerFolderSchema.optional() }),
+  z.object({ type: z.literal("search"), path: computerFolderSchema.optional() }),
 ]).meta({ ref: "ComputerAction" })
 export type ComputerAction = z.infer<typeof computerActionSchema>
 
@@ -97,6 +106,44 @@ export const computerPolicySchema = z.object({
   grants: z.array(computerGrantSchema),
 })
 export type ComputerPolicy = z.infer<typeof computerPolicySchema>
+
+const computerStateSchema = z.enum(["ready", "starts_when_needed", "has_a_problem", "online", "offline"])
+export const COMPUTER_STATES = Object.freeze(computerStateSchema.options)
+export type ComputerState = z.infer<typeof computerStateSchema>
+export const COMPUTER_STATE_LABELS = Object.freeze({
+  ready: "Ready",
+  starts_when_needed: "Starts when needed",
+  has_a_problem: "Has a problem",
+  online: "Online",
+  offline: "Offline",
+} satisfies Record<ComputerState, string>)
+
+export const computerAccessSettingSchema = z.strictObject({
+  choice: z.enum(COMPUTER_OWNER_CHOICES),
+  folders: sharedFoldersSchema(8),
+})
+export type ComputerAccessSetting = z.infer<typeof computerAccessSettingSchema>
+
+export const listedComputerSchema = computerSchema.extend({
+  state: computerStateSchema,
+  lastSeenAt: z.iso.datetime({ offset: true }).nullable(),
+  access: z.object({ choice: ownerChoiceSchema, folders: z.array(z.string()) }).nullable(),
+  reach: computerDecisionSchema,
+}).meta({ ref: "ListedComputer" })
+export type ListedComputer = z.infer<typeof listedComputerSchema>
+
+export const computerListResponseSchema = z.object({ computers: z.array(listedComputerSchema) })
+export type ComputerListResponse = z.infer<typeof computerListResponseSchema>
+
+export const computerAuthorizeRequestSchema = z.strictObject({ action: computerActionSchema })
+export type ComputerAuthorizeRequest = z.infer<typeof computerAuthorizeRequestSchema>
+
+export const computerAuthorizeResponseSchema = z.object({
+  decision: computerDecisionSchema,
+  computer: listedComputerSchema,
+  connection: z.object({ provider: z.enum(REMOTE_DEVICE_PROVIDERS), externalId: z.string() }).nullable(),
+})
+export type ComputerAuthorizeResponse = z.infer<typeof computerAuthorizeResponseSchema>
 
 export const COMPUTER_COMMAND_STATUSES = ["pending", "claimed", "done", "failed", "refused", "expired"] as const
 export type ComputerCommandStatus = (typeof COMPUTER_COMMAND_STATUSES)[number]

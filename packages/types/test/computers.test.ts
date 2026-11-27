@@ -2,12 +2,20 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
   COMPUTER_OUTPUT_MAX_BYTES,
+  COMPUTER_STATE_LABELS,
+  COMPUTER_STATES,
   computerAccessReportSchema,
+  computerAccessSettingSchema,
   computerActionSchema,
+  computerAuthorizeRequestSchema,
+  computerAuthorizeResponseSchema,
   computerCommandCompleteRequestSchema,
   computerDecisionSchema,
   computerFolderSchema,
   computerGrantScopeSchema,
+  computerListResponseSchema,
+  computerSourceRefSchema,
+  listedComputerSchema,
 } from "@openwork/types/den/computers"
 
 const scope = { surface: "sandbox", folders: ["/a/logs"] }
@@ -51,6 +59,73 @@ test("shell actions enforce command length, timeout bounds and folder rules", ()
   ]) {
     assert.equal(computerActionSchema.safeParse({ ...shell, ...fields }).success, false)
   }
+})
+
+test("file actions use the same canonical folder paths; only lists and searches can omit the path", () => {
+  for (const type of ["read", "write", "list", "search"]) {
+    const action = { type, path: "/workspace/src/index.ts" }
+    assert.deepEqual(computerActionSchema.parse(action), action)
+    assert.equal(computerActionSchema.safeParse({ type }).success, type === "list" || type === "search")
+    for (const path of ["src", "/workspace/../other", "/workspace/", null]) {
+      assert.equal(computerActionSchema.safeParse({ type, path }).success, false)
+    }
+  }
+})
+
+test("owner source refs are strict and parse in existing access reports", () => {
+  const source = { kind: "owner" }
+  assert.deepEqual(computerSourceRefSchema.parse(source), source)
+  assert.equal(computerSourceRefSchema.safeParse({ ...source, id: "ada" }).success, false)
+  assert.equal(computerAccessReportSchema.safeParse({ choice: "allow", grants: [{ source, folders: ["/workspace"] }] }).success, true)
+})
+
+test("access settings require a choice and at most eight unique canonical folders", () => {
+  for (const choice of ["allow", "off"]) {
+    const setting = { choice, folders: numberedFolders(8) }
+    assert.deepEqual(computerAccessSettingSchema.parse(setting), setting)
+  }
+  assert.deepEqual(computerAccessSettingSchema.parse({ choice: "off", folders: [] }), { choice: "off", folders: [] })
+  for (const invalid of [
+    { choice: null, folders: [] }, { choice: "allow" }, { choice: "allow", folders: numberedFolders(9) },
+    { choice: "allow", folders: ["/workspace", "/workspace"] }, { choice: "allow", folders: ["workspace"] },
+    { choice: "allow", folders: [], extra: true },
+  ]) {
+    assert.equal(computerAccessSettingSchema.safeParse(invalid).success, false)
+  }
+})
+
+const reach = { outcome: "allow", route: "checked", scope }
+const listed = {
+  id: "vm", kind: "registered_vm", provider: "daytona", label: "Build box", ownerMemberId: "ada", availability: "unknown",
+  state: "starts_when_needed", lastSeenAt: null, access: { choice: null, folders: [] }, reach,
+}
+
+test("listed computers include a known state, an ISO last-seen time or null, access and reach", () => {
+  assert.deepEqual(COMPUTER_STATES, ["ready", "starts_when_needed", "has_a_problem", "online", "offline"])
+  assert.deepEqual(COMPUTER_STATE_LABELS, {
+    ready: "Ready", starts_when_needed: "Starts when needed", has_a_problem: "Has a problem", online: "Online", offline: "Offline",
+  })
+  assert.deepEqual(listedComputerSchema.parse(listed), listed)
+  const seen = { ...listed, access: null, lastSeenAt: "2026-11-26T18:00:00Z" }
+  assert.deepEqual(computerListResponseSchema.parse({ computers: [seen, listed] }), { computers: [seen, listed] })
+  assert.equal(listedComputerSchema.safeParse({ ...listed, state: "unknown" }).success, false)
+  assert.equal(listedComputerSchema.safeParse({ ...listed, lastSeenAt: "today" }).success, false)
+  assert.equal(listedComputerSchema.safeParse({ ...listed, access: { choice: true, folders: [] } }).success, false)
+  assert.equal(listedComputerSchema.safeParse({ ...listed, reach: null }).success, false)
+})
+
+test("authorize accepts a strict action body and returns the decision, computer and nullable connection", () => {
+  const request = { action: { type: "read", path: "/workspace" } }
+  assert.deepEqual(computerAuthorizeRequestSchema.parse(request), request)
+  assert.equal(computerAuthorizeRequestSchema.safeParse({ ...request, extra: true }).success, false)
+  assert.equal(computerAuthorizeRequestSchema.safeParse({ action: { type: "read" } }).success, false)
+  const connection = { provider: "daytona", externalId: "sandbox" }
+  const allowed = { decision: reach, computer: listed, connection }
+  assert.deepEqual(computerAuthorizeResponseSchema.parse(allowed), allowed)
+  assert.equal(computerAuthorizeResponseSchema.safeParse({ ...allowed, connection: { ...connection, provider: "invalid-provider" } }).success, false)
+  const decision = { outcome: "refuse", layer: "source", code: "nothing_shared", message: "Nothing is shared.", changeableBy: "computer_owner" }
+  const refused = { decision, computer: { ...listed, reach: decision }, connection: null }
+  assert.deepEqual(computerAuthorizeResponseSchema.parse(refused), refused)
 })
 
 test("access reports are strict and cap grants and folders", () => {
