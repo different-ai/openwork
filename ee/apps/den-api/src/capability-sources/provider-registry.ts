@@ -85,6 +85,8 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
       sitesRead: ["Sites.Read.All"],
       teamsChatRead: ["Chat.Read"],
       teamsChatSend: ["Chat.Read", "ChatMessage.Send"],
+      directoryRead: ["User.ReadBasic.All"],
+      teamsChannelList: ["Team.ReadBasic.All", "Channel.ReadBasic.All"],
     },
     scopeImplications: {
       "Mail.ReadWrite": ["Mail.Read"],

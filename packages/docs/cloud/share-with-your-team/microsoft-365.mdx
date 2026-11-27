@@ -107,7 +107,8 @@ and choose **Save permissions**.
 | Calendar | Read events, or create and manage events |
 | OneDrive | Read or update the member's own files, or every file they can open, including SharePoint libraries, files shared with them, and Teams files |
 | SharePoint | Find sites and list their document libraries |
-| Teams | Read chats, or send messages in existing chats |
+| People | Look up people in your organization (when the feature is on) |
+| Teams | Read chats or send messages in existing chats. With the feature on, list teams and channels. |
 
 Draft access requires mailbox read/write permission. It does not enable the
 separate **Send Outlook email** option. Drafts, reply drafts, and calendar
@@ -128,6 +129,8 @@ the chat, files are sent outside the model's context, and the draft is never
 sent. If a file cannot be attached, the draft is moved to Deleted Items rather
 than left without it. Agents can also read the files attached to an Outlook
 message.
+
+With the **Microsoft 365 mail folders, profile, people and Teams channels** feature turned on for your organization, agents can read the connected member's profile, browse Outlook folders, and read message summaries, including unread messages. With the corresponding optional permissions, they can also find people by name and list joined teams and their channels, but not read channel messages.
 
 File permissions that mention “all
 files” can include shared files the member can access beyond their own drive,
@@ -158,6 +161,8 @@ The enabled choices determine the scopes requested during sign-in:
 | Read all files the member can access | `Files.Read.All` |
 | Full access to files the member can access | `Files.ReadWrite.All` |
 | Find SharePoint sites and libraries | `Sites.Read.All` |
+| Look up people in your organization | `User.ReadBasic.All` |
+| List teams and channels | `Team.ReadBasic.All` and `Channel.ReadBasic.All` |
 | Read Teams chats | `Chat.Read` |
 | Send Teams chat messages | `Chat.Read` and `ChatMessage.Send` |
 

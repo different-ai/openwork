@@ -166,6 +166,8 @@ export type MicrosoftGraphPageTokens = {
   open(token: string): MicrosoftGraphPageLink | null
 }
 
+type MicrosoftGraphResourceRequest = { path: string; query: URLSearchParams; headers?: Readonly<Record<string, string>> }
+
 type MicrosoftGraphPage<T> = { items: T[]; nextPageToken: string | null; hasMore: boolean }
 
 type MicrosoftGraphClientOptions = {
@@ -660,6 +662,22 @@ export class MicrosoftGraphClient {
     const nextLink = isRecord(json) ? readString(json, "@odata.nextLink") : ""
     const nextPageToken = this.pageTokens && pageUrl(nextLink) ? this.pageTokens.seal({ list, url: nextLink }) : null
     return { items: extract(json), nextPageToken, hasMore }
+  }
+
+  async readResourcePage(operation: string, list: string, request: MicrosoftGraphResourceRequest, pageToken?: string) {
+    const url = this.url(request.path)
+    url.search = request.query.toString()
+    return this.requestPage(operation, list, url, pageToken, (json) =>
+      isRecord(json) && Array.isArray(json.value) ? json.value.filter(isRecord) : [],
+    { headers: () => request.headers })
+  }
+
+  async readResourceItem(operation: string, request: MicrosoftGraphResourceRequest) {
+    const url = this.url(request.path)
+    url.search = request.query.toString()
+    const json = await this.requestJson(operation, url, { headers: request.headers, redirect: "error" })
+    if (!isRecord(json)) throw new MicrosoftGraphRequestError(operation, 502, "Microsoft Graph did not return an object.")
+    return json
   }
 
   private async requestMutation(

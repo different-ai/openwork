@@ -25,6 +25,7 @@ export { default as managedDeploymentConfigUpdates } from "@openwork/features/fl
 export { default as managedDeployments } from "@openwork/features/flags/managed-deployments"
 export { default as managedGoogleCloudDeployments } from "@openwork/features/flags/managed-google-cloud-deployments"
 export { default as mcpThreads } from "@openwork/features/flags/mcp-threads"
+export { default as microsoft365ReadResources } from "@openwork/features/flags/microsoft365-read-resources"
 export { default as officeOutlinePreview } from "@openwork/features/flags/office-outline-preview"
 export { default as opencodeV2Only } from "@openwork/features/flags/opencode-v2-only"
 export { default as personalAgents } from "@openwork/features/flags/personal-agents"

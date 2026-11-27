@@ -1,3 +1,4 @@
+import type { FeatureKey } from "@openwork/features";
 import {
   MICROSOFT_365_DEFAULT_FEATURES,
   type Microsoft365Feature,
@@ -10,6 +11,7 @@ export type Microsoft365Permission = {
   label: string;
   scope: string;
   detail?: string;
+  requiresFeature?: FeatureKey;
 };
 
 export type Microsoft365PermissionGroup = {
@@ -75,6 +77,18 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
     ],
   },
   {
+    name: "People",
+    permissions: [
+      {
+        key: "directoryRead",
+        label: "Look up people in your organization",
+        scope: "User.ReadBasic.All",
+        detail: "Finds colleagues by name and returns their name and email address.",
+        requiresFeature: "microsoft365ReadResources",
+      },
+    ],
+  },
+  {
     name: "Teams",
     permissions: [
       { key: "teamsChatRead", label: "Read Teams chats", scope: "Chat.Read" },
@@ -83,6 +97,13 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
         label: "Send Teams chat messages",
         scope: "Chat.Read + ChatMessage.Send",
         detail: "Includes chat read access so OpenWork can find an existing chat; it cannot create a new chat.",
+      },
+      {
+        key: "teamsChannelList",
+        label: "List teams and channels",
+        scope: "Team.ReadBasic.All + Channel.ReadBasic.All",
+        detail: "Lists the teams the member belongs to and their channel names. It does not read channel messages.",
+        requiresFeature: "microsoft365ReadResources",
       },
     ],
   },

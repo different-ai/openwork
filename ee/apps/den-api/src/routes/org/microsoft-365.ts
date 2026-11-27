@@ -19,6 +19,7 @@ import { INTERNAL_CAPABILITY_CONNECTOR_HEADER, readInternalCapabilityConnectorId
 import type { OrgRouteVariables } from "./shared.js"
 import { driveIdSchema, driveItemNameSchema, driveItemSchema, graphError, graphErrorStatus, graphItemIdSchema, needsConnectionSchema, pageTokenSchema, pagingDescription, pagingResponseFields, upstreamErrorSchema, type Microsoft365Access, type Microsoft365Identity } from "./microsoft-365-shared.js"
 import { registerMicrosoftDriveFileRoutes, type MicrosoftDriveFileRouteOptions } from "./microsoft-drive-files.js"
+import { registerMicrosoftGraphResourceRoutes } from "./microsoft-graph-resource-routes.js"
 import { registerMicrosoftDocumentRoutes } from "./microsoft-documents.js"
 
 const FILE_WRITE_FEATURES: readonly string[] = ["filesWrite", "filesFull"]
@@ -521,8 +522,8 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     const token = await resolveAccessToken(identity)
     if (token.kind === "microsoft_graph_error") return { ok: false, status: 502, body: { error: token.kind, message: token.message } }
     if (token.kind === "needs_connection" || token.kind === "policy_blocked") return { ok: false, status: token.kind === "policy_blocked" ? 403 : 409, body: { error: token.kind, message: token.message } }
-    if (!featureEnabled(token, features)) return { ok: false, status: 409, body: { error: "needs_connection", message: disabledFeatureMessage(label) } }
-    if (!featureGranted(token, features)) return { ok: false, status: 409, body: { error: "needs_connection", message: missingPermissionMessage(label) } }
+    if (features.length > 0 && !featureEnabled(token, features)) return { ok: false, status: 409, body: { error: "needs_connection", message: disabledFeatureMessage(label) } }
+    if (features.length > 0 && !featureGranted(token, features)) return { ok: false, status: 409, body: { error: "needs_connection", message: missingPermissionMessage(label) } }
     const write = features.every((feature) => FILE_WRITE_FEATURES.includes(feature))
     return { ok: true, graphBaseUrl: token.graphBaseUrl, graph: (client = {}) => graphClient(token, client.signal, client.timeoutMs, ownDriveOnly(token, write)) }
   }
@@ -533,6 +534,8 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     if (!granted.ok) return Response.json(granted.body, { status: granted.status })
     return granted.graph({ signal })
   }
+
+  registerMicrosoftGraphResourceRoutes(app, { access, memberRoute: orgMemberRouteMiddleware })
 
   registerMicrosoftDriveFileRoutes(app, {
     access,

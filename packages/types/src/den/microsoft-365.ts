@@ -12,6 +12,8 @@ export type Microsoft365Feature =
   | "sitesRead"
   | "teamsChatRead"
   | "teamsChatSend"
+  | "directoryRead"
+  | "teamsChannelList"
 
 export const MICROSOFT_365_DEFAULT_FEATURES: readonly Microsoft365Feature[] = [
   "mailRead",
@@ -33,4 +35,6 @@ export const MICROSOFT_365_FEATURES: readonly Microsoft365Feature[] = [
   "sitesRead",
   "teamsChatRead",
   "teamsChatSend",
+  "directoryRead",
+  "teamsChannelList",
 ]
