@@ -16,6 +16,7 @@ export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-
 export { default as endedSandboxNotice } from "@openwork/features/flags/ended-sandbox-notice"
 export { default as followUpDelivery } from "@openwork/features/flags/follow-up-delivery"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
+export { default as githubConnectorSkillFiles } from "@openwork/features/flags/github-connector-skill-files"
 export { default as gmailThreadRead } from "@openwork/features/flags/gmail-thread-read"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
 export { default as lowStorageWarning } from "@openwork/features/flags/low-storage-warning"
