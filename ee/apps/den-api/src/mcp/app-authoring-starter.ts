@@ -826,7 +826,7 @@ export default function App({ app, input, result, hostContext }) {
   const writing = React.useRef(false);
   const writeBusy = write.status === "loading";
   const availability = result?._meta?.[${jsString(MCP_APP_STORAGE_META)}];
-  const unavailable = result !== undefined && availability?.available !== true;
+  const unavailable = availability?.available === false;
 
   function readRows() {
     return load.call({ ...READ_ARGS, limit: wanted.current }, (page) => {

@@ -3,6 +3,7 @@ import {
   createMcpAppInputSchema,
   mcpAppPublicPath,
   MCP_APP_LAUNCH_TOOL_NAME,
+  MCP_APP_STORAGE_META,
   mcpAppResourceUri,
   mcpAppSummarySchema,
   prepareMcpAppInputSchema,
@@ -11,6 +12,7 @@ import {
   readMcpAppOutputSchema,
   updateMcpAppInputSchema,
   type CreateMcpAppInput,
+  type McpAppStorageStatus,
   type McpAppSummary,
   type PrepareMcpAppInput,
   type PrepareMcpAppOutput,
@@ -99,7 +101,7 @@ function mcpUrl(publicOrigin: string, serverPath: string) {
   return `${publicOrigin}${serverPath}`
 }
 
-export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: string; message: string; launchInput?: unknown; canOpen?: boolean; built?: boolean }) {
+export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: string; message: string; launchInput?: unknown; canOpen?: boolean; built?: boolean; storage?: McpAppStorageStatus }) {
   const launchInput = mcpAppLaunchInput(input.launchInput)
   const url = mcpUrl(input.publicOrigin, input.app.serverPath)
   const launch = { connectionId: input.app.appId, toolName: MCP_APP_LAUNCH_TOOL_NAME, resourceUri: input.app.resourceUri, arguments: { input: launchInput } }
@@ -120,6 +122,7 @@ export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: st
         resourceUri: input.app.resourceUri,
         arguments: { input: launchInput },
       },
+      ...(input.storage ? { [MCP_APP_STORAGE_META]: input.storage } : {}),
     },
   }
 }
@@ -158,6 +161,7 @@ export function registerAppBuilderTools(input: {
   publicOrigin: string
   storage?: boolean
   canOpen?: (appId: string) => Promise<boolean>
+  storageStatus?: (appId: string) => Promise<McpAppStorageStatus | undefined>
   notifyCatalogChanged: () => void
 }) {
   const requireScope = (scope: string) => {
@@ -206,6 +210,7 @@ export function registerAppBuilderTools(input: {
         publicOrigin: input.publicOrigin,
         message: `Created ${app.title} as its own MCP server with ${app.tools.length} ${app.tools.length === 1 ? "tool" : "tools"} plus ${MCP_APP_LAUNCH_TOOL_NAME}. MCP URL: ${mcpUrl(input.publicOrigin, app.serverPath)}${publicNote(request.public, app.appId, request.publicName)}`,
         canOpen: await input.canOpen?.(app.appId) ?? true,
+        storage: await input.storageStatus?.(app.appId),
       })
     } catch (error) {
       return errorResult(error)
@@ -227,7 +232,7 @@ export function registerAppBuilderTools(input: {
       requireScope(DEN_MCP_WRITE_SCOPE)
       const app = await input.service.update(request)
       input.notifyCatalogChanged()
-      return mcpAppLaunchResult({ app, built: true, publicOrigin: input.publicOrigin, message: `Updated ${app.title} to a new revision.${publicNote(request.public, app.appId, request.publicName)}`, canOpen: await input.canOpen?.(app.appId) ?? true })
+      return mcpAppLaunchResult({ app, built: true, publicOrigin: input.publicOrigin, message: `Updated ${app.title} to a new revision.${publicNote(request.public, app.appId, request.publicName)}`, canOpen: await input.canOpen?.(app.appId) ?? true, storage: await input.storageStatus?.(app.appId) })
     } catch (error) {
       return errorResult(error)
     }

@@ -100,6 +100,15 @@ test("an artifact that declares storage gets a read and a write tool, and two me
   await setStorage(main.orgId, true)
   const { token: ownerToken, created } = await build(main.owner, main.orgId, "Shared requests")
   const app = appOf(created)
+  const opensWith = async (token: string, name: string, args: Record<string, unknown>) =>
+    field((await rpc(token, "/mcp/agent", "tools/call", { name, arguments: args })).result, "_meta", "openwork/storage")
+  const launched = await rpc(ownerToken, "/mcp/agent", "tools/call", { name: "create_app", arguments: { title: "Launch check", reactSource: REACT, textFallback: "Launch check.", storage: STORAGE } })
+  assert.deepEqual(field(launched.result, "_meta", "openwork/storage"), { available: true, collections: ["requests", "drafts", "claims"] }, "the artifact a chat opens right after building it is told its data is available")
+  const launchedId = text(field(launched.result, "structuredContent", "app", "appId"), "launched app id")
+  const launchedName = `plugin:${text(field(launched.result, "structuredContent", "app", "pluginId"), "plugin id")}:${launchedId}`
+  assert.deepEqual(await opensWith(ownerToken, "execute_capability", { name: launchedName }), { available: true, collections: ["requests", "drafts", "claims"] })
+  const plain = await rpc(ownerToken, "/mcp/agent", "tools/call", { name: "create_app", arguments: { title: "Plain launch", reactSource: REACT, textFallback: "Plain." } })
+  assert.equal(field(plain.result, "_meta", "openwork/storage"), undefined, "an artifact without storage launches exactly as before")
   await share(main.owner, main.orgId, app.pluginId, teammate.memberId)
   const teammateToken = await den.mintMcpToken(teammate, main.orgId)
 
@@ -221,6 +230,7 @@ test("an artifact that declares storage gets a read and a write tool, and two me
     const blockedWrite = await call(ownerToken, app.path, "storage_write", { collection: "requests", action: "delete", id: rowId })
     assert.equal(field(blockedWrite.body, "error"), "storage_unavailable")
     assert.ok(!toolNames(await rpc(ownerToken, "/mcp/agent", "tools/list")).includes("read_app_data"))
+    assert.deepEqual(await opensWith(ownerToken, "execute_capability", { name: launchedName }), { available: false, collections: ["requests", "drafts", "claims"] })
     assert.ok(existsSync(join(directory, main.orgId, `${app.appId}.sqlite`)), "the database file is still there")
     await setStorage(main.orgId, true)
     const back = await call(teammateToken, app.path, "storage_read", { collection: "requests", where: { title: "Standing desk" } })

@@ -5,6 +5,7 @@ import { createAgentMcpServer, WORKFLOW_SAVE_INSTRUCTIONS } from "./agent-server
 export { createAgentMcpServer, AGENT_MCP_INSTRUCTIONS, LEGACY_AGENT_MCP_INSTRUCTIONS, AGENT_MCP_GUIDANCE_URI } from "./agent-server.js"
 import { appAuthoringStarter, registerAppStarterResources } from "./app-authoring-starter.js"
 import type { BuildAnAppSkillOptions } from "./build-an-app-skill.js"
+import type { McpAppStorage } from "@openwork/types/mcp-app"
 import { startMcpAppTiming } from "@openwork/types/mcp-app-timing"
 import {
   McpServer,
@@ -646,6 +647,9 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       finishIndexTiming()
       return skillBatchResponse(requestInfo.id, contents)
     }
+    const storageStatusOf = (definition: { app: { appId: string }; storage?: McpAppStorage }) => definition.storage && memberIdentity
+      ? bindMcpAppStorage({ organizationId, appId: definition.app.appId, storage: definition.storage, memberId: memberIdentity.orgMembershipId, enabled: organizationFeatures.artifactStorage }).status
+      : undefined
     const executeCapabilityTool = async ({ name, arguments: args, schemaDigest, path, query, body }: CapabilityCall & { schemaDigest?: string }) => {
       const plugin = appServersEnabled && !personalRun ? parseMarketplaceCapabilityName(name) : null
       const definition = plugin && await isActiveMcpApp({ organizationId: principal.organizationId, appId: plugin.configObjectId })
@@ -653,7 +657,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         : null
       if (definition) {
         const canOpen = (await loadOpenableApps()).some((app) => app.appId === definition.app.appId)
-        return mcpAppLaunchResult({ app: definition.app, publicOrigin: redirectUriBase, message: `Opened ${definition.app.title}.`, launchInput: args ?? body, canOpen })
+        return mcpAppLaunchResult({ app: definition.app, publicOrigin: redirectUriBase, message: `Opened ${definition.app.title}.`, launchInput: args ?? body, canOpen, storage: storageStatusOf(definition) })
       }
       const result = await executeCapabilityWithBudget({
         capability: name,
@@ -771,6 +775,10 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           read: (request) => appOperation(async () => readMcpApp({ ...request, context: await appActor(), storageEnabled })),
         },
         canOpen: async (appId) => (await loadOpenableApps()).some((app) => app.appId === appId),
+        storageStatus: async (appId) => {
+          const definition = await loadMcpAppServerDefinition({ ...appAccess, appId }).catch(() => null)
+          return definition ? storageStatusOf(definition) : undefined
+        },
         notifyCatalogChanged: () => {
           mcpAppsPromise = null
           openableAppsPromise = null
