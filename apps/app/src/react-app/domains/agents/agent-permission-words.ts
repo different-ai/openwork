@@ -29,7 +29,11 @@ export function agentOwnerFirstName(owner: PersonalAgentPerson | null): string {
 }
 
 export function requestToolTitle(request: Pick<PersonalAgentRequest, "toolTitle" | "toolName">): string {
-  return request.toolTitle?.trim() || request.toolName?.trim() || t("agents.permission_ask_tool");
+  const title = request.toolTitle?.trim();
+  const name = request.toolName?.trim();
+  if (title && title !== name) return title;
+  const words = name?.split(/[:./]/u).at(-1)?.replace(/([a-z])([A-Z])/gu, "$1 $2").replace(/[_-]+/gu, " ").trim();
+  return words ? words[0]?.toUpperCase() + words.slice(1) : t("agents.permission_ask_tool");
 }
 
 export function requestConnectionName(request: Pick<PersonalAgentRequest, "connectionName">): string {

@@ -12,9 +12,9 @@ const finishedRun: Parameters<typeof automationRunMessages>[0]["run"] = {
 }
 
 test("receipt messages keep instructions, recorded work, and one Markdown answer in turn order", () => {
-  const messages = automationRunMessages({ run: finishedRun, events: [
+  const messages = automationRunMessages({ run: finishedRun, revision: { instructions: "Summarize today's issues" }, events: [
     event(4, "capability_execution", { messageId: "m2", partId: "p1", tool: "read_issues", connectionName: "Linear", status: "completed", input: { query: "not replayed" }, output: "not replayed" }),
-    event(1, "user", { messageId: "m1", text: "Summarize today's issues" }),
+    event(1, "user", { messageId: "m1", text: "Private agent brief and memory. Summarize today's issues" }),
     event(2, "assistant", { messageId: "m2", text: "**Report ready**" }),
     event(3, "capability_search", { name: "search_capabilities" }),
     event(5, "usage", { inputTokens: 50 }),

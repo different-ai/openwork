@@ -48,8 +48,9 @@ function executionPart(event: AutomationRunEvent, active: boolean): DynamicToolU
   return { ...base, state: "output-available", input: {}, output: "" }
 }
 
-export function automationRunMessages({ events, run }: {
+export function automationRunMessages({ events, run, revision }: {
   events: readonly AutomationRunEvent[]
+  revision?: Pick<AutomationRunReceipt["revision"], "instructions">
   run: Pick<AutomationRunReceipt["run"], "id" | "status" | "attemptCount" | "resultSummary" | "finishedAt" | "updatedAt">
 }): UIMessage[] {
   const messages: UIMessage[] = []
@@ -60,7 +61,8 @@ export function automationRunMessages({ events, run }: {
     const { type, payload, createdAt, attempt } = event
     const text = eventText(payload.text)
     if (type === "user") {
-      if (text) messages.push({ id: event.id, role: "user", metadata: { opencode: { created: createdAt } }, parts: [{ type: "text", text }] })
+      const instructions = revision?.instructions.trim()
+      if (instructions) messages.push({ id: event.id, role: "user", metadata: { opencode: { created: createdAt } }, parts: [{ type: "text", text: instructions }] })
       continue
     }
     if (type !== "assistant" && type !== "capability_execution") continue
