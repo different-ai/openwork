@@ -4,17 +4,32 @@ description: "Enable the private runner and Workbot on a self-hosted OpenWork He
 ---
 
 <Note>
-  Requires an OpenWork release newer than `v0.18.73` (`v0.18.74` or later) whose `openwork-ee` OCI chart includes `headlessRunner` and `workbot` support.
+  Requires a published OpenWork release newer than `v0.18.73` whose `openwork-ee` OCI chart includes `headlessRunner` and `workbot` support.
 </Note>
 
-Add Workbot to an existing OpenWork Kubernetes deployment so members can chat from your own dashboard. Workbot needs the headless runner. Roll out the runner first so you can verify it before opening Workbot to members.
+Add Workbot to an existing OpenWork Kubernetes deployment so members can chat from your own dashboard. Workbot needs the headless runner. You can enable both in one Helm upgrade, but rolling out the runner first is recommended on initial setup so you can verify storage and runner health before troubleshooting Workbot DNS, TLS, and ingress.
 
 ## Prepare your release and model access
 
 1. Choose a [published OpenWork release](https://github.com/different-ai/openwork/releases) whose `openwork-ee` OCI chart includes both `headlessRunner` and `workbot` support. Use that same release for the Den API, Den Web, AI Gateway, headless runner and Workbot images. Installing a newer chart with older images does not add support.
-2. Start with your complete, reviewed Helm values for the existing release. Keep your database, authentication and networking settings and existing Secret references. Pin the chart with `--version` in the commands below and set the top-level `image.tag` in that file to the matching published image tag. Remove or reconcile per-component tags, including any legacy `inference.image.tag` inherited by Gateway. Make sure your cluster can pull all five matching images, including from your mirrors if you use them.
+2. Start with your complete, reviewed Helm values for the existing release. Keep your database, authentication and networking settings and existing Secret references. Pin the chart with `--version` in the commands below and leave top-level `image.tag: ""` so all five images follow the chart version (or set `image.tag` to the matching release tag without a `v` prefix, for example when using mirrored images). Remove or reconcile per-component tags, including any legacy `inference.image.tag` inherited by Gateway. Make sure your cluster can pull all five matching images, including from your mirrors if you use them.
 3. Make sure [AI Gateway is enabled](/self-host/gateway) (`gateway.enabled: true`). In the dashboard, open **AI Gateway › AI Providers** and [configure a provider](/ai-gateway/overview#set-it-up). Put the model in an active model group with working credentials. Grant access to the intended members and to the admin who will choose the default model. If the provider requires individual sign-in, connect the relevant accounts before testing.
-4. Look up the runner's startup model alias in this deployment. With an account that has the grant, select the organization, open the browser's Network panel and reload **My Library › Models**. Inspect the response to `GET /v1/inference-providers?scope=usable`. In the intended provider's `models` list, match the model, model group and credential set and copy the entry's `id` starting with `gwm_`, not its `upstreamModelId`. Use the matching protocol: `anthropic` for Anthropic Messages, `openai` for Chat Completions or `openai-responses` for OpenAI Responses. Choose a different model if your provider does not support a runner protocol. The startup alias does not grant anyone access; Workbot uses each signed-in member's Gateway permissions.
+4. Look up the runner's startup **Gateway model ID** (`headlessRunner.model.alias`) in this deployment. This is a deployment-specific ID starting with `gwm_`, not a hostname or upstream model name. With an account that has the grant, select the organization, open the browser's Network panel and reload **My Library › Models**. Inspect the response to `GET /v1/inference-providers?scope=usable`, match the model, model group and credential set inside the provider's `models` list, and copy `id` (not `upstreamModelId`):
+
+   ```json
+   {
+     "id": "gwm_01examplegroup..._01examplecred..._01examplemodel...",
+     "name": "Example Model",
+     "upstreamModelId": "provider/model-name"
+   }
+   ```
+
+   Set `headlessRunner.model.protocol` to match how OpenWork connects to that provider:
+   - `anthropic` for direct Anthropic providers (Messages API)
+   - `openai-responses` for direct OpenAI providers (Responses API)
+   - `openai` (Chat Completions) for OpenAI-compatible providers in OpenWork (such as TrueFoundry, LiteLLM, OpenRouter and custom OpenAI-compatible endpoints)
+
+   Choose a different model if your provider does not support one of these runner protocols. The startup model ID does not grant anyone access. Workbot uses each signed-in member's Gateway permissions.
 
 ## Prepare Secrets, storage and HTTPS
 
@@ -22,12 +37,12 @@ Generate a different random value for each of the four keys below using your sec
 
 If you generate the values locally, `openssl rand -hex 32` produces 64 hexadecimal characters per run. Generate each value separately and pass the output directly to your secret manager's secure import mechanism without the trailing newline. Do not print the values to the terminal or pass them as command-line arguments.
 
-Provision the two Kubernetes Secrets below in the Helm release namespace, separate from the shared Den Secret. Helm references these Secrets but does not create or rotate them. Restrict access to both Secrets. Put only the Secret names in Helm values, and reuse the same values across upgrades and if you disable and re-enable the workloads.
+Provision these two Kubernetes Secrets in the Helm release namespace, separate from the shared Den Secret:
 
-| Secret name in the example | Required keys | Who receives them |
-| --- | --- | --- |
-| `runner-runtime` | `HEADLESS_API_TOKEN`, `HEADLESS_DEN_CALLBACK_TOKEN`, `HEADLESS_GRANT_KEY` | The API token goes to the runner, Den API and Workbot; the callback token goes to the runner and Den API; the grant key goes only to the runner. |
-| `workbot-runtime` | `WORKBOT_SESSION_SECRET` | Workbot only. |
+- **`runner-runtime`:** `HEADLESS_API_TOKEN`, `HEADLESS_DEN_CALLBACK_TOKEN` (must differ from `HEADLESS_API_TOKEN`), `HEADLESS_GRANT_KEY`
+- **`workbot-runtime`:** `WORKBOT_SESSION_SECRET`
+
+Helm references these Secrets but does not create or rotate them. Restrict access to both Secrets, put only their names in Helm values, and reuse the same values across upgrades and if you disable and re-enable the workloads. See [Companion Secrets](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/companions.md#companion-secrets) in the chart reference for each key's purpose, which components receive it, key remapping, and rotation effects.
 
 Use a ReadWriteOnce volume for the runner and plan to back up its SQLite database and files together. The runner is a single writer and restarts with a brief interruption during upgrades. Keep its Service private on a trusted cluster network. The [chart reference](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/companions.md) covers existing claims, backups and Pod Security requirements. The companion workloads as rendered do not meet Restricted Pod Security admission.
 
@@ -39,7 +54,7 @@ Give Workbot its own HTTPS hostname, distinct from Den and Gateway. For the Ingr
 
 If you already run an eligible Automation or Slack integration, review its model access first: enabling the runner can let those integrations use it before Workbot is on. If you are replacing manually configured companions, follow the [chart migration notes](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/companions.md#manual-destinations-and-terraform-classification) before proceeding. Helm does not adopt those workloads or migrate their data.
 
-Add this configuration to your complete `openwork-values.yaml`. Replace the model alias and protocol with the ones you looked up. The storage example uses the cluster's default StorageClass; review the storage choice before applying.
+Add this configuration to your complete `openwork-values.yaml`. Replace the model alias and protocol with the ones you looked up. Review `storageClass` before the first apply because Kubernetes cannot change a PVC's StorageClass after creation. Leave `storageClass` omitted to use the cluster default, or set a StorageClass that supports `ReadWriteOnce`. Do not set `storageClass: ""` unless you want static provisioning.
 
 ```yaml
 headlessRunner:
@@ -53,6 +68,8 @@ headlessRunner:
   persistence:
     enabled: true
     size: 10Gi
+    # Leave omitted for the cluster default StorageClass, or set one that supports ReadWriteOnce.
+    # storageClass: REPLACE_WITH_STORAGE_CLASS
 workbot:
   enabled: false
 ```
@@ -86,9 +103,12 @@ workbot:
   secret:
     existingSecret: workbot-runtime
   ingress:
+    # Set false if you terminate HTTPS at an external reverse proxy (route to the Workbot Service on port 3020).
     enabled: true
     className: REPLACE_WITH_YOUR_INGRESS_CLASS
     tlsSecretName: workbot-tls
+    # Add your Ingress controller's unbuffered streaming and idle-timeout annotations here.
+    annotations: {}
 ```
 
 Run the same render and upgrade commands. Check `kubectl --namespace "$NAMESPACE" get deployments,pods,ingress` for a ready `-workbot` Deployment and the Ingress for your Workbot hostname. In **Services**, check that Workbot is **Ready**. A ready pod alone does not prove Den API can reach the Workbot HTTPS endpoint.
