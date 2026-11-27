@@ -24,7 +24,7 @@ export function AgentHeaderTitle({ sessionId, layout, children }: SessionHeaderT
   const name = agent?.agent.name ?? chat.agentName ?? t("agents.new");
   const compact = layout === "compact";
   const title = (
-    <h1 data-agent-header={chat.agentId ? undefined : "new"} className="flex min-w-0 items-center gap-2 max-lg:max-w-32">
+    <h1 data-agent-header={chat.agentId ? undefined : "new"} className="flex min-w-0 items-center gap-2 max-lg:max-w-32 max-lg:shrink-0">
       {!agent ? <>
         <AgentFace name={chat.agentName} />
         <span className="truncate">{name}</span>
