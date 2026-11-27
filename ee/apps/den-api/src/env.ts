@@ -173,7 +173,6 @@ const EnvSchema = z.object({
   DEN_APP_MCP_SERVERS_ENABLED: z.string().optional(),
   DEN_ARTIFACT_STORAGE_BACKEND: z.string().optional(),
   DEN_ARTIFACT_STORAGE_LOCAL_DIR: z.string().optional(),
-  DEN_ARTIFACT_STORAGE_LOCAL_UNSAFE_SINGLE_INSTANCE: z.string().optional(),
   DEN_ARTIFACT_STORAGE_CELLD_URL: z.string().optional(),
   DEN_ARTIFACT_STORAGE_CELLD_TOKEN: z.string().optional(),
   DEN_ARTIFACT_STORAGE_MAX_BYTES: z.string().optional(),
@@ -556,7 +555,6 @@ const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
 const artifactStorage = resolveArtifactStorageConfig({
   backend: parsed.DEN_ARTIFACT_STORAGE_BACKEND,
   localDir: parsed.DEN_ARTIFACT_STORAGE_LOCAL_DIR,
-  localSingleInstance: parsed.DEN_ARTIFACT_STORAGE_LOCAL_UNSAFE_SINGLE_INSTANCE,
   celldUrl: parsed.DEN_ARTIFACT_STORAGE_CELLD_URL,
   celldToken: parsed.DEN_ARTIFACT_STORAGE_CELLD_TOKEN,
   maxBytes: parsed.DEN_ARTIFACT_STORAGE_MAX_BYTES,

@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "5864bd0c-32f2-430d-956a-069ff182bc7a",
+  "id": "0bc2e44c-d253-4058-83e4-e74bc50b74bf",
   "prevId": "176785bf-7a89-4601-8db8-535025b11a0a",
   "tables": {
     "admin_metric_refresh_lease": {
@@ -27143,6 +27143,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "created_at": {
           "name": "created_at",

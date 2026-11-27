@@ -5,6 +5,7 @@ import { AuthUserTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   MCP_APP_STORAGE_MAX_READ_ROWS,
+  MCP_APP_STORAGE_META,
   MCP_APP_STORAGE_READ_TOOL_NAME,
   MCP_APP_STORAGE_WRITE_TOOL_NAME,
   mcpAppIdSchema,
@@ -19,7 +20,7 @@ import { db } from "../db.js"
 import { env } from "../env.js"
 import { markFeaturesUsed } from "../feature-usage.js"
 import { getMcpAppStorageBackend } from "../mcp-app-storage/index.js"
-import { readMcpAppStorageRecord, recordMcpAppStorageUse } from "../mcp-app-storage/registry.js"
+import { claimMcpAppStorage, readMcpAppStorageRecord, recordMcpAppStorageUsage } from "../mcp-app-storage/registry.js"
 import { McpAppStorageError, readMcpAppStorage, writeMcpAppStorage, type McpAppStorageAccess } from "../mcp-app-storage/service.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 
@@ -73,7 +74,7 @@ export function mcpAppStorageTools(title: string, storage: McpAppStorage): Tool[
         additionalProperties: false,
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-      _meta: { ui: { visibility: ["model", "app"] } },
+      _meta: { ui: { visibility: ["model", "app"] }, [MCP_APP_STORAGE_META]: "read" },
     },
     {
       name: MCP_APP_STORAGE_WRITE_TOOL_NAME,
@@ -91,7 +92,7 @@ export function mcpAppStorageTools(title: string, storage: McpAppStorage): Tool[
         additionalProperties: false,
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-      _meta: { ui: { visibility: ["model", "app"] } },
+      _meta: { ui: { visibility: ["model", "app"] }, [MCP_APP_STORAGE_META]: "write" },
     },
   ]
 }
@@ -119,7 +120,7 @@ export async function callMcpAppStorageTool(input: {
   } catch (error) {
     if (error instanceof McpAppStorageError) return failure(error.code, error.message)
     console.error("mcp_app_storage_failed", { error: error instanceof Error ? error.message : String(error) })
-    return failure("storage_unavailable", "Saved data is unavailable right now. Try again in a moment.")
+    return failure("storage_failed", "Saved data could not be reached. Try again in a moment.")
   }
 }
 
@@ -152,7 +153,7 @@ export function bindMcpAppStorage(input: {
       actor: await (actor ??= memberName(input.memberId).then((name) => ({ memberId: input.memberId, name }))),
       backend,
       limits: { maxRows: env.artifactStorage.maxRows, maxBytes: env.artifactStorage.maxBytes },
-      registry: { read: readMcpAppStorageRecord, record: recordMcpAppStorageUse },
+      registry: { read: readMcpAppStorageRecord, claim: claimMcpAppStorage, record: recordMcpAppStorageUsage },
     }),
   }
 }
@@ -166,6 +167,8 @@ export function registerAppStorageTools(input: {
 }) {
   const run = async (name: string, request: { appId: string } & Record<string, unknown>) => {
     const { appId: id, ...args } = request
+    const scope = name === MCP_APP_STORAGE_WRITE_TOOL_NAME ? DEN_MCP_WRITE_SCOPE : DEN_MCP_READ_SCOPE
+    if (!input.scopes.has(scope)) return failure("insufficient_mcp_scope", `${name} requires the ${scope} scope.`, { requiredScope: scope })
     const bound = await input.bind(id)
     if (!bound) return failure("no_saved_data", "That artifact is not available to you, or it does not save data.")
     return callMcpAppStorageTool({ binding: bound.binding, name, args, scopes: input.scopes, usage: bound.usage })

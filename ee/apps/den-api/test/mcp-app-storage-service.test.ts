@@ -44,10 +44,18 @@ let nextApp = 0
 function world(overrides: Partial<Pick<McpAppStorageAccess, "limits" | "backend" | "storage">> = {}) {
   nextApp += 1
   const ref = { organizationId: ORGANIZATION, appId: `cob_01${run}${String(nextApp).padStart(12, "0")}` }
-  const records = new Map<string, { sizeBytes: number; rowCount: number }>()
+  const records = new Map<string, { backend: string; deletedAt: Date | null; sizeBytes: number; rowCount: number }>()
   const registry: McpAppStorageRegistry = {
     read: async (target) => records.get(target.appId) ?? null,
-    record: async (target, usage) => { records.set(target.appId, { sizeBytes: usage.sizeBytes, rowCount: usage.rowCount }) },
+    claim: async (target, kind) => {
+      const claimed = records.get(target.appId) ?? { backend: kind, deletedAt: null, sizeBytes: 0, rowCount: 0 }
+      records.set(target.appId, claimed)
+      return claimed
+    },
+    record: async (target, usage) => {
+      const current = records.get(target.appId)
+      if (current && !current.deletedAt) records.set(target.appId, { ...current, ...usage })
+    },
   }
   const backend = overrides.backend ?? defaultBackend
   const as = (actor: typeof ANA): McpAppStorageAccess => ({
@@ -164,12 +172,85 @@ test("an artifact stops accepting rows at its row cap, and accepts again after o
   assert.equal((await readMcpAppStorage(as(ANA), { collection: "requests" })).total, 1)
 })
 
-test("an artifact stops accepting rows and changes at its size cap, and removing still works", async () => {
-  const { as } = world({ limits: { maxRows: 100, maxBytes: 1 } })
-  const first = await writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "One" } })
-  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "Two" } }))).code, "storage_full")
-  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "update", id: first.id, values: { title: "Uno" } }))).code, "storage_full")
+test("a write that would pass the size cap never commits, a shrinking change and a removal still work", async () => {
+  const { as } = world({ limits: { maxRows: 100, maxBytes: 60 } })
+  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "x".repeat(80) } }))).code, "storage_full")
+  assert.equal((await readMcpAppStorage(as(ANA), { collection: "requests" })).total, 0)
+  const first = await writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "x".repeat(30) } })
+  assert.equal((await refusal(writeMcpAppStorage(as(BEN), { collection: "requests", action: "insert", values: { title: "y".repeat(30) } }))).code, "storage_full")
+  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "update", id: first.id, values: { title: "z".repeat(70) } }))).code, "storage_full")
+  assert.equal((await readMcpAppStorage(as(ANA), { collection: "requests" })).rows[0]?.values.title, "x".repeat(30))
+  const shorter = await writeMcpAppStorage(as(ANA), { collection: "requests", action: "update", id: first.id, values: { title: "short" } })
+  assert.equal(shorter.row?.values.title, "short")
   await writeMcpAppStorage(as(ANA), { collection: "requests", action: "delete", id: first.id })
+  await writeMcpAppStorage(as(BEN), { collection: "requests", action: "insert", values: { title: "y".repeat(30) } })
+})
+
+test("writers racing at the row cap never pass it", async () => {
+  const { as } = world({ limits: { maxRows: 3, maxBytes: 1024 * 1024 } })
+  const attempts = await Promise.allSettled(Array.from({ length: 8 }, (_, index) => writeMcpAppStorage(as(index % 2 ? ANA : BEN), { collection: "requests", action: "insert", values: { title: `Racer ${index}` } })))
+  assert.equal(attempts.filter((attempt) => attempt.status === "fulfilled").length, 3)
+  assert.equal((await readMcpAppStorage(as(ANA), { collection: "requests" })).total, 3)
+})
+
+test("two members changing different fields of one row at the same time both keep their change", async () => {
+  const { as } = world()
+  const added = await writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "Desk", status: "new", amount: 1 } })
+  await Promise.all([
+    writeMcpAppStorage(as(ANA), { collection: "requests", action: "update", id: added.id, values: { amount: 250 } }),
+    writeMcpAppStorage(as(BEN), { collection: "requests", action: "update", id: added.id, values: { status: "approved" } }),
+  ])
+  const row = (await readMcpAppStorage(as(ANA), { collection: "requests" })).rows[0]
+  assert.deepEqual([row?.values.title, row?.values.status, row?.values.amount], ["Desk", "approved", 250])
+})
+
+test("a database being removed reads as empty, takes no writes, and a write that lands after removal is undone", async () => {
+  const { as, records, ref, backend } = world()
+  const added = await writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "Keep out" } })
+  const live = records.get(ref.appId)
+  assert.ok(live)
+  records.set(ref.appId, { ...live, deletedAt: new Date() })
+  assert.equal((await readMcpAppStorage(as(ANA), { collection: "requests" })).total, 0)
+  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "Late" } }))).code, "storage_failed")
+  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "delete", id: added.id }))).code, "row_not_found")
+
+  const racing = world()
+  await writeMcpAppStorage(racing.as(ANA), { collection: "requests", action: "insert", values: { title: "Before" } })
+  const fenced: McpAppStorageAccess = {
+    ...racing.as(ANA),
+    backend: { ...racing.backend, write: async (target, statements) => {
+      const result = await racing.backend.write(target, statements)
+      racing.records.delete(target.appId)
+      return result
+    } },
+  }
+  assert.equal((await refusal(writeMcpAppStorage(fenced, { collection: "requests", action: "insert", values: { title: "During delete" } }))).code, "storage_failed")
+  assert.equal(await racing.backend.export(racing.ref), null)
+  assert.equal(await backend.export(ref) === null, false)
+})
+
+test("a database made on another backend is never read or written through this one", async () => {
+  const { as, records, ref } = world()
+  await writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "Here" } })
+  const live = records.get(ref.appId)
+  assert.ok(live)
+  records.set(ref.appId, { ...live, backend: live.backend === "local" ? "celld" : "local" })
+  assert.equal((await refusal(readMcpAppStorage(as(ANA), { collection: "requests" }))).code, "storage_failed")
+  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "There" } }))).code, "storage_failed")
+})
+
+test("retyping a field hides old values of the other type from filters and from the row, and impossible dates are refused", async () => {
+  const numbers = { collections: [{ name: "flags", fields: [{ name: "label", type: "text" as const, required: true }, { name: "on", type: "number" as const }] }] }
+  const first = world({ storage: numbers })
+  await writeMcpAppStorage(first.as(ANA), { collection: "flags", action: "insert", values: { label: "Old", on: 1 } })
+  const booleans = { collections: [{ name: "flags", fields: [{ name: "label", type: "text" as const, required: true }, { name: "on", type: "boolean" as const }] }] }
+  const later = { ...first.as(ANA), storage: booleans }
+  assert.equal((await readMcpAppStorage(later, { collection: "flags", where: { on: true } })).total, 0)
+  assert.equal((await readMcpAppStorage(later, { collection: "flags", where: { on: null } })).total, 1)
+  assert.equal((await readMcpAppStorage(later, { collection: "flags" })).rows[0]?.values.on, null)
+  const { as } = world()
+  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "A", due: "2026-02-30" } }))).code, "invalid_value")
+  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "delete", id: "x", values: { title: "A" } }))).code, "invalid_input")
 })
 
 test("one entry larger than the row limit is refused", async () => {
@@ -216,6 +297,9 @@ test("a failing backend reads as unavailable and never as an empty list", async 
     delete: async () => undefined,
   }
   const { as } = world({ backend: broken })
-  assert.equal((await refusal(readMcpAppStorage(as(ANA), { collection: "requests" }))).code, "storage_unavailable")
-  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "A" } }))).code, "storage_unavailable")
+  const { as: live } = world()
+  await writeMcpAppStorage(live(ANA), { collection: "requests", action: "insert", values: { title: "A" } })
+  const down = { ...live(ANA), backend: broken }
+  assert.equal((await refusal(readMcpAppStorage(down, { collection: "requests" }))).code, "storage_failed")
+  assert.equal((await refusal(writeMcpAppStorage(as(ANA), { collection: "requests", action: "insert", values: { title: "A" } }))).code, "storage_failed")
 })

@@ -103,7 +103,9 @@ test("an artifact that declares storage gets a read and a write tool, and two me
   await share(main.owner, main.orgId, app.pluginId, teammate.memberId)
   const teammateToken = await den.mintMcpToken(teammate, main.orgId)
 
-  assert.deepEqual(toolNames(await rpc(ownerToken, app.path, "tools/list")), ["open_app", "storage_read", "storage_write"])
+  const served = await rpc(ownerToken, app.path, "tools/list")
+  assert.deepEqual(toolNames(served), ["open_app", "storage_read", "storage_write"])
+  assert.deepEqual(list(field(served.result, "tools")).map((tool) => field(tool, "_meta", "openwork/storage")), [undefined, "read", "write"])
   const opened = await call(ownerToken, app.path, "open_app", {})
   assert.deepEqual(field(opened.meta, "openwork/storage"), { available: true, collections: ["requests", "drafts", "claims"] })
 
@@ -153,6 +155,19 @@ test("an artifact that declares storage gets a read and a write tool, and two me
     assert.ok(outside.error, "another organization's member gets an error, not rows")
     const outsideAgent = await den.callMcpTool(outsideToken, "read_app_data", { appId: app.appId, collection: "requests" })
     assert.equal(field(outsideAgent.body, "error"), "no_saved_data")
+  })
+
+  await test("the agent's data tools check the token's scope before they say whether an artifact exists", async () => {
+    const issued = await den.request(stranger.token, "POST", "/v1/mcp/token", { orgId: main.orgId, body: { scopes: ["mcp:read"] } })
+    const readOnly = text(field(issued.body, "token"), "read-only token")
+    for (const appId of [app.appId, "cob_01kq0000000000000000000000"]) {
+      const refused = await den.callMcpTool(readOnly, "write_app_data", { appId, collection: "requests", action: "insert", values: { title: "Probe" } })
+      assert.equal(field(refused.body, "error"), "insufficient_mcp_scope", appId)
+    }
+    const strangerToken = await den.mintMcpToken(stranger, main.orgId)
+    const wrote = await den.callMcpTool(strangerToken, "write_app_data", { appId: app.appId, collection: "requests", action: "insert", values: { title: "Intruder" } })
+    assert.equal(field(wrote.body, "error"), "no_saved_data")
+    assert.equal(field((await call(ownerToken, app.path, "storage_read", { collection: "requests", where: { title: "Intruder" } })).structured, "total"), 0)
   })
 
   await test("a read-only token reads and cannot write", async () => {

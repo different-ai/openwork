@@ -2,6 +2,8 @@
 
 OpenWork Den keeps each artifact's saved data in a separate SQLite Durable Object on [celld](https://github.com/denoland/celld). The Worker routes to a cell named `<organizationId>/<appId>`. Den authenticates users, checks their permissions, and authors all SQL. This is a private service, not an end-user SQL API. Keep the Worker and celld's operator listener off public networks.
 
+Use celld for any Den installation outside dev mode. Den's local SQLite backend is available only with `OPENWORK_DEV_MODE=1`.
+
 ## HTTP contract
 
 All routes except `GET /health` require `Authorization: Bearer <token>` matching `ARTIFACT_STORAGE_TOKEN`. Storage routes return 503 if the binding is missing or shorter than 24 characters. `/health` is liveness only and responds `200 { "ok": true }` even if storage is not configured.

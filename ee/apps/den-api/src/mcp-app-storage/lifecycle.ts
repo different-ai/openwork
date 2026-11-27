@@ -1,11 +1,21 @@
 import type { StorageDatabaseRef } from "./backend.js"
 import { getMcpAppStorageBackend } from "./index.js"
-import { listOrganizationMcpAppStorage, readMcpAppStorageRecord, removeMcpAppStorageRecord } from "./registry.js"
+import {
+  listMcpAppStoragePendingDelete,
+  listOrganizationMcpAppStorage,
+  markMcpAppStorageDeleted,
+  markOrganizationMcpAppStorageDeleted,
+  removeMcpAppStorageRecord,
+  type McpAppStorageRecord,
+} from "./registry.js"
 
-async function deleteRegisteredStorage(ref: StorageDatabaseRef, kind: string): Promise<boolean> {
+const RETRY_BATCH = 50
+
+async function purge(record: Pick<McpAppStorageRecord, "appId" | "organizationId" | "backend">): Promise<boolean> {
+  const ref: StorageDatabaseRef = { organizationId: record.organizationId, appId: record.appId }
   try {
     const backend = getMcpAppStorageBackend()
-    if (!backend || backend.kind !== kind) throw new Error("Storage backend unavailable")
+    if (!backend || backend.kind !== record.backend) throw new Error("Storage backend unavailable")
     await backend.delete(ref)
     await removeMcpAppStorageRecord(ref)
     return true
@@ -15,10 +25,25 @@ async function deleteRegisteredStorage(ref: StorageDatabaseRef, kind: string): P
   }
 }
 
+export async function retryMcpAppStorageDeletes(limit = RETRY_BATCH): Promise<{ deleted: number; failed: number }> {
+  let deleted = 0
+  let failed = 0
+  try {
+    for (const record of await listMcpAppStoragePendingDelete(limit)) {
+      if (await purge(record)) deleted++
+      else failed++
+    }
+  } catch {
+    console.error("mcp_app_storage_delete_failed", {})
+    failed++
+  }
+  return { deleted, failed }
+}
+
 export async function deleteMcpAppStorage(ref: StorageDatabaseRef): Promise<void> {
   try {
-    const record = await readMcpAppStorageRecord(ref)
-    if (record) await deleteRegisteredStorage(ref, record.backend)
+    await markMcpAppStorageDeleted(ref)
+    await retryMcpAppStorageDeletes()
   } catch {
     console.error("mcp_app_storage_delete_failed", { organizationId: ref.organizationId, appId: ref.appId })
   }
@@ -28,8 +53,9 @@ export async function deleteOrganizationMcpAppStorage(organizationId: string): P
   let deleted = 0
   let failed = 0
   try {
+    await markOrganizationMcpAppStorageDeleted(organizationId)
     for (const record of await listOrganizationMcpAppStorage(organizationId)) {
-      if (await deleteRegisteredStorage(record, record.backend)) deleted++
+      if (await purge(record)) deleted++
       else failed++
     }
   } catch {
@@ -37,4 +63,10 @@ export async function deleteOrganizationMcpAppStorage(organizationId: string): P
     failed++
   }
   return { deleted, failed }
+}
+
+export function startMcpAppStorageDeleteRetries(intervalMs = 10 * 60_000): () => void {
+  const timer = setInterval(() => { void retryMcpAppStorageDeletes() }, intervalMs)
+  timer.unref()
+  return () => clearInterval(timer)
 }

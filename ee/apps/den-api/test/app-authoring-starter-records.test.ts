@@ -31,6 +31,9 @@ for (const [label, storage] of cases) {
   test(`compiles the records starter with ${label}`, async () => {
     const { pattern, reactSource, cssSource } = appStarter([], storage)
     assert.equal(pattern, "records")
+    for (const copy of ["Showing the latest ", "Show all ", "Couldn't refresh. Showing what loaded at ", "Try again", "Saved data is unavailable. An OpenWork admin can turn it back on."]) {
+      assert.ok(reactSource.includes(copy), copy)
+    }
     const result = await buildGeneratedMcpApp({ reactSource, cssSource, title: "Saved requests", description: null })
     assert.equal(result.ok, true, result.diagnostics.map((item) => item.message).join("\n"))
   })

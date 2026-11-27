@@ -35,9 +35,12 @@ export class McpAppStorageError extends Error {
 
 export type McpAppStorageActor = { memberId: string; name: string }
 
+export type McpAppStorageClaim = { backend: string; deletedAt: Date | null }
+
 export type McpAppStorageRegistry = {
-  read(ref: StorageDatabaseRef): Promise<{ sizeBytes: number } | null>
-  record(ref: StorageDatabaseRef, usage: { backend: McpAppStorageBackendKind; rowCount: number; sizeBytes: number }): Promise<void>
+  read(ref: StorageDatabaseRef): Promise<McpAppStorageClaim | null>
+  claim(ref: StorageDatabaseRef, backend: McpAppStorageBackendKind): Promise<McpAppStorageClaim>
+  record(ref: StorageDatabaseRef, usage: { rowCount: number; sizeBytes: number }): Promise<void>
 }
 
 export type McpAppStorageAccess = {
@@ -90,17 +93,32 @@ function checkedValue(field: McpAppStorageField, value: FieldValue): FieldValue 
     if (typeof value !== "boolean") throw new McpAppStorageError("invalid_value", `${label(field)} must be true or false.`)
     return value
   }
-  if (typeof value !== "string" || !(ISO_DATE.test(value) || ISO_DATE_TIME.test(value)) || Number.isNaN(Date.parse(value))) {
+  if (typeof value !== "string" || !isCalendarDate(value)) {
     throw new McpAppStorageError("invalid_value", `${label(field)} must be a date such as 2026-03-01.`)
   }
   return value
+}
+
+function isCalendarDate(value: string): boolean {
+  if (!ISO_DATE.test(value) && !ISO_DATE_TIME.test(value)) return false
+  const day = new Date(`${value.slice(0, 10)}T00:00:00.000Z`)
+  return !Number.isNaN(day.getTime()) && day.toISOString().slice(0, 10) === value.slice(0, 10) && !Number.isNaN(Date.parse(value))
 }
 
 function matchesField(field: McpAppStorageField, value: unknown): value is FieldValue {
   if (value === null) return true
   if (field.type === "number") return typeof value === "number"
   if (field.type === "boolean") return typeof value === "boolean"
-  return typeof value === "string"
+  if (typeof value !== "string") return false
+  if (field.type === "date") return isCalendarDate(value)
+  return !field.options || field.options.includes(value)
+}
+
+const JSON_TYPES: Record<McpAppStorageField["type"], string> = {
+  text: "'text'",
+  date: "'text'",
+  number: "'integer', 'real'",
+  boolean: "'true', 'false'",
 }
 
 function storedData(text: StorageValue | undefined): Record<string, unknown> {
@@ -146,13 +164,33 @@ function sqlValue(value: FieldValue): StorageValue {
   return typeof value === "boolean" ? (value ? 1 : 0) : value
 }
 
+function unreachable(): McpAppStorageError {
+  return new McpAppStorageError("storage_failed", "Saved data could not be reached. Try again in a moment.")
+}
+
+type Claim = "none" | "live"
+
+async function claimOf(access: McpAppStorageAccess, create: boolean): Promise<Claim> {
+  const known = await access.registry.read(access.ref) ?? (create ? await access.registry.claim(access.ref, access.backend.kind) : null)
+  if (!known) return "none"
+  if (known.deletedAt) {
+    if (!create) return "none"
+    throw new McpAppStorageError("storage_failed", "This artifact's earlier saved data is still being removed. Try again in a few minutes.")
+  }
+  if (known.backend !== access.backend.kind) {
+    console.error("mcp_app_storage_backend_mismatch", { organizationId: access.ref.organizationId, appId: access.ref.appId, recorded: known.backend, configured: access.backend.kind })
+    throw unreachable()
+  }
+  return "live"
+}
+
 async function run<Result>(access: McpAppStorageAccess, work: () => Promise<Result>): Promise<Result> {
   try {
     return await work()
   } catch (error) {
     if (error instanceof McpAppStorageBackendError) {
       console.error("mcp_app_storage_failed", { organizationId: access.ref.organizationId, appId: access.ref.appId, backend: access.backend.kind, error: error.message })
-      throw new McpAppStorageError("storage_unavailable", "Saved data is unavailable right now. Try again in a moment.")
+      throw unreachable()
     }
     throw error
   }
@@ -170,11 +208,11 @@ export async function readMcpAppStorage(access: McpAppStorageAccess, rawInput: u
     const field = fieldOf(collection, name)
     const checked = checkedValue(field, value)
     if (checked === null) {
-      filters.push("json_extract(data, ?) IS NULL")
-      params.push(jsonPath(field.name))
+      filters.push(`(json_type(data, ?) IS NULL OR json_type(data, ?) NOT IN (${JSON_TYPES[field.type]}))`)
+      params.push(jsonPath(field.name), jsonPath(field.name))
     } else {
-      filters.push("json_extract(data, ?) = ?")
-      params.push(jsonPath(field.name), sqlValue(checked))
+      filters.push(`json_type(data, ?) IN (${JSON_TYPES[field.type]}) AND json_extract(data, ?) = ?`)
+      params.push(jsonPath(field.name), jsonPath(field.name), sqlValue(checked))
     }
   }
   const direction = (input.order ?? "desc") === "asc" ? "ASC" : "DESC"
@@ -188,21 +226,24 @@ export async function readMcpAppStorage(access: McpAppStorageAccess, rawInput: u
   const limit = input.limit ?? DEFAULT_READ_ROWS
   const offset = input.offset ?? 0
   const where = filters.join(" AND ")
-  const [rows, count] = await run(access, () => Promise.all([
-    access.backend.query(access.ref, {
-      sql: `SELECT id, created_by, created_by_name, updated_by_name, created_at, updated_at, data FROM ${TABLE} WHERE ${where} ORDER BY ${orderSql}, id ASC LIMIT ? OFFSET ?`,
+  const empty = { collection: collection.name, rows: [], total: 0, limit, offset }
+  return run(access, async () => {
+    if (await claimOf(access, false) === "none") return empty
+    const page = await access.backend.query(access.ref, {
+      sql: `SELECT id, created_by, created_by_name, updated_by_name, created_at, updated_at, data, COUNT(*) OVER () AS total FROM ${TABLE} WHERE ${where} ORDER BY ${orderSql}, id ASC LIMIT ? OFFSET ?`,
       params: [...params, ...orderParams, limit, offset],
-    }),
-    access.backend.query(access.ref, { sql: `SELECT COUNT(*) AS total FROM ${TABLE} WHERE ${where}`, params }),
-  ]))
-  const total = count.rows[0]?.total
-  return {
-    collection: collection.name,
-    rows: rows.rows.map((row) => publicRow(collection, row, access.actor)),
-    total: typeof total === "number" ? total : 0,
-    limit,
-    offset,
-  }
+    })
+    const counted = page.rows.length > 0 || offset === 0
+      ? page.rows[0]?.total
+      : (await access.backend.query(access.ref, { sql: `SELECT COUNT(*) AS total FROM ${TABLE} WHERE ${where}`, params })).rows[0]?.total
+    return {
+      collection: collection.name,
+      rows: page.rows.map((row) => publicRow(collection, row, access.actor)),
+      total: typeof counted === "number" ? counted : 0,
+      limit,
+      offset,
+    }
+  })
 }
 
 function checkedValues(collection: McpAppStorageCollection, values: Record<string, FieldValue>): Record<string, FieldValue> {
@@ -210,7 +251,10 @@ function checkedValues(collection: McpAppStorageCollection, values: Record<strin
 }
 
 function requireComplete(collection: McpAppStorageCollection, data: Record<string, unknown>): void {
-  const missing = collection.fields.filter((field) => field.required && (data[field.name] === undefined || data[field.name] === null))
+  const missing = collection.fields.filter((field) => {
+    const value = data[field.name]
+    return field.required && (value === undefined || value === null || !matchesField(field, value))
+  })
   if (missing.length > 0) throw new McpAppStorageError("missing_value", `${missing.map(label).join(", ")} ${missing.length === 1 ? "is" : "are"} required.`)
 }
 
@@ -242,12 +286,25 @@ function editRule(collection: McpAppStorageCollection, actor: McpAppStorageActor
   return { sql: " AND created_by = ?", params: [actor.memberId] }
 }
 
+const BYTES = "LENGTH(CAST(data AS BLOB))"
+const SAVED_BYTES = `(SELECT COALESCE(SUM(${BYTES}), 0) FROM ${TABLE})`
+const NOT_FOUND = "That entry no longer exists. Reload to see the latest."
+
+function full(access: McpAppStorageAccess): McpAppStorageError {
+  return new McpAppStorageError("storage_full", `This artifact's saved data is full: it holds at most ${access.limits.maxRows.toLocaleString("en-US")} entries and ${Math.floor(access.limits.maxBytes / 1024 / 1024)} MB. Remove entries you no longer need, or ask an OpenWork admin to export and clear it.`)
+}
+
 async function writeAndRecord(access: McpAppStorageAccess, statement: StorageStatement): Promise<number> {
-  const registry = access.registry
   const result = await access.backend.write(access.ref, [statement])
+  const claim = await access.registry.read(access.ref)
+  if (!claim || claim.deletedAt) {
+    await access.backend.delete(access.ref).catch(() => undefined)
+    console.error("mcp_app_storage_write_after_delete", { organizationId: access.ref.organizationId, appId: access.ref.appId })
+    throw unreachable()
+  }
   const counted = await access.backend.query(access.ref, { sql: `SELECT COUNT(*) AS total FROM ${TABLE}` }).catch(() => null)
   const total = counted?.rows[0]?.total
-  await registry.record(access.ref, { backend: access.backend.kind, rowCount: typeof total === "number" ? total : 0, sizeBytes: result.sizeBytes }).catch((error: unknown) => {
+  await access.registry.record(access.ref, { rowCount: typeof total === "number" ? total : 0, sizeBytes: result.sizeBytes }).catch((error: unknown) => {
     console.error("mcp_app_storage_usage_not_recorded", { organizationId: access.ref.organizationId, appId: access.ref.appId, error: error instanceof Error ? error.message : String(error) })
   })
   return result.changes[0] ?? 0
@@ -258,59 +315,62 @@ export async function writeMcpAppStorage(access: McpAppStorageAccess, rawInput: 
   if (!parsed.success) throw new McpAppStorageError("invalid_input", "Changing saved data takes a collection, an action (insert, update, or delete), an id for update and delete, and values for insert and update.")
   const input = parsed.data
   const collection = collectionOf(access, input.collection)
-  const registry = access.registry
   const actor = access.actor
   const now = new Date().toISOString()
+  const visible = visibility(collection, actor)
   return run(access, async () => {
     if (input.action === "delete") {
       if (!input.id) throw new McpAppStorageError("invalid_input", "Removing an entry needs its id.")
-      const row = await visibleRow(access, collection, input.id)
-      const visible = visibility(collection, actor)
-      const rule = editRule(collection, actor, row)
+      if (input.values) throw new McpAppStorageError("invalid_input", "Removing an entry takes only its id. Leave values out.")
+      if (await claimOf(access, false) === "none") throw new McpAppStorageError("row_not_found", NOT_FOUND)
+      const rule = editRule(collection, actor, await visibleRow(access, collection, input.id))
       const changed = await writeAndRecord(access, {
         sql: `DELETE FROM ${TABLE} WHERE ${visible.sql} AND id = ?${rule.sql}`,
         params: [...visible.params, input.id, ...rule.params],
       })
-      if (changed === 0) throw new McpAppStorageError("row_not_found", "That entry no longer exists. Reload to see the latest.")
+      if (changed === 0) throw new McpAppStorageError("row_not_found", NOT_FOUND)
       return { collection: collection.name, action: "delete", id: input.id }
     }
 
-    const known = await registry.read(access.ref)
-    if (known && known.sizeBytes >= access.limits.maxBytes) {
-      throw new McpAppStorageError("storage_full", "This artifact's saved data is full. Remove entries you no longer need, or ask an OpenWork admin to export and clear it.")
-    }
     const values = checkedValues(collection, input.values ?? {})
 
     if (input.action === "insert") {
       if (input.id) throw new McpAppStorageError("invalid_input", "OpenWork sets the id of a new entry. Leave id out.")
       requireComplete(collection, values)
       const data = encoded(values)
-      if (!known) await registry.record(access.ref, { backend: access.backend.kind, rowCount: 0, sizeBytes: 0 })
+      await claimOf(access, true)
       const id = randomUUID()
       const owner = collection.scope === "personal" ? actor.memberId : null
       const changed = await writeAndRecord(access, {
         sql: `INSERT INTO ${TABLE} (collection, id, owner, created_by, created_by_name, updated_by, updated_by_name, created_at, updated_at, data)
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM ${TABLE}) < ?`,
-        params: [collection.name, id, owner, actor.memberId, actor.name, actor.memberId, actor.name, now, now, data, access.limits.maxRows],
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM ${TABLE}) < ? AND ${SAVED_BYTES} + ? <= ?`,
+        params: [collection.name, id, owner, actor.memberId, actor.name, actor.memberId, actor.name, now, now, data, access.limits.maxRows, Buffer.byteLength(data), access.limits.maxBytes],
       })
-      if (changed === 0) {
-        throw new McpAppStorageError("storage_full", `This artifact can hold ${access.limits.maxRows.toLocaleString("en-US")} entries and is full. Remove entries you no longer need, or ask an OpenWork admin to export and clear it.`)
-      }
-      return { collection: collection.name, action: "insert", id, row: publicRow(collection, await visibleRow(access, collection, id), actor) }
+      if (changed === 0) throw full(access)
+      const row = { id, created_by: actor.memberId, created_by_name: actor.name, updated_by_name: actor.name, created_at: now, updated_at: now, data }
+      return { collection: collection.name, action: "insert", id, row: publicRow(collection, row, actor) }
     }
 
     if (!input.id) throw new McpAppStorageError("invalid_input", "Changing an entry needs its id.")
     if (Object.keys(values).length === 0) throw new McpAppStorageError("invalid_input", "Changing an entry needs at least one value.")
-    const row = await visibleRow(access, collection, input.id)
-    const rule = editRule(collection, actor, row)
-    const merged = { ...storedData(row.data), ...values }
+    if (await claimOf(access, false) === "none") throw new McpAppStorageError("row_not_found", NOT_FOUND)
+    const before = await visibleRow(access, collection, input.id)
+    const rule = editRule(collection, actor, before)
+    const merged = { ...storedData(before.data), ...values }
     requireComplete(collection, merged)
-    const visible = visibility(collection, actor)
+    const snapshot = encoded(merged)
+    const patch = JSON.stringify(values)
+    const patched = `LENGTH(CAST(json_patch(data, ?) AS BLOB))`
     const changed = await writeAndRecord(access, {
-      sql: `UPDATE ${TABLE} SET data = ?, updated_by = ?, updated_by_name = ?, updated_at = ? WHERE ${visible.sql} AND id = ?${rule.sql}`,
-      params: [encoded(merged), actor.memberId, actor.name, now, ...visible.params, input.id, ...rule.params],
+      sql: `UPDATE ${TABLE} SET data = json_patch(data, ?), updated_by = ?, updated_by_name = ?, updated_at = ?
+        WHERE ${visible.sql} AND id = ?${rule.sql} AND ${patched} <= ? AND (${patched} <= ${BYTES} OR ${SAVED_BYTES} - ${BYTES} + ${patched} <= ?)`,
+      params: [patch, actor.memberId, actor.name, now, ...visible.params, input.id, ...rule.params, patch, MCP_APP_STORAGE_MAX_ROW_BYTES, patch, patch, access.limits.maxBytes],
     })
-    if (changed === 0) throw new McpAppStorageError("row_not_found", "That entry no longer exists. Reload to see the latest.")
-    return { collection: collection.name, action: "update", id: input.id, row: publicRow(collection, await visibleRow(access, collection, input.id), actor) }
+    if (changed === 0) {
+      await visibleRow(access, collection, input.id)
+      throw full(access)
+    }
+    const after = await visibleRow(access, collection, input.id).catch(() => ({ ...before, updated_by_name: actor.name, updated_at: now, data: snapshot }))
+    return { collection: collection.name, action: "update", id: input.id, row: publicRow(collection, after, actor) }
   })
 }

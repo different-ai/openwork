@@ -2,14 +2,15 @@ import { and, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { ConfigObjectTable, ConfigObjectVersionTable } from "@openwork-ee/den-db/schema"
 import { typeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { mcpAppCompiledRevisionSchema } from "@openwork/types/mcp-app"
-import type { Hono } from "hono"
+import type { Hono, MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError } from "../../agent-error-envelope.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { requireFeature } from "../../features.js"
 import { exportMcpAppStorageCsv, exportMcpAppStorageSqlite, McpAppStorageCsvLimitError, readMcpAppStorageSummary } from "../../mcp-app-storage/export.js"
-import { orgRoleRoute } from "../../middleware/index.js"
+import { orgMemberRoute, verifyOrgRole } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 
@@ -58,6 +59,19 @@ function filenameSlug(title: string): string {
   return title.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 80).replace(/^-|-$/g, "") || "artifact"
 }
 
+const requireStorageAdmin: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
+  const context = c.get("organizationContext")
+  if (!context) return c.json({ error: "organization_not_found" }, 404)
+  if (!verifyOrgRole({ roles: ["admin"], userContext: context.currentMember })) {
+    c.header("WWW-Authenticate", INSUFFICIENT_SCOPE_CHALLENGE)
+    return c.json({
+      error: "forbidden",
+      ...requiresAdminError("Only workspace owners and admins can do this. Ask one of them, or have them change your role."),
+    }, 403)
+  }
+  await next()
+}
+
 export function registerOrgMcpAppStorageRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/mcp-apps/:appId/storage",
@@ -68,8 +82,9 @@ export function registerOrgMcpAppStorageRoutes<T extends { Variables: OrgRouteVa
       parameters: [appIdParameter],
       responses: { ...commonResponses, 200: jsonResponse("The artifact's storage summary.", storageSummarySchema) },
     }),
-    orgRoleRoute(["admin"]),
+    orgMemberRoute(),
     requireFeature("artifactStorage"),
+    requireStorageAdmin,
     async (c) => {
       const context = c.get("organizationContext")
       if (!context) return c.json({ error: "organization_not_found" }, 404)
@@ -113,8 +128,9 @@ export function registerOrgMcpAppStorageRoutes<T extends { Variables: OrgRouteVa
         413: jsonResponse("The collection is too large for CSV. Use the SQLite export.", tooLargeSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgMemberRoute(),
     requireFeature("artifactStorage"),
+    requireStorageAdmin,
     async (c) => {
       const context = c.get("organizationContext")
       if (!context) return c.json({ error: "organization_not_found" }, 404)
@@ -140,10 +156,10 @@ export function registerOrgMcpAppStorageRoutes<T extends { Variables: OrgRouteVa
         }
         const declared = artifact.storage?.collections.find(({ name }) => name === collection)
         const summary = await readMcpAppStorageSummary(artifact.ref, artifact.storage)
-        if (!declared && !summary?.collections.some(({ name }) => name === collection)) {
+        if (!summary) return c.json({ error: "no_saved_data" }, 404)
+        if (!declared && !summary.collections.some(({ name }) => name === collection)) {
           return c.json({ error: "invalid_collection", message: "Choose a declared collection or one with saved rows." }, 400)
         }
-        if (!summary) return c.json({ error: "no_saved_data" }, 404)
         const fields = declared?.fields.map(({ name }) => name) ?? []
         const csv = await exportMcpAppStorageCsv(artifact.ref, { collection, fields })
         return c.body(csv, 200, attachment(`${slug}-${collection}.csv`, "text/csv; charset=utf-8"))

@@ -16,8 +16,8 @@ const den = await bootDen({ env: { DEN_DEPLOYMENT: "cloud" } })
 const { db } = await import("../../src/db.js")
 const { default: app } = await import("../../src/app.js")
 const { setMcpAppStorageBackendForTests } = await import("../../src/mcp-app-storage/index.js")
-const { readMcpAppStorageRecord, recordMcpAppStorageUse } = await import("../../src/mcp-app-storage/registry.js")
-const { deleteOrganizationMcpAppStorage } = await import("../../src/mcp-app-storage/lifecycle.js")
+const { claimMcpAppStorage, markMcpAppStorageDeleted, readMcpAppStorageRecord, recordMcpAppStorageUsage } = await import("../../src/mcp-app-storage/registry.js")
+const { deleteOrganizationMcpAppStorage, retryMcpAppStorageDeletes } = await import("../../src/mcp-app-storage/lifecycle.js")
 const directory = await mkdtemp(join(tmpdir(), "artifact-storage-export-"))
 const backend = createLocalStorageBackend({ directory, schema: MCP_APP_STORAGE_SCHEMA })
 setMcpAppStorageBackendForTests(backend)
@@ -39,7 +39,7 @@ for (const { orgId } of [main, other]) {
 const timestamp = "2026-01-01T00:00:00.000Z"
 const tricky = { notes: 'café, "salut"\nline', formula: "=SUM(1)", empty: null, z_old: true, a_old: "retained" }
 
-async function seed(org: typeof main, saved = true) {
+async function seed(org: typeof main, saved = true, declared = true) {
   const appId = createDenTypeId("configObject")
   const organizationId = normalizeDenTypeId("organization", org.orgId)
   const creator = normalizeDenTypeId("member", org.owner.memberId)
@@ -60,7 +60,7 @@ async function seed(org: typeof main, saved = true) {
     compilerName: "openwork-react-mcp-app",
     compilerVersion: "test",
     reactVersion: "test",
-    storage: { collections: [{ name: "items", fields: ["notes", "formula", "empty"].map((name) => ({ type: "text", name })) }] },
+    ...(declared ? { storage: { collections: [{ name: "items", fields: ["notes", "formula", "empty"].map((name) => ({ type: "text", name })) }] } } : {}),
   })
   await db.insert(ConfigObjectTable).values({ id: appId, organizationId, createdByOrgMembershipId: creator, objectType: "app", sourceMode: "cloud", title: payload.title })
   await db.insert(ConfigObjectVersionTable).values({
@@ -74,11 +74,12 @@ async function seed(org: typeof main, saved = true) {
       { collection: "items", id: "b", owner: member.memberId, data: { notes: "personal" } },
       { collection: "former", id: "c", owner: null, data: { history: "saved" } },
     ]
+    await claimMcpAppStorage(ref, backend.kind)
     const result = await backend.write(ref, rows.map((row) => ({
       sql: "INSERT INTO artifact_rows (collection, id, owner, created_by, created_by_name, updated_by, updated_by_name, created_at, updated_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       params: [row.collection, row.id, row.owner, creator, "Storage owner", creator, "Storage owner", timestamp, timestamp, JSON.stringify(row.data)],
     })))
-    await recordMcpAppStorageUse(ref, { backend: backend.kind, rowCount: rows.length, sizeBytes: result.sizeBytes })
+    await recordMcpAppStorageUsage(ref, { rowCount: rows.length, sizeBytes: result.sizeBytes })
   }
   return { ...ref, path: `/v1/mcp-apps/${appId}/storage`, file: join(directory, organizationId, `${appId}.sqlite`) }
 }
@@ -166,9 +167,13 @@ test("archive retains storage; deletion removes it even with the feature off", a
   assert.equal((await request("GET", exportPath(ref))).status, 200)
   const disabled = await den.setFeature(main.orgId, "artifactStorage", false)
   assert.equal(disabled.status, 200, summary(disabled))
-  const gated = await request("GET", exportPath(ref))
-  assert.equal(gated.status, 404, summary(gated))
-  assert.equal(field(gated.body, "error"), "feature_disabled")
+  for (const caller of [member, admin]) {
+    for (const path of [ref.path, exportPath(ref), exportPath(ref, "format=csv&collection=items")]) {
+      const gated = await den.as(caller, main.orgId)("GET", path)
+      assert.equal(gated.status, 404, summary(gated))
+      assert.equal(field(gated.body, "error"), "feature_disabled")
+    }
+  }
   const deleted = await request("POST", `/v1/config-objects/${ref.appId}/delete`)
   assert.equal(deleted.status, 200, summary(deleted))
   assert.equal(existsSync(ref.file), false)
@@ -180,8 +185,23 @@ test("unavailable storage returns 503; a backend deletion failure keeps its regi
   const enabled = await den.setFeature(main.orgId, "artifactStorage", true)
   assert.equal(enabled.status, 200, summary(enabled))
   const request = den.as(main.owner, main.orgId)
+  const unsaved = await seed(main, false)
+  const plain = await seed(main, false, false)
   setMcpAppStorageBackendForTests(null)
   try {
+    const plainSummary = await request("GET", plain.path)
+    assert.equal(plainSummary.status, 200, summary(plainSummary))
+    assert.equal(field(plainSummary.body, "declared"), false)
+    assert.deepEqual(field(plainSummary.body, "collections"), [])
+    const empty = await request("GET", unsaved.path)
+    assert.equal(empty.status, 200, summary(empty))
+    assert.equal(field(empty.body, "updatedAt"), null)
+    assert.deepEqual(field(empty.body, "collections"), [{ name: "items", rows: 0 }])
+    for (const path of [exportPath(unsaved), exportPath(unsaved, "format=csv&collection=items")]) {
+      const missing = await request("GET", path)
+      assert.equal(missing.status, 404, summary(missing))
+      assert.equal(field(missing.body, "error"), "no_saved_data")
+    }
     for (const path of [ref.path, exportPath(ref)]) {
       const unavailable = await request("GET", path)
       assert.equal(unavailable.status, 503, summary(unavailable))
@@ -194,7 +214,31 @@ test("unavailable storage returns 503; a backend deletion failure keeps its regi
     setMcpAppStorageBackendForTests(backend)
   }
   assert.ok(existsSync(ref.file))
-  assert.ok(await readMcpAppStorageRecord(ref))
+  assert.ok((await readMcpAppStorageRecord(ref))?.deletedAt instanceof Date)
+
+  const pending = await seed(main)
+  await markMcpAppStorageDeleted(pending)
+  assert.ok(existsSync(pending.file))
+  setMcpAppStorageBackendForTests(null)
+  try {
+    const empty = await request("GET", pending.path)
+    assert.equal(empty.status, 200, summary(empty))
+    assert.equal(field(empty.body, "updatedAt"), null)
+    assert.equal(field(empty.body, "rowCount"), 0)
+    assert.deepEqual(field(empty.body, "collections"), [{ name: "items", rows: 0 }])
+    for (const path of [exportPath(pending), exportPath(pending, "format=csv&collection=items"), exportPath(pending, "format=csv&collection=former")]) {
+      const missing = await request("GET", path)
+      assert.equal(missing.status, 404, summary(missing))
+      assert.equal(field(missing.body, "error"), "no_saved_data")
+    }
+  } finally {
+    setMcpAppStorageBackendForTests(backend)
+  }
+  assert.deepEqual(await retryMcpAppStorageDeletes(), { deleted: 2, failed: 0 })
+  for (const purged of [ref, pending]) {
+    assert.equal(existsSync(purged.file), false)
+    assert.equal(await readMcpAppStorageRecord(purged), null)
+  }
 })
 
 test("organization deletion removes every registered database only for that organization, independent of the flag", async () => {

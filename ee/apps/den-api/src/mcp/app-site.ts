@@ -1,5 +1,4 @@
 import { env } from "../env.js"
-import { isPublicMcpAppSite } from "../mcp-apps.js"
 import { NO_INDEX } from "../public-response-headers.js"
 
 export function wantsAppSite(request: Request): boolean {
@@ -19,6 +18,7 @@ const SITE_SCRIPT = `
   let nextId = 1
   let opened = null
   let tools = []
+  let storageWritePending = false
 
   const show = (text) => { status.textContent = text; status.hidden = false; frame.hidden = true }
 
@@ -68,12 +68,20 @@ const SITE_SCRIPT = `
       case "ui/notifications/initialized":
         post({ method: "ui/notifications/tool-input", params: { arguments: { input: {} } } })
         return post({ method: "ui/notifications/tool-result", params: opened })
-      case "tools/call":
-        if (params.name === "storage_write" && !(navigator.userActivation && navigator.userActivation.isActive)) {
-          return refuse("Saving needs a click on a button in this artifact.")
+      case "tools/call": {
+        const tool = tools.find((tool) => tool.name === params.name)
+        const storageWrite = tool?._meta?.["openwork/storage"] === "write"
+        if (storageWrite) {
+          if (!(navigator.userActivation && navigator.userActivation.isActive)) {
+            return refuse("Saving needs a click on a button in this artifact.")
+          }
+          if (storageWritePending) return refuse("Still saving the last change. Try again in a moment.")
+          storageWritePending = true
         }
         try { return reply(await rpc("tools/call", { name: params.name, arguments: params.arguments || {} })) }
         catch (error) { return refuse(error.message) }
+        finally { if (storageWrite) storageWritePending = false }
+      }
       case "ui/open-link": {
         let url = null
         try { url = new URL(params.url) } catch { url = null }
@@ -160,7 +168,10 @@ export const APP_SITE_HEADER = "x-openwork-app-site"
 
 export async function appSiteResponse(input: { appIdOrName: string; publicOnly: boolean }): Promise<Response | null> {
   if (!env.appMcpServersEnabled) return null
-  if (input.publicOnly && !await isPublicMcpAppSite({ appIdOrName: input.appIdOrName })) return null
+  if (input.publicOnly) {
+    const { isPublicMcpAppSite } = await import("../mcp-apps.js")
+    if (!await isPublicMcpAppSite({ appIdOrName: input.appIdOrName })) return null
+  }
   return new Response(sitePage(input.publicOnly ? "public" : "member"), {
     headers: {
       "content-type": "text/html; charset=utf-8",

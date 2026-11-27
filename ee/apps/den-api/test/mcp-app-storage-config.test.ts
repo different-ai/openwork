@@ -7,7 +7,6 @@ import { resolveArtifactStorageConfig } from "../src/mcp-app-storage/config.js"
 const defaults = {
   backend: undefined,
   localDir: undefined,
-  localSingleInstance: undefined,
   celldUrl: undefined,
   celldToken: undefined,
   maxBytes: undefined,
@@ -40,14 +39,19 @@ test("celld requires a token of at least 24 characters and an absolute HTTP(S) U
   }
 })
 
-test("local outside dev mode needs the exact single-instance opt-in", () => {
-  const local = { ...defaults, backend: "local", localDir: " .runtime/storage " }
-  for (const localSingleInstance of [undefined, "0", "yes", "true"]) {
-    const config = resolveArtifactStorageConfig({ ...local, localSingleInstance })
-    assert.equal(config.backend, null)
-    assert.match(config.unavailableReason ?? "", /refused outside dev mode/u)
+test("celld rejects credentials, query strings and fragments", () => {
+  for (const celldUrl of ["http://user@host", "http://:password@host", "http://host/?key=value", "http://host/#section", "http://host/?", "http://host/#"]) {
+    assert.throws(() => resolveArtifactStorageConfig({ ...celld, celldUrl }), /DEN_ARTIFACT_STORAGE_CELLD_URL must not contain credentials, a query string, or a fragment/u)
   }
-  assert.deepEqual(resolveArtifactStorageConfig({ ...local, localSingleInstance: "1" }).backend, { kind: "local", directory: path.resolve(".runtime/storage") })
+  assert.equal(resolveArtifactStorageConfig({ ...celld, celldUrl: "http://host/storage%3F%23" }).backend?.kind, "celld")
+})
+
+test("local is available only in dev mode", () => {
+  const local = { ...defaults, backend: "local", localDir: " .runtime/storage " }
+  const config = resolveArtifactStorageConfig(local)
+  assert.equal(config.backend, null)
+  assert.match(config.unavailableReason ?? "", /refused outside dev mode\. Use celld instead/u)
+  assert.deepEqual(resolveArtifactStorageConfig({ ...local, devMode: true }).backend, { kind: "local", directory: path.resolve(".runtime/storage") })
 })
 
 test("rejects unknown backend names", () => {

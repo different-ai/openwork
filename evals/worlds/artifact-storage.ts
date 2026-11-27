@@ -34,7 +34,7 @@ export async function artifactStorageWorld(seed: Seed) {
       DEN_DASHBOARDS_ENABLED: "true",
       DEN_ARTIFACT_STORAGE_BACKEND: "local",
       DEN_ARTIFACT_STORAGE_LOCAL_DIR: seed.tmpPath("artifact-storage-data"),
-      DEN_ARTIFACT_STORAGE_LOCAL_UNSAFE_SINGLE_INSTANCE: "1",
+      OPENWORK_DEV_MODE: "1",
     },
     org: {
       name: `Requests Lab ${Date.now()}`,

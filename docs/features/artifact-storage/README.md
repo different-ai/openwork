@@ -52,26 +52,39 @@ Public artifacts cannot use storage. There are no anonymous writes.
 
 ## Limits and lifecycle
 
-The default caps are 10,000 rows across all collections and 20 MiB per
-artifact. Set `DEN_ARTIFACT_STORAGE_MAX_ROWS` and
-`DEN_ARTIFACT_STORAGE_MAX_BYTES` to override them. Writes that exceed a cap fail
-with `storage_full`.
+The default caps are 10,000 rows across all collections and 20 MiB of saved
+values per artifact. Set `DEN_ARTIFACT_STORAGE_MAX_ROWS` and
+`DEN_ARTIFACT_STORAGE_MAX_BYTES` to override them. Both are checked inside the
+write's own transaction, so a write that would pass a cap never commits, even
+when several people write at once; it fails with `storage_full`. Removing rows
+frees room at once. One row holds at most 16 KB.
 
 Organization admins can export the artifact's database as SQLite or export
-rows as CSV. Deleting the artifact or its organization deletes the saved data.
+one collection as CSV, from the artifact's row on its Plugin page in Den. An
+export includes every member's personal rows: the data is the organization's.
+
+Deleting the artifact or its organization deletes the saved data. Den first
+marks the artifact's registry row as deleted, then asks the backend, and drops
+the row only when the backend has confirmed. While a row is marked, the
+artifact reads as empty and takes no writes. A removal the backend could not
+finish is retried every ten minutes and on the next deletion, and a write that
+lands during a removal is undone. Archiving an artifact keeps its data.
 
 ## Where data lives
 
 Den uses one SQLite database per artifact behind a storage-backend interface.
-The `mcp_app_storage` registry tracks how to reach each artifact's database.
+The `mcp_app_storage` registry records which artifacts have a database and
+pins each one to the backend that created it: after an install switches
+backend, existing artifacts report their data as unreachable rather than
+starting empty on the new one. Moving data between backends is a deliberate
+operator step, not something Den does.
 Choose the backend at install time, separately from the organization flag:
 
 - `DEN_ARTIFACT_STORAGE_BACKEND=celld` is for production and multi-instance Den.
   Set `DEN_ARTIFACT_STORAGE_CELLD_URL` and `DEN_ARTIFACT_STORAGE_CELLD_TOKEN`.
 - `DEN_ARTIFACT_STORAGE_BACKEND=local` keeps the databases on the Den instance's
-  disk under `DEN_ARTIFACT_STORAGE_LOCAL_DIR`. It is for dev and tests, not
-  multi-instance Den. Outside dev, `DEN_ARTIFACT_STORAGE_LOCAL_UNSAFE_SINGLE_INSTANCE=1`
-  explicitly acknowledges the single-instance, persistent-disk requirement.
+  disk under `DEN_ARTIFACT_STORAGE_LOCAL_DIR`. It is available only with
+  `OPENWORK_DEV_MODE=1`. Use celld outside dev mode.
 
 Watch `artifact_storage_backend_unavailable` for an unavailable backend and
 `mcp_app_storage_failed` for storage operations that fail unexpectedly.
@@ -110,14 +123,18 @@ Run the contract and the row rules against a real celld node with
 ## Not yet proven
 
 - celld is verified on one `celld dev` node (v0.6.3, macOS arm64) with its
-  local object store: the backend contract, every row rule and cap, export,
-  delete, and rows surviving a node restart. An S3-compatible bucket, a fleet
-  of two or more nodes, failover, backup and restore, production latency and
-  exports near the size cap have not been run.
+  local object store: the backend contract, every row rule and cap including
+  racing writers, export, delete, and rows surviving a node restart. An
+  S3-compatible bucket, a fleet of two or more nodes, failover, backup and
+  restore, production latency and exports near the size cap have not been run.
 - No celld fleet for artifact storage is deployed, so the feature cannot be
   turned on in production until one is and Den has its URL and token.
-- The size cap is checked against the size recorded after the previous write,
-  so concurrent writers can pass it by at most one row each.
-- On the page a browser opens for an artifact, only `storage_write` checks for
-  a click. Other changing tools there are not click-gated; that predates this
-  feature.
+- A write whose answer is lost on the way back from the backend may have been
+  saved; trying again then adds a second row. There is no request id yet.
+- An export taken while people are writing is not a single snapshot.
+- Changing a celld URL to a different fleet is not detected; the registry pins
+  the backend kind, not its address.
+- On the page a browser opens for an artifact, a saved-data write needs a
+  recent click in the page and only one runs at a time, but the click is not
+  tied to that exact write. Other changing tools on that page are not
+  click-gated at all; that predates this feature.

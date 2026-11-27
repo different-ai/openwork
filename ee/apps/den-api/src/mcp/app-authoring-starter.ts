@@ -51,7 +51,7 @@ export function appStarter(tools: McpAppToolBinding[], storage?: McpAppStorage) 
       cssSource: STARTER_CSS + RECORDS_CSS,
       nextSteps: [
         "Starter: records. It shows the latest rows in the first collection and adds, edits a choice, or deletes a row from its own button.",
-        "Rename the row and button labels to the person’s words. Choose the fields that matter most in each row and add filters or paging if the person needs older rows.",
+        "Rename the row and button labels to the person’s words. Choose the fields that matter most in each row. The list starts at 8 rows and can expand to 200; add filters or paging if the person needs older rows.",
         ...(tools.length ? [`Also declared but not wired yet: ${tools.map((tool) => tool.name).join(", ")}. Give each write its own button.`] : []),
         "Keep useTheme, the load on open, and the saved-data blocked state. Then call create_app with this preparationId and the same storage declaration.",
       ],
@@ -358,7 +358,7 @@ function useToolCall(app, name) {
     if (response?.isError) {
       ${records ? `const failure = valueOf(response);
       const error = isRecord(failure) ? failure.error : undefined;
-      const message = isRecord(failure) && typeof failure.message === "string" ? failure.message : "Couldn't reach your saved data. Try again.";` : "const message = messageOf(response);"}
+      const message = isRecord(failure) && typeof failure.message === "string" ? failure.message : messageOf(response);` : "const message = messageOf(response);"}
       setState((previous) => ({ ...previous, status: /approv/i.test(message) ? "approval" : "error", message${records ? ", error" : ""} }));
       return false;
     }
@@ -761,6 +761,7 @@ const RECORDS_SOURCE = `
 const READ = ${jsString(MCP_APP_STORAGE_READ_TOOL_NAME)};
 const WRITE = ${jsString(MCP_APP_STORAGE_WRITE_TOOL_NAME)};
 const READ_ARGS = { collection: COLLECTION.name };
+const EXPANDED_LIMIT = 200;
 const choice = COLLECTION.fields.find((field) => field.options);
 const leadField = COLLECTION.fields.find((field) => field !== choice && field.type === "text") ?? COLLECTION.fields[0];
 
@@ -779,7 +780,7 @@ function RecordRow({ row, pending, setPending, disabled, save }) {
     <li className="record-row">
       <div className="record-text">
         <span className="record-title" title={title}>{title}</span>
-        <span className="meta">{author} · {formatValue(row.createdAt)}</span>
+        <span className="meta">{author}, {formatValue(row.createdAt)}</span>
       </div>
       {canChange ? (
         <div className="record-actions">
@@ -821,16 +822,23 @@ export default function App({ app, input, result, hostContext }) {
   const [data, setData] = React.useState(null);
   const [pending, setPending] = React.useState(null);
   const loadedLaunch = React.useRef(null);
+  const wanted = React.useRef(MAX_ROWS);
   const writing = React.useRef(false);
   const writeBusy = write.status === "loading";
   const availability = result?._meta?.[${jsString(MCP_APP_STORAGE_META)}];
   const unavailable = result !== undefined && availability?.available !== true;
 
   function readRows() {
-    load.call(READ_ARGS, (page) => {
-      setData({ ...page, updatedAt: new Date() });
+    return load.call({ ...READ_ARGS, limit: wanted.current }, (page) => {
+      const loadedAt = new Date();
+      setData({ ...page, loadedAt, updatedAt: loadedAt });
       write.clearUnavailable();
     });
+  }
+
+  function showAll() {
+    wanted.current = EXPANDED_LIMIT;
+    readRows();
   }
 
   // Wait for the launch and for the host to support tools. A later launch
@@ -849,14 +857,13 @@ export default function App({ app, input, result, hostContext }) {
     writing.current = true;
     try {
       await write.call({ collection: COLLECTION.name, ...changes }, (answer) => {
-        setData((previous) => {
-          const rows = answer.action === "delete" ? previous.rows.filter((row) => row.id !== answer.id)
-            : answer.action === "insert" ? [answer.row, ...previous.rows].slice(0, previous.limit)
-            : previous.rows.map((row) => row.id === answer.id ? answer.row : row);
-          const total = previous.total + (answer.action === "insert" ? 1 : answer.action === "delete" ? -1 : 0);
-          return { ...previous, rows, total, updatedAt: new Date() };
-        });
+        const rows = answer.action === "delete" ? data.rows.filter((row) => row.id !== answer.id)
+          : answer.action === "insert" ? [answer.row, ...data.rows].slice(0, data.limit)
+          : data.rows.map((row) => row.id === answer.id ? answer.row : row);
+        const total = data.total + (answer.action === "insert" ? 1 : answer.action === "delete" ? -1 : 0);
+        setData({ ...data, rows, total, updatedAt: new Date() });
         if (answer.action === "insert") setValues(initialValues(COLLECTION.fields, {}));
+        if (answer.action === "delete" && rows.length < Math.min(total, wanted.current)) readRows();
         setPending(null);
       });
     } finally {
@@ -871,27 +878,41 @@ export default function App({ app, input, result, hostContext }) {
     return <main className="app" style={theme}><ToolNotice call={load} /></main>;
   }
 
-  const shown = data?.rows.slice(0, MAX_ROWS) ?? [];
-  const firstLoad = !data && (load.status === "idle" || load.status === "loading");
+  const shown = data?.rows ?? [];
+  const readFailed = load.status === "error" || load.status === "approval";
+  const refreshing = load.status === "loading";
+  const showSkeleton = (!data && load.status === "idle") || (refreshing && shown.length === 0 && data?.total !== 0);
   return (
     <main className="app" style={theme}>
-      <fieldset className="controls record-fields" aria-label={"Add " + COLLECTION.singular} disabled={!data || writeBusy}>
+      <fieldset className="controls record-fields" aria-label={"Add " + COLLECTION.singular} disabled={writeBusy}>
         <Fields fields={COLLECTION.fields} values={values} onChange={setValues} />
-        <button type="button" className="primary" disabled={!ready || busy} onClick={() => { if (ready) save({ action: "insert", values: entries }); }}>Add {COLLECTION.singular}</button>
+        <button type="button" className="primary" disabled={!data || !ready || busy} onClick={() => { if (ready) save({ action: "insert", values: entries }); }}>Add {COLLECTION.singular}</button>
       </fieldset>
       {write.status === "error" || write.status === "approval" ? <p className="notice" role="alert" data-tone="danger">{write.message}</p> : null}
-      <section className="result" aria-label={humanize(COLLECTION.plural)} aria-busy={firstLoad || load.status === "loading"}>
-        <ToolNotice call={load} onRetry={readRows} retryLabel="Try again" />
-        {firstLoad ? <div className="records-loading"><Skeleton /></div> : null}
-        {data ? (
+      <section className="result" aria-label={humanize(COLLECTION.plural)} aria-busy={showSkeleton || refreshing}>
+        {readFailed ? (
+          <div className="notice records-recovery" role="alert" data-tone="danger">
+            <span>{load.message}</span>
+            {shown.length > 0 ? <span className="meta">Couldn't refresh. Showing what loaded at {timeOf(data.loadedAt)}.</span> : null}
+            <button type="button" className="quiet" disabled={busy} onClick={readRows}>Try again</button>
+          </div>
+        ) : null}
+        {showSkeleton ? <div className="records-loading"><Skeleton /></div> : null}
+        {data && (shown.length > 0 || (data.total === 0 && !readFailed)) ? (
+          <p className="meta" role="status">{formatValue(data.total)} {data.total === 1 ? COLLECTION.singular : COLLECTION.plural} · updated {timeOf(data.updatedAt)}</p>
+        ) : null}
+        {data?.total === 0 && !readFailed ? <p className="notice">Nothing saved yet. Add your first {COLLECTION.singular} above.</p> : null}
+        {shown.length > 0 ? (
           <>
-            <p className="meta" role="status">{formatValue(data.total)} {data.total === 1 ? COLLECTION.singular : COLLECTION.plural} · updated {timeOf(data.updatedAt)}{busy && !writeBusy ? " · refreshing…" : ""}</p>
-            {data.total === 0 ? <p className="notice">Nothing saved yet. Add your first {COLLECTION.singular} above.</p> : (
-              <ul className="records">
-                {shown.map((row) => <RecordRow key={row.id} row={row} pending={pending} setPending={setPending} disabled={busy} save={save} />)}
-              </ul>
-            )}
-            {data.total > shown.length ? <p className="meta">Showing the latest {shown.length}</p> : null}
+            <ul className="records">
+              {shown.map((row) => <RecordRow key={row.id} row={row} pending={pending} setPending={setPending} disabled={busy} save={save} />)}
+            </ul>
+            {data.total > shown.length ? (
+              <div className="records-more">
+                <span className="meta">{shown.length < data.limit ? "Showing " : "Showing the latest "}{shown.length}</span>
+                {data.limit < EXPANDED_LIMIT && !readFailed ? <button type="button" className="quiet" disabled={busy} onClick={showAll}>Show all {formatValue(data.total)}</button> : null}
+              </div>
+            ) : null}
           </>
         ) : null}
       </section>
@@ -902,6 +923,9 @@ export default function App({ app, input, result, hostContext }) {
 
 const RECORDS_CSS = `
 .record-fields { margin: 0; padding: 0; min-inline-size: 0; border: 0; }
+.records-more, .records-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.records-recovery .meta { flex-basis: 100%; }
+.records-recovery button { margin-left: 0; }
 .records { list-style: none; margin: 0; padding: 0; }
 .record-row { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--color-border-primary, GrayText); }
 .record-text { min-width: 0; display: grid; }

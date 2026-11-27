@@ -31,7 +31,6 @@ function positiveInteger(name: string, value: string | undefined, fallback: numb
 export function resolveArtifactStorageConfig(input: {
   backend: string | undefined
   localDir: string | undefined
-  localSingleInstance: string | undefined
   celldUrl: string | undefined
   celldToken: string | undefined
   maxBytes: string | undefined
@@ -60,15 +59,17 @@ export function resolveArtifactStorageConfig(input: {
       throw new Error("DEN_ARTIFACT_STORAGE_CELLD_URL must be an absolute http or https URL.")
     }
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("DEN_ARTIFACT_STORAGE_CELLD_URL must be an absolute http or https URL.")
+    if (parsed.username || parsed.password || /[?#]/u.test(parsed.href)) {
+      throw new Error("DEN_ARTIFACT_STORAGE_CELLD_URL must not contain credentials, a query string, or a fragment.")
+    }
     if (token.length < 24) throw new Error("DEN_ARTIFACT_STORAGE_CELLD_TOKEN must contain at least 24 characters.")
     return { backend: { kind: "celld", url: parsed.toString().replace(/\/+$/u, ""), token }, ...limits }
   }
   if (kind === "local") {
-    const acknowledged = trimmed(input.localSingleInstance) === "1"
-    if (!input.devMode && !acknowledged) {
+    if (!input.devMode) {
       return {
         backend: null,
-        unavailableReason: "DEN_ARTIFACT_STORAGE_BACKEND=local keeps data on one Den's disk, so it is refused outside dev mode. Use celld, or set DEN_ARTIFACT_STORAGE_LOCAL_UNSAFE_SINGLE_INSTANCE=1 when this install runs exactly one Den with a persistent disk.",
+        unavailableReason: "DEN_ARTIFACT_STORAGE_BACKEND=local keeps data on one Den's disk, so it is refused outside dev mode. Use celld instead.",
         ...limits,
       }
     }

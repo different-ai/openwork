@@ -18,9 +18,10 @@ function storageBackend() {
 }
 
 export async function exportMcpAppStorageSqlite(ref: StorageDatabaseRef): Promise<Uint8Array | null> {
-  const backend = storageBackend()
   const record = await readMcpAppStorageRecord(ref)
-  if (record && record.backend !== backend.kind) throw new McpAppStorageBackendError("The artifact storage backend has changed.")
+  if (!record || ("deletedAt" in record && record.deletedAt)) return null
+  const backend = storageBackend()
+  if (record.backend !== backend.kind) throw new McpAppStorageBackendError("The artifact storage backend has changed.")
   return backend.export(ref)
 }
 
@@ -46,9 +47,9 @@ export async function exportMcpAppStorageCsv(ref: StorageDatabaseRef, input: { c
 }
 
 export async function readMcpAppStorageSummary(ref: StorageDatabaseRef, declaration: McpAppStorage | undefined) {
-  const backend = storageBackend()
   const record = await readMcpAppStorageRecord(ref)
-  if (!record) return null
+  if (!record || ("deletedAt" in record && record.deletedAt)) return null
+  const backend = storageBackend()
   if (record.backend !== backend.kind) throw new McpAppStorageBackendError("The artifact storage backend has changed.")
   const result = await backend.query(ref, {
     sql: `SELECT collection, COUNT(*) AS rows FROM ${MCP_APP_STORAGE_TABLE} GROUP BY collection ORDER BY collection`,

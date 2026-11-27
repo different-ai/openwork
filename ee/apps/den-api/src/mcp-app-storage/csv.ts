@@ -15,7 +15,7 @@ type CsvCell = CsvRow["data"][string] | undefined
 
 function csvCell(value: CsvCell): string {
   let text = value == null ? "" : String(value)
-  if (/^[=+\-@\t\r]/u.test(text)) text = `'${text}`
+  if (typeof value === "string" && (/^[\t\r]/u.test(value) || /^[\s\p{Cc}]*[=+\-@]/u.test(value))) text = `'${text}`
   return /[,"\r\n]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text
 }
 
@@ -28,7 +28,11 @@ export function buildMcpAppStorageCsv(fields: readonly string[], rows: readonly 
     }
   }
   const keys = [...fields, ...[...extra].sort()]
-  const lines = [["id", ...keys, "created_by", "created_at", "updated_by", "updated_at", "visibility", "owner_member_id"].map(csvCell).join(",")]
+  const metadata = ["created_by", "created_at", "updated_by", "updated_at", "visibility", "owner_member_id"].map((key) => {
+    while (declared.has(key) || extra.has(key)) key = `_${key}`
+    return key
+  })
+  const lines = [["id", ...keys, ...metadata].map(csvCell).join(",")]
   for (const row of rows) {
     lines.push([
       row.id, ...keys.map((key) => Object.hasOwn(row.data, key) ? row.data[key] : undefined),
