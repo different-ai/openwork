@@ -21,6 +21,7 @@ COPY packages/managed-deployments/package.json /app/packages/managed-deployments
 COPY packages/features/package.json /app/packages/features/package.json
 COPY packages/free-auto/package.json /app/packages/free-auto/package.json
 COPY packages/automations/package.json /app/packages/automations/package.json
+COPY packages/computers/package.json /app/packages/computers/package.json
 COPY packages/codemode/package.json /app/packages/codemode/package.json
 COPY packages/email/package.json /app/packages/email/package.json
 COPY packages/mcp-enterprise-client/package.json /app/packages/mcp-enterprise-client/package.json
@@ -65,6 +66,7 @@ COPY packages/managed-deployments /app/packages/managed-deployments
 COPY packages/features /app/packages/features
 COPY packages/free-auto /app/packages/free-auto
 COPY packages/automations /app/packages/automations
+COPY packages/computers /app/packages/computers
 COPY packages/codemode /app/packages/codemode
 COPY packages/email /app/packages/email
 COPY packages/mcp-enterprise-client /app/packages/mcp-enterprise-client

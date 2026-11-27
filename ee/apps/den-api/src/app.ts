@@ -43,6 +43,7 @@ import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerAutomationRoutes } from "./routes/automations/index.js"
 import { registerToolPermissionRoutes } from "./routes/tool-permissions/index.js"
 import { registerPersonalAgentRoutes } from "./routes/personal-agents/index.js"
+import { registerComputerRunnerRoutes } from "./routes/computer-runners/index.js"
 import { registerSessionRunnerRoutes } from "./routes/session-runners/index.js"
 import { registerRemoteSessionRoutes } from "./routes/remote-sessions/index.js"
 import { automationService, configureCloudAgentExecutor, configureCloudWorkflowExecutor, configureHeadlessAgentExecutor } from "./automations/service.js"
@@ -281,6 +282,7 @@ registerDeprecatedSkillHubRoutes(app)
 registerDevRoutes(app)
 registerMeRoutes(app)
 registerSessionRunnerRoutes(app, { automationService: env.automations.runtimeEnabled ? automationService : undefined })
+registerComputerRunnerRoutes(app)
 registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled, sessionRunners: false })
 if (env.automations.runtimeEnabled) registerPersonalAgentRoutes(app)
 registerToolPermissionRoutes(app)

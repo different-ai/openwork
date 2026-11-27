@@ -664,6 +664,9 @@ importers:
       '@openwork/codemode':
         specifier: workspace:*
         version: link:../../../packages/codemode
+      '@openwork/computers':
+        specifier: workspace:*
+        version: link:../../../packages/computers
       '@openwork/connect-link':
         specifier: workspace:*
         version: link:../../../packages/connect-link
@@ -1699,6 +1702,12 @@ importers:
       zod:
         specifier: ^4.6.6
         version: 4.6.6
+
+  packages/computers:
+    dependencies:
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../types
 
   packages/connect-link:
     dependencies:

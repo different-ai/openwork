@@ -210,7 +210,7 @@ function organizationComputerEventView(row: typeof RemoteDeviceEventTable.$infer
   return { ...eventView(row), data: row.data ?? null, actorId: row.actorId }
 }
 
-async function syncDesktopsFromRunners(scope: { organizationId: OrganizationId; memberId?: MemberId; includeStale?: boolean }, now: Date) {
+export async function syncDesktopsFromRunners(scope: { organizationId: OrganizationId; memberId?: MemberId; includeStale?: boolean }, now: Date) {
   const cutoff = new Date(now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS)
   const missing = await db.select({
     id: AutomationRunnerTable.id,
@@ -304,6 +304,10 @@ function visibleTo(actor: RemoteDeviceActor) {
 const AVAILABILITY_ORDER: Record<RemoteDeviceAvailability, number> = { online: 0, needs_setup: 1, paused: 2, unknown: 3, offline: 4 }
 
 export async function listMemberRemoteDevices(actor: RemoteDeviceActor, options: { canManageShared: boolean; now?: Date }): Promise<RemoteDevice[]> {
+  return (await listMemberRemoteDeviceRows(actor, options)).map(({ device }) => device)
+}
+
+export async function listMemberRemoteDeviceRows(actor: RemoteDeviceActor, options: { canManageShared: boolean; now?: Date }) {
   const now = options.now ?? new Date()
   await syncDesktopsFromRunners({ organizationId: actor.organizationId, memberId: actor.memberId }, now)
   const rows = await db.$primary.select().from(RemoteDeviceTable).where(visibleTo(actor)).limit(500)
@@ -311,12 +315,16 @@ export async function listMemberRemoteDevices(actor: RemoteDeviceActor, options:
   const stale = now.getTime() - REMOTE_DEVICE_DESKTOP_RETENTION_MS
   const recent = (at: string | null) => at !== null && Date.parse(at) >= stale
   return rows
-    .map((row) => deviceView(row, {
-      viewer: actor, canManageShared: options.canManageShared, runner: runners.get(row.externalId) ?? null, session: sessions.get(row.id) ?? null,
-      disconnectedAt: disconnections.get(row.id) ?? null, policy, now: now.getTime(),
-    }))
-    .filter((device) => device.kind !== "desktop" || recent(device.lastSeenAt) || recent(device.disconnectedAt))
-    .sort((a, b) => AVAILABILITY_ORDER[a.availability] - AVAILABILITY_ORDER[b.availability]
+    .map((row) => {
+      const runner = runners.get(row.externalId) ?? null
+      const device = deviceView(row, {
+        viewer: actor, canManageShared: options.canManageShared, runner, session: sessions.get(row.id) ?? null,
+        disconnectedAt: disconnections.get(row.id) ?? null, policy, now: now.getTime(),
+      })
+      return { row, device, runner }
+    })
+    .filter(({ device }) => device.kind !== "desktop" || recent(device.lastSeenAt) || recent(device.disconnectedAt))
+    .sort(({ device: a }, { device: b }) => AVAILABILITY_ORDER[a.availability] - AVAILABILITY_ORDER[b.availability]
       || (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? "")
       || a.label.localeCompare(b.label))
 }

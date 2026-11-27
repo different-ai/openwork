@@ -6,7 +6,7 @@ import { Effect } from "effect"
 import type { Hono } from "hono"
 import { z } from "zod"
 import { connectionActionAppSchemaVersion } from "@openwork/types/connection-action-app"
-import type { FeatureMap } from "../features.js"
+import { organizationFeatureEnabled, type FeatureMap } from "../features.js"
 import { markFeaturesUsed } from "../feature-usage.js"
 import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus, type McpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import type { AuditServiceActionName } from "../audit/service-actions.js"
@@ -100,8 +100,9 @@ import {
 } from "./search.js"
 import { externalToolContent } from "./tool-content.js"
 import { capabilityCallInput } from "./capability-tool.js"
+import { computerSource } from "./computer-capabilities.js"
 
-export const CAPABILITY_SOURCE_KINDS = ["catalog", "native", "externalMcp", "marketplace", "builtinSkill", "remoteSession", "slackSendAsBot", "admin"] as const
+export const CAPABILITY_SOURCE_KINDS = ["catalog", "native", "externalMcp", "marketplace", "builtinSkill", "remoteSession", "computers", "slackSendAsBot", "admin"] as const
 export type CapabilitySourceKind = (typeof CAPABILITY_SOURCE_KINDS)[number]
 
 const SCRIPT_SOURCE_KINDS: readonly CapabilitySourceKind[] = CAPABILITY_SOURCE_KINDS.filter((kind) => kind !== "admin")
@@ -113,6 +114,7 @@ export type ParsedCapability =
   | { kind: "marketplace"; name: string; configObjectId: string; pluginId: string }
   | { kind: "builtinSkill"; name: string }
   | { kind: "remoteSession"; name: string; action: RemoteSessionAction }
+  | { kind: "computers"; name: string }
   | { kind: "slackSendAsBot"; name: string }
   | { kind: "admin"; name: string; toolName: string }
 
@@ -865,6 +867,7 @@ export const CAPABILITY_SOURCES: Record<CapabilitySourceKind, CapabilitySource> 
   marketplace: marketplaceSource,
   builtinSkill: builtinSkillSource,
   remoteSession: remoteSessionSource,
+  computers: computerSource,
   slackSendAsBot: slackSendAsBotSource,
   admin: adminSource,
 }
@@ -907,6 +910,9 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
         const source = sources[kind]
         const parsed = source.parseName(input.name)
         if (!parsed) continue
+        if (parsed.kind === "computers" && (!ctx.member || !await organizationFeatureEnabled(ctx.organizationId, "computers", { userId: ctx.principal.userId }))) {
+          return unknownCapabilityResult(input.name)
+        }
         const refusal = await personalAgentRunDispatchRefusal(ctx.principal.scopes, ctx.organizationId)
         if (refusal) return capabilityErrorResult(refusal)
         if (personalAgentRunId(ctx.principal.scopes) !== undefined && capabilityHasNoApprovalPath(parsed)) {
@@ -947,6 +953,7 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
 
 function capabilityHasNoApprovalPath(parsed: ParsedCapability): boolean {
   if (parsed.kind === "admin" || parsed.kind === "slackSendAsBot") return true
+  if (parsed.kind === "computers") return parsed.name === "computers:shell"
   return parsed.kind === "remoteSession" && !["read", "list", "targets", "status"].includes(parsed.action)
 }
 
