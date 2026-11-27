@@ -5,7 +5,7 @@ import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { cachedOrganizationFeatureEnabled, organizationFeatureEnabled } from "../features.js"
 import { listTeamsForMember } from "../member-teams.js"
-import { AGENT_TOOL_WITHHELD_MESSAGE, automationRunId, personalAgentExecution } from "../mcp/workbot-turn-limits.js"
+import { AGENT_TOOL_WITHHELD_MESSAGE, automationRunId, personalAgentExecution, type PersonalAgentExecution } from "../mcp/workbot-turn-limits.js"
 import { personalAgentPeople, personOrUnknown } from "../personal-agents/access.js"
 import { personalAgentRequestEventDetail, recordPersonalAgentEvent } from "../personal-agents/events.js"
 import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentExecutionContext, personalAgentPolicyRefusal } from "../personal-agents/permissions-dispatch.js"
@@ -26,14 +26,14 @@ export type ToolPermissionRefusal =
   | { error: "forbidden"; message: string }
   | { error: "policy_blocked" | "needs_approval"; message: string; retryable: false; sameArgumentsRetryable: false }
 
-export async function ordinaryToolPermissionRefusal(input: ToolPermissionDispatchInput): Promise<ToolPermissionRefusal | null> {
+async function ordinaryToolPermissionRefusal(input: ToolPermissionDispatchInput): Promise<ToolPermissionRefusal | null> {
   const { connection, tool, scopes } = input
   if (!(input.toolPermissionsEnabled ?? await cachedOrganizationFeatureEnabled(connection.organizationId, "toolPermissions"))) return null
   const organizationId = normalizeDenTypeId("organization", connection.organizationId)
   const memberId = input.actingMemberId && normalizeDenTypeId("member", input.actingMemberId)
   const teamIds = memberId ? (await listTeamsForMember({ organizationId, memberId })).map(({ id }) => id) : undefined
-  const rules = await loadApplicableToolPermissionRules({ organizationId, memberId: memberId || undefined, teamIds, connectionId: connection.id, toolName: tool.name })
-  const access = evaluateToolPermission(rules.map(({ rule }) => rule), personalAgentToolIsReadOnly(tool.annotations))
+  const rules = await loadApplicableToolPermissionRules({ mode: "ordinary", organizationId, memberId: memberId || undefined, teamIds, connectionId: connection.id, toolName: tool.name })
+  const access = evaluateToolPermission(rules.map(({ rule }) => rule), { kind: "ordinary" })
   const title = personalAgentToolTitle(tool)
   if (access === "block") return personalAgentPolicyRefusal(`${title} is blocked by your organization's tool permissions.`)
   if (access === "allow") return null
@@ -62,9 +62,7 @@ export async function ordinaryToolPermissionRefusal(input: ToolPermissionDispatc
   }
 }
 
-export async function toolPermissionRefusal(input: ToolPermissionDispatchInput): Promise<ToolPermissionRefusal | null> {
-  const execution = personalAgentExecution(input.scopes)
-  if (!execution) return ordinaryToolPermissionRefusal(input)
+async function agentToolPermissionRefusal(input: ToolPermissionDispatchInput, execution: PersonalAgentExecution): Promise<ToolPermissionRefusal | null> {
   const { connection, tool } = input
   const organizationId = normalizeDenTypeId("organization", connection.organizationId)
   const context = input.actingMemberId && await personalAgentExecutionContext(execution, organizationId, input.actingMemberId)
@@ -73,11 +71,13 @@ export async function toolPermissionRefusal(input: ToolPermissionDispatchInput):
   const memberId = context.memberId
   const teamAndMember = await cachedOrganizationFeatureEnabled(organizationId, "toolPermissions")
   const teamIds = teamAndMember ? input.teamIds ?? (await listTeamsForMember({ organizationId, memberId })).map(({ id }) => id) : undefined
-  const rules = await loadApplicableToolPermissionRules({ organizationId, agentId: context.agentId,
+  const rules = await loadApplicableToolPermissionRules({ mode: "agent", organizationId, agentId: context.agentId,
     memberId: teamAndMember ? memberId : undefined, teamIds, connectionId: connection.id, toolName: tool.name })
   const wildcard = rules.find(({ kind, toolName }) => kind === "agent" && toolName === "*")?.rule
   const state = personalAgentConnectorState(context, { connections: wildcard ? { [connection.id]: wildcard } : {} }, connection.id)
-  const access = evaluateToolPermission(rules.filter(({ kind, toolName }) => kind !== "agent" || toolName !== "*").map(({ rule }) => rule), personalAgentToolIsReadOnly(tool.annotations))
+  const access = evaluateToolPermission(rules.filter(({ kind, toolName }) => kind !== "agent" || toolName !== "*").map(({ rule }) => rule), {
+    kind: "agent", readOnly: personalAgentToolIsReadOnly(tool.annotations),
+  })
   if (state === "blocked" || access === "block") return personalAgentPolicyRefusal(`${tool.name} ${AGENT_TOOL_WITHHELD_MESSAGE}`)
   const key: AgentConnectorApprovalKey = { organizationId, memberId, context: agentApprovalContext(context, execution),
     connectionId: connection.id, toolName: tool.name }
@@ -103,4 +103,9 @@ export async function toolPermissionRefusal(input: ToolPermissionDispatchInput):
     message: `${title} needs a yes from a person first. I asked in this agent's chat. Do not try it again in this run: finish what you can and say what is waiting.`,
     retryable: false, sameArgumentsRetryable: false,
   }
+}
+
+export function toolPermissionRefusal(input: ToolPermissionDispatchInput): Promise<ToolPermissionRefusal | null> {
+  const execution = personalAgentExecution(input.scopes)
+  return execution ? agentToolPermissionRefusal(input, execution) : ordinaryToolPermissionRefusal(input)
 }

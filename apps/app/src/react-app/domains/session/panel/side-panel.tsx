@@ -90,6 +90,7 @@ type SidePanelProps = {
   browserPresentation?: BrowserPresentationControls;
   browserShownElsewhere?: boolean;
   sideChat?: { content: React.ReactNode; onOpen: () => void };
+  onOpenRemoteTask?: (threadKey: string) => void;
 };
 
 if (import.meta.hot) {
@@ -629,6 +630,7 @@ export function SidePanel({
   browserPresentation,
   browserShownElsewhere = false,
   sideChat,
+  onOpenRemoteTask,
   compactChrome = false,
   files,
   onOpenFile,
@@ -827,7 +829,7 @@ export function SidePanel({
           event.stopPropagation();
         }}
       >
-        {!(tabs.length === 1 && activeTab?.type === "mcp-app") ? <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+        {!(tabs.length === 1 && (activeTab?.type === "mcp-app" || activeTab?.type === "remote-thread")) ? <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
           <div className="flex h-10 items-center gap-1 border-b border-border/60 px-2">
             <div className="no-scrollbar min-w-0 flex-1 overflow-x-auto">
               <PanelTabList
@@ -919,7 +921,17 @@ export function SidePanel({
         ) : activeTab?.type === "side-chat" ? (
           <div className="min-h-0 flex-1 overflow-hidden">{sideChat?.content}</div>
         ) : activeTab?.type === "remote-thread" ? (
-          <div className="min-h-0 flex-1 overflow-hidden"><RemoteThreadPanel key={activeTab.id} tab={activeTab} /></div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <RemoteThreadPanel
+              key={activeTab.id}
+              tab={activeTab}
+              onClose={onClose}
+              onExpand={onOpenRemoteTask ? () => {
+                onClose();
+                onOpenRemoteTask(activeTab.threadKey);
+              } : undefined}
+            />
+          </div>
         ) : activeTab?.type === "app" ? (
           <div className="min-h-0 flex-1 overflow-hidden"><AppArtifact key={activeTab.id} appId={activeTab.appId} revisionId={activeTab.revisionId} receiptId={activeTab.receiptId} onClose={onClose} /></div>
         ) : activeTab?.type === "artifact" ? (

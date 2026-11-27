@@ -59,10 +59,10 @@ export function useApprovalDecision(scope: ToolApprovalsScope, approval: ToolApp
 
 function PendingChatApproval({ scope, approval }: { scope: ToolApprovalsScope; approval: ToolApproval }) {
   const decision = useApprovalDecision(scope, approval, (choice) => {
-    if (choice === "allow_once") toast.success(t("tool_approvals.chat_allowed"), { duration: 4_000 });
+    toast.success(t(choice === "allow_once" ? "tool_approvals.chat_allowed" : "tool_approvals.chat_denied"));
   });
 
-  return <ToolApprovalCard {...approvalWords(approval)} data-tool-approval={approval.toolName}
+  return <ToolApprovalCard {...approvalWords(approval)} variant="dock" data-tool-approval={approval.toolName}
     decisions={["deny", "allow_once"]} busy={decision.isPending} onDecide={(choice) => {
       if (choice !== "always_allow") decision.mutate(choice);
     }} />;
@@ -75,18 +75,13 @@ export function ApprovalLoadError({ onRetry }: { onRetry: () => void }) {
   </div>;
 }
 
-export function ToolApprovalsStack({ scope, surface, completedAt }: {
-  scope: ToolApprovalsScope | null;
-  surface: "chat";
-  completedAt?: number;
-}) {
+export function ChatApprovalDock({ scope, completedAt }: { scope: ToolApprovalsScope; completedAt: number }) {
   const query = useToolApprovals(scope);
-  if (!scope) return null;
-  const approvals = approvalsForSurface(query.data?.items ?? [], surface);
+  const approvals = approvalsForSurface(query.data?.items ?? [], "chat");
   return <>
-    {Boolean(completedAt) && completedAt !== undefined && <ApprovalRefresh key={completedAt} scope={scope} completedAt={completedAt} />}
-    {(approvals.length > 0 || query.isError) && <div data-tool-approvals className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-3 py-2">
-      {query.isError && <ApprovalLoadError onRetry={() => void query.refetch()} />}
+    {completedAt > 0 && <ApprovalRefresh key={completedAt} scope={scope} completedAt={completedAt} />}
+    {(approvals.length > 0 || query.isError) && <div data-tool-approvals data-composer-interaction="tool-approval">
+      {query.isError && <div className="border-b border-dls-border px-4 py-3"><ApprovalLoadError onRetry={() => void query.refetch()} /></div>}
       {approvals.map((approval) => <PendingChatApproval key={approval.id} scope={scope} approval={approval} />)}
     </div>}
   </>;

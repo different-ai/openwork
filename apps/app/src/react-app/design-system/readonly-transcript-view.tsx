@@ -14,6 +14,7 @@ export function RemoteTranscriptView({
   showThinking,
   developerMode,
   waiting = false,
+  runStartedAt = null,
 }: {
   threadKey: string
   messages: UIMessage[]
@@ -21,6 +22,7 @@ export function RemoteTranscriptView({
   showThinking: boolean
   developerMode: boolean
   waiting?: boolean
+  runStartedAt?: number | null
 }) {
   const scope = `remote:${threadKey}`
   const noop = useCallback(() => {}, [])
@@ -50,6 +52,7 @@ export function RemoteTranscriptView({
             messages={messages}
             status={running || waiting ? "streaming" : "ready"}
             activityStatus={waiting ? "waiting" : running ? "thinking" : "idle"}
+            fallbackRunStartedAt={runStartedAt}
           />
         </OpenTargetProvider>
       </UntrustedMarkdown>

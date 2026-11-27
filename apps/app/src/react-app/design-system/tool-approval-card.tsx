@@ -8,9 +8,9 @@ type Decision = "deny" | "allow_once" | "always_allow";
 const ORDER: readonly Decision[] = ["deny", "always_allow", "allow_once"];
 
 export function ToolApprovalCard({ title, line, decisions, busy, onDecide, children, turnOn, variant = "card", ...hooks }: {
-  variant?: "card" | "inline" | "placeholder";
+  variant?: "card" | "inline" | "placeholder" | "dock";
   title: string;
-  line: string;
+  line?: string;
   decisions: readonly Decision[];
   busy: boolean;
   onDecide: (decision: Decision) => void;
@@ -21,13 +21,15 @@ export function ToolApprovalCard({ title, line, decisions, busy, onDecide, child
 }) {
   const agent = hooks["data-agent-ask"] !== undefined;
   const placeholder = variant === "placeholder";
+  const dock = variant === "dock";
   return (
     <div {...hooks} aria-busy={busy} inert={placeholder} className={variant === "card"
       ? "w-full max-w-xl rounded-2xl border border-dls-border bg-dls-surface p-4"
-      : `w-full border-t border-dls-border py-3 ${placeholder ? "invisible" : ""}`}>
-      <p className="wrap-anywhere text-sm font-medium text-dls-text">{title}</p>
-      <p className="mt-1 text-xs text-dls-secondary">{line}</p>
-      <div className="mt-3 flex flex-wrap justify-end gap-2">
+      : dock ? "flex flex-wrap items-center justify-between gap-3 border-b border-dls-border px-4 py-3"
+        : `w-full border-t border-dls-border py-3 ${placeholder ? "invisible" : ""}`}>
+      <p className={dock ? "min-w-0 flex-[1_1_16rem] wrap-anywhere text-sm text-dls-text" : "wrap-anywhere text-sm font-medium text-dls-text"}>{title}</p>
+      {line && <p className="mt-1 text-xs text-dls-secondary">{line}</p>}
+      <div className={dock ? "ml-auto flex flex-wrap justify-end gap-2" : "mt-3 flex flex-wrap justify-end gap-2"}>
         {ORDER.filter((choice) => decisions.includes(choice)).map((choice) => (
           <Button key={choice} type="button" size="sm"
             variant={choice === "deny" ? "ghost" : choice === "always_allow" ? "outline" : "default"}

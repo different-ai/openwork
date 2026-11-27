@@ -157,6 +157,9 @@ test("chat approvals are private and one-shot; only admins can change rules", as
   const rules = toolPermissionsSchema.parse(await status(admin("GET", path), 200))
   assert.equal(rules.writtenRules, written)
   await execute(samToken, undefined, "list_issues")
+  await execute(samToken)
+  assert.deepEqual(await pending(), [])
+  await setRule("ask")
   const refusal = await execute(samToken, "needs_approval")
   assert.match(refusal.text, /needs your yes first/)
   const approval = await onePending()
@@ -178,7 +181,7 @@ test("chat approvals are private and one-shot; only admins can change rules", as
   await setRule("block")
   const blocked = await execute(samToken, "policy_blocked")
   assert.match(blocked.text, /is blocked by your organization's tool permissions/)
-  await setRule(null)
+  await setRule("ask")
   await execute(samToken)
   await setRule("allow")
   await execute(samToken)
@@ -204,7 +207,11 @@ test("team and member rules stay with their subjects; proxy and Code Mode enforc
   await status(otherAdmin("PUT", `${path}/rule`, { ...rule("block"), connectionId: foreignId }), 200)
   await setRule("allow")
   await execute(samToken)
-  await setRule(null)
+  await setRule("block", { kind: "team", id: teamId }, "*")
+  await execute(samToken, "policy_blocked")
+  await execute(priyaToken)
+  await setRule(null, { kind: "team", id: teamId }, "*")
+  await setRule("ask", { kind: "team", id: teamId })
   const before = providerCalls()
   const proxy = await den.request(samToken, "POST", `/mcp/agent/connections/${connectionId}`, {
     headers: { accept: "application/json, text/event-stream" },
@@ -218,6 +225,8 @@ test("team and member rules stay with their subjects; proxy and Code Mode enforc
   assert.match(script.raw, /needs_approval|needs your yes first/)
   assert.equal(providerCalls(), before)
   await decide((await onePending()).id, "deny")
+  await setRule(null, { kind: "team", id: teamId })
+  await setRule(null)
 })
 
 test("a run approval covers one Automation run and written rules precede its task", async () => {
@@ -227,6 +236,9 @@ test("a run approval covers one Automation run and written rules precede its tas
   assert.ok(first.scopes.has(`openwork:automation-run:${first.id}`))
   assert.ok(first.prompt.includes(`<organization_rules>\n${written}\n</organization_rules>`))
   assert.ok(first.prompt.indexOf(written) < first.prompt.indexOf(instruction))
+  await execute(first.token)
+  assert.deepEqual(await pending(), [])
+  await setRule("ask")
   const refusal = await execute(first.token, "needs_approval")
   approvalOutputs.set(first.sessionId, refusal.text)
   const approval = await onePending()
@@ -307,7 +319,10 @@ test("ordinary MCP calls ignore saved tool policy while tool permissions are off
     assert.equal(providerCalls() - before, expected ? 0 : 1)
   }
 
-  // Save an ordinary chat grant, then turn enforcement off without deleting any state.
+  await gateway("create_issue")
+  await proxy("create_issue")
+  assert.deepEqual(await pending(asPriya), [])
+  await status(admin("PUT", `${path}/rule`, { ...rule("ask"), connectionId: directId }), 200)
   await gateway("create_issue", "needs_approval")
   const [approval, extra] = await pending(asPriya)
   assert.ok(approval)

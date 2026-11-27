@@ -10,7 +10,7 @@ const den = await bootDen()
 after(() => den.close())
 const { db } = await import("../../src/db.js")
 const { automationRunnerRowId } = await import("../../src/automations/repository.js")
-const { REMOTE_SESSION_TAIL_MAX_BYTES, REMOTE_SESSION_TAIL_MAX_MESSAGES, sweepExpiredRemoteSessionTails } = await import("../../src/remote-sessions/tails.js")
+const { boundRemoteSessionTailPayload, REMOTE_SESSION_TAIL_MAX_BYTES, REMOTE_SESSION_TAIL_MAX_MESSAGES, sweepExpiredRemoteSessionTails } = await import("../../src/remote-sessions/tails.js")
 
 const { orgId, owner } = await den.createOrg(await den.signUp("Rina Owner"), "Live sync organization")
 const asOwner = den.as(owner, orgId)
@@ -240,6 +240,10 @@ test("remoteSessionLiveSync is gated off by default, binds parent sessions, enfo
   assert.equal(legacyComplete.status, 200, summary(legacyComplete))
   const beforeBackfill = await asOwner("GET", "/v1/remote-sessions/bound?parentSessionId=ses_parent_backfill")
   assert.equal(boundRemoteSessionsResponseSchema.parse(beforeBackfill.body).sessions.length, 0)
+  const legacyBeforeAll = boundRemoteSessionsResponseSchema.parse((await asOwner("GET", "/v1/remote-sessions/bound")).body).sessions
+    .find((item) => item.commandId === legacyCommandId)
+  assert.ok(legacyBeforeAll)
+  await new Promise((resolve) => setTimeout(resolve, 25))
   const backfillSendPromise = den.callMcpTool(mcpToken, "execute_capability", {
     name: "remote-session:send",
     body: {
@@ -269,6 +273,29 @@ test("remoteSessionLiveSync is gated off by default, binds parent sessions, enfo
   assert.equal(parsedBackfill.sessions.length, 1)
   assert.equal(parsedBackfill.sessions[0]?.commandId, legacyCommandId)
   assert.equal(parsedBackfill.sessions[0]?.parentWorkspaceId, "ws_parent_backfill")
+  assert.ok(
+    parsedBackfill.sessions[0]!.activeSince > legacyBeforeAll.activeSince,
+    `expected activeSince (${parsedBackfill.sessions[0]!.activeSince}) to advance on follow-up send beyond createdAt (${legacyBeforeAll.activeSince})`,
+  )
+
+  const longProse = `${"Detailed release summary paragraph. ".repeat(70)}END_MARKER`
+  assert.ok(longProse.length > 2000)
+  const boundedLong = boundRemoteSessionTailPayload({
+    title: "Long prose tail",
+    status: "idle",
+    waitingFor: null,
+    lastError: null,
+    messageCount: 2,
+    from: "end",
+    messages: [
+      { id: "msg_u1", role: "user", createdAt: 1000, text: longProse, truncated: false, toolCalls: [], error: null, parts: [{ type: "text", text: longProse }] },
+      { id: "msg_a1", role: "assistant", createdAt: 1500, completedAt: 2000, text: longProse, truncated: false, toolCalls: [], error: null, parts: [{ type: "text", text: longProse }] },
+    ],
+    nextCursor: null,
+  })
+  assert.ok(boundedLong.byteSize <= REMOTE_SESSION_TAIL_MAX_BYTES)
+  assert.ok(boundedLong.payload.messages[0]?.text.endsWith("END_MARKER"), "prompt under 32 KB must not be truncated mid-sentence")
+  assert.ok(boundedLong.payload.messages[1]?.text.endsWith("END_MARKER"), "reply under 32 KB must not be truncated mid-sentence")
 
   await db.update(RemoteSessionTailTable)
     .set({ expires_at: new Date(Date.now() - 1_000) })

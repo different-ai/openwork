@@ -60,7 +60,7 @@ for (const [as, apiKey] of [[asDana, "fixture-dana-tracker-key"], [asSam, samKey
   await expectStatus(as("PUT", credentialPath, { apiKey }), 200)
 }
 const brief = "Check the bug tracker."
-const agent = personalAgentDetailSchema.parse(await expectStatus(asDana("POST", "/v1/personal-agents", { name: "Bug watcher", brief }), 201))
+const agent = personalAgentDetailSchema.parse(await expectStatus(asDana("POST", "/v1/personal-agents", { name: "Bug watcher", brief, connectorNames: ["Bug tracker"] }), 201))
 const path = `/v1/personal-agents/${agent.agent.id}`
 await expectStatus(asDana("POST", `${path}/routines`, {
   name: "Morning", instructions: "Check for new issues.", schedule: { kind: "daily", hour: 8, minute: 0, timezone: "UTC" },
@@ -95,7 +95,9 @@ async function run() {
 const policyPath = "/v1/org/personal-agent-policy"
 const policy = (choice?: "allow" | "ask" | "block") => ({ toolPolicy: { tools: choice ? { [connectionId]: { create_issue: choice } } : {} } })
 const updateOrg = (change: object) => expectStatus(asDana("PUT", policyPath, change), 200)
-const updateAgent = (choice?: "allow" | "ask" | "block") => expectStatus(asDana("PATCH", path, policy(choice)), 200)
+const updateAgent = (choice?: "allow" | "ask" | "block") => expectStatus(asDana("PATCH", path, {
+  toolPolicy: { ...policy(choice).toolPolicy, connections: { [connectionId]: "allow" } },
+}), 200)
 const execute = (token: string, tool = "create_issue") => den.callMcpTool(token, "execute_capability", { name: `mcp:${connectionId}:${tool}`, body: {} })
 const providerCalls = () => tracker.wire.filter((entry) => entry.rpcMethod === "tools/call")
 const requests = async () => personalAgentRequestListSchema.parse(await expectStatus(asPriya("GET", `${path}/requests`), 200)).items

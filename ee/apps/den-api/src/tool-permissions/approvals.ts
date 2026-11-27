@@ -4,7 +4,7 @@ import { createDenTypeId, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/u
 import type { ToolApproval, ToolApprovalDecision } from "@openwork/types/den/tool-permissions"
 import { db } from "../db.js"
 import { cachedOrganizationFeatureEnabled, organizationFeatureEnabled } from "../features.js"
-import { loadApplicableToolPermissionRules } from "./evaluate.js"
+import { loadApplicableToolPermissionRules, type ToolPermissionRuleScope } from "./evaluate.js"
 import { setSubjectToolRule, type ToolPermissionTransaction } from "./rules.js"
 
 export type ToolApprovalRow = typeof ToolApprovalTable.$inferSelect
@@ -144,7 +144,7 @@ export async function listAgentToolApprovals(organizationId: string, agentId: st
   )).orderBy(desc(table.created_at), desc(table.id)).limit(options.limit ?? 50)
 }
 
-export async function toolApprovalRules(row: Pick<ToolApprovalRow, "organization_id" | "requested_by_member_id" | "connection_id" | "tool_name">, tx?: ToolPermissionTransaction, agentId?: string) {
+export async function toolApprovalRules(row: Pick<ToolApprovalRow, "organization_id" | "requested_by_member_id" | "connection_id" | "tool_name">, scope: ToolPermissionRuleScope, tx?: ToolPermissionTransaction) {
   const organizationId = row.organization_id
   const teamAndMember = tx
     ? await organizationFeatureEnabled(organizationId, "toolPermissions", { database: tx, lock: "share" })
@@ -154,12 +154,12 @@ export async function toolApprovalRules(row: Pick<ToolApprovalRow, "organization
     .innerJoin(TeamMemberTable, eq(TeamMemberTable.teamId, TeamTable.id))
     .where(and(eq(TeamTable.organizationId, organizationId), eq(TeamMemberTable.orgMembershipId, memberId)))
   const teams = query ? await (tx ? query.for("share") : query) : []
-  return loadApplicableToolPermissionRules({ organizationId, memberId, teamIds: teams.map(({ id }) => id),
-    agentId, connectionId: row.connection_id, toolName: row.tool_name }, tx)
+  return loadApplicableToolPermissionRules({ ...scope, organizationId, memberId, teamIds: teams.map(({ id }) => id),
+    connectionId: row.connection_id, toolName: row.tool_name }, tx)
 }
 
 export async function toolApprovalRequiresAsk(row: ToolApprovalRow, tx?: ToolPermissionTransaction) {
-  return (await toolApprovalRules(row, tx)).some(({ rule }) => rule === "ask")
+  return (await toolApprovalRules(row, { mode: "ordinary" }, tx)).some(({ rule }) => rule === "ask")
 }
 
 type ConnectorApprovalAgent = typeof PersonalAgentTable.$inferSelect

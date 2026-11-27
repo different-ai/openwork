@@ -70,7 +70,10 @@ export function automationApprovalName(context: ToolApproval["context"]): string
   return context.label?.trim() || t("tool_approvals.automation_fallback");
 }
 
-export function approvalWords(approval: ToolApproval): { title: string; line: string } {
+export function approvalWords(approval: ToolApproval): { title: string; line?: string } {
+  const tool = approval.toolTitle.trim() || t("tool_approvals.tool_fallback");
+  const connection = approval.connectionName.trim() || t("tool_approvals.connection_fallback");
+  if (approval.context.kind === "chat") return { title: t("tool_approvals.chat_request", { tool, connection }) };
   const automation = approval.context.kind === "automation";
   return {
     title: t("tool_approvals.title", {
@@ -78,6 +81,6 @@ export function approvalWords(approval: ToolApproval): { title: string; line: st
       tool: approval.toolTitle || t("tool_approvals.tool_fallback"),
       connection: approval.connectionName || t("tool_approvals.connection_fallback"),
     }),
-    line: automation ? t("tool_approvals.automation_line") : t("tool_approvals.chat_line"),
+    line: automation ? t("tool_approvals.automation_line") : undefined,
   };
 }

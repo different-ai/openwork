@@ -154,7 +154,7 @@ async function decidePersonalAgentToolRequest(access: PersonalAgentAccess, membe
         eq(ExternalMcpConnectionTable.kind, "external_mcp"),
       )).limit(1).for("share")
       if (!connection || isToolDisabled(connection.toolPolicy, approval.tool_name)) return "blocked"
-      const rules = await toolApprovalRules(approval, tx, agent.id)
+      const rules = await toolApprovalRules(approval, { mode: "agent", agentId: agent.id }, tx)
       if (rules.some(({ kind, toolName, rule }) => rule === "block" && (kind !== "agent" || toolName !== CONNECTOR_ONLY_TOOL_NAME))) return "blocked"
       const policy = await readSubjectToolPolicy({ organizationId: access.organizationId, kind: "agent", id: agent.id }, tx)
       return personalAgentConnectorState({ defaultConnectorsOff: approval.chat_turn_id !== null, legacyConnectorAccess: agent.legacy_connector_access, neverConnectionIds: agent.never_connection_ids ?? [] }, policy, approval.connection_id)
