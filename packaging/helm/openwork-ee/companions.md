@@ -50,17 +50,21 @@ include real member sign-in, a granted model reply and stored-data recovery.
   starting its replacement and cause an availability gap. Never scale it or
   mount its claim in another writer. Take a consistent SQLite backup including
   its WAL, and back up `/var/data/files` together with the database.
-- Create operator-owned Secrets before the upgrade, in the release namespace.
-  The chart never creates, updates, rotates or deletes these companion Secrets.
-  Use your secret manager, External Secrets, or another approved secure path.
-  Never put the values in Helm values, command-line flags or Git.
 
-| Secret | Required keys (defaults) | Contract |
-| --- | --- | --- |
-| runner Secret | `HEADLESS_API_TOKEN` | At least 32 characters. Shared by runner, Den API and Workbot through targeted `secretKeyRef`s. |
-| same runner Secret | `HEADLESS_DEN_CALLBACK_TOKEN` | At least 32 characters, different from the API token. Shared only by runner and Den API. |
-| same runner Secret | `HEADLESS_GRANT_KEY` | Independent stable value of at least 32 characters. Runner only, for encrypted resume grants. |
-| Workbot Secret | `WORKBOT_SESSION_SECRET` | Independent stable value of at least 32 characters. Workbot only, for encrypted sign-in cookies. |
+### Companion Secrets
+
+Create operator-owned Secrets before the upgrade, in the release namespace.
+The deployment operator generates all four values. OpenWork does not issue them.
+The chart never creates, updates, rotates or deletes these companion Secrets.
+Use your secret manager, External Secrets, or another approved secure path.
+Never put the values in Helm values, command-line flags or Git.
+
+| Secret | Required key (default name) | Purpose | Contract |
+| --- | --- | --- | --- |
+| Runner Secret | `HEADLESS_API_TOKEN` | Authenticates calls to the runner. | At least 32 characters. Shared by the runner, Den API and Workbot through targeted `secretKeyRef`s. |
+| Runner Secret | `HEADLESS_DEN_CALLBACK_TOKEN` | Authenticates callbacks from the runner to Den. | At least 32 characters. Must differ from `HEADLESS_API_TOKEN`. Shared only by the runner and Den API. |
+| Runner Secret | `HEADLESS_GRANT_KEY` | Encrypts the runner's stored resume grants. | Independent, stable value of at least 32 characters. Runner only. |
+| Workbot Secret | `WORKBOT_SESSION_SECRET` | Encrypts Workbot sign-in cookies. | Independent, stable value of at least 32 characters. Workbot only. |
 
 Keys can be remapped with `headlessRunner.secret.apiTokenKey`, `callbackTokenKey`,
 `grantKey` and `workbot.secret.sessionSecretKey`. Required keys use

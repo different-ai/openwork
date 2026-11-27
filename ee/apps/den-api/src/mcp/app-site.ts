@@ -169,8 +169,8 @@ export const APP_SITE_HEADER = "x-openwork-app-site"
 export async function appSiteResponse(input: { appIdOrName: string; publicOnly: boolean }): Promise<Response | null> {
   if (!env.appMcpServersEnabled) return null
   if (input.publicOnly) {
-    const { isPublicMcpAppSite } = await import("../mcp-apps.js")
-    if (!await isPublicMcpAppSite({ appIdOrName: input.appIdOrName })) return null
+    const { loadPublicMcpApp } = await import("../mcp-apps.js")
+    if (!await loadPublicMcpApp({ appIdOrName: input.appIdOrName })) return null
   }
   return new Response(sitePage(input.publicOnly ? "public" : "member"), {
     headers: {

@@ -260,7 +260,7 @@ function BuiltDashboardTileMenu({
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
-      <BuiltAppShareDialog pluginId={app.pluginId} title={app.title} open={sharing} onOpenChange={setSharing} />
+      <BuiltAppShareDialog appId={app.connectionId} pluginId={app.pluginId} title={app.title} open={sharing} onOpenChange={setSharing} />
     </>
   );
 }

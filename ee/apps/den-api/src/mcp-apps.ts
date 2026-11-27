@@ -463,6 +463,88 @@ async function updateMcpAppOnPrimary({ context, resolveTools, storageEnabled, ..
   return updated
 }
 
+type PublicSharingBlocker = "tools" | "storage"
+type PublicSharingState = { appId: string; revisionId: string; public: boolean; canPublish: boolean; blockedBy: PublicSharingBlocker | null }
+
+function publicSharingBlocker(payload: McpAppCompiledRevision): PublicSharingBlocker | null {
+  if (payload.tools.length > 0) return "tools"
+  return payload.storage ? "storage" : null
+}
+
+function publicSharingState(versionId: string, id: string, payload: McpAppCompiledRevision): PublicSharingState {
+  const blockedBy = publicSharingBlocker(payload)
+  const canPublish = blockedBy === null
+  return { appId: id, revisionId: versionId, public: payload.public === true && canPublish, canPublish, blockedBy }
+}
+
+export function changeMcpAppPublicSharing(input: {
+  context: PluginArchActorContext
+  appId: string
+  change?: { public: boolean; expectedRevisionId: string }
+}): Promise<PublicSharingState> {
+  return withPrimaryReads(async () => {
+    if (!env.appMcpServersEnabled) return notFound()
+    const id = appId(input.appId)
+    const organizationId = input.context.organizationContext.organization.id
+    if (!await activeApp(organizationId, id)) return notFound()
+    await requirePluginArchResourceRole({ context: input.context, resourceId: id, resourceKind: "config_object", role: "manager" })
+    const change = input.change
+    if (!change) {
+      const version = await latestRevision(organizationId, id)
+      const payload = version && compiledRevision(version)
+      if (!version || !payload) return notFound()
+      return publicSharingState(version.id, id, payload)
+    }
+    return db.transaction(async (tx) => {
+      const [locked] = await tx.select({ id: ConfigObjectTable.id }).from(ConfigObjectTable).where(and(
+        eq(ConfigObjectTable.organizationId, organizationId),
+        eq(ConfigObjectTable.id, id),
+        eq(ConfigObjectTable.objectType, "app"),
+        eq(ConfigObjectTable.status, "active"),
+        isNull(ConfigObjectTable.deletedAt),
+      )).limit(1).for("update")
+      if (!locked) return notFound()
+      const latest = await latestRevision(organizationId, id, tx)
+      const payload = latest && compiledRevision(latest)
+      if (!latest || !payload) return notFound()
+      if (latest.id !== change.expectedRevisionId) {
+        throw new McpAppError(409, "mcp_app_revision_conflict", "This artifact has changed. Review the latest version before changing its public link.")
+      }
+      if (change.public) {
+        await requirePublishable(payload.tools, payload.storage)
+        if (digest(payload.html) !== payload.resourceDigest || Buffer.byteLength(payload.html) !== payload.htmlBytes) {
+          throw new McpAppError(422, "mcp_app_digest_mismatch", "The artifact revision failed its integrity check.")
+        }
+      }
+      if ((payload.public === true) === change.public) return publicSharingState(latest.id, id, payload)
+      const next: McpAppCompiledRevision = { ...payload }
+      if (change.public) next.public = true
+      else delete next.public
+      const nextId = createDenTypeId("configObjectVersion")
+      const now = new Date(Math.max(Date.now(), latest.createdAt.getTime() + 1))
+      await tx.insert(ConfigObjectVersionTable).values({
+        id: nextId,
+        configObjectId: id,
+        organizationId,
+        createdAt: now,
+        createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+        createdVia: "cloud",
+        isDeletedVersion: false,
+        normalizedPayloadJson: next,
+        rawSourceText: latest.rawSourceText,
+        schemaVersion: MCP_APP_CONFIG_SCHEMA_VERSION,
+        connectorSyncEventId: null,
+        sourceRevisionRef: null,
+      })
+      await tx.update(ConfigObjectTable).set({ updatedAt: now }).where(and(
+        eq(ConfigObjectTable.organizationId, organizationId),
+        eq(ConfigObjectTable.id, id),
+      ))
+      return publicSharingState(nextId, id, next)
+    })
+  })
+}
+
 export async function readMcpApp(input: { context: PluginArchActorContext; appId: string; storageEnabled?: boolean }): Promise<ReadMcpAppOutput> {
   const { version, payload } = await editableApp(input.context, appId(input.appId))
   const source = storedSource(version, payload)
@@ -674,7 +756,11 @@ async function appIdForPublicPath(appIdOrName: string): Promise<DenTypeId<"confi
   return parsed.success ? appId(parsed.data) : null
 }
 
-export async function loadPublicMcpApp(input: { appIdOrName: string }): Promise<McpAppResource | null> {
+export function loadPublicMcpApp(input: { appIdOrName: string }): Promise<McpAppResource | null> {
+  return withPrimaryReads(() => loadPublicMcpAppOnPrimary(input))
+}
+
+async function loadPublicMcpAppOnPrimary(input: { appIdOrName: string }): Promise<McpAppResource | null> {
   if (!env.appMcpServersEnabled) return null
   const id = await appIdForPublicPath(input.appIdOrName)
   if (!id) return null
@@ -698,23 +784,6 @@ export async function loadPublicMcpApp(input: { appIdOrName: string }): Promise<
     csp: payload.csp,
     resourceDigest: payload.resourceDigest,
   }
-}
-
-export async function isPublicMcpAppSite(input: { appIdOrName: string }): Promise<boolean> {
-  if (!env.appMcpServersEnabled) return false
-  const id = await appIdForPublicPath(input.appIdOrName)
-  if (!id) return false
-  const [app] = await db.select({ organizationId: ConfigObjectTable.organizationId }).from(ConfigObjectTable).where(and(
-    eq(ConfigObjectTable.id, id),
-    eq(ConfigObjectTable.objectType, "app"),
-    eq(ConfigObjectTable.status, "active"),
-    isNull(ConfigObjectTable.deletedAt),
-  )).limit(1)
-  if (!app) return false
-  const head = await latestRevisionHead(app.organizationId, id)
-  const payload = head ? (await revisionContent(app.organizationId, id, head))?.payload : null
-  if (!payload || payload.site !== true || payload.public !== true || payload.tools.length > 0 || payload.storage) return false
-  return true
 }
 
 if (process.env.OPENWORK_MCP_APP_TIMINGS === "1") {

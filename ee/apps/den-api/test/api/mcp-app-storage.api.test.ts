@@ -248,6 +248,12 @@ test("a public artifact cannot save data, so nobody writes without signing in", 
   const app = appOf(made)
   const published = await den.callMcpTool(token, "update_app", { appId: app.appId, expectedRevisionId: app.revisionId, title: "Private requests", reactSource: REACT, textFallback: "Requests.", public: true })
   assert.equal(field(published.body, "error"), "public_app_has_storage")
+  const sharingPath = `/v1/mcp-apps/${app.appId}/public-sharing`
+  const sharing = await den.as(main.owner, main.orgId)("GET", sharingPath)
+  assert.deepEqual(sharing.body, { revisionId: app.revisionId, publicUrl: null, canPublish: false, blockedBy: "storage" })
+  const linked = await den.as(main.owner, main.orgId)("PUT", sharingPath, { public: true, expectedRevisionId: app.revisionId })
+  assert.equal(linked.status, 409)
+  assert.equal(field(linked.body, "error"), "public_app_has_storage")
   const anonymous = await den.request(null, "POST", `/mcp/public/apps/${app.appId}`, {
     headers: { accept: "application/json, text/event-stream" },
     body: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "storage_write", arguments: { collection: "requests", action: "insert", values: { title: "Anonymous" } } } },

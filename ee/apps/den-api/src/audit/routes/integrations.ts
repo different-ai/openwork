@@ -287,6 +287,8 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   change("POST", "/v1/llm-providers/:llmProviderId/member-credentials/:orgMembershipId/block", "llm_provider.member_credential.block", LLMC, res("llm_provider_member_credential", "orgMembershipId")),
 
   read("/v1/mcp-apps", "mcp_app.catalog.list", "mcp_app.catalog", res("mcp_app")),
+  read("/v1/mcp-apps/:appId/public-sharing", "mcp_app.public_sharing.read", "mcp_app.sharing", res("mcp_app", "appId")),
+  change("PUT", "/v1/mcp-apps/:appId/public-sharing", "mcp_app.public_sharing.update", "mcp_app.sharing", res("mcp_app", "appId"), "Changes access to a tool-free artifact for unsigned visitors."),
   read("/v1/mcp-apps/:appId/storage", "mcp_app.storage.summary", "mcp_app.storage", res("mcp_app", "appId"), "Organization admin; counts and limits only."),
   access("GET", "/v1/mcp-apps/:appId/storage/export", "mcp_app.storage.export", "mcp_app.storage", res("mcp_app", "appId"), "Organization admin; downloads organization data, including all members' personal rows."),
   read("/v1/mcp-connections", "mcp_connection.list", MCP, res("mcp_connection")),
