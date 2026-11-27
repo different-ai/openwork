@@ -164,20 +164,35 @@ async function productionLikeDatabase(options: { replica: boolean }) {
   if (!("getConnection" in client)) throw new Error("productionLike needs MySQL mode")
   const replica = options.replica ? readClient : null
   if (options.replica && (!replica || !("getConnection" in replica))) throw new Error("productionLike needs replica credentials")
-  const REPLICA_CONNECTIONS = 10
-  let frozen = false
-
-  async function snapshotAll(): Promise<void> {
-    if (!replica || !("getConnection" in replica)) return
-    const connections = await Promise.all(Array.from({ length: REPLICA_CONNECTIONS }, () => replica.getConnection()))
-    try {
-      await Promise.all(connections.map(async (connection) => {
-        await connection.query("COMMIT")
-        await connection.query("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY")
-      }))
-    } finally {
-      for (const connection of connections) connection.release()
+  let pinnedSnapshot: { query: (...args: unknown[]) => Promise<unknown>; end: () => Promise<void> } | null = null
+  if (replica && "getConnection" in replica) {
+    for (const method of ["query", "execute"] as const) {
+      const live = replica[method]
+      const routed = (...args: unknown[]): Promise<unknown> => pinnedSnapshot ? pinnedSnapshot.query(...args) : Reflect.apply(live, replica, args)
+      Object.defineProperty(replica, method, { value: routed, configurable: true, writable: true })
     }
+  }
+
+  async function freezeReplica(): Promise<void> {
+    if (pinnedSnapshot || !replica || !("getConnection" in replica)) return
+    const connection = await replica.getConnection()
+    await connection.query("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY")
+    pinnedSnapshot = {
+      query: (...args) => Reflect.apply(connection.query, connection, args),
+      async end() {
+        try {
+          await connection.query("COMMIT")
+        } finally {
+          connection.release()
+        }
+      },
+    }
+  }
+
+  async function thawReplica(): Promise<void> {
+    const current = pinnedSnapshot
+    pinnedSnapshot = null
+    await current?.end()
   }
 
   const concurrentStatements: ConcurrentStatement[] = []
@@ -210,19 +225,9 @@ async function productionLikeDatabase(options: { replica: boolean }) {
     return connection
   }
 
-  await snapshotAll()
   return {
-    async catchUp(): Promise<void> {
-      if (!frozen) await snapshotAll()
-    },
-    async freeze(): Promise<void> {
-      await snapshotAll()
-      frozen = true
-    },
-    async thaw(): Promise<void> {
-      frozen = false
-      await snapshotAll()
-    },
+    freeze: freezeReplica,
+    thaw: thawReplica,
     concurrentStatements,
   }
 }
@@ -459,7 +464,6 @@ export async function bootDen(options: { env?: Record<string, string>; productio
   const production = productionLike ? await productionLikeDatabase({ replica: !transactionsOnly }) : null
 
   async function request(token: string | null, method: Method, pathname: string, options: RequestOptions = {}): Promise<Call> {
-    await production?.catchUp()
     const headers = new Headers({ origin: WEB_ORIGIN, ...options.headers })
     if (token) headers.set("authorization", `Bearer ${token}`)
     if (options.orgId) headers.set("x-openwork-org-id", options.orgId)
