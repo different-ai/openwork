@@ -11,7 +11,6 @@ export type CloudCodingRepositoryRow = typeof CloudCodingRepositoryTable.$inferS
 export const CLOUD_CODING_SETUP_CODE_PREFIX = "occ_setup_"
 export const CLOUD_CODING_TASK_TOKEN_PREFIX = "occ_task_"
 
-/** A task that can still read its repository and ask for a push. */
 const OPEN_TASK_STATUSES: readonly CloudCodingTaskStatus[] = ["created", "running", "awaiting_approval", "pushed"]
 
 type TaskScope = { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }
@@ -33,11 +32,6 @@ function newSetupCode(now: number) {
   }
 }
 
-/**
- * Records one request to change code and returns the one-time setup code the
- * cloud computer trades for its task token. The code and the token are never
- * stored, only their hashes.
- */
 export async function createCloudCodingTask(input: TaskScope & {
   repository: Pick<CloudCodingRepositoryRow, "id" | "githubRepositoryId" | "fullName">
   baseBranch: string
@@ -63,7 +57,6 @@ export async function createCloudCodingTask(input: TaskScope & {
   return { task, setupCode: code.setupCode }
 }
 
-/** The person's own task, for status reads and for starting it again while the cloud computer wakes up. */
 export async function findCloudCodingTask(input: TaskScope & { taskId: string }): Promise<CloudCodingTaskRow | null> {
   const [task] = await db.$primary.select().from(CloudCodingTaskTable).where(and(
     eq(CloudCodingTaskTable.id, normalizeDenTypeId("cloudCodingTask", input.taskId)),
@@ -73,7 +66,6 @@ export async function findCloudCodingTask(input: TaskScope & { taskId: string })
   return task ?? null
 }
 
-/** A fresh setup code for a task whose cloud computer has not taken its token yet. Returns null once the token exists. */
 export async function renewCloudCodingSetupCode(input: TaskScope & { taskId: string; now?: number }): Promise<string | null> {
   const code = newSetupCode(input.now ?? Date.now())
   return db.transaction(async (tx) => {
@@ -90,10 +82,6 @@ export async function renewCloudCodingSetupCode(input: TaskScope & { taskId: str
   })
 }
 
-/**
- * Trades a setup code for the task token, once. A second use of the same code
- * gets nothing, so a code read from a transcript later is worthless.
- */
 export async function redeemCloudCodingSetupCode(input: { code: string; now?: number }): Promise<{ task: CloudCodingTaskRow; token: string; tokenExpiresAt: Date } | null> {
   if (!input.code.startsWith(CLOUD_CODING_SETUP_CODE_PREFIX)) return null
   const now = input.now ?? Date.now()
@@ -111,7 +99,6 @@ export async function redeemCloudCodingSetupCode(input: { code: string; now?: nu
   })
 }
 
-/** The open task a gateway call is for, or null when the token is unknown, expired, or its task is finished. */
 export async function findCloudCodingTaskByToken(input: { token: string; now?: number }): Promise<CloudCodingTaskRow | null> {
   if (!input.token.startsWith(CLOUD_CODING_TASK_TOKEN_PREFIX)) return null
   const [task] = await db.$primary.select().from(CloudCodingTaskTable).where(and(
@@ -129,9 +116,11 @@ export async function updateCloudCodingTask(
   await db.update(CloudCodingTaskTable).set(changes).where(eq(CloudCodingTaskTable.id, taskId))
 }
 
-/** Ends every open task of a person, so their cloud computers lose access at once (member removed, account unlinked). */
-export async function closeCloudCodingTasksForMember(input: TaskScope & { failureCode: string }): Promise<void> {
-  await db.update(CloudCodingTaskTable).set({ status: "cancelled", failureCode: input.failureCode, tokenHash: null, setupCodeHash: null })
+export async function closeCloudCodingTasksForMember(
+  input: TaskScope & { failureCode: string },
+  database: Pick<typeof db, "update"> = db,
+): Promise<void> {
+  await database.update(CloudCodingTaskTable).set({ status: "cancelled", failureCode: input.failureCode, tokenHash: null, setupCodeHash: null })
     .where(and(
       eq(CloudCodingTaskTable.organizationId, input.organizationId),
       eq(CloudCodingTaskTable.orgMembershipId, input.memberId),

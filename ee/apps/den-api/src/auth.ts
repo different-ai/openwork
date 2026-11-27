@@ -1,3 +1,4 @@
+import { deleteCloudCodingMemberData } from "./cloud-coding/links.js";
 import * as crypto from "node:crypto";
 import { recordFreeAutoSignIn } from "@openwork-ee/den-db";
 import { WorkspaceLimitReachedError, recordFounderWithinLimit, recordWorkspaceLimitReached } from "./workspace-create-limit.js";
@@ -347,6 +348,7 @@ async function deleteOrganizationMemberConnectedAccounts(input: {
       eq(schema.LlmProviderMemberCredentialTable.organizationId, organizationId),
       eq(schema.LlmProviderMemberCredentialTable.orgMembershipId, orgMembershipId),
     ));
+  await deleteCloudCodingMemberData({ organizationId, memberId: orgMembershipId });
 }
 
 function throwMemberLifecycleError(message: string): never {

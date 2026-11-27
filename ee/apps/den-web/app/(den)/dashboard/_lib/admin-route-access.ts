@@ -4,6 +4,7 @@ import {
   getAiGatewayRoute,
   getApiKeysRoute,
   getBillingRoute,
+  getCloudCodingRoute,
   getConfigRoute,
   getComputersRoute,
   getCustomLlmProvidersRoute,
@@ -104,6 +105,7 @@ function ruleFor(pathname: string): AdminRouteRule | null {
 }
 
 export function canOpenAdminRoute(pathname: string, access: DenOrgAccessFlags, canManageDeploymentServices = false): boolean {
+  if (matchesPrefix(pathname, getCloudCodingRoute())) return true;
   if (pathname === getDiagnosticsRoute() && canManageDeploymentServices === true) return true;
   if (!access.canViewSettings) return false;
   const rule = ruleFor(pathname);

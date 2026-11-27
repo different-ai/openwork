@@ -1,12 +1,6 @@
 import { createHash } from "node:crypto"
 import type { CloudCodingFileChange, CloudCodingGatewayRefusal } from "@openwork/types/den/cloud-coding"
 
-/**
- * Git object maths for the Cloud coding gateway. Den works out the exact
- * commit a set of changed files produces before it asks the person, so an
- * approval names one commit SHA and nothing else can be pushed with it.
- * Everything here is pure: reading trees from GitHub is passed in.
- */
 
 export class CloudCodingChangeRefusal extends Error {
   constructor(readonly code: CloudCodingGatewayRefusal, message: string) {
@@ -29,9 +23,7 @@ export type PlannedTree = { sha: string; entries: GitTreeEntry[] }
 
 export type CommitTreePlan = {
   rootTreeSha: string
-  /** Trees GitHub does not have yet, children before parents. */
   newTrees: PlannedTree[]
-  /** What the person is shown, sorted by path. Files sent unchanged are left out. */
   changes: CloudCodingFileChange[]
 }
 
@@ -43,7 +35,6 @@ export function gitBlobSha(content: Uint8Array): string {
   return gitObjectSha("blob", content)
 }
 
-/** GitHub writes tree modes as "040000"; git stores "40000". */
 function normalizeMode(mode: string): string {
   return mode.replace(/^0+/, "")
 }
@@ -52,7 +43,6 @@ function isTree(entry: Pick<GitTreeEntry, "mode">): boolean {
   return normalizeMode(entry.mode) === TREE_MODE
 }
 
-/** Git orders tree entries by name bytes, with a directory compared as if its name ended in "/". */
 function treeSortKey(entry: GitTreeEntry): Buffer {
   return Buffer.from(isTree(entry) ? `${entry.name}/` : entry.name, "utf8")
 }
@@ -72,22 +62,15 @@ export function gitTreeSha(entries: readonly GitTreeEntry[]): string {
 
 export type GitIdentity = { name: string; email: string }
 
-/** A name git and GitHub store unchanged: no angle brackets or line breaks, trimmed, never empty. */
 export function gitIdentityName(name: string, fallback: string): string {
   const cleaned = name.replace(/[<>\r\n\0]/g, "").trim()
   return cleaned.length > 0 ? cleaned : fallback
 }
 
-/** The message as it is stored: trailing whitespace dropped, exactly one final newline. */
 export function normalizeCommitMessage(message: string): string {
   return `${message.replace(/\r\n?/g, "\n").trimEnd()}\n`
 }
 
-/**
- * The SHA of a commit with one parent, the same author and committer, a UTC
- * time and no signature: byte for byte what GitHub's create-commit call
- * writes for the same fields.
- */
 export function gitCommitSha(input: { treeSha: string; parentSha: string; identity: GitIdentity; time: number; message: string }): string {
   const stamp = `${input.identity.name} <${input.identity.email}> ${input.time} +0000`
   const body = `tree ${input.treeSha}\nparent ${input.parentSha}\nauthor ${stamp}\ncommitter ${stamp}\n\n${input.message}`
@@ -97,7 +80,6 @@ export function gitCommitSha(input: { treeSha: string; parentSha: string; identi
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 const WORKFLOW_PREFIX = ".github/workflows/"
 
-/** Refuses anything that is not a plain file path inside the repository's working tree. */
 export function assertRepositoryPath(path: string): void {
   if (path.length === 0 || path.length > 1024 || path.startsWith("/") || path.endsWith("/") || path.includes("\\") || CONTROL_CHARACTERS.test(path)) {
     throw new CloudCodingChangeRefusal("path_refused", `"${path}" is not a file path inside the repository.`)
@@ -117,7 +99,6 @@ export function assertRepositoryPath(path: string): void {
 
 const BRANCH_FORBIDDEN = /[\u0000-\u0020\u007f~^:?*[\\]/
 
-/** A plain new branch name, by git's own ref rules. */
 export function assertBranchName(branch: string): void {
   const refuse = () => {
     throw new CloudCodingChangeRefusal("invalid_branch", `"${branch}" can't be used as a branch name. Use letters, numbers, dashes and slashes, for example openwork/fix-rounding.`)
@@ -151,7 +132,6 @@ async function loadedEntries(node: TreeNode, readTree: GitTreeReader) {
   return entries
 }
 
-/** True once every file under a folder was deleted by this change; git keeps no empty folders. */
 function emptied(node: TreeNode | null): boolean {
   if (!node?.entries) return false
   for (const entry of node.entries.values()) {
@@ -164,12 +144,6 @@ function conflict(path: string): never {
   throw new CloudCodingChangeRefusal("path_refused", `"${path}" can't be changed this way because a file and a folder would share a name. Delete the old path in the same change.`)
 }
 
-/**
- * Applies the changed files to the base tree and returns the new root tree
- * SHA, the trees that must be created, and the list of real changes.
- * Deletions are applied first so a folder can be replaced by a file (and the
- * other way round) in one change.
- */
 export async function planCommitTrees(input: { baseTreeSha: string; files: readonly PlannedFile[]; readTree: GitTreeReader }): Promise<CommitTreePlan> {
   const root: TreeNode = { originalSha: input.baseTreeSha, entries: null, dirty: false }
   const changes = new Map<string, CloudCodingFileChange["change"]>()

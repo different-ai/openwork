@@ -1,4 +1,6 @@
 import { createElement, type ReactElement } from "react"
+import { CloudCodingLinkGithub, type CloudCodingLinkGithubProps } from "./cloud-coding-link-github.js"
+import { CloudCodingAdminRequest, type CloudCodingAdminRequestProps } from "./cloud-coding-admin-request.js"
 import { DownloadLinkEmail, type DownloadLinkEmailProps } from "./download-link.js"
 import { FeedbackEmail, type FeedbackEmailProps } from "./feedback.js"
 import { ClaimReminderEmail, TeamNudgeEmail, type ClaimReminderEmailProps, type TeamNudgeEmailProps } from "./lifecycle-reminders.js"
@@ -20,6 +22,8 @@ export type EmailTemplateProps = {
   downloadLink: DownloadLinkEmailProps
   feedback: FeedbackEmailProps
   claimReminder: ClaimReminderEmailProps
+  cloudCodingLinkGithub: CloudCodingLinkGithubProps
+  cloudCodingAdminRequest: CloudCodingAdminRequestProps
   teamNudge: TeamNudgeEmailProps
 }
 
@@ -32,6 +36,8 @@ export const emailSubjects: { [Template in EmailTemplate]: (props: EmailTemplate
   downloadLink: () => "Your OpenWork download link",
   feedback: ({ name, source }) => `OpenWork feedback from ${name}${source ? ` (${source})` : ""}`,
   claimReminder: ({ organizationName }) => `Claim ${organizationName} before it expires`,
+  cloudCodingLinkGithub: () => "Link your GitHub account",
+  cloudCodingAdminRequest: ({ requesterName }) => `${requesterName} asked to use Cloud coding`,
   teamNudge: ({ organizationName }) => `Bring your team into ${organizationName}`,
 }
 
@@ -42,6 +48,8 @@ export const emailReplyTo: { [Template in EmailTemplate]: (props: EmailTemplateP
   downloadLink: () => undefined,
   feedback: ({ email }) => email,
   claimReminder: () => undefined,
+  cloudCodingLinkGithub: () => undefined,
+  cloudCodingAdminRequest: () => undefined,
   teamNudge: () => undefined,
 }
 
@@ -52,6 +60,8 @@ const emailRenderers: { [Template in EmailTemplate]: (props: EmailTemplateProps[
   downloadLink: (props) => createElement(DownloadLinkEmail, props),
   feedback: (props) => createElement(FeedbackEmail, props),
   claimReminder: (props) => createElement(ClaimReminderEmail, props),
+  cloudCodingLinkGithub: (props) => createElement(CloudCodingLinkGithub, props),
+  cloudCodingAdminRequest: (props) => createElement(CloudCodingAdminRequest, props),
   teamNudge: (props) => createElement(TeamNudgeEmail, props),
 }
 

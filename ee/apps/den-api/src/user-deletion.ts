@@ -1,3 +1,4 @@
+import { deleteCloudCodingMemberData, revokeCloudCodingTokens } from "./cloud-coding/links.js"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
 import {
@@ -37,11 +38,13 @@ export async function deleteGlobalAuthUser(userId: UserId) {
     .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, userId))
-  const { oauthConsents, gatewayCredentials } = await db.transaction(async (tx) => {
-    const members = await tx.select({ id: MemberTable.id }).from(MemberTable)
+  const { oauthConsents, gatewayCredentials, githubTokens } = await db.transaction(async (tx) => {
+    const members = await tx.select({ id: MemberTable.id, organizationId: MemberTable.organizationId }).from(MemberTable)
       .where(eq(MemberTable.userId, userId)).orderBy(MemberTable.id).for("update")
     await expireUsageRequestsForMembers(tx, members.map((member) => member.id))
     const credentials = await revokeInferenceCredentialsForMembers(tx, members.map((member) => member.id))
+    const githubTokens: string[] = []
+    for (const { organizationId, id } of members) githubTokens.push(...await deleteCloudCodingMemberData({ organizationId, memberId: id }, tx))
     const consentRows = await tx
       .select({ id: OAuthConsentTable.id })
       .from(OAuthConsentTable)
@@ -66,9 +69,10 @@ export async function deleteGlobalAuthUser(userId: UserId) {
     await tx.delete(FreeAutoLimitEventTable).where(eq(FreeAutoLimitEventTable.user_id, userId))
     await tx.delete(FreeAutoPurchaseTable).where(eq(FreeAutoPurchaseTable.user_id, userId))
     await tx.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
-    return { oauthConsents: consentRows, gatewayCredentials: credentials }
+    return { oauthConsents: consentRows, gatewayCredentials: credentials, githubTokens }
   })
   await revokeUpstreamCredentials(gatewayCredentials)
+  await revokeCloudCodingTokens(githubTokens)
   await Promise.all(Array.from(new Set(memberships.map((membership) => membership.organizationId))).map((organizationId) => cache.org.deleteMembers(organizationId)))
   await Promise.all(sessions.flatMap((session) => [
     cache.auth.revokeSession(session.token),

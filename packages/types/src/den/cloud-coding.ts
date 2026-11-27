@@ -1,14 +1,5 @@
 import { z } from "zod"
 
-/**
- * Cloud coding: people ask OpenWork to change code, the work runs on a cloud
- * computer, every push waits for the person who asked, and the pull request
- * opens under their own GitHub identity.
- *
- * This file is the wire contract shared by Den API, the Den dashboard, the
- * OpenWork app and the helper that runs on the cloud computer.
- */
-
 const timestampSchema = z.string().datetime({ offset: true })
 const shaSchema = z.string().regex(/^[0-9a-f]{40}$/)
 
@@ -35,7 +26,6 @@ export const cloudCodingConnectionSchema = z.object({
   accountLogin: z.string(),
   accountType: z.enum(["Organization", "User"]),
   repositorySelection: z.enum(["all", "selected"]),
-  /** GitHub's own page for this installation, where repositories are chosen. */
   settingsUrl: z.string().url(),
   connectedAt: timestampSchema,
   suspended: z.boolean(),
@@ -84,9 +74,7 @@ export type CloudCodingPullRequest = z.infer<typeof cloudCodingPullRequestSchema
 
 /** `GET /v1/cloud-coding`: everything the Cloud coding page shows. */
 export const cloudCodingOverviewSchema = z.object({
-  /** False when this deployment has no Cloud coding GitHub App configured; nothing can be connected. */
   configured: z.boolean(),
-  /** The caller may connect GitHub and change the settings. */
   canManage: z.boolean(),
   connection: cloudCodingConnectionSchema.nullable(),
   enabled: z.boolean(),
@@ -141,6 +129,7 @@ export const cloudCodingInstallCompleteInputSchema = z.object({ installationId: 
 export const CLOUD_CODING_CALLBACK_OUTCOMES = ["connected", "linked", "choose", "error"] as const
 export const CLOUD_CODING_CALLBACK_ERROR_REASONS = [
   "state_invalid",
+  "different_account",
   "not_configured",
   "not_allowed",
   "not_installed",
@@ -150,6 +139,19 @@ export const CLOUD_CODING_CALLBACK_ERROR_REASONS = [
   "github_error",
 ] as const
 export type CloudCodingCallbackErrorReason = (typeof CLOUD_CODING_CALLBACK_ERROR_REASONS)[number]
+
+export const cloudCodingGithubCallbackInputSchema = z.object({
+  code: z.string().min(1).max(500),
+  state: z.string().min(1).max(4000),
+  installationId: z.number().int().positive().optional(),
+}).strict().meta({ ref: "CloudCodingGithubCallbackInput" })
+export type CloudCodingGithubCallbackInput = z.infer<typeof cloudCodingGithubCallbackInputSchema>
+
+export const cloudCodingGithubCallbackResultSchema = z.object({
+  outcome: z.enum(["connected", "linked", "choose", "install"]),
+  redirectUrl: z.string().url().optional(),
+}).meta({ ref: "CloudCodingGithubCallbackResult" })
+export type CloudCodingGithubCallbackResult = z.infer<typeof cloudCodingGithubCallbackResultSchema>
 
 /**
  * Why a person cannot use Cloud coding right now, in the order checked. The
@@ -192,10 +194,8 @@ export const cloudCodingPushApprovalSchema = z.object({
   repositoryFullName: z.string(),
   branch: z.string(),
   baseBranch: z.string(),
-  /** The exact commit this approval covers. A different commit needs a new approval. */
   headSha: shaSchema,
   title: z.string(),
-  /** At most CLOUD_CODING_SUMMARY_FILES_MAX entries; `fileCount` is the real total. */
   files: z.array(cloudCodingFileChangeSchema),
   fileCount: z.number().int().nonnegative(),
   tests: cloudCodingTestReportSchema,
@@ -219,9 +219,6 @@ export const cloudCodingPushDecisionInputSchema = z.object({ decision: z.enum(["
   .meta({ ref: "CloudCodingPushDecisionInput" })
 export type CloudCodingPushDecisionInput = z.infer<typeof cloudCodingPushDecisionInputSchema>
 
-// ---------------------------------------------------------------------------
-// Git gateway: called by the helper on the cloud computer with a task token.
-// ---------------------------------------------------------------------------
 
 const repositoryPathSchema = z.string().min(1).max(1024)
 
@@ -271,7 +268,6 @@ export const cloudCodingGatewayTaskSchema = z.object({
   taskId: z.string(),
   repository: z.object({ fullName: z.string(), cloneUrl: z.string().url(), defaultBranch: z.string() }),
   baseBranch: z.string(),
-  /** The person the commit and pull request are for: name and GitHub noreply email. */
   author: z.object({ name: z.string(), email: z.string(), login: z.string() }),
 }).meta({ ref: "CloudCodingGatewayTask" })
 export type CloudCodingGatewayTask = z.infer<typeof cloudCodingGatewayTaskSchema>

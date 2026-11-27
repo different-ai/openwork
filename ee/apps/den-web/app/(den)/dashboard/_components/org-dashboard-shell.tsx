@@ -481,6 +481,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
     personalAgents: orgFeatureEnabled(orgContext, "personalAgents"),
+    cloudCoding: orgFeatureEnabled(orgContext, "cloudCoding"),
     canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
 
     desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),

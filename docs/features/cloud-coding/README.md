@@ -115,7 +115,7 @@ All routes are active-organization routes behind `orgMemberRoute()` and
 | `POST /v1/cloud-coding/github/sync` | manage | Re-reads the installation and its repositories from GitHub. Removes the connection when GitHub says the app was uninstalled. |
 | `POST /v1/cloud-coding/github/link/start` | member who can use it | `{ redirectUrl }` to GitHub's "Authorize OpenWork" page. |
 | `DELETE /v1/cloud-coding/github/link` | member | Revokes the token at GitHub and deletes the link. |
-| `GET /v1/cloud-coding/github/callback` | public, signed state | GitHub returns here after install and after authorize. Verifies the installation belongs to the GitHub user who just authorized (`GET /user/installations`), stores the link, binds the installation, then redirects to Den web. |
+| `POST /v1/cloud-coding/github/callback` | member, signed state | GitHub returns the browser to Den web, which posts the `code` and `state` here from the signed-in session. The state must have been issued to this same person and organization, so a link started by someone else cannot be completed in your browser. Verifies the installation belongs to the GitHub user who just authorized (`GET /user/installations`), stores the link, binds the installation. |
 | `POST /v1/cloud-coding/people/:memberId/send-link` | manage | Emails that person a link to connect their GitHub account. |
 | `POST /v1/cloud-coding/admin-requests` | member | Emails the organization's admins that this person asked for Cloud coding. |
 | `GET /v1/cloud-coding/approvals?status=pending` | member, own | Pushes waiting for this person. |
@@ -196,7 +196,7 @@ Create a GitHub App (GitHub → Settings → Developer settings → GitHub Apps)
 | --- | --- |
 | Name | `OpenWork Cloud coding` (any free name; the slug goes in `GITHUB_CLOUD_CODING_APP_SLUG`) |
 | Homepage URL | the Den web origin |
-| Callback URL | `<den-api origin>/v1/cloud-coding/github/callback` |
+| Callback URL | `<den web origin>/dashboard/cloud-coding/github/callback` |
 | Request user authorization (OAuth) during installation | on |
 | Expire user authorization tokens | on |
 | Setup URL | leave empty (GitHub does not allow one when authorization is requested during installation) |
