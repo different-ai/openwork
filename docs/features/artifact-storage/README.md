@@ -89,6 +89,18 @@ Choose the backend at install time, separately from the organization flag:
 Watch `artifact_storage_backend_unavailable` for an unavailable backend and
 `mcp_app_storage_failed` for storage operations that fail unexpectedly.
 
+### An install without a backend
+
+An install that sets none of these has no storage backend, and nothing else
+changes for it. Den starts and answers `/health` as before, agents get no
+storage tools, turning the feature on for an organization is refused, and
+artifacts that keep no data build, open and delete as they always did. That
+holds even with the flag forced on. The Den image does not contain the
+Worker, the Helm chart has no setting for it, and deploying the Worker
+rebuilds no image. `test/api/self-hosted-artifact-storage-off.api.test.ts`
+runs a self-hosted Den this way on every pull request that changes the Den
+API and on every `dev` push.
+
 ## Off
 
 Turning the flag off removes the storage tools and stops reads and writes.
@@ -123,8 +135,11 @@ Run the contract and the row rules against a real celld node with
 OpenWork Cloud runs it as a two-node fleet on its own bucket prefix, beside
 the runner's. The same checks watch both fleets: node memory and settings
 every 15 minutes, and a daily copy of the bucket that also confirms every
-database still has its ownership record. Nothing redeploys the Worker when
-its package changes; that is `deploy:celld`, by hand.
+database still has its ownership record. A `dev` push that changes the
+Worker's package redeploys it (`celld-artifact-storage-deploy.yml`): the new
+Worker is first served from a throwaway bucket prefix and checked, and the
+run ends only when every node has adopted it. A push that leaves the bundle
+unchanged writes nothing.
 
 ## Not yet proven
 

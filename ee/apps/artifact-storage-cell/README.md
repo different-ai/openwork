@@ -56,7 +56,19 @@ CELLD_BIN=/path/to/celld CELLD_BUCKET=s3://bucket/artifact-storage ARTIFACT_STOR
 
 For a custom S3 endpoint and region, set `S3_ENDPOINT` and `AWS_REGION`. Add `--dry-run` to bundle and print the version without writing. Treat the deployment bucket as sensitive: it holds the Worker configuration, token included. Point `DEN_ARTIFACT_STORAGE_CELLD_URL` at the protected fleet address and set `DEN_ARTIFACT_STORAGE_CELLD_TOKEN` to match.
 
-Nothing deploys this Worker automatically. Run the script again whenever this package changes; running nodes adopt a new version from the bucket and log `deployment_adopted`, as the runner's do, with no restart. The token is part of the deployment, so changing it means deploying again and then changing Den's copy.
+Running nodes adopt a new version from the bucket and log `deployment_adopted`, as the runner's do, with no restart. A fleet you run yourself gets a new Worker only when you run the script again, so run it whenever this package changes.
+
+Before a fleet gets a new Worker, prove it on a throwaway bucket prefix. `preflight:celld` deploys there with a random token, serves it from one real node, checks the HTTP contract (`scripts/celld-smoke.mjs`), restarts the node with an empty disk and reads the same rows back from the bucket. Remove the prefix afterwards:
+
+```sh
+CELLD_BIN=/path/to/celld CELLD_BUCKET=s3://bucket/ci/<unique> pnpm --filter @openwork-ee/artifact-storage-cell preflight:celld
+```
+
+### OpenWork Cloud's fleet
+
+`.github/workflows/celld-artifact-storage-deploy.yml` deploys OpenWork Cloud's fleet on every `dev` push that changes this package or a workspace package it depends on. It bundles the Worker and compares the version with the one the fleet runs; when they are the same it writes nothing. Otherwise it runs the preflight, deploys, and waits until every node has logged adopting the new version (`scripts/celld-wait-adopted.mjs`). Run it by hand from the Actions tab to deploy without a push.
+
+The token is kept in one place, the fleet's Render service, and the workflow reads it from there. It also reads Den's copy and stops if the two differ, because that deploy would lock Den out of saved data. To rotate the token: change it on the fleet's service, run the workflow by hand with `allow_token_change`, then change Den's copy. Den is refused from the moment the nodes adopt the new deployment until its copy matches.
 
 Run the nodes with the settings `ee/apps/headless-runner/OWNER-CELLS.md` recommends ("Recommended production settings"): at least two nodes, `CELLD_DURABILITY=bucket`, `CELLD_TTL_MS=60000`, an idle eviction time, LTX retention, and a shutdown grace longer than `CELLD_SHUTDOWN_TOTAL_MS`. OpenWork Cloud's fleet is checked every 15 minutes by `.github/workflows/celld-fleet-health.yml` and copied daily by `.github/workflows/celld-backup.yml`, beside the runner's.
 

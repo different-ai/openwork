@@ -8,6 +8,7 @@ import { buildInputPatterns, isBuildAffected } from "./build-inputs.mjs";
 const workflows = new Map([
   ["desktop", "alpha-macos-aarch64.yml"],
   ["headless-runner", "celld-runner-deploy.yml"],
+  ["artifact-storage-cell", "celld-artifact-storage-deploy.yml"],
   ["review", "review-app-deploy.yml"],
 ].map(([target, name]) => [target, readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")]));
 
@@ -108,7 +109,8 @@ test("the packaged desktop builds and boots before every alpha release", () => {
 test("deployment scope gates retain repository, environment and authentication checks", () => {
   const runner = job(workflows.get("headless-runner"), "deploy");
   const review = job(workflows.get("review"), "deploy");
-  for (const deploy of [runner, review]) {
+  const storage = job(workflows.get("artifact-storage-cell"), "deploy");
+  for (const deploy of [runner, review, storage]) {
     assert.match(deploy, /needs: changes/);
     assert.match(deploy, /github\.repository == 'different-ai\/openwork'/);
     assert.match(deploy, /needs\.changes\.outputs\.affected == 'true'/);
@@ -119,6 +121,20 @@ test("deployment scope gates retain repository, environment and authentication c
   assert.match(runner, /name: Check the live runner and this one can serve each other/);
   assert.match(runner, /name: Preflight on a throwaway prefix/);
   assert.match(runner, /name: Wait for every node to adopt it/);
+  assert.match(storage, /concurrency:\n      group: celld-artifact-storage-deploy\n      cancel-in-progress: false/);
+  assert.match(storage, /environment: celld-production/);
+  assert.match(storage, /name: Read the storage token/);
+  assert.match(storage, /name: Preflight on a throwaway prefix/);
+  assert.match(storage, /name: Wait for every node to adopt it/);
+  // The fleet health check reads the runner workflow's pin as the release every fleet's nodes should run.
+  const pin = /^      CELLD_VERSION: (v[0-9.]+)$/m;
+  assert.ok(runner.match(pin)?.[1]);
+  assert.equal(storage.match(pin)?.[1], runner.match(pin)[1]);
+  // The fleet is written only by a bundle that differs from the live one and passed its preflight.
+  for (const step of ["Preflight on a throwaway prefix", "Deploy to the fleet", "Wait for every node to adopt it"]) {
+    assert.ok(storage.includes(`      - name: ${step}\n        id: `), step);
+    assert.match(storage.split(`      - name: ${step}\n`)[1].split("\n      - name: ")[0], /^        if: steps\.bundle\.outputs\.unchanged != 'true'$/m, step);
+  }
   assert.match(review, /name: review-app/);
   assert.match(review, /vars\.OPENWORK_REVIEW_URL != ''/);
   assert.match(review, /vars\.OPENWORK_REVIEW_VERCEL_ORG_ID != ''/);
