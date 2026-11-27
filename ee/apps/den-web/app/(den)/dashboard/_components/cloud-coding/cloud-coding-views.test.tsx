@@ -74,7 +74,7 @@ test("unconfigured and disconnected manager states show the approved setup flow"
   disabled(unavailable, "Connect GitHub");
   const html = main({ overview: disconnected });
   assert.deepEqual(buttons(html), ["Connect GitHub"]);
-  for (const text of ["Let people fix code and open pull requests from any chat, as themselves.", "Not connected", "How it works", "You connect GitHub and choose which repositories OpenWork can use.", "The first time someone asks for a code change, they link their own GitHub account from the chat.", "OpenWork does the work on a cloud computer, then waits for that person to approve the push.", "The pull request opens in their name."]) assert.ok(html.includes(text), text);
+  for (const text of ["Let people fix code and open pull requests from Workbot, Slack and OpenWork Web, as themselves.", "Not connected", "How it works", "You connect GitHub and choose which repositories OpenWork can use.", "The first time someone asks for a code change, they link their own GitHub account from the chat.", "OpenWork does the work on the cloud computer that chat already has, then waits for that person to approve the push.", "The pull request opens in their name."]) assert.ok(html.includes(text), text);
   assert.match(main({ overview: disconnected, finishConnecting: true }), /Already installed on GitHub\? Finish connecting/);
 });
 

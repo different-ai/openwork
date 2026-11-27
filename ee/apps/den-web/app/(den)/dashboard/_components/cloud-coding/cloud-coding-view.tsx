@@ -13,11 +13,11 @@ import { ItemPanel, ItemRow, ItemRowsSkeleton } from "../item-list";
 import { RelativeTime } from "../permissions-ui";
 import { CloudCodingLoadError, GithubMark, Locked } from "./cloud-coding-ui";
 
-const introduction = "Let people fix code and open pull requests from any chat, as themselves.";
+const introduction = "Let people fix code and open pull requests from Workbot, Slack and OpenWork Web, as themselves.";
 const steps = [
   "You connect GitHub and choose which repositories OpenWork can use.",
   "The first time someone asks for a code change, they link their own GitHub account from the chat.",
-  "OpenWork does the work on a cloud computer, then waits for that person to approve the push.",
+  "OpenWork does the work on the cloud computer that chat already has, then waits for that person to approve the push.",
   "The pull request opens in their name.",
 ];
 const pullStates = { open: "Open", merged: "Merged", closed: "Closed" };
@@ -131,7 +131,7 @@ export function CloudCodingView({ overview, loadError, callbackError, actionErro
             <section>
               <DenSectionHeader density="compact" title="General" className="border-b border-[var(--den-list-line)]" />
               <div className="divide-y divide-[var(--den-list-line)] border-b border-[var(--den-list-line)]">
-                <AccessRow title="Cloud coding" description={<span className="whitespace-normal">People can ask OpenWork to change code and open pull requests from the desktop app, OpenWork Web, Slack and their agents.</span>}
+                <AccessRow title="Cloud coding" description={<span className="whitespace-normal">People can ask OpenWork to change code and open pull requests from Workbot, Slack and OpenWork Web.</span>}
                   trailing={<span className="flex shrink-0 flex-col-reverse items-end gap-2 sm:flex-row sm:items-center">
                     {!canManage ? <Locked id="cloud-coding-admin-lock">Only admins can change this</Locked> : null}
                     <DenSwitch aria-label="Cloud coding" aria-describedby={!canManage ? "cloud-coding-admin-lock" : undefined} checked={overview.enabled} disabled={!canManage || settingsPending} onChange={onToggle} />
