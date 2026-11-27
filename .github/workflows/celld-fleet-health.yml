@@ -1,14 +1,16 @@
-name: Check the runner fleet
+name: Check the celld fleets
 
-# The production headless runner runs on a celld fleet (Render service headless-cells). celld closes a node to new
-# cells once its memory passes 80% of the machine, and the conversations that node owns stop answering until it is
-# back under 64%, however idle the other nodes are. Render's autoscaling reads the fleet average, so it does not see
-# one full node. This check does: every 15 minutes it reads each node's memory, celld's own pressure flags, how many
-# requests were refused and how many nodes stopped themselves, and compares the service's settings with the ones
-# ee/apps/headless-runner/OWNER-CELLS.md recommends ("When a node is full").
+# Two production services run on celld fleets: the headless runner (Render service headless-cells) and artifact
+# storage (artifact-cells, one SQLite database per artifact that saves data). celld closes a node to new cells once its
+# memory passes 80% of the machine, and the conversations or artifact databases that node owns stop answering until it
+# is back under 64%, however idle the other nodes are. Render's autoscaling reads the fleet average, so it does not see
+# one full node. This check does, once per fleet: every 15 minutes it reads each node's memory, celld's own pressure
+# flags, how many requests were refused and how many nodes stopped themselves, and compares the service's settings
+# with the ones ee/apps/headless-runner/OWNER-CELLS.md recommends ("When a node is full").
 #
 # It only reads. The run fails when something needs action now (a node near or past its ceiling, refused requests,
-# a single node) and says so in Slack: on the first failing run, then once an hour while it lasts. Warnings (settings
+# a single node) and says so in Slack, naming the fleet: on that fleet's first failing run, then once an hour while it
+# lasts. Warnings (settings
 # that drifted, a node that stopped for a lost lease) go to Slack once a day.
 #
 # This repository is public, and so are these logs and summaries: they say only how many alerts and warnings there
@@ -34,17 +36,31 @@ concurrency:
 
 jobs:
   check:
-    name: Check each runner node
+    name: Check the ${{ matrix.fleet.key }} fleet
     if: github.repository == 'different-ai/openwork'
     runs-on: ubuntu-24.04
     environment: celld-production
     timeout-minutes: 10
 
+    # One job per fleet, so a problem in one never hides the other's reading. `key` is a name the script knows.
+    strategy:
+      fail-fast: false
+      matrix:
+        fleet:
+          - key: runner
+            service: srv-db3upfjbc2fs73c1ii70
+            bucket: s3://openwork-celld/fleet
+          - key: artifact-storage
+            service: srv-dc4v2umi0phs73botcsg
+            bucket: s3://openwork-celld/artifact-storage
+
     # Secrets are given only to the steps that use them, never to the checkout or setup actions.
     env:
-      RENDER_SERVICE_ID: srv-db3upfjbc2fs73c1ii70
+      FLEET: ${{ matrix.fleet.key }}
+      JOB_NAME: Check the ${{ matrix.fleet.key }} fleet
+      RENDER_SERVICE_ID: ${{ matrix.fleet.service }}
       S3_ENDPOINT: https://5abbcca46f2a1399566cab3a8f8bd2c6.r2.cloudflarestorage.com
-      FLEET_BUCKET: s3://openwork-celld/fleet
+      FLEET_BUCKET: ${{ matrix.fleet.bucket }}
 
     steps:
       - name: Check the fleet check is configured
@@ -91,7 +107,8 @@ jobs:
           aws s3 cp "$FLEET_BUCKET/fleet/capacity-v1.json" "$RUNNER_TEMP/fleet-sample.json" --endpoint-url "$S3_ENDPOINT" --region auto --only-show-errors
           echo "file=$RUNNER_TEMP/fleet-sample.json" >> "$GITHUB_OUTPUT"
 
-      # Slack hears of a problem when it starts and then once an hour, not on every failing run.
+      # Slack hears of a problem when it starts and then once an hour, not on every failing run. Each fleet is judged
+      # by its own job in the previous run, so one fleet's standing problem does not delay the other's first alert.
       - name: Decide whether to tell Slack
         id: notify
         if: steps.configured.outputs.ready == 'true'
@@ -99,7 +116,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          previous="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow celld-fleet-health.yml --status completed --limit 1 --json conclusion --jq '.[0].conclusion // ""' || echo "")"
+          previous_run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow celld-fleet-health.yml --status completed --limit 1 --json databaseId --jq '.[0].databaseId // ""' || echo "")"
+          previous=""
+          if [ -n "$previous_run" ]; then
+            previous="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$previous_run/jobs" --jq '.jobs[] | select(.name == env.JOB_NAME) | .conclusion' | head -n 1 || echo "")"
+          fi
           minute="$(date -u +%-M)"
           if [ "$previous" != "failure" ] || [ "$minute" -lt 15 ]; then echo "notify=true" >> "$GITHUB_OUTPUT"; else echo "notify=false" >> "$GITHUB_OUTPUT"; fi
           # Warnings stand for days: once a day is enough (the first run after 09:00 UTC).
@@ -116,7 +137,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          # The celld release the deploy workflow uses is the one the nodes should be built from.
+          # The celld release the runner's deploy workflow uses is the one every fleet's nodes should be built from.
           EXPECTED_CELLD_VERSION="$(grep -m1 -oE 'CELLD_VERSION: v[0-9]+\.[0-9]+\.[0-9]+' .github/workflows/celld-runner-deploy.yml | cut -d' ' -f2 || true)"
           export EXPECTED_CELLD_VERSION
           node .github/scripts/celld-fleet-health.mjs

@@ -47,16 +47,30 @@ CELLD_BIN=/path/to/celld pnpm --filter @openwork-ee/artifact-storage-cell test:c
 
 A fleet runs one app. Give artifact storage its own celld node(s) and S3-compatible bucket or dedicated bucket prefix; do not deploy this to the headless runner's fleet prefix. Configure the nodes to read the same bucket/prefix. Keep `openwork-artifact-storage` and `ArtifactDatabase` stable: changing either orphans existing databases.
 
-Inject `ARTIFACT_STORAGE_TOKEN` from the deploy environment's secret store into `vars.ARTIFACT_STORAGE_TOKEN` in a private, generated Wrangler config beside the entry point (or in a private staging copy of the project). `celld deploy` does not read `.dev.vars` or automatically turn shell environment variables into bindings. Do not commit the generated config or log its contents; treat the deployment bucket as sensitive because it contains the Worker configuration.
-
-From that prepared project, deploy using your fleet's object-store credentials and settings:
+`celld deploy` does not read `.dev.vars` or turn shell environment variables into bindings: the token has to be in `vars.ARTIFACT_STORAGE_TOKEN` of the Wrangler config it is given. `scripts/celld-deploy.sh` does that in a private staging copy inside this package (`.deploy.*`, ignored by git) that it deletes afterwards, and prints only the deployed version. celld's version is a hash of the bundle, and the bundle names its modules by their path from the staging copy, so the same source gives the same version from any checkout. Give it the fleet's object-store credentials and settings and the token from your secret store, as a file:
 
 ```sh
-CELLD_ESBUILD="$PWD/node_modules/.bin/esbuild" celld deploy . --bucket "$CELLD_BUCKET"
+CELLD_BIN=/path/to/celld CELLD_BUCKET=s3://bucket/artifact-storage ARTIFACT_STORAGE_TOKEN_FILE=/path/to/token \
+  pnpm --filter @openwork-ee/artifact-storage-cell deploy:celld
 ```
 
-For a custom S3 endpoint and region, set `S3_ENDPOINT` and `AWS_REGION` or pass `--endpoint` and `--region`. Point `DEN_ARTIFACT_STORAGE_CELLD_URL` at the protected fleet address and set `DEN_ARTIFACT_STORAGE_CELLD_TOKEN` to match.
+For a custom S3 endpoint and region, set `S3_ENDPOINT` and `AWS_REGION`. Add `--dry-run` to bundle and print the version without writing. Treat the deployment bucket as sensitive: it holds the Worker configuration, token included. Point `DEN_ARTIFACT_STORAGE_CELLD_URL` at the protected fleet address and set `DEN_ARTIFACT_STORAGE_CELLD_TOKEN` to match.
+
+Nothing deploys this Worker automatically. Run the script again whenever this package changes; running nodes adopt a new version from the bucket and log `deployment_adopted`, as the runner's do, with no restart. The token is part of the deployment, so changing it means deploying again and then changing Den's copy.
+
+Run the nodes with the settings `ee/apps/headless-runner/OWNER-CELLS.md` recommends ("Recommended production settings"): at least two nodes, `CELLD_DURABILITY=bucket`, `CELLD_TTL_MS=60000`, an idle eviction time, LTX retention, and a shutdown grace longer than `CELLD_SHUTDOWN_TOTAL_MS`. OpenWork Cloud's fleet is checked every 15 minutes by `.github/workflows/celld-fleet-health.yml` and copied daily by `.github/workflows/celld-backup.yml`, beside the runner's.
 
 ## Verified and not yet proven
 
-Verified on celld v0.6.3 on macOS arm64: the HTTP backend contract, paged export to a readable SQLite file, and survival of an acknowledged row across a normal single-node `celld dev` restart using the local object store. Not yet verified: a real S3 bucket or deployment, multi-node ownership moves or failover, abrupt node loss, backup/restore or historical deletion, Cloudflare workerd, production latency/load, token rotation, or exports near the configured size limits.
+Verified on celld v0.6.3 on macOS arm64: the HTTP backend contract, paged export to a readable SQLite file, and survival of an acknowledged row across a normal single-node `celld dev` restart using the local object store.
+
+Verified on celld v0.6.3 against a real S3-compatible bucket (Cloudflare R2, a dedicated prefix), on 27 November 2026:
+
+- The backend contract and Den's storage service tests against one node on the bucket, and an acknowledged row read back by a fresh node with an empty disk.
+- A two-node fleet on Linux x64 behind a private address: requests without the token or with a wrong one are refused (401); from the same private network a write is acknowledged in about 0.3 s (p95 0.36 s, the bucket write included) and a read in about 4 ms; 30 writes at once all succeed.
+- One database filled to 18.6 MiB, just under Den's default 20 MiB cap, then read back in pages (294 rows in 0.5 s).
+- Stopping and starting every node at once: both were serving again in about 15 seconds with every acknowledged row intact.
+- Deleting a database (204), after which its tables are gone.
+- Deploying a new version with `deploy:celld` while the fleet served: both nodes adopted it in place within about 20 seconds, and rows written under the old version were read, and added to, under the new one.
+
+Not yet verified: abrupt loss of one node while it owns busy cells, restoring from a backup, erasure from retained history, Cloudflare workerd, sustained production load, token rotation, or a Den export near the size cap.
