@@ -8,7 +8,6 @@ import {
   House,
   Laptop,
   LibraryBig,
-  LockKeyhole,
   MessageCircle,
   MonitorSmartphone,
   ScrollText,
@@ -149,13 +148,8 @@ export function buildDashboardNavSections({
   const observabilityItems: DashboardNavItem[] = orgSlug
     ? [
         ...(access.canViewUsageAnalytics ? [{ href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 }] : []),
-        ...(capabilities.auditLogs
-          ? [{
-              href: getAuditLogsRoute(orgSlug),
-              label: "Audit logs",
-              icon: access.canViewAuditLogs ? ScrollText : LockKeyhole,
-              ...(access.canViewAuditLogs ? {} : { badge: "Locked" }),
-            }]
+        ...(capabilities.auditLogs && access.canViewAuditLogs
+          ? [{ href: getAuditLogsRoute(orgSlug), label: "Audit logs", icon: ScrollText }]
           : []),
       ]
     : [];

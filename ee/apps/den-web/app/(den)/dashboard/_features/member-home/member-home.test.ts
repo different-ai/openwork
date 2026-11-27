@@ -59,6 +59,10 @@ test("a member's sidebar is Home and Workbot; their own pages stay findable by s
   });
   const work = sections.find((section) => section.label === "Work");
   assert.deepEqual(work?.items.map((item) => item.label), ["Home", "Workbot"]);
+  const withAuditLogs = buildDashboardNavSections({
+    orgSlug: "acme", access: getOrgAccessFlags("member", false, []), capabilities: { ...capabilities, auditLogs: true }, orgMode: "multi_org", runtimeConfigLoaded: true,
+  });
+  assert.deepEqual(withAuditLogs.map((section) => section.label), ["Work"]);
   assert.equal(work?.items[0]?.href, "/dashboard");
   assert.equal(work?.items[0]?.attention, "2 need your sign-in");
   const personal = buildPersonalPagesSection({ orgSlug: "acme", capabilities, runtimeConfigLoaded: true, myBot: true });

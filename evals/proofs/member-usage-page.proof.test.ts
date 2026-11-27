@@ -28,11 +28,11 @@ test("any member sees their own spend limit, past 30 days and what each model wo
     const links = await text('[data-sidebar-section="work"] a, [data-sidebar-section="work"] button');
     const tiles = await text('[data-testid="member-home-open"] [data-tile-link]');
     const spend = await text('[data-testid="member-home-limits"] [data-testid="my-usage-limit-row"]');
-    const analytics = (await text('[data-sidebar-section="observability"] a')).filter((link) => link.includes("Analytics") || link.includes("Usage"));
+    const sections = await text('[data-sidebar-section]');
     await user.screenshot();
     const ok = links.length === 1 && links[0].includes("Home") && tiles.some((tile) => tile.includes("OpenWork Desktop"))
-      && spend.length === 1 && spend[0].includes(used) && analytics.length === 0;
-    evidence.recordAssertionEvidence("A member's sidebar is Home; Home opens OpenWork and shows their own limit", `Work: ${links.join(", ") || "none"}; ways in: ${tiles.join(", ") || "none"}; spend row: ${spend.join(" | ") || "none"}; organization usage links in the sidebar: ${analytics.length}`, ok);
+      && spend.length === 1 && spend[0].includes(used) && sections.length === 1;
+    evidence.recordAssertionEvidence("A member's sidebar is Home; Home opens OpenWork and shows their own limit", `Work: ${links.join(", ") || "none"}; ways in: ${tiles.join(", ") || "none"}; spend row: ${spend.join(" | ") || "none"}; sidebar sections: ${sections.length}`, ok);
     expect(ok).toBe(true);
   });
 
