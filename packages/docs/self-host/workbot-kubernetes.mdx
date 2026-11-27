@@ -39,7 +39,7 @@ Give Workbot its own HTTPS hostname, distinct from Den and Gateway. For the Ingr
 
 If you already run an eligible Automation or Slack integration, review its model access first: enabling the runner can let those integrations use it before Workbot is on. If you are replacing manually configured companions, follow the [chart migration notes](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/companions.md#manual-destinations-and-terraform-classification) before proceeding. Helm does not adopt those workloads or migrate their data.
 
-Add this configuration to your complete `openwork-values.yaml`. Replace the model alias and protocol with the ones you looked up. The storage example uses the cluster's default StorageClass; review the storage choice before applying.
+Add this configuration to your complete `openwork-values.yaml`. Replace the model alias and protocol with the ones you looked up. Review `storageClass` before the first apply because Kubernetes cannot change a PVC's StorageClass after creation. Leave `storageClass` omitted to use the cluster default, or set a StorageClass that supports `ReadWriteOnce`. Do not set `storageClass: ""` unless you want static provisioning.
 
 ```yaml
 headlessRunner:
@@ -53,6 +53,8 @@ headlessRunner:
   persistence:
     enabled: true
     size: 10Gi
+    # Leave omitted for the cluster default StorageClass, or set one that supports ReadWriteOnce.
+    # storageClass: REPLACE_WITH_STORAGE_CLASS
 workbot:
   enabled: false
 ```
