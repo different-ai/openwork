@@ -1,0 +1,26 @@
+---
+title: "Deploy OpenWork on-premises or in a private cloud"
+sidebarTitle: "On-premises and private clouds"
+description: "Plan OpenWork on internal Linux VMs or Kubernetes with private networking, identity, MySQL, and your own deployment controls."
+---
+
+OpenWork can be deployed inside your network using Linux VMs or Kubernetes. Your infrastructure can be a private cloud, a VMware or Proxmox environment, or physical servers. Choose the runtime first, then plan identity, networking, and data storage around it.
+
+## Deployment approach
+
+Use [Docker and VM planning](/self-host/platforms/docker-and-vms) for Linux hosts, or adapt the published [Helm chart](https://github.com/different-ai/openwork/tree/dev/packaging/helm/openwork-ee) to your cluster. This page is a requirements guide, not certification of every hypervisor or private-cloud combination.
+
+## What you need
+
+- Compatible container hosts or a Kubernetes cluster, with approved image access or an internal registry mirror.
+- A private MySQL 8-compatible database, verified TLS, encrypted storage and backups, and a restore plan.
+- Internal web/API DNS names, certificates trusted by member devices, and VPN or private-network access as needed.
+- Secrets management, a migration procedure, and a secure first-administrator setup.
+- Approved model-provider and connector access, or alternatives that work within your network constraints.
+- Isolated worker runtimes and durable storage if cloud workspaces are required.
+
+Follow [Private network deployment](/start-here/private-network-deployment) and [Certificate trust and proxies](/start-here/certificate-trust-and-proxies). Full isolation needs the separate [air-gapped checklist](/start-here/air-gapped-deployment); an internal install is not automatically air-gapped.
+
+## Next step
+
+Review the [common requirements](/self-host/platforms/overview#common-requirements) and [licensing](/start-here/pricing-and-licensing). For help planning your network and rollout, [ask us about on-premises deployment](mailto:sales@openworklabs.com?subject=OpenWork%20on-premises%20deployment&body=Platform%3A%20On-premises%20or%20private%20cloud%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Fon-premises%0ATeam%20size%3A%20%0ANetwork%20and%20deployment%20constraints%3A%20).

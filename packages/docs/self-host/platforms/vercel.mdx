@@ -1,0 +1,25 @@
+---
+title: "Plan OpenWork with a Vercel frontend"
+sidebarTitle: "Vercel (web frontend)"
+description: "Plan Den web on Vercel with OpenWork's API, MySQL, and worker runtimes hosted on a separate container or VM platform."
+---
+
+Vercel is an option for OpenWork's Next.js Den web frontend as part of a split deployment. The API, database, and workers need their own hosting. This is planning guidance, not a tested Vercel installer or a one-click full-platform deployment.
+
+## Deployment approach
+
+Deploy Den web from source using Vercel's [Next.js hosting](https://vercel.com/docs/frameworks/full-stack/nextjs), and run the published Den API image on a [container or VM platform](/self-host/platforms/overview). The published Den web container is an alternative on those platforms; it is not the deployment input for this Vercel path.
+
+## What you need
+
+- A build configured for the repository's workspace dependencies and the chosen release.
+- A stable HTTPS Den web origin and a separately reachable HTTPS API origin.
+- `DEN_BASE_URL`, server-side `DEN_API_BASE`, and client-facing `DEN_API_PUBLIC_URL` configured for that split.
+- Authentication callbacks, trusted origins, and CORS aligned with the hostnames. Review function and proxy limits for the enabled flows.
+- A MySQL 8-compatible database, secrets, migrations, and worker provisioning on the backend side.
+
+A successful frontend deploy does not verify the API, authentication, streaming, or cloud workspace runtime. Test those connections before a rollout.
+
+## Next step
+
+Review the [common requirements](/self-host/platforms/overview#common-requirements) and [licensing](/start-here/pricing-and-licensing). For help choosing the backend and connecting the origins, [ask us about a Vercel deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20with%20Vercel&body=Platform%3A%20Vercel%20frontend%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Fvercel%0ABackend%20platform%3A%20%0ATeam%20size%3A%20%0ADeployment%20constraints%3A%20).

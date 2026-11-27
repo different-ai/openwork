@@ -1,0 +1,25 @@
+---
+title: "Plan OpenWork on Render"
+sidebarTitle: "Render"
+description: "Plan OpenWork's container services on Render with a MySQL-compatible database, HTTPS, and a separate worker runtime."
+---
+
+Render runs long-lived services from container images. OpenWork's hosted deployment uses Render, and the same service boundaries can inform your own deployment. This page is a planning guide; the repository does not ship a turnkey self-hosted Render blueprint.
+
+## Deployment approach
+
+Create separate web services for Den web and Den API from pinned images, with a MySQL 8-compatible database reachable by the services. See Render's [prebuilt image guide](https://render.com/docs/deploying-an-image) and OpenWork's [common requirements](/self-host/platforms/overview#common-requirements).
+
+## What you need
+
+- Image access, HTTPS web/API hostnames, environment variables, and secrets.
+- MySQL-compatible database hosting with verified TLS, backups, and access restrictions. Render's PostgreSQL offering is not a replacement for Den's MySQL database.
+- A migration command or release task completed before API traffic.
+- Health checks and an instance policy appropriate for background work and availability.
+- Persistent storage and a configured provisioner for any worker runtimes.
+
+Review Render's [persistent disk constraints](https://render.com/docs/disks) before designing worker storage or scaling. Hosted OpenWork's provisioning setup is not automatically included when you deploy the control-plane images.
+
+## Next step
+
+Review [licensing](/start-here/pricing-and-licensing). For help mapping your services, database, and workers, [ask us about Render deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20on%20Render&body=Platform%3A%20Render%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Frender%0ATeam%20size%3A%20%0ADeployment%20constraints%3A%20).
