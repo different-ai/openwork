@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useState } from "react";
 import { computerState, projectComputer } from "@openwork/computers";
-import { COMPUTER_STATE_LABELS, computerFolderSchema, type ComputerOwnerChoice } from "@openwork/types/den/computers";
+import { COMPUTER_STATE_LABELS, computerFolderSchema, type ComputerAccessSetting, type ComputerOwnerChoice } from "@openwork/types/den/computers";
 import {
   REMOTE_DEVICE_AVAILABILITY_LABELS,
   REMOTE_DEVICE_DISCONNECTED_LABEL,
@@ -112,24 +112,43 @@ function DeviceDialog({ action, context, computersEnabled, onClose }: { action: 
   const computers = useComputersQuery(context, editAccess);
   const setComputerAccess = useSetComputerAccess(context);
   const computer = editAccess && action.kind === "rename" ? computers.data?.find(row => row.id === action.device.id) : undefined;
-  const access = computer?.access;
+  const access = computers.isError ? null : computer?.access;
   const locked = computer?.reach.outcome === "refuse" && computer.reach.layer === "organization";
   const [choiceDraft, setChoiceDraft] = useState<ComputerOwnerChoice | null>(null);
   const [folderDraft, setFolderDraft] = useState<string | null>(null);
-  const choice = choiceDraft ?? access?.choice ?? "off";
-  const folder = folderDraft ?? access?.folders[0] ?? "/workspace";
+  const savedChoice = access?.choice === "allow" && access.scope === "whole_vm" ? "allow" : "off";
+  const savedFolder = savedChoice === "allow" ? access?.folders[0] ?? "/workspace" : "/workspace";
+  const choice = choiceDraft ?? savedChoice;
+  const folder = folderDraft ?? savedFolder;
+  const accessChanged = choice !== savedChoice || (choice === "allow" && folder !== savedFolder);
   const [label, setLabel] = useState(action.kind === "register" ? "" : action.device.label);
   const [provider, setProvider] = useState<RemoteDeviceRegisterableProvider>("freestyle");
   const [platform, setPlatform] = useState<RemoteDevicePlatform>("linux");
   const [externalId, setExternalId] = useState("");
   const [shared, setShared] = useState(false);
   const [error, setError] = useState("");
+  const [accessError, setAccessError] = useState("");
   const busy = mutations.register.isPending || mutations.rename.isPending || mutations.disconnect.isPending || mutations.remove.isPending || setComputerAccess.isPending;
   const confirming = action.kind === "disconnect" || action.kind === "remove";
   const title = action.kind === "register" ? "Add computer" : action.kind === "rename" ? editAccess ? t("settings.devices.edit_computer") : "Rename computer" : action.kind === "disconnect" ? `Disconnect ${action.device.label}?` : `Remove ${action.device.label}?`;
+  async function saveAccess() {
+    if (action.kind !== "rename" || busy || !access || locked || !accessChanged) return;
+    const setting: ComputerAccessSetting = choice === "allow"
+      ? { choice: "allow", scope: "whole_vm", folders: [folder] }
+      : { choice: "off" };
+    if (setting.choice === "allow" && !computerFolderSchema.safeParse(folder).success) { setAccessError(t("settings.devices.folder_invalid")); return; }
+    setAccessError("");
+    try {
+      await setComputerAccess.mutateAsync({ computerId: action.device.id, setting });
+      setChoiceDraft(null);
+      setFolderDraft(null);
+    } catch (cause) {
+      setAccessError(cause instanceof DenApiError && cause.status === 409 ? cause.message : t("settings.devices.access_save_failed"));
+    }
+  }
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (busy || (editAccess && !access)) return;
+    if (busy) return;
     setError("");
     try {
       if (action.kind === "register") {
@@ -138,17 +157,7 @@ function DeviceDialog({ action, context, computersEnabled, onClose }: { action: 
         await mutations.register.mutateAsync(parsed.data);
       } else if (action.kind === "rename") {
         if (!label.trim() || label.trim().length > 80) { setError("Use a name between 1 and 80 characters."); return; }
-        const setting = editAccess && !locked ? { choice, folders: [folder] } : null;
-        if (setting && !computerFolderSchema.safeParse(folder).success) { setError(t("settings.devices.folder_invalid")); return; }
         await mutations.rename.mutateAsync({ deviceId: action.device.id, label: label.trim() });
-        if (setting) {
-          try {
-            await setComputerAccess.mutateAsync({ computerId: action.device.id, setting });
-          } catch (cause) {
-            setError(cause instanceof DenApiError && cause.status === 409 ? cause.message : t("settings.devices.access_save_failed"));
-            return;
-          }
-        }
       } else if (action.kind === "disconnect") {
         const { signedOut } = await mutations.disconnect.mutateAsync(action.device.id);
         onClose(signedOut ? "Disconnected. OpenWork was signed out on that computer." : "Disconnected. It can't act as a computer until someone signs in on it again.");
@@ -167,21 +176,24 @@ function DeviceDialog({ action, context, computersEnabled, onClose }: { action: 
         <div className="grid gap-2"><Label htmlFor="device-platform">Platform</Label><Select items={platforms} value={platform} disabled={busy} onValueChange={value => { if (value) setPlatform(value); }}><SelectTrigger id="device-platform" aria-label="Platform"><SelectValue /></SelectTrigger><SelectContent>{platforms.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></div>
         <div className="grid gap-2"><Label className="flex items-center gap-2"><Checkbox checked={shared} disabled={busy} onCheckedChange={setShared} />Share with organization</Label><p className="text-xs text-muted-foreground">Sharing requires the Manage desktop policies permission. Registration doesn't grant access to the VM.</p></div>
       </> : null}
-      {editAccess && access ? <>
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+      <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => onClose()}>Cancel</Button><Button type="submit" variant={confirming ? "destructive" : "default"} disabled={busy} aria-busy={busy}>{action.kind === "register" ? "Add computer" : action.kind === "rename" ? editAccess ? t("settings.devices.save_name") : "Save changes" : action.kind === "disconnect" ? "Disconnect" : "Remove device"}</Button></DialogFooter>
+    </form>
+      {editAccess && access ? <div className="grid gap-4 border-t border-border pt-4">
         <div className="grid gap-2">
           <div className="flex items-center justify-between gap-3">
             <Label id="device-run-work-label" htmlFor="device-run-work">{t("settings.devices.run_work")}</Label>
-            <Switch id="device-run-work" aria-labelledby="device-run-work-label" aria-describedby={locked ? "device-access-locked" : undefined} checked={!locked && choice === "allow"} disabled={busy || locked} onCheckedChange={checked => setChoiceDraft(checked ? "allow" : "off")} />
+            <Switch id="device-run-work" aria-labelledby="device-run-work-label" aria-describedby={locked ? "device-access-risk device-access-locked" : "device-access-risk"} checked={!locked && choice === "allow"} disabled={busy || locked} onCheckedChange={checked => { setChoiceDraft(checked ? "allow" : "off"); setAccessError(""); }} />
           </div>
+          <p id="device-access-risk" className="text-sm text-muted-foreground">{t("settings.devices.access_risk")}</p>
           {locked ? <p id="device-access-locked" className="flex items-start gap-2 text-sm text-muted-foreground"><Lock aria-hidden className="size-4 shrink-0" strokeWidth={1.5} />{t("settings.devices.access_locked")}</p> : null}
         </div>
-        <div className="grid gap-2"><Label htmlFor="device-folder">{t("settings.devices.folder")}</Label><Input id="device-folder" value={folder} onChange={event => setFolderDraft(event.target.value)} maxLength={1024} disabled={busy || locked} autoComplete="off" /></div>
-      </> : editAccess ? computers.isPending
+        <div className="grid gap-2"><Label htmlFor="device-folder">{t("settings.devices.folder")}</Label><Input id="device-folder" value={folder} onChange={event => setFolderDraft(event.target.value)} maxLength={1024} disabled={busy || locked || choice !== "allow"} autoComplete="off" /></div>
+        {accessError ? <p role="alert" className="text-sm text-destructive">{accessError}</p> : null}
+        <div className="flex justify-end"><Button type="button" disabled={busy || locked || !accessChanged} onClick={() => void saveAccess()}>{t("settings.devices.save_access")}</Button></div>
+      </div> : editAccess ? computers.isPending
         ? <div aria-label={t("settings.devices.access_checking")} className="grid gap-4"><div className="h-5 animate-pulse rounded-md bg-muted motion-reduce:animate-none" /><div className="h-9 animate-pulse rounded-md bg-muted motion-reduce:animate-none" /></div>
         : <div role="alert" className="flex flex-wrap items-center gap-3 text-sm"><span>{t("settings.devices.access_read_failed")}</span><Button type="button" size="sm" variant="outline" onClick={() => void computers.refetch()}>{t("settings.devices.try_again")}</Button></div>
         : null}
-      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-      <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => onClose()}>Cancel</Button><Button type="submit" variant={confirming ? "destructive" : "default"} disabled={busy || (editAccess && !access)} aria-busy={busy}>{action.kind === "register" ? "Add computer" : action.kind === "rename" ? "Save changes" : action.kind === "disconnect" ? "Disconnect" : "Remove device"}</Button></DialogFooter>
-    </form>
   </DialogContent></Dialog>;
 }

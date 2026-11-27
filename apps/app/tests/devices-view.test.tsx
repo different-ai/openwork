@@ -38,8 +38,8 @@ const devices = [vm,
 const existing: ListedComputer = {
   id: vm.id, kind: "registered_vm", provider: vm.provider, label: vm.label, ownerMemberId: "test-member",
   availability: "unknown", state: "starts_when_needed", lastSeenAt: null,
-  access: { choice: "allow", folders: ["/workspace/build"] },
-  reach: { outcome: "allow", route: "checked", scope: { surface: "sandbox", folders: ["/workspace/build"] } },
+  access: { choice: "allow", scope: "whole_vm", folders: ["/workspace/build"] },
+  reach: { outcome: "allow", route: "checked", scope: { surface: "whole_vm", folders: ["/workspace/build"] } },
 };
 
 let queryClient: InstanceType<typeof QueryClient>;
@@ -82,7 +82,7 @@ async function renderDevices({ enabled, computer = existing, rejectRename = fals
       : Response.json({ device: body && typeof body === "object" ? { ...vm, ...body } : vm });
     if (path === "/v1/computers/build/access" && request.method === "PUT") return rejectAccess
       ? Response.json({ error: "not_configurable", message: "That computer can't be configured here." }, { status: 409 })
-      : Response.json({ computer: { ...computer, access: body } });
+      : Response.json({ computer: { ...computer, access: { folders: [], ...body } } });
     throw new Error(`Unexpected request: ${request.method} ${path}`);
   }, { preconnect: realFetch.preconnect });
   await act(async () => root.render(<QueryClientProvider client={queryClient}><DevicesContent context={context} computersEnabled={enabled} /></QueryClientProvider>));
@@ -168,34 +168,63 @@ test("feature on uses the three cloud states and leaves desktop status and last 
   expect(requests.some(({ path }) => path.startsWith("/v1/computers"))).toBe(false);
 });
 
-test("the edit dialog loads the owner's configuration and saves the name before choice and folder", async () => {
+function accessButton() {
+  const button = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(element => element.textContent === "Save access");
+  if (!button) throw new Error("Missing Save access");
+  return button;
+}
+
+async function saveAccess() {
+  await act(async () => accessButton().click());
+}
+
+test("saving a name never saves or resets access, even with an unsaved revocation", async () => {
   const requests = await renderDevices({ enabled: true });
   await edit("Edit");
   await until(() => document.querySelector("#device-folder") !== null);
   expect(control('[role="switch"]').getAttribute("aria-checked")).toBe("true");
   expect(textControl("#device-folder").value).toBe("/workspace/build");
+  expect(accessButton().disabled).toBe(true);
   await act(async () => control('[role="switch"]').click());
-  await enter("#device-folder", "/workspace/sam");
+  expect(accessButton().disabled).toBe(false);
   await enter("#device-label", "Sam's build box");
   await save();
   await until(() => document.querySelector('[role="dialog"]') === null);
-  expect(requests.some(({ method, path }) => method === "GET" && path === "/v1/computers")).toBe(true);
-  expect(writes(requests)).toEqual([
-    { method: "PATCH", path: "/v1/remote-devices/build", body: { label: "Sam's build box" } },
-    { method: "PUT", path: "/v1/computers/build/access", body: { choice: "off", folders: ["/workspace/sam"] } },
-  ]);
+  expect(writes(requests)).toEqual([{ method: "PATCH", path: "/v1/remote-devices/build", body: { label: "Sam's build box" } }]);
 });
 
-test("an unconfigured computer defaults to off and /workspace; an invalid folder blocks both writes", async () => {
-  const requests = await renderDevices({ enabled: true, computer: { ...existing, access: { choice: null, folders: [] } } });
+const legacy: ListedComputer = { ...existing, access: { choice: "allow", folders: ["/workspace/legacy"] },
+  reach: { outcome: "allow", route: "checked", scope: { surface: "sandbox", folders: ["/workspace/legacy"] } } };
+
+test("legacy access starts off; opting in and saving sends an explicit whole-computer grant", async () => {
+  const requests = await renderDevices({ enabled: true, computer: legacy });
   await edit("Edit");
   await until(() => document.querySelector("#device-folder") !== null);
   expect(control('[role="switch"]').getAttribute("aria-checked")).toBe("false");
   expect(textControl("#device-folder").value).toBe("/workspace");
+  expect(control("#device-access-risk").textContent).toContain("access files outside the working folder");
+  expect(accessButton().disabled).toBe(true);
+  await act(async () => control('[role="switch"]').click());
+  await enter("#device-folder", "/workspace/new");
+  expect(writes(requests)).toEqual([]);
+  await saveAccess();
+  await until(() => writes(requests).length > 0 && accessButton().disabled);
+  expect(writes(requests)).toEqual([{ method: "PUT", path: "/v1/computers/build/access", body: { choice: "allow", scope: "whole_vm", folders: ["/workspace/new"] } }]);
+});
+
+test("an unconfigured computer defaults to off; an invalid folder blocks only access changes", async () => {
+  const requests = await renderDevices({ enabled: true, computer: { ...existing, access: { choice: null, folders: [] } } });
+  await edit("Edit");
+  await until(() => document.querySelector("#device-folder") !== null);
+  expect(control('[role="switch"]').getAttribute("aria-checked")).toBe("false");
+  await act(async () => control('[role="switch"]').click());
   await enter("#device-folder", "workspace");
-  await save();
+  await saveAccess();
   expect(control('[role="dialog"] [role="alert"]').textContent).toBe("Enter a full folder path, such as /workspace.");
   expect(writes(requests)).toEqual([]);
+  await save();
+  await until(() => document.querySelector('[role="dialog"]') === null);
+  expect(writes(requests).map(({ method }) => method)).toEqual(["PATCH"]);
 });
 
 test("an organization refusal locks access without blocking a rename", async () => {
@@ -207,7 +236,7 @@ test("an organization refusal locks access without blocking a rename", async () 
   const toggle = control('[role="switch"]');
   expect(toggle.getAttribute("aria-checked")).toBe("false");
   expect(toggle.hasAttribute("data-disabled")).toBe(true);
-  expect(toggle.getAttribute("aria-describedby")).toBe("device-access-locked");
+  expect(toggle.getAttribute("aria-describedby")).toBe("device-access-risk device-access-locked");
   const reason = control("#device-access-locked");
   expect(reason.textContent).toBe("Your organization has turned this off. An organization admin can change it.");
   expect(reason.classList.contains("text-muted-foreground")).toBe(true);
@@ -232,18 +261,18 @@ test("a name conflict shows Den's sentence inline and does not save or clear the
   expect(writes(requests).map(({ method }) => method)).toEqual(["PATCH"]);
 });
 
-test("an access conflict after a saved name leaves the dialog and both drafts in place", async () => {
+test("an access conflict leaves the dialog and both drafts in place without saving the name", async () => {
   const requests = await renderDevices({ enabled: true, rejectAccess: true });
   await edit("Edit");
   await until(() => document.querySelector("#device-folder") !== null);
   await enter("#device-folder", "/workspace/sam");
   await enter("#device-label", "Sam's build box");
   await act(async () => control('[role="switch"]').click());
-  await save();
+  await saveAccess();
   await until(() => document.querySelector('[role="dialog"] [role="alert"]') !== null);
   expect(control('[role="dialog"] [role="alert"]').textContent).toBe("That computer can't be configured here.");
   expect(textControl("#device-label").value).toBe("Sam's build box");
   expect(textControl("#device-folder").value).toBe("/workspace/sam");
   expect(control('[role="switch"]').getAttribute("aria-checked")).toBe("false");
-  expect(writes(requests).map(({ method }) => method)).toEqual(["PATCH", "PUT"]);
+  expect(writes(requests).map(({ method }) => method)).toEqual(["PUT"]);
 });

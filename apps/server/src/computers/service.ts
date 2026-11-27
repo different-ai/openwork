@@ -32,11 +32,11 @@ export function createComputerService(config: ServerConfig, den: ReturnType<type
       const [computer] = matches;
       if (!computer) return `I couldn't find a computer called ${query}. ${names(computers)}`;
       if (computer.reach.outcome === "refuse") return computer.reach.message;
-      const folder = computer.reach.scope?.folders[0];
-      if (!folder) return `I can't use ${computer.label}. No folders are shared with me.`;
       if (computer.kind !== "registered_vm" || computer.provider !== "daytona") return `OpenWork can't reach ${computer.provider} computers yet.`;
+      const folder = computer.reach.scope?.surface === "whole_vm" ? computer.reach.scope.folders[0] : undefined;
+      if (!folder) return `I can't use ${computer.label} without its owner's approval to access the entire computer.`;
       await bindings.set(directory, rootId, { id: computer.id, label: computer.label, folder });
-      return `This chat now runs on ${describe(computer)}. Files and commands use ${folder} there.`;
+      return `This chat now runs on ${describe(computer)}. Work starts in ${folder} there.`;
     },
     async execute(binding: ComputerBinding, name: string, input: unknown, signal: AbortSignal) {
       const tool = routedComputerTool(name);
@@ -45,7 +45,7 @@ export function createComputerService(config: ServerConfig, den: ReturnType<type
       const authorization = await den.authorize(binding.id, computerActionForTool(tool, translated), signal);
       const { decision, connection, computer } = authorization;
       if (decision.outcome === "refuse") throw new Error(decision.message);
-      if (!decision.scope || !connection || computer.id !== binding.id) throw new Error(`OpenWork can't reach ${binding.label} from this chat.`);
+      if (!connection || computer.kind !== "registered_vm" || computer.id !== binding.id) throw new Error(`OpenWork can't reach ${binding.label} from this chat.`);
       return runOnComputer({ connection, scope: decision.scope, label: computer.label, tool, input, translated, signal });
     },
   };

@@ -33,10 +33,17 @@ function sharedFoldersSchema(max: number) {
 
 const foldersSchema = sharedFoldersSchema(32)
 
-export const computerGrantScopeSchema = z.strictObject({
+export const computerSandboxScopeSchema = z.strictObject({
   surface: z.literal("sandbox"),
   folders: foldersSchema,
 })
+const workingFolderSchema = z.array(computerFolderSchema).length(1)
+export const computerWholeVmScopeSchema = z.strictObject({
+  surface: z.literal("whole_vm"),
+  folders: workingFolderSchema,
+})
+export const computerGrantScopeSchema = z.discriminatedUnion("surface", [computerSandboxScopeSchema, computerWholeVmScopeSchema])
+export type ComputerWholeVmScope = z.infer<typeof computerWholeVmScopeSchema>
 export type ComputerGrantScope = z.infer<typeof computerGrantScopeSchema>
 
 export const computerSourceRefSchema = z.discriminatedUnion("kind", [
@@ -118,16 +125,16 @@ export const COMPUTER_STATE_LABELS = Object.freeze({
   offline: "Offline",
 } satisfies Record<ComputerState, string>)
 
-export const computerAccessSettingSchema = z.strictObject({
-  choice: z.enum(COMPUTER_OWNER_CHOICES),
-  folders: sharedFoldersSchema(8),
-})
+export const computerAccessSettingSchema = z.discriminatedUnion("choice", [
+  z.strictObject({ choice: z.literal("allow"), scope: z.literal("whole_vm"), folders: workingFolderSchema }),
+  z.strictObject({ choice: z.literal("off"), folders: sharedFoldersSchema(8).optional() }),
+])
 export type ComputerAccessSetting = z.infer<typeof computerAccessSettingSchema>
 
 export const listedComputerSchema = computerSchema.extend({
   state: computerStateSchema,
   lastSeenAt: z.iso.datetime({ offset: true }).nullable(),
-  access: z.object({ choice: ownerChoiceSchema, folders: z.array(z.string()) }).nullable(),
+  access: z.object({ choice: ownerChoiceSchema, scope: z.literal("whole_vm").optional(), folders: z.array(z.string()) }).nullable(),
   reach: computerDecisionSchema,
 }).meta({ ref: "ListedComputer" })
 export type ListedComputer = z.infer<typeof listedComputerSchema>
@@ -164,9 +171,14 @@ export const computerExecutionSchema = z.discriminatedUnion("state", [
 export type ComputerExecution = z.infer<typeof computerExecutionSchema>
 
 export { COMPUTER_SHELL_RUNNER_CAPABILITY } from "@openwork/types/automations"
+export const COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY = "owner_whole_vm"
+const computerRunnerSourceSchema = computerSourceRefSchema.refine(
+  (source) => source.kind !== "computer" || source.id !== COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY,
+  "This source is reserved for a registered virtual computer's owner.",
+)
 export const computerAccessReportSchema = z.strictObject({
   choice: ownerChoiceSchema,
-  grants: z.array(z.strictObject({ source: computerSourceRefSchema, folders: foldersSchema })).max(16),
+  grants: z.array(z.strictObject({ source: computerRunnerSourceSchema, folders: foldersSchema })).max(16),
 })
 export type ComputerAccessReport = z.infer<typeof computerAccessReportSchema>
 
@@ -179,7 +191,7 @@ export const computerCommandAssignmentSchema = z.object({
   id: z.string(),
   source: computerSchema,
   action: computerActionSchema,
-  scope: computerGrantScopeSchema,
+  scope: computerSandboxScopeSchema,
   expiresAt: expiresAtSchema,
 })
 export type ComputerCommandAssignment = z.infer<typeof computerCommandAssignmentSchema>

@@ -130,6 +130,23 @@ test("owner grants cover only member machines with the target's non-null owner",
   assert.deepEqual(decide(app, target, action, policy([{ ...owner, targetId: "other-target" }])), sourceRefusal)
 })
 
+test("registered VMs require a whole-VM grant for the owning member's app", () => {
+  const vm: Computer = { ...target, kind: "registered_vm", provider: "daytona" }
+  const wholeVm: ComputerGrant = { ...owner, scope: { surface: "whole_vm", folders: ["/workspace"] } }
+  const inside = { type: "read", path: "/workspace/notes.txt" } satisfies ComputerAction
+  const outside = { type: "read", path: "/project/notes.txt" } satisfies ComputerAction
+  const app = signedInApp("ada")
+  const refused = refusal("computer_not_allowed", vm, inside)
+  assert.deepEqual(decide(app, vm, inside, policy([owner])), refused)
+  assert.deepEqual(decide(app, vm, inside, policy([{ ...wholeVm, source: { kind: "computer", id: app.id } }])), refused)
+  assert.deepEqual(decide(app, vm, inside, policy([wholeVm])), checked(wholeVm))
+  assert.deepEqual(decide(app, vm, outside, policy([wholeVm])), checked(wholeVm))
+  assert.deepEqual(decide(signedInApp("sam"), vm, inside, policy([wholeVm])), refused)
+  assert.deepEqual(decide(source, vm, inside, policy([wholeVm])), refused)
+  assert.deepEqual(decide(app, target, inside, policy([wholeVm])), sourceRefusal)
+  assert.deepEqual(decide(app, target, inside, policy([wholeVm, owner])), checked(owner))
+})
+
 test("when all grants match, exact wins over owner and owner wins over Workbot without folder fallback", () => {
   const desktop = { ...source, kind: "member_machine" } satisfies Computer
   for (const grants of [[workbot, owner, exact], [exact, owner, workbot]]) {
@@ -151,7 +168,9 @@ test("reads, writes, lists and searches enforce the same path check and name the
     const decision = decide(signedInApp("ada"), target, { type, path: "/workspace-other/artifacts" }, policy([owner]))
     assert.deepEqual(decision, {
       outcome: "refuse", layer: "source", code: "folder_not_shared", changeableBy: "computer_owner",
-      message: "I can't see the artifacts folder on Ada's MacBook. It isn't shared with me. Its owner can share it in Settings > Devices on that computer.",
+      message: type === "read" || type === "write"
+        ? "I can't see the path artifacts on Ada's MacBook. It isn't shared with me. Its owner can share the folder you need in Settings > Devices on that computer."
+        : "I can't see the artifacts folder on Ada's MacBook. It isn't shared with me. Its owner can share it in Settings > Devices on that computer.",
     })
   }
   assert.deepEqual(decide(signedInApp("ada"), target, { type: "list" }, policy([owner])), checked(owner))
@@ -269,20 +288,22 @@ test("execute does not run on member machines that do not report online", async 
   assert.equal(run.mock.callCount(), 0)
 })
 
-test("execute delegates allowed work to both cloud kinds at every availability", async ({ mock }) => {
+test("execute delegates allowed work at every cloud availability", async ({ mock }) => {
   const done: ComputerExecution = { state: "done", id: "command", exitCode: 0, output: "", truncated: false }
   type Request = Parameters<Parameters<typeof createComputers>[0]["run"]>[0]
-  const cloudTargets: Computer[] = [
-    { ...target, kind: "cloud_sandbox", provider: "workbot" },
-    { ...target, kind: "registered_vm", provider: "daytona" },
-  ]
+  const app = signedInApp("ada")
+  const workbotCloud = { ...target, kind: "cloud_sandbox", provider: "workbot" } satisfies Computer
+  const vm = { ...target, kind: "registered_vm", provider: "daytona" } satisfies Computer
+  const vmGrant: ComputerGrant = { ...owner, scope: { surface: "whole_vm", folders: ["/workspace"] } }
   const run = mock.fn(async (_request: Request) => done)
-  const computers = createComputers({ self: source, computers: cloudTargets, policyFor: () => policy(), run })
-  const targets = cloudTargets.flatMap((computer) => REMOTE_DEVICE_AVAILABILITIES.map((availability) => ({ ...computer, availability })))
-  for (const cloud of targets) {
-    assert.deepEqual(await computers.execute(cloud, action), done, `${cloud.kind}/${cloud.availability}`)
+  for (const [self, computer, grant] of [[source, workbotCloud, workbot], [app, vm, vmGrant]] as const) {
+    const computers = createComputers({ self, computers: [computer], policyFor: () => policy([grant]), run })
+    for (const availability of REMOTE_DEVICE_AVAILABILITIES) {
+      const target = { ...computer, availability }
+      assert.deepEqual(await computers.execute(target, action), done, `${computer.kind}/${availability}`)
+      assert.deepEqual(run.mock.calls.at(-1)?.arguments, [{ source: self, target, action, scope: grant.scope }])
+    }
   }
-  assert.deepEqual(run.mock.calls.map((call) => call.arguments), targets.map((target) => [{ source, target, action, scope: workbot.scope }]))
 })
 
 test("execute reports same-computer execution unsupported without loading policy or running", async ({ mock }) => {

@@ -27,7 +27,7 @@ export const ComputerAccessTable = mysqlTable(
   (table) => [uniqueIndex("computer_access_device").on(table.deviceId)],
 )
 
-/** The folders a target computer's owner shared with one source. */
+/** Personal sandbox folders or the working folder for an explicit registered VM grant. */
 export const ComputerGrantTable = mysqlTable(
   "computer_grant",
   {

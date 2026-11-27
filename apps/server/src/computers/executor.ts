@@ -1,14 +1,13 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { insideSharedFolder, refusal } from "@openwork/computers";
 import type { SandboxProvider } from "@openwork/sandbox";
-import type { ComputerAuthorizeResponse, ComputerGrantScope } from "@openwork/types/den/computers";
-import { createSandboxToolHost, type SandboxToolName } from "../sandbox-tool-host.js";
+import { computerWholeVmScopeSchema, type ComputerAuthorizeResponse, type ComputerGrantScope } from "@openwork/types/den/computers";
+import { createSandboxToolHost, SandboxToolError, type SandboxToolName } from "../sandbox-tool-host.js";
 import { computerActionForTool, translateComputerInput } from "./input.js";
 
 type DaytonaConfig = { apiKey: string; apiUrl: string; target?: string };
 type ComputerRun = {
   connection: NonNullable<ComputerAuthorizeResponse["connection"]>;
-  scope: ComputerGrantScope;
+  scope: ComputerGrantScope | null | undefined;
   label: string;
   tool: SandboxToolName;
   input: unknown;
@@ -31,12 +30,11 @@ export async function runOnComputer(
     providerFactory?: (config: DaytonaConfig) => Promise<SandboxProvider>;
   } = {},
 ) {
-  const folder = scope.folders[0];
-  if (!folder) throw new Error(`I can't use ${label}. No folders are shared with me.`);
+  const consent = computerWholeVmScopeSchema.safeParse(scope);
+  const folder = consent.data?.folders[0];
+  if (!folder) throw new Error(`I can't use ${label} without its owner's approval to access the entire computer.`);
   const translated = authorizedInput ?? translateComputerInput(tool, input, folder);
-  const action = computerActionForTool(tool, translated);
-  const path = action.type === "shell" ? action.cwd : action.path;
-  if (!path || !insideSharedFolder(path, scope.folders)) throw new Error(refusal("folder_not_shared", { label }, action).message);
+  computerActionForTool(tool, translated);
   if (connection.provider !== "daytona") throw new Error(`OpenWork can't reach ${connection.provider} computers yet.`);
   const apiKey = env.DAYTONA_API_KEY?.trim();
   if (!apiKey) throw new Error("This computer needs its Daytona key on this machine before OpenWork can reach it.");
@@ -72,11 +70,12 @@ export async function runOnComputer(
     return handle;
   };
   const handle = await acquire();
-  const host = createSandboxToolHost({ provider, acquire: async () => handle, cwd: folder });
+  const host = createSandboxToolHost({ provider, acquire: async () => handle, cwd: folder, computerTools: true });
   try {
     const result = await host.execute(tool, translated, { sessionID: "", signal });
     return { ...result, content: result.content.map(part => ({ ...part, text: part.text.replaceAll(apiKey, "[redacted]") })) };
-  } catch {
+  } catch (error) {
+    if (error instanceof SandboxToolError) throw new Error(error.message.replaceAll(apiKey, "[redacted]"));
     throw unavailable();
   }
 }

@@ -2,7 +2,7 @@ import { and, asc, eq, gt, inArray, isNull, lt, or } from "@openwork-ee/den-db/d
 import { AutomationRunnerTable, ComputerAccessTable, ComputerCommandTable, ComputerGrantTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { decide, projectComputer } from "@openwork/computers"
-import { COMPUTER_SHELL_RUNNER_CAPABILITY, type ComputerAccessReport, type ComputerAction, type ComputerCommandAssignment, type ComputerCommandCompleteRequest, type ComputerGrantScope } from "@openwork/types/den/computers"
+import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, type ComputerAccessSetting, type ComputerAccessReport, type ComputerAction, type ComputerCommandAssignment, type ComputerCommandCompleteRequest, type ComputerGrantScope } from "@openwork/types/den/computers"
 import { remoteDeviceAvailability } from "@openwork/types/den/remote-devices"
 import { db } from "../db.js"
 import { syncDesktopsFromRunners, type RemoteDeviceActor } from "../remote-devices.js"
@@ -36,16 +36,28 @@ export async function runnerComputer(runner: ComputerRunner, sync = false) {
 }
 
 export async function replaceComputerAccess(device: DeviceRow, reportedByRunnerId: string, report: ComputerAccessReport) {
+  return storeComputerAccess(device, reportedByRunnerId, report.choice, report.grants.map(({ source, folders }) => ({
+    sourceKey: source.kind === "computer" ? source.id : source.kind, folders,
+  })))
+}
+
+export async function replaceRegisteredVmAccess(device: DeviceRow, ownerMemberId: string, setting: ComputerAccessSetting) {
+  return storeComputerAccess(device, ownerMemberId, setting.choice, setting.choice === "allow"
+    ? [{ sourceKey: COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, folders: setting.folders }]
+    : [])
+}
+
+async function storeComputerAccess(device: DeviceRow, reportedByRunnerId: string, ownerChoice: ComputerAccessReport["choice"], grants: { sourceKey: string; folders: string[] }[]) {
   const { organizationId, id: deviceId } = device
   await db.transaction(async (tx) => {
-    const choice = { ownerChoice: report.choice, reportedByRunnerId }
+    const choice = { ownerChoice, reportedByRunnerId }
     await tx.insert(ComputerAccessTable).values({ id: createDenTypeId("computerAccess"), organizationId, deviceId, ...choice })
       .onDuplicateKeyUpdate({ set: choice })
     await tx.delete(ComputerGrantTable).where(and(eq(ComputerGrantTable.organizationId, organizationId), eq(ComputerGrantTable.targetDeviceId, deviceId)))
-    if (report.grants.length > 0) {
-      await tx.insert(ComputerGrantTable).values(report.grants.map(({ source, folders }) => ({
+    if (grants.length > 0) {
+      await tx.insert(ComputerGrantTable).values(grants.map(({ sourceKey, folders }) => ({
         id: createDenTypeId("computerGrant"), organizationId, targetDeviceId: deviceId,
-        sourceKey: source.kind === "computer" ? source.id : source.kind, folders,
+        sourceKey, folders,
       })))
     }
   })
@@ -119,7 +131,7 @@ export async function claimComputerCommand(runner: ComputerRunner, device: Devic
         .where(eq(ComputerCommandTable.id, id))
       return "command_refused"
     }
-    if (decision.route !== "checked") return "command_conflict"
+    if (decision.route !== "checked" || decision.scope.surface !== "sandbox") return "command_conflict"
     await tx.update(ComputerCommandTable).set({ status: "claimed", claimedByRunnerId: runner.runnerId, claimedAt: now, scope: decision.scope })
       .where(eq(ComputerCommandTable.id, id))
     return { id, source, action: command.action, scope: decision.scope, expiresAt: command.expiresAt.toISOString() }

@@ -1,12 +1,14 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { ComputerAccessTable, ComputerGrantTable } from "@openwork-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { workbotSessionId } from "@openwork-ee/headless-protocol/workbot-routing"
 import { COMPUTER_SHELL_RUNNER_CAPABILITY, computerAuthorizeResponseSchema, computerListResponseSchema, listedComputerSchema, type ComputerAccessSetting, type ComputerAction, type ComputerRefusal } from "@openwork/types/den/computers"
 import { remoteDeviceResponseSchema } from "@openwork/types/den/remote-devices"
 import { bootDen, field, summary, text, type Call } from "./harness.js"
 
 const den = await bootDen()
+const { db } = await import("../../src/db.js")
 after(() => den.close())
 const adaAccount = await den.signUp("Ada")
 const { orgId, owner: ada } = await den.createOrg(adaAccount, "Member computer fixtures")
@@ -23,8 +25,8 @@ const listPath = "/v1/computers"
 const accessPath = (id: string) => `${listPath}/${id}/access`
 const authorizePath = (id: string) => `${listPath}/${id}/authorize`
 const devicePath = (id: string) => `/v1/remote-devices/${id}`
-const sharedAccess: ComputerAccessSetting = { choice: "allow", folders: ["/workspace"] }
-const checked = { outcome: "allow", route: "checked", scope: { surface: "sandbox", folders: ["/workspace"] } }
+const wholeVmAccess: ComputerAccessSetting = { choice: "allow", scope: "whole_vm", folders: ["/workspace"] }
+const checked = { outcome: "allow", route: "checked", scope: { surface: "whole_vm", folders: ["/workspace"] } }
 const shell: ComputerAction = { type: "shell", command: "true", cwd: "/workspace" }
 const featureOff = { error: "feature_disabled", feature: "computers" }
 const notFound = { error: "computer_not_found" }
@@ -44,7 +46,7 @@ async function listed(request = asAda) {
   return computerListResponseSchema.parse(call.body).computers
 }
 
-async function setAccess(id: string, setting = sharedAccess) {
+async function setAccess(id: string, setting: ComputerAccessSetting = wholeVmAccess) {
   const response = await asAda("PUT", accessPath(id), setting)
   assert.equal(response.status, 200, summary(response))
   const computer = field(response.body, "computer")
@@ -73,7 +75,7 @@ async function assertRefusal(id: string, expected: Omit<ComputerRefusal, "outcom
 
 const computerRefusal = {
   layer: "computer", code: "computer_not_allowed", changeableBy: "computer_owner",
-  message: "I can't do that. Build box doesn't take work from other computers. Its owner can allow it in Settings > Devices on that computer.",
+  message: "I can't use Build box. Its owner can allow access to the entire computer in Settings > Devices.",
 } satisfies Omit<ComputerRefusal, "outcome">
 
 async function reportDesktop() {
@@ -90,7 +92,7 @@ test("The list is disabled when Computers is off", async () => {
 
 test("Saving access is disabled when Computers is off", async () => {
   const { id } = await registerVm(asOff)
-  assertError(await asOff("PUT", accessPath(id), sharedAccess), 404, featureOff)
+  assertError(await asOff("PUT", accessPath(id), wholeVmAccess), 404, featureOff)
 })
 
 test("Authorizing an action is disabled when Computers is off", async () => {
@@ -131,48 +133,49 @@ const allowedActions = [
   { type: "search", path: "/workspace" },
 ] satisfies ComputerAction[]
 for (const action of allowedActions) {
-  test(`The owner can authorize a ${action.type} action inside the shared folder`, async () => {
+  test(`The owner can authorize a ${action.type} action with explicit whole-computer consent`, async () => {
     const { id, externalId } = await registerVm()
     const saved = await setAccess(id)
-    assert.deepEqual(saved.access, sharedAccess)
+    assert.deepEqual(saved.access, wholeVmAccess)
     assert.deepEqual(saved.reach, checked)
     assert.deepEqual(await authorize(id, action), { computer: saved, decision: checked, connection: { provider: "daytona", externalId } })
   })
 }
 
-test("A sibling path outside the shared folder is refused at the source layer", async () => {
+test("A legacy stored sandbox grant stays off and a legacy allow request cannot enable access", async () => {
+  const { id } = await registerVm()
+  const organizationId = normalizeDenTypeId("organization", orgId)
+  const deviceId = normalizeDenTypeId("remoteDevice", id)
+  await db.insert(ComputerAccessTable).values({ id: createDenTypeId("computerAccess"), organizationId, deviceId, ownerChoice: "allow", reportedByRunnerId: ada.memberId })
+  await db.insert(ComputerGrantTable).values({ id: createDenTypeId("computerGrant"), organizationId, targetDeviceId: deviceId, sourceKey: "owner", folders: ["/workspace"] })
+  const read: ComputerAction = { type: "read", path: "/workspace/notes.txt" }
+  assert.deepEqual((await listed()).find((computer) => computer.id === id)?.access, { choice: "off", folders: [] })
+  await assertRefusal(id, computerRefusal, read)
+  const legacy = await asAda("PUT", accessPath(id), { choice: "allow", folders: ["/workspace"] })
+  assert.equal(legacy.status, 400, summary(legacy))
+  await assertRefusal(id, computerRefusal, read)
+  await setAccess(id)
+  assert.deepEqual((await authorize(id, read)).decision, checked)
+})
+
+test("Explicit consent permits ordinary paths outside the working folder", async () => {
   const { id } = await registerVm()
   await setAccess(id)
-  await assertRefusal(id, {
-    layer: "source", code: "folder_not_shared", changeableBy: "computer_owner",
-    message: "I can't see the workspace2 folder on Build box. It isn't shared with me. Its owner can share it in Settings > Devices on that computer.",
-  }, { type: "read", path: "/workspace2" })
+  assert.deepEqual((await authorize(id, { type: "read", path: "/project/notes.txt" })).decision, checked)
 })
 
-test("Turning off access refuses work at the computer layer without deleting its folders", async () => {
-  const { id, externalId } = await registerVm()
-  await setAccess(id)
-  const setting: ComputerAccessSetting = { choice: "off", folders: ["/workspace"] }
-  assert.deepEqual((await setAccess(id, setting)).access, setting)
-  const stored = (await listed()).find((computer) => computer.id === id)?.access
-  assert.deepEqual(stored, setting)
-  await assertRefusal(id, computerRefusal)
-  await setAccess(id, { choice: "allow", folders: stored.folders })
-  assert.deepEqual((await authorize(id)).connection, { provider: "daytona", externalId })
-})
-
-test("Saving an empty folder list removes the old grant", async () => {
+test("Turning off access revokes whole-VM consent, including from a legacy client", async () => {
   const { id } = await registerVm()
-  await setAccess(id)
-  const setting: ComputerAccessSetting = { choice: "allow", folders: [] }
-  assert.deepEqual((await setAccess(id, setting)).access, setting)
-  await assertRefusal(id, {
-    layer: "source", code: "nothing_shared", changeableBy: "computer_owner",
-    message: "I can't use Build box. Nothing on it is shared with me. Its owner can share its sandbox and folders in Settings > Devices on that computer.",
-  })
+  for (const setting of [{ choice: "off", folders: ["/workspace"] }, { choice: "off" }] satisfies ComputerAccessSetting[]) {
+    await setAccess(id)
+    const off = { choice: "off", folders: [] }
+    assert.deepEqual((await setAccess(id, setting)).access, off)
+    assert.deepEqual((await listed()).find((computer) => computer.id === id)?.access, off)
+    await assertRefusal(id, computerRefusal)
+  }
 })
 
-test("The organization ceiling refuses work even when the owner shares a folder", async () => {
+test("The organization ceiling refuses work even with whole-computer consent", async () => {
   const { id } = await registerVm()
   await setAccess(id)
   const ceiling = (access: string) => asAda("PATCH", "/v1/org/remote-session-settings", { access })
@@ -196,7 +199,7 @@ test("Another member cannot see a private computer in the list", async () => {
 
 test("Another member cannot configure a private computer", async () => {
   const { id } = await registerVm()
-  assertError(await asSam("PUT", accessPath(id), sharedAccess), 404, notFound)
+  assertError(await asSam("PUT", accessPath(id), wholeVmAccess), 404, notFound)
 })
 
 test("Another member cannot authorize work on a private computer even when the owner allows it", async () => {
@@ -216,14 +219,14 @@ test("A shared VM is visible but has no member access settings or owner grant", 
     const shared = (await listed(request)).find((computer) => computer.id === id)
     assert.ok(shared)
     assert.deepEqual([shared.ownerMemberId, shared.access], [null, null])
-    assertError(await request("PUT", accessPath(id), sharedAccess), 404, notFound)
+    assertError(await request("PUT", accessPath(id), wholeVmAccess), 404, notFound)
     await assertRefusal(id, computerRefusal, shell, request)
   }
 })
 
 test("A desktop owner has to choose access on the desktop itself", async () => {
   const id = await reportDesktop()
-  assertError(await asAda("PUT", accessPath(id), sharedAccess), 409, {
+  assertError(await asAda("PUT", accessPath(id), wholeVmAccess), 409, {
     error: "choose_on_that_computer", message: "That computer's owner chooses this on the computer itself.",
   })
 })
@@ -236,7 +239,7 @@ test("Workbot computer access cannot be configured here", async () => {
   const workbot = (await listed()).find((computer) => computer.kind === "cloud_sandbox")
   assert.ok(workbot)
   assert.equal(workbot.access, null)
-  assertError(await asAda("PUT", accessPath(workbot.id), sharedAccess), 409, {
+  assertError(await asAda("PUT", accessPath(workbot.id), wholeVmAccess), 409, {
     error: "not_configurable", message: "That computer's access can't be set here.",
   })
 })
@@ -253,10 +256,12 @@ test("An allowed desktop action does not return connection information", async (
   assert.equal(inventory.status, 200, summary(inventory))
   const access = await den.request(token, "PUT", "/v1/computer-runners/access", { body: { choice: "allow", grants: [{ source: { kind: "owner" }, folders: ["/workspace"] }] } })
   assert.equal(access.status, 200, summary(access))
+  const reserved = await den.request(token, "PUT", "/v1/computer-runners/access", { body: { choice: "allow", grants: [{ source: { kind: "computer", id: "owner_whole_vm" }, folders: ["/workspace"] }] } })
+  assert.equal(reserved.status, 400, summary(reserved))
   const computer = (await listed()).find((item) => item.label === label)
   assert.ok(computer)
   const result = await authorize(computer.id)
-  assert.deepEqual([result.decision, result.connection, result.computer.access], [checked, null, null])
+  assert.deepEqual([result.decision, result.connection, result.computer.access], [{ ...checked, scope: { ...checked.scope, surface: "sandbox" } }, null, null])
 })
 
 test("Renaming to a different computer's name is refused regardless of case", async () => {

@@ -40,10 +40,10 @@ export function registerOrgMemberComputerRoutes<T extends { Variables: OrgRouteV
 
   app.put(`${base}/:computerId/access`, describeComputerRoute({
     tags: ["Devices"], operationId: "setMemberComputerAccess", "x-mcp": false,
-    summary: "Choose what my registered virtual computer shares",
-    description: "Replaces the access choice and shared sandbox folders on a registered virtual computer the caller owns. Turning access off still saves the supplied folders; sending no folders removes the grant. The organization can still turn access off. Desktops choose on that computer, and Workbot computers cannot be configured here. Requires active organization membership and Computers.",
+    summary: "Choose whether my OpenWork apps can access my entire virtual computer",
+    description: "Only the owner can allow their OpenWork apps to access the entire registered virtual computer. Allow requires explicit whole_vm consent and one working folder, which is a starting point, not an access limit. Turning access off revokes the grant. The organization can still turn access off. Desktops choose on that computer, and Workbot computers cannot be configured here. Requires active organization membership and Computers.",
     responses: {
-      200: jsonResponse("The computer with its saved access choice and folders.", z.object({ computer: listedComputerSchema })),
+      200: jsonResponse("The computer with its saved access choice and working folder, if allowed.", z.object({ computer: listedComputerSchema })),
       400: invalid,
       401: unauthorized,
       404: notFound,
@@ -61,7 +61,7 @@ export function registerOrgMemberComputerRoutes<T extends { Variables: OrgRouteV
   app.post(`${base}/:computerId/authorize`, describeComputerRoute({
     tags: ["Devices"], operationId: "authorizeMemberComputer", "x-mcp": false,
     summary: "Check whether my OpenWork app can do work on a computer",
-    description: "Checks the requested action on one of the caller's computers or a computer shared with the organization. The organization limit, the computer owner's choice and the shared folders all apply. Both allow and refuse are decisions returned with HTTP 200. Only an allowed action on a registered virtual computer includes its provider and provider id. Den never runs the action or supplies provider credentials. Requires active organization membership and Computers.",
+    description: "Checks the requested action on one of the caller's computers or a computer shared with the organization. The organization limit and the owner's access choice apply. Registered virtual computers also require explicit whole-computer consent; personal sandbox grants retain their folder limits. Both allow and refuse are decisions returned with HTTP 200. Only an allowed action on a registered virtual computer includes its provider and provider id. Den never runs the action or supplies provider credentials. Requires active organization membership and Computers.",
     responses: {
       200: jsonResponse("The decision, computer and connection if available.", computerAuthorizeResponseSchema),
       400: invalid,

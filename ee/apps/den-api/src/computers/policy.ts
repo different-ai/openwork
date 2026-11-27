@@ -1,7 +1,7 @@
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { ComputerAccessTable, ComputerGrantTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import type { ComputerPolicy } from "@openwork/types/den/computers"
+import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, computerWholeVmScopeSchema, type ComputerGrant, type ComputerPolicy } from "@openwork/types/den/computers"
 import { readOrganizationRemoteSessionSettings } from "@openwork/types/den/remote-sessions"
 import { db } from "../db.js"
 import { readOrganizationMetadataColumn } from "../organization-metadata.js"
@@ -26,10 +26,16 @@ export async function loadComputerPolicy(
   return {
     organization: { allowed: metadata != null && readOrganizationRemoteSessionSettings(metadata.metadata).access !== "off" },
     owner: { choice: owner?.choice ?? null },
-    grants: grants.map(({ sourceKey, folders }) => ({
-      source: sourceKey === "workbot" || sourceKey === "owner" ? { kind: sourceKey } : { kind: "computer", id: sourceKey },
-      targetId,
-      scope: { surface: "sandbox", folders },
-    })),
+    grants: grants.flatMap<ComputerGrant>(({ sourceKey, folders }) => {
+      if (sourceKey === COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY) {
+        const scope = computerWholeVmScopeSchema.safeParse({ surface: "whole_vm", folders })
+        return scope.success ? [{ source: { kind: "owner" }, targetId, scope: scope.data }] : []
+      }
+      return [{
+        source: sourceKey === "workbot" || sourceKey === "owner" ? { kind: sourceKey } : { kind: "computer", id: sourceKey },
+        targetId,
+        scope: { surface: "sandbox", folders },
+      }]
+    }),
   }
 }

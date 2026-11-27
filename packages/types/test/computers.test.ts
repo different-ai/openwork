@@ -24,7 +24,7 @@ function numberedFolders(count: number) {
   return Array.from({ length: count }, (_, index) => `/logs/${index}`)
 }
 
-test("grants can only name the sandbox and up to 32 unique folders", () => {
+test("sandbox grants accept up to 32 unique folders", () => {
   assert.deepEqual(computerGrantScopeSchema.parse(scope), scope)
   assert.equal(computerGrantScopeSchema.safeParse({ surface: "sandbox", folders: [] }).success, true)
   assert.equal(computerGrantScopeSchema.safeParse({ surface: "sandbox", folders: numberedFolders(32) }).success, true)
@@ -79,19 +79,19 @@ test("owner source refs are strict and parse in existing access reports", () => 
   assert.equal(computerAccessReportSchema.safeParse({ choice: "allow", grants: [{ source, folders: ["/workspace"] }] }).success, true)
 })
 
-test("access settings require a choice and at most eight unique canonical folders", () => {
-  for (const choice of ["allow", "off"]) {
-    const setting = { choice, folders: numberedFolders(8) }
-    assert.deepEqual(computerAccessSettingSchema.parse(setting), setting)
-  }
-  assert.deepEqual(computerAccessSettingSchema.parse({ choice: "off", folders: [] }), { choice: "off", folders: [] })
+test("whole-VM consent requires an explicit scope and exactly one canonical working folder", () => {
+  const setting = { choice: "allow", scope: "whole_vm", folders: ["/workspace"] }
+  assert.deepEqual(computerAccessSettingSchema.parse(setting), setting)
+  assert.deepEqual(computerGrantScopeSchema.parse({ surface: "whole_vm", folders: setting.folders }), { surface: "whole_vm", folders: setting.folders })
+  assert.deepEqual(computerAccessSettingSchema.parse({ choice: "off" }), { choice: "off" })
+  assert.deepEqual(computerAccessSettingSchema.parse({ choice: "off", folders: numberedFolders(8) }), { choice: "off", folders: numberedFolders(8) })
   for (const invalid of [
-    { choice: null, folders: [] }, { choice: "allow" }, { choice: "allow", folders: numberedFolders(9) },
-    { choice: "allow", folders: ["/workspace", "/workspace"] }, { choice: "allow", folders: ["workspace"] },
-    { choice: "allow", folders: [], extra: true },
+    { choice: null, folders: [] }, { choice: "allow", folders: ["/workspace"] }, { ...setting, scope: "sandbox" },
+    ...[[], ["/workspace", "/data"], ["workspace"]].map((folders) => ({ ...setting, folders })),
   ]) {
     assert.equal(computerAccessSettingSchema.safeParse(invalid).success, false)
   }
+  assert.equal(computerAccessReportSchema.safeParse({ choice: "allow", grants: [{ source: { kind: "computer", id: "owner_whole_vm" }, folders: ["/workspace"] }] }).success, false)
 })
 
 const reach = { outcome: "allow", route: "checked", scope }

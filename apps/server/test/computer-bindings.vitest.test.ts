@@ -9,7 +9,7 @@ import { computerListResponseSchema } from "@openwork/types/den/computers";
 const computer = {
   id: "build", label: "Build box", ownerMemberId: "ada", kind: "registered_vm", provider: "daytona",
   state: "starts_when_needed", lastSeenAt: null, availability: "unknown", access: null,
-  reach: { outcome: "allow", route: "checked", scope: { surface: "sandbox", folders: ["/workspace"] } },
+  reach: { outcome: "allow", route: "checked", scope: { surface: "whole_vm", folders: ["/workspace"] } },
 };
 
 test("runs_on lists, refuses, asks about ambiguity, binds by name and clears just that root", async () => {
@@ -24,6 +24,8 @@ test("runs_on lists, refuses, asks about ambiguity, binds by name and clears jus
       ...computer, id: "private", label: "Private box", reach: {
         outcome: "refuse", layer: "computer", code: "computer_not_allowed", changeableBy: "computer_owner", message: "Private box doesn't take work from other computers.",
       },
+    }, {
+      ...computer, id: "legacy", label: "Legacy VM", reach: { ...computer.reach, scope: { surface: "sandbox", folders: ["/workspace"] } },
     }] });
     const den = {
       async status(): Promise<"enabled"> { return "enabled"; },
@@ -35,6 +37,7 @@ test("runs_on lists, refuses, asks about ambiguity, binds by name and clears jus
     expect(await service.select("/local", "root", "unknown")).toContain("couldn't find");
     expect(await service.select("/local", "root", "build")).toContain("Ask which one to use");
     expect(await service.select("/local", "root", "Private box")).toBe("Private box doesn't take work from other computers.");
+    expect(await service.select("/local", "root", "Legacy VM")).toContain("owner's approval to access the entire computer");
     expect(await service.binding("/local", "root")).toBeNull();
     expect(await service.select("/local", "root", " build BOX ")).toContain("Build box (Starts when needed)");
     const reopened = createComputerService({ ...config }, den);
