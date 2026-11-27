@@ -5,6 +5,7 @@ import {
   Gauge,
   Radar,
   Globe,
+  House,
   Laptop,
   LibraryBig,
   LockKeyhole,
@@ -40,6 +41,7 @@ import {
   getMembersRoute,
   getMyComputersRoute,
   getMyUsageRoute,
+  getOrgDashboardRoute,
   getOrgSettingsRoute,
   getPermissionsRoute,
   getPluginsRoute,
@@ -97,7 +99,6 @@ export type BuildDashboardNavSectionsInput = {
   canManageDeploymentServices?: boolean;
   workbotEntry?: WorkbotEntry;
   organizationId?: string | null;
-  myBot?: boolean;
 };
 
 export function buildDashboardNavSections({
@@ -113,37 +114,22 @@ export function buildDashboardNavSections({
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
   organizationId = null,
-  myBot = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
-  const workflowsEnabled = capabilities.workflows;
-  const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
   const workbotOff = workbotEntry.kind === "off";
   const workItems: DashboardNavItem[] = [
+    ...(orgSlug
+      ? [{
+          href: getOrgDashboardRoute(orgSlug),
+          label: "Home",
+          icon: House,
+          testId: "dashboard-nav-home",
+          ...(!access.isAdmin && libraryNeedsSignIn > 0
+            ? { attention: `${libraryNeedsSignIn} ${libraryNeedsSignIn === 1 ? "needs" : "need"} your sign-in` }
+            : {}),
+        }]
+      : []),
     ...(capabilities.workbot && !workbotOff
       ? [{ href: workbotEntryHref(organizationId), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot", ...workbotNavMarker(workbotEntry) }]
-      : []),
-    ...(myBot && orgSlug && !workbotOff
-      ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot" }]
-      : []),
-    {
-      href: orgSlug ? getLibraryRoute(orgSlug) : "#",
-      label: "My Library",
-      icon: LibraryBig,
-      ...(libraryNeedsSignIn > 0
-        ? { attention: `${libraryNeedsSignIn} ${libraryNeedsSignIn === 1 ? "needs" : "need"} your sign-in` }
-        : {}),
-    },
-    ...(workflowsEnabled && orgSlug
-      ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
-      : []),
-    ...(orgSlug
-      ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
-      : []),
-    ...(orgSlug
-      ? [{ href: getMyUsageRoute(orgSlug), label: "My Usage", icon: Gauge, testId: "dashboard-nav-my-usage" }]
-      : []),
-    ...(showWeb
-      ? [{ href: orgSlug ? getWebRoute(orgSlug) : "#", label: "OpenWork Web", icon: Globe }]
       : []),
   ];
 
@@ -217,6 +203,31 @@ export function buildDashboardNavSections({
   ];
 }
 
+export function buildPersonalPagesSection({
+  orgSlug,
+  capabilities,
+  runtimeConfigLoaded,
+  workbotEntry = { kind: "open" },
+  myBot = false,
+}: Pick<BuildDashboardNavSectionsInput, "orgSlug" | "capabilities" | "runtimeConfigLoaded" | "workbotEntry"> & { myBot?: boolean }): DashboardNavSection {
+  if (!orgSlug) return { label: PERSONAL_PAGES_LABEL, items: [] };
+  return {
+    label: PERSONAL_PAGES_LABEL,
+    items: [
+      ...(myBot && workbotEntry.kind !== "off"
+        ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar }]
+        : []),
+      { href: getLibraryRoute(orgSlug), label: "My Library", icon: LibraryBig },
+      ...(capabilities.workflows ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }] : []),
+      { href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone },
+      { href: getMyUsageRoute(orgSlug), label: "My Usage", icon: Gauge },
+      ...(runtimeConfigLoaded && capabilities.openworkWeb ? [{ href: getWebRoute(orgSlug), label: "OpenWork Web", icon: Globe }] : []),
+    ],
+  };
+}
+
+const PERSONAL_PAGES_LABEL = "Yours";
+
 function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, membersOpen: boolean): DashboardNavChild[] {
   return access.canViewPermissions && !membersOpen ? [{ href: getPermissionsRoute(orgSlug), label: "Roles" }] : [];
 }
@@ -242,6 +253,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Dashboards: ["boards", "apps"],
   Diagnostics: ["health", "status", "services", "readiness", "debug", "troubleshooting", "desktop startup"],
   General: ["organization", "workspace"],
+  Home: ["dashboard", "start", "download", "api keys", "spend"],
   Members: ["people", "users", "invite", "teams", "roles", "agent permissions", "commands", "websites", "allow list", "block list", "desktop", "prompt suggestions"],
   Models: ["llm", "provider", "byok", "api key"],
   Permissions: ["access", "roles", "teams", "admin", "rbac"],

@@ -117,7 +117,7 @@ function SpendLimits({ orgId }: { orgId: string }) {
   );
 }
 
-function LimitRow({ bucket, asking, stale, pending, error, onAsk, onCancel, onSubmit }: {
+export function LimitRow({ bucket, asking, stale, pending, error, onAsk, onCancel, onSubmit }: {
   bucket: GatewayUsageBucket; asking: boolean; stale: boolean; pending: boolean; error: string | null;
   onAsk: () => void; onCancel: () => void; onSubmit: (reason: string) => void;
 }) {
