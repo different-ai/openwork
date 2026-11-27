@@ -10,6 +10,7 @@ import {
 } from "../src/react-app/domains/session/remote-threads/remote-thread-store"
 import { remoteSessionRouteId } from "../src/lib/remote-session-route"
 import { mergeRemoteThreadStart, remoteThreadActivitiesFromToolPart } from "../src/lib/remote-session-thread"
+import { remoteTailIsStale } from "../src/react-app/domains/session/remote-threads/use-remote-thread-conversation"
 import { conversationRemoteTasks, selectComposerRemoteTasks } from "../src/react-app/domains/session/surface/composer/composer-subagent-tracker"
 import {
   clearRemoteFollowUpDraftMessageId,
@@ -281,5 +282,9 @@ test("a fresh draft store reopens a remote follow-up for the same member only an
   expect(
     selectComposerRemoteTasks(emptyTasks, { [settledEntry.start.key]: settledEntry }, "org_1", 5000, { workspaceId: "ws_parent_1", sessionId: "ses_parent_1" }, { includeSettled: false }),
   ).toEqual([])
+  expect(remoteTailIsStale({ status: settledEntry.status, activeSince: 1_000, tailUpdatedAt: 2_000 }, { messageCount: 4 })).toBe(false)
+  expect(remoteTailIsStale({ status: settledEntry.status, activeSince: 1_000, tailUpdatedAt: 2_000 }, { messageCount: 2 })).toBe(true)
+  expect(remoteTailIsStale({ status: settledEntry.status, activeSince: 1_000, tailUpdatedAt: 1_500 }, { messageCount: 4 })).toBe(true)
+  expect(remoteTailIsStale({ status: settledEntry.status, activeSince: 3_000, tailUpdatedAt: 2_000 }, { messageCount: 4 })).toBe(true)
   useRemoteThreadStore.getState().clearAll()
 })

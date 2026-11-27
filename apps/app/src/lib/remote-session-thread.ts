@@ -335,6 +335,7 @@ export type RemoteTranscriptPage = {
   title: string | null
   messages: RemoteTranscriptMessage[]
   nextCursor: string | null
+  messageCount?: number | null
   pending?: RemoteSessionPending | null
 }
 
@@ -427,12 +428,16 @@ export function parseRemoteRead(payload: unknown): RemoteReadOutcome {
   const messages = Array.isArray(record?.messages)
     ? record.messages.flatMap((message) => transcriptMessage(message) ?? [])
     : []
+  const messageCount = typeof record?.messageCount === "number" && Number.isFinite(record.messageCount)
+    ? record.messageCount
+    : null
   return {
     kind: "page",
     page: {
       title: text(record?.title),
       messages,
       nextCursor: text(record?.nextCursor),
+      ...(messageCount === null ? {} : { messageCount }),
       pending: parseRemotePending(record?.pending),
     },
   }

@@ -66,7 +66,7 @@ type RemoteThreadState = {
     sessions: readonly BoundRemoteSession[],
     options?: { replace?: boolean; tails?: Readonly<Record<string, unknown>>; checkedAt?: number },
   ) => void
-  setTail: (threadKey: string, page: RemoteTranscriptPage) => void
+  setTail: (threadKey: string, page: RemoteTranscriptPage, updatedAt?: number) => void
   markStale: (keys: readonly string[]) => void
   clearAll: () => void
 }
@@ -122,6 +122,9 @@ function boundToEntry(
   const newTurn = session.status.state !== "idle" && session.status.state !== "error"
     || (sameOrg && existing.followUpVersion !== null && session.status.version !== existing.followUpVersion)
   const followedUpAt = sameOrg && existing.followedUpAt !== null && !newTurn ? existing.followedUpAt : null
+  const activeSince = followedUpAt !== null && existing?.activeSince != null
+    ? Math.max(session.activeSince, existing.activeSince)
+    : session.activeSince
   return {
     start: sameOrg ? mergeRemoteThreadStart(existing.start, start) : start,
     organizationId,
@@ -129,7 +132,7 @@ function boundToEntry(
     status: session.status,
     stale: false,
     checkedAt,
-    activeSince: session.activeSince,
+    activeSince,
     firstSeenAt: sameOrg ? existing.firstSeenAt : checkedAt,
     followedUpAt,
     followUpVersion: sameOrg ? existing.followUpVersion : null,
@@ -148,8 +151,21 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
   clearAll: () => {
     set({ threads: {}, tailsByKey: {}, liveHydratedOrgId: null })
   },
-  setTail: (threadKey, page) => {
-    set((state) => ({ tailsByKey: { ...state.tailsByKey, [threadKey]: page } }))
+  setTail: (threadKey, page, updatedAt) => {
+    set((state) => {
+      const existing = state.threads[threadKey]
+      return {
+        tailsByKey: { ...state.tailsByKey, [threadKey]: page },
+        ...(existing && typeof updatedAt === "number"
+          ? {
+              threads: {
+                ...state.threads,
+                [threadKey]: { ...existing, tailUpdatedAt: Math.max(existing.tailUpdatedAt ?? 0, updatedAt) },
+              },
+            }
+          : {}),
+      }
+    })
   },
   applyBoundSessions: (organizationId, sessions, options = {}) => {
     const checkedAt = options.checkedAt ?? Date.now()
@@ -418,7 +434,7 @@ export async function fetchRemoteSessionTail(threadKey: string, signal?: AbortSi
     if (!response.tail) return null
     const parsed = parseRemoteRead(response.tail)
     if (parsed.kind !== "page") return null
-    useRemoteThreadStore.getState().setTail(threadKey, parsed.page)
+    useRemoteThreadStore.getState().setTail(threadKey, parsed.page, response.updatedAt ?? undefined)
     return parsed.page
   } catch {
     return null

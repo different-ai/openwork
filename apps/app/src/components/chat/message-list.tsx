@@ -1047,30 +1047,30 @@ const UserMessage = React.memo(
                   >
                     <MessageTimestamp message={message} className="mr-1.5" />
                     <CopyMessageButton messages={[message]} />
-                    {messageText ? (
+                    {!readOnly && messageText ? (
                       <MessageAction tooltip="Edit message">
                         <Button
                           variant="ghost"
                           size="icon"
                           aria-label="Edit message"
-                          disabled={readOnly}
                           onClick={editMessage}
                         >
                           <Pencil />
                         </Button>
                       </MessageAction>
                     ) : null}
-                    <MessageAction tooltip="Revert">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Revert"
-                        disabled={readOnly}
-                        onClick={() => onRevertToUserMessage(message.id)}
-                      >
-                        <Undo2 />
-                      </Button>
-                    </MessageAction>
+                    {!readOnly ? (
+                      <MessageAction tooltip="Revert">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Revert"
+                          onClick={() => onRevertToUserMessage(message.id)}
+                        >
+                          <Undo2 />
+                        </Button>
+                      </MessageAction>
+                    ) : null}
                   </MessageActions>
                 )}
               </div>
@@ -1806,6 +1806,7 @@ interface MessageListProps {
   viewport?: MessageListViewport
   sessionErrorHandled?: boolean
   trailing?: React.ReactNode
+  fallbackRunStartedAt?: number | null
 }
 
 export function shouldShowMessageListLoading(status: ThreadStatus, messageCount: number) {
@@ -1817,7 +1818,7 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
   return status === "submitted" || status === "streaming" || status === "retrying"
 }
 
-export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false, trailing }: MessageListProps) {
+export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false, trailing, fallbackRunStartedAt = null }: MessageListProps) {
   const { workspaceId, sessionId, onStopSubagentSession, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName } = useMessageList()
   const workingModel = React.useMemo<WorkingModel | null>(() => {
     const lastUser = messages.findLastIndex((message) => message.role === "user")
@@ -1861,7 +1862,12 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   const activityActive = runActive || tasks.length > 0
   const runStartedAtRef = React.useRef<number | null>(null)
   const [runElapsedSeconds, setRunElapsedSeconds] = React.useState(0)
-  const runStartedAt = React.useMemo(() => runActive ? getRunStartedAt(messages) : null, [messages, runActive])
+  const inferredRunStartedAt = React.useMemo(() => runActive ? getRunStartedAt(messages) : null, [messages, runActive])
+  const runStartedAt = runActive
+    ? (inferredRunStartedAt !== null && fallbackRunStartedAt !== null
+        ? Math.max(inferredRunStartedAt, fallbackRunStartedAt)
+        : (inferredRunStartedAt ?? fallbackRunStartedAt ?? null))
+    : null
   React.useEffect(() => {
     if (!activityActive) {
       runStartedAtRef.current = null

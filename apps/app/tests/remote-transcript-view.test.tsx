@@ -131,5 +131,32 @@ test("text from the other computer never makes this browser fetch a URL it chose
     const links = [...container.querySelectorAll("a")].map((link) => link.textContent)
     expect(links).toContain("chart")
     expect(links).toContain("the notes")
+    expect(container.querySelector("button[aria-label='Edit message']")).toBeNull()
+    expect(container.querySelector("button[aria-label='Revert']")).toBeNull()
   })
+})
+
+test("running remote transcript uses runStartedAt fallback instead of resetting Working to 0s when tail has no user message", async () => {
+  const outcome = parseRemoteRead({
+    messages: [
+      { id: "msg_a_tail_only", role: "assistant", createdAt: Date.now() - 10_000, text: "Still checking logs.", toolCalls: [], parts: [{ type: "text", text: "Still checking logs." }] },
+    ],
+  })
+  if (outcome.kind !== "page") throw new Error("expected a page")
+  const startedAt = Date.now() - 95_000
+  await render(
+    <RemoteTranscriptView
+      threadKey="command:rsc_elapsed_fallback"
+      messages={remoteTranscriptToUIMessages(outcome.page.messages, { running: true })}
+      running
+      runStartedAt={startedAt}
+      showThinking={false}
+      developerMode={false}
+    />,
+    async (container) => {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)) })
+      const working = container.querySelector("[data-loading-message='working']")?.textContent ?? ""
+      expect(working).toMatch(/^Working 1m 3[4-9]s$/)
+    },
+  )
 })

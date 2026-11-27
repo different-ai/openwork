@@ -1500,6 +1500,7 @@ export function SessionPage(props: SessionPageProps) {
       browserPresentation={browserPresentation.enabled ? { onPresent: browserPresentation.present } : undefined}
       browserShownElsewhere={browserPresentation.mode === "fullscreen"}
       sideChat={sideChat}
+      onOpenRemoteTask={props.onOpenRemoteTask}
     />
   ) : null;
 

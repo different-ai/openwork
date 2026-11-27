@@ -1923,7 +1923,7 @@ export async function listBoundRemoteSessions(
         limit,
       })
   if (commands.length === 0) return []
-  const [targets, tailUpdatedByKey] = await Promise.all([
+  const [targets, tailUpdatedByKey, latestSendByCommandId] = await Promise.all([
     deps.desktopTargets
       ? deps.desktopTargets({ organizationId: input.organizationId, userId: input.userId }).catch(() => ({ ownerMemberId: null, computers: [] }))
       : Promise.resolve({ ownerMemberId: null, computers: [] }),
@@ -1933,6 +1933,13 @@ export async function listBoundRemoteSessions(
       threadKeys: commands.map((command) => `command:${command.id}`),
       now,
     }).catch(() => new Map<string, number>()),
+    deps.requestStore.listLatestSendCreatedAt
+      ? deps.requestStore.listLatestSendCreatedAt({
+          organizationId: input.organizationId,
+          createdByUserId: input.userId,
+          commandIds: commands.map((command) => command.id),
+        }).catch(() => new Map<string, number>())
+      : Promise.resolve(new Map<string, number>()),
   ])
   const labels = new Map(targets.computers.map((computer) => [computer.computerId, computerLabel(computer)]))
   return commands.map((command) => {
@@ -1940,6 +1947,8 @@ export async function listBoundRemoteSessions(
     const threadKey = `command:${command.id}`
     const version = versionForProjection({ ...projection, observedAt: undefined })
     const rawPrompt = command.prompt?.trim() ?? null
+    const latestSendAt = latestSendByCommandId.get(command.id) ?? null
+    const activeSince = latestSendAt !== null ? Math.max(command.createdAt, latestSendAt) : command.createdAt
     return {
       threadKey,
       commandId: command.id,
@@ -1955,7 +1964,7 @@ export async function listBoundRemoteSessions(
         ...projection,
         computerLabel: projection.computerId ? labels.get(projection.computerId) ?? null : null,
       },
-      activeSince: command.createdAt,
+      activeSince,
       updatedAt: command.updatedAt,
       tailUpdatedAt: tailUpdatedByKey.get(threadKey) ?? null,
     }

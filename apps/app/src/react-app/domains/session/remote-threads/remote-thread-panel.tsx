@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { Maximize2, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -12,24 +13,47 @@ import { REMOTE_THREAD_PAGE_MAX, REMOTE_THREAD_PAGE_SIZE, useRemoteThreadConvers
 import { RemoteFollowUpComposer } from "./remote-follow-up-composer"
 import { RemoteTranscriptView } from "./remote-transcript-view"
 
-export function RemoteThreadPanel({ tab }: { tab: RemoteThreadPanelTab }) {
+export function RemoteThreadPanel({ tab, onClose, onExpand }: {
+  tab: RemoteThreadPanelTab
+  onClose?: () => void
+  onExpand?: () => void
+}) {
   const entry = useRemoteThread(tab.threadKey)
   useFollowRemoteThread(entry?.start ?? null, tab.owner, null)
   if (!entry) {
-    return <div className="p-4 text-sm text-muted-foreground">{t("session.remote_task_read_failed")}</div>
+    return (
+      <div className="flex h-full flex-col bg-dls-surface">
+        <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-dls-text">{tab.label}</span>
+          {onClose ? (
+            <Button variant="ghost" size="icon-xs" aria-label={t("session_management.close_split_view")} title={t("session_management.close_split_view")} onClick={onClose}>
+              <X />
+            </Button>
+          ) : null}
+        </div>
+        <div className="p-4 text-sm text-muted-foreground">{t("session.remote_task_read_failed")}</div>
+      </div>
+    )
   }
-  return <RemoteThreadConversation key={entry.start.key} entry={entry} />
+  return <RemoteThreadConversation key={entry.start.key} entry={entry} onClose={onClose} onExpand={onExpand} />
 }
 
-function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
+function RemoteThreadConversation({ entry, onClose, onExpand }: {
+  entry: RemoteThreadEntry
+  onClose?: () => void
+  onExpand?: () => void
+}) {
   const conversation = useRemoteThreadConversation(entry)
   const { view, stopping } = conversation
 
   return (
-    <div className="flex h-full min-h-0 flex-col" data-remote-thread-panel={entry.start.key} data-remote-thread-state={view.state}>
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{view.title}</span>
-        <span className="shrink-0 text-xs text-muted-foreground" data-remote-thread-computer="">{view.computer}</span>
+    <div className="flex h-full min-h-0 flex-col bg-dls-surface" data-remote-thread-panel={entry.start.key} data-remote-thread-state={view.state}>
+      <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border bg-dls-surface px-3">
+        <div className="flex min-w-0 flex-1 items-center gap-1 text-xs">
+          <span className="max-w-36 shrink-0 truncate text-dls-secondary" data-remote-thread-computer="">{view.computer}</span>
+          <span aria-hidden="true" className="text-dls-secondary/50">/</span>
+          <span className="min-w-0 truncate font-medium text-dls-text" title={view.title}>{view.title}</span>
+        </div>
         {view.active && view.started ? (
           <Button
             variant="ghost"
@@ -41,12 +65,34 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
             {t(stopping ? "session.remote_task_stopping_short" : "session.remote_task_stop_short")}
           </Button>
         ) : null}
+        {onExpand ? (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t("session_management.expand_side_chat")}
+            title={t("session_management.expand_side_chat")}
+            onClick={onExpand}
+          >
+            <Maximize2 />
+          </Button>
+        ) : null}
+        {onClose ? (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t("session_management.close_split_view")}
+            title={t("session_management.close_split_view")}
+            onClick={onClose}
+          >
+            <X />
+          </Button>
+        ) : null}
       </div>
 
       <RemoteThreadTranscriptBody
         entry={entry}
         conversation={conversation}
-        className="[&_.md\:px-10]:md:px-3 [&_.md\:px-8]:md:px-2"
+        className="py-4 [&_.md\:px-10]:md:px-4 [&_.md\:px-8]:md:px-3"
       />
 
       <RemoteThreadAnswerSlot entry={entry} conversation={conversation} />
@@ -94,6 +140,7 @@ export function RemoteThreadTranscriptBody({ entry, conversation, className }: {
           messages={messages}
           running={running && page !== null}
           waiting={Boolean(view.waitingFor)}
+          runStartedAt={entry.activeSince}
           showThinking={local.prefs.showThinking}
           developerMode={developerMode}
         />
