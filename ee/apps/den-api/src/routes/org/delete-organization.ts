@@ -143,6 +143,7 @@ import { ORGANIZATION_DELETION_METADATA_KEY, updateOrganizationMetadata } from "
 import { invalidateWebOriginApprovalCache } from "../../organization-web-origins.js"
 import { cancelOrganizationSubscriptions } from "../../stripe-billing.js"
 import { deleteSandboxModelKeyForOrganization } from "../../sandbox-organizations.js"
+import { deleteOrganizationMcpAppStorage } from "../../mcp-app-storage/lifecycle.js"
 import { purgeOrganizationHistory } from "./delete-organization-purge.js"
 import { ensureOwner, orgAccessFailureStatus, type OrgRouteVariables } from "./shared.js"
 
@@ -464,6 +465,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       }
 
       await purgeOrganizationHistory(organizationId)
+      await deleteOrganizationMcpAppStorage(organizationId)
 
       let affectedSessions: Array<{ id: typeof AuthSessionTable.$inferSelect.id; token: typeof AuthSessionTable.$inferSelect.token }> = []
       let alreadyDeleted = false

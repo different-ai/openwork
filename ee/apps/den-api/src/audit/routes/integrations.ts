@@ -290,6 +290,8 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   read("/v1/mcp-apps", "mcp_app.catalog.list", "mcp_app.catalog", res("mcp_app")),
   read("/v1/mcp-apps/:appId/public-sharing", "mcp_app.public_sharing.read", "mcp_app.sharing", res("mcp_app", "appId")),
   change("PUT", "/v1/mcp-apps/:appId/public-sharing", "mcp_app.public_sharing.update", "mcp_app.sharing", res("mcp_app", "appId"), "Changes access to a tool-free artifact for unsigned visitors."),
+  read("/v1/mcp-apps/:appId/storage", "mcp_app.storage.summary", "mcp_app.storage", res("mcp_app", "appId"), "Organization admin; counts and limits only."),
+  access("GET", "/v1/mcp-apps/:appId/storage/export", "mcp_app.storage.export", "mcp_app.storage", res("mcp_app", "appId"), "Organization admin; downloads organization data, including all members' personal rows."),
   read("/v1/mcp-connections", "mcp_connection.list", MCP, res("mcp_connection")),
   read("/v1/mcp-connections/presets", "mcp_connection.preset.list", MCP, res("mcp_connection_preset")),
   read("/v1/mcp-connections/:connectionId", "mcp_connection.read", MCP, res("mcp_connection", "connectionId")),
