@@ -85,6 +85,7 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
       sitesRead: ["Sites.Read.All"],
       teamsChatRead: ["Chat.Read"],
       teamsChatSend: ["Chat.Read", "ChatMessage.Send"],
+      teamsTranscriptRead: ["OnlineMeetings.Read", "OnlineMeetingTranscript.Read.All"],
     },
     scopeImplications: {
       "Mail.ReadWrite": ["Mail.Read"],
@@ -94,6 +95,7 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
       "Files.ReadWrite.All": ["Files.Read", "Files.ReadWrite", "Files.Read.All"],
       "Sites.ReadWrite.All": ["Sites.Read.All"],
       "Chat.ReadWrite": ["Chat.Read", "ChatMessage.Send"],
+      "OnlineMeetings.ReadWrite": ["OnlineMeetings.Read"],
     },
     usesPkce: true,
     tenantIdExtraKey: "tenantId",

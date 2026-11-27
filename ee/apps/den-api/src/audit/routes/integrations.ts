@@ -119,6 +119,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   external("POST", `${MS}/mail-drafts`, "capability.outlook_mail.draft.create", MSK, res("outlook_message"), GRAPH, CAP),
   external("POST", `${MS}/mail-drafts/:messageId/send`, "capability.outlook_mail.draft.send", MSK, res("outlook_message", "messageId"), GRAPH, `${CAP} Sends email.`),
   access("GET", `${MS}/calendar-events`, "capability.outlook_calendar.event.list", MSK, res("outlook_calendar_event"), CAP_CONTENT),
+  access("GET", `${MS}/calendar-events/:eventId/transcript`, "capability.teams.meeting_transcript.read", MSK, res("outlook_calendar_event", "eventId"), `${CAP_CONTENT} Transcript text is never audit evidence.`),
   external("POST", `${MS}/calendar-events`, "capability.outlook_calendar.event.create", MSK, res("outlook_calendar_event"), GRAPH, `${CAP} May send invitations to attendees.`),
   external("PATCH", `${MS}/calendar-events/:eventId`, "capability.outlook_calendar.event.update", MSK, res("outlook_calendar_event", "eventId"), GRAPH, `${CAP} May notify attendees; response echoes event.`),
   external("DELETE", `${MS}/calendar-events/:eventId`, "capability.outlook_calendar.event.delete", MSK, res("outlook_calendar_event", "eventId"), GRAPH, CAP),

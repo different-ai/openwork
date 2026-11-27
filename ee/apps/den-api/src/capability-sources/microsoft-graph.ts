@@ -157,6 +157,45 @@ export type Microsoft365TeamsMessage = {
   webUrl: string
 }
 
+export type Microsoft365TeamsTranscript = {
+  id: string
+  meetingId: string
+  createdDateTime: string
+  endDateTime: string
+}
+
+export type Microsoft365TranscriptEvent = {
+  id: string
+  subject: string
+  start: string
+  end: string
+  type: string
+  isOnlineMeeting: boolean | undefined
+  onlineMeetingProvider: string
+  joinUrl: string | null
+}
+
+const TRANSCRIPT_EVENT_SELECT = "id,subject,start,end,type,seriesMasterId,isOnlineMeeting,onlineMeetingProvider,onlineMeeting,onlineMeetingUrl"
+const TRANSCRIPT_LIST_MAX_PAGES = 10
+export const TRANSCRIPT_PAGE_MAX_CHARACTERS = 18_000
+
+export class MicrosoftGraphTranscriptListIncompleteError extends Error {
+  constructor() {
+    super("The meeting has more transcripts than could be listed, so the right transcript could not be determined.")
+    this.name = "MicrosoftGraphTranscriptListIncompleteError"
+  }
+}
+
+export type Microsoft365TeamsTranscriptContent = {
+  format: "vtt" | "text"
+  speakerAttribution: boolean
+  content: string
+  offset: number
+  totalCharacters: number
+  nextOffset: number | null
+  contentUnavailableReason: "transcript_too_large" | null
+}
+
 type MutationStatus = 200 | 201 | 202 | 204
 
 type MicrosoftGraphClientOptions = {
@@ -523,6 +562,82 @@ export function extractMicrosoftTeamsMessages(json: unknown): Microsoft365TeamsM
     .filter((message) => Boolean(message.id))
 }
 
+export function extractMicrosoftTeamsMeetingIds(json: unknown): string[] {
+  const root = isRecord(json) ? json : {}
+  return readArray(root, "value").filter(isRecord).map((meeting) => readString(meeting, "id")).filter(Boolean)
+}
+
+export function extractMicrosoftTeamsTranscripts(json: unknown): Microsoft365TeamsTranscript[] {
+  const root = isRecord(json) ? json : {}
+  return readArray(root, "value")
+    .filter(isRecord)
+    .map((transcript) => ({
+      id: readString(transcript, "id"),
+      meetingId: readString(transcript, "meetingId"),
+      createdDateTime: readString(transcript, "createdDateTime"),
+      endDateTime: readString(transcript, "endDateTime"),
+    }))
+    .filter((transcript) => Boolean(transcript.id))
+}
+
+const TRANSCRIPT_VTT = "text/vtt"
+const TRANSCRIPT_UNATTRIBUTED_TEXT = "application/vnd.microsoft.graph.transcript+text"
+
+const TEAMS_JOIN_HOSTS: readonly string[] = ["teams.microsoft.com", "teams.cloud.microsoft", "gov.teams.microsoft.us", "dod.teams.microsoft.us"]
+
+export function isTeamsJoinUrl(value: string): boolean {
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === "https:" && !url.username && !url.password && !url.port && TEAMS_JOIN_HOSTS.includes(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+export function escapeODataString(value: string): string {
+  return value.replace(/'/g, "''")
+}
+
+const GRAPH_ERROR_CODE = /^[A-Za-z0-9_.-]{1,80}$/
+
+export function microsoftGraphErrorCodes(error: unknown): { status: number; code: string; innerCode: string } | null {
+  if (!(error instanceof MicrosoftGraphRequestError)) return null
+  const safe = (value: string) => GRAPH_ERROR_CODE.test(value) ? value : ""
+  try {
+    const body: unknown = JSON.parse(error.responseBody)
+    const graphError = isRecord(body) ? readRecord(body, "error") : null
+    const inner = graphError ? readRecord(graphError, "innerError") ?? readRecord(graphError, "innererror") : null
+    return { status: error.status, code: graphError ? safe(readString(graphError, "code")) : "", innerCode: inner ? safe(readString(inner, "code")) : "" }
+  } catch {
+    return { status: error.status, code: "", innerCode: "" }
+  }
+}
+
+function graphForbids(error: unknown, innerCode: string): boolean {
+  const codes = microsoftGraphErrorCodes(error)
+  return codes?.status === 403 && codes.innerCode === innerCode
+}
+
+export function isGraphTranscriptAccessDisabled(error: unknown): boolean {
+  return graphForbids(error, "GraphAccessToTranscriptsDisabled")
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
+}
+
+export function sliceTranscript(text: string, offset: number, maxCharacters: number): { content: string; nextOffset: number | null } {
+  if (offset >= text.length) return { content: "", nextOffset: null }
+  let end = Math.min(text.length, offset + maxCharacters)
+  if (end < text.length) {
+    const cueBreak = text.lastIndexOf("\n\n", end - 2)
+    if (cueBreak > offset) end = cueBreak + 2
+    else if (end - 1 > offset && isHighSurrogate(text.charCodeAt(end - 1))) end -= 1
+  }
+  return { content: text.slice(offset, end), nextOffset: end < text.length ? end : null }
+}
+
 function escapeGraphSearch(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
 }
@@ -708,6 +823,33 @@ export class MicrosoftGraphClient {
     url.searchParams.set("$orderby", "start/dateTime")
     url.searchParams.set("$select", CALENDAR_EVENT_SELECT)
     return extractMicrosoftCalendarEvents(await this.requestJson("Microsoft 365 calendar list", url))
+  }
+
+  async getCalendarEventForTranscript(eventId: string): Promise<Microsoft365TranscriptEvent> {
+    const url = this.url(`me/events/${encodeURIComponent(eventId)}`)
+    url.searchParams.set("$select", TRANSCRIPT_EVENT_SELECT)
+    const operation = "Microsoft 365 transcript calendar event read"
+    const json = await this.requestJson(operation, url, { redirect: "error", headers: { prefer: 'outlook.timezone="UTC"' } })
+    const event = isRecord(json) ? json : {}
+    const utc = (key: string) => {
+      const { dateTime } = readEventTime(event, key)
+      const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(dateTime) ? dateTime : `${dateTime}Z`
+      const instant = Date.parse(zoned)
+      if (!Number.isFinite(instant)) throw new MicrosoftGraphRequestError(operation, 502, "Microsoft Graph returned an invalid calendar event time.")
+      return new Date(instant).toISOString()
+    }
+    const id = readString(event, "id")
+    if (!id) throw new MicrosoftGraphRequestError(operation, 502, "Microsoft Graph did not return a calendar event id.")
+    return {
+      id,
+      subject: readString(event, "subject"),
+      start: utc("start"),
+      end: utc("end"),
+      type: readString(event, "type"),
+      isOnlineMeeting: typeof event.isOnlineMeeting === "boolean" ? event.isOnlineMeeting : undefined,
+      onlineMeetingProvider: readString(event, "onlineMeetingProvider"),
+      joinUrl: readOnlineMeetingUrl(event),
+    }
   }
 
   async sendMailDraft(messageId: string): Promise<{ draftId: string; status: "accepted" }> {
@@ -1044,5 +1186,54 @@ export class MicrosoftGraphClient {
     return extractMicrosoftTeamsMessage(await this.requestMutation(
       "Microsoft 365 Teams message send", `chats/${encodeURIComponent(chatId)}/messages`, "POST", 201, { body: { contentType: "text", content } },
     ))
+  }
+
+  async findTeamsMeetingIdByJoinUrl(joinUrl: string): Promise<string | null> {
+    const url = this.url("me/onlineMeetings")
+    url.search = `$filter=${encodeURIComponent(`JoinWebUrl eq '${escapeODataString(joinUrl)}'`)}`
+    return extractMicrosoftTeamsMeetingIds(await this.requestJson("Microsoft 365 Teams meeting lookup", url, { redirect: "error" }))[0] ?? null
+  }
+
+  async listTeamsMeetingTranscripts(meetingId: string): Promise<Microsoft365TeamsTranscript[]> {
+    const first = this.url(`me/onlineMeetings/${encodeURIComponent(meetingId)}/transcripts`)
+    first.searchParams.set("$top", "50")
+    const operation = "Microsoft 365 Teams transcript list"
+    const transcripts = new Map<string, Microsoft365TeamsTranscript>()
+    let url = first
+    for (let page = 1; page <= TRANSCRIPT_LIST_MAX_PAGES; page++) {
+      const json = await this.requestJson(operation, url, { redirect: "error" })
+      if (!isRecord(json) || !Array.isArray(json.value)) throw new MicrosoftGraphRequestError(operation, 502, "Microsoft Graph returned an invalid transcript list.")
+      for (const transcript of extractMicrosoftTeamsTranscripts(json)) transcripts.set(transcript.id, transcript)
+      const link = json["@odata.nextLink"]
+      if (link === undefined || link === null) return [...transcripts.values()]
+      const next = typeof link === "string" ? URL.parse(link) : null
+      if (!next || next.origin !== first.origin || next.pathname !== first.pathname || next.username || next.password || next.hash || page === TRANSCRIPT_LIST_MAX_PAGES) {
+        throw new MicrosoftGraphTranscriptListIncompleteError()
+      }
+      url = next
+    }
+    throw new MicrosoftGraphTranscriptListIncompleteError()
+  }
+
+  async getTeamsMeetingTranscriptContent(input: { meetingId: string; transcriptId: string; offset: number; maxCharacters: number }): Promise<Microsoft365TeamsTranscriptContent> {
+    const url = this.url(`me/onlineMeetings/${encodeURIComponent(input.meetingId)}/transcripts/${encodeURIComponent(input.transcriptId)}/content`)
+    const operation = "Microsoft 365 Teams transcript read"
+    let speakerAttribution = true
+    let response: Response
+    try {
+      response = await this.request(operation, url, { headers: { accept: TRANSCRIPT_VTT } })
+    } catch (error) {
+      if (!graphForbids(error, "SpeakerAttributionNotAllowed")) throw error
+      speakerAttribution = false
+      response = await this.request(operation, url, { headers: { accept: TRANSCRIPT_UNATTRIBUTED_TEXT } })
+    }
+    const format = speakerAttribution ? "vtt" : "text"
+    const downloaded = await readBytesWithByteLimit(response, this.maxDownloadBytes)
+    if (downloaded.limitExceeded) {
+      return { format, speakerAttribution, content: "", offset: input.offset, totalCharacters: 0, nextOffset: null, contentUnavailableReason: "transcript_too_large" }
+    }
+    const text = new TextDecoder().decode(downloaded.bytes).replace(/\r\n?/g, "\n")
+    const page = sliceTranscript(text, input.offset, Math.min(input.maxCharacters, this.maxContentCharacters, TRANSCRIPT_PAGE_MAX_CHARACTERS))
+    return { format, speakerAttribution, ...page, offset: input.offset, totalCharacters: text.length, contentUnavailableReason: null }
   }
 }

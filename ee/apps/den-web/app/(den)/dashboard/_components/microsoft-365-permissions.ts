@@ -1,3 +1,4 @@
+import type { FeatureKey } from "@openwork/features";
 import {
   MICROSOFT_365_DEFAULT_FEATURES,
   type Microsoft365Feature,
@@ -10,6 +11,7 @@ export type Microsoft365Permission = {
   label: string;
   scope: string;
   detail?: string;
+  requiresFeature?: FeatureKey;
 };
 
 export type Microsoft365PermissionGroup = {
@@ -83,6 +85,13 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
         label: "Send Teams chat messages",
         scope: "Chat.Read + ChatMessage.Send",
         detail: "Includes chat read access so OpenWork can find an existing chat; it cannot create a new chat.",
+      },
+      {
+        key: "teamsTranscriptRead",
+        label: "Read Teams meeting transcripts",
+        scope: "OnlineMeetings.Read + OnlineMeetingTranscript.Read.All",
+        detail: "Reads the transcript of a Teams meeting on the member's calendar. Also needs calendar read. Needs admin consent.",
+        requiresFeature: "teamsMeetingTranscripts",
       },
     ],
   },
