@@ -846,7 +846,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     scope.signal.throwIfAborted();
     const { tab, sessionId } = scope;
     checkControl(sessionId, scope.control);
-    if (getTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed()) fail("tab_closed", "The browser tab closed while navigation was pending.");
+    if (getTab(tab.tabId) !== tab || (tab.view.webContents?.isDestroyed() ?? true)) fail("tab_closed", "The browser tab closed while navigation was pending.");
     if (ownerOf(tab.tabId) !== sessionId || navigations.get(tab.tabId) !== scope) fail("wrong_conversation", "The browser navigation owner changed.");
     if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message.");
     if (!enabled()) fail("browser_disabled", "Browser control was disabled while navigation was pending.");
@@ -907,11 +907,11 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (typeof sessionId !== "string" || !sessionId.trim()) fail("missing_session", "Browser control requires a requesting conversation.");
     const id = tabId || activeFor(sessionId);
     const tab = id && getTab(id);
-    if (!tab || tab.view.webContents.isDestroyed()) fail("tab_closed", "This conversation has no live browser tab. List tabs or open a website.");
+    if (!tab || (tab.view.webContents?.isDestroyed() ?? true)) fail("tab_closed", "This conversation has no live browser tab. List tabs or open a website.");
     if (ownerOf(id) !== sessionId) fail("wrong_conversation", "That tab belongs to another conversation. Select one of this conversation's tabs.");
     const url = tab.view.webContents.getURL();
     if (!allowBlocked && !await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
-    if (tab.view.webContents.isDestroyed() || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while checking policy. Observe again.");
+    if ((tab.view.webContents?.isDestroyed() ?? true) || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while checking policy. Observe again.");
     return tab;
   }
   function pause(tabId, reason = "Paused by you") {
@@ -946,7 +946,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   function invalidate(tabId, { closed = false, reason = undefined } = {}) {
     if (closed) {
       const owner = ownerOf(tabId);
-      if (owner && !tabsFor(owner).some((tab) => tab.tabId !== tabId && !tab.view.webContents.isDestroyed())) {
+      if (owner && !tabsFor(owner).some((tab) => tab.tabId !== tabId && !(tab.view.webContents?.isDestroyed() ?? true))) {
         stopControl(owner, controls.get(owner), reason);
         pausedSessions.delete(owner);
       }

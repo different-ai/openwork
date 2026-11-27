@@ -262,7 +262,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const waiting = [...tabsWaitingForWebsiteRules];
     tabsWaitingForWebsiteRules.clear();
     for (const [tab, url] of waiting) {
-      if (getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed()) continue;
+      if (getBrowserTab(tab.tabId) !== tab || (tab.view.webContents?.isDestroyed() ?? true)) continue;
       tab.loadError = null;
       runDetachedTask("open a page held for agent permissions", () => tab.view.webContents.loadURL(url));
     }
@@ -328,12 +328,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         .then((validate) => {
           try {
             validate?.();
-            if (tab && details.resourceType === "mainFrame" && (getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed() || registry.ownerOf(tab.tabId) !== owner)) throw new Error("Browser navigation owner changed");
+            if (tab && details.resourceType === "mainFrame" && (getBrowserTab(tab.tabId) !== tab || (tab.view.webContents?.isDestroyed() ?? true) || registry.ownerOf(tab.tabId) !== owner)) throw new Error("Browser navigation owner changed");
           } catch { callback({ cancel: true }); return; }
           callback({ cancel: false });
         }, (error) => {
           if (error?.websiteRule && tab && details.resourceType === "mainFrame"
-            && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()) {
+            && getBrowserTab(tab.tabId) === tab && !(tab.view.webContents?.isDestroyed() ?? true)) {
             tab.loadError = error.blocked ? blockedSitePage(details.url) : { code: "organization_policy_denied", message: error.message };
             if (error.blocked) tab.view.setVisible(false);
             if (error.waiting) tabsWaitingForWebsiteRules.set(tab, details.url);
@@ -344,7 +344,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
             callback({ cancel: true });
             return;
           }
-          if (tab && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()
+          if (tab && getBrowserTab(tab.tabId) === tab && !(tab.view.webContents?.isDestroyed() ?? true)
             && registry.ownerOf(tab.tabId) === owner && tab.documentGeneration === documentGeneration
             && !showsErrorPage(tab)
             && (error?.code === "policy_unavailable" || error?.code === "organization_policy_denied")) {
@@ -522,7 +522,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     try {
       await beforeLoad?.(tab);
       signal?.throwIfAborted();
-      if (getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed() || registry.ownerOf(tab.tabId) !== ownerSessionId) throw new BrowserTaskError("tab_closed", "The browser tab closed or changed owner before navigation.");
+      if (getBrowserTab(tab.tabId) !== tab || (tab.view.webContents?.isDestroyed() ?? true) || registry.ownerOf(tab.tabId) !== ownerSessionId) throw new BrowserTaskError("tab_closed", "The browser tab closed or changed owner before navigation.");
       await tab.view.webContents.loadURL(url); signal?.throwIfAborted();
       tab.deferBackground = false;
       applySurfacing();
@@ -608,7 +608,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       .list()
       .map(({ tabId }) => {
         const tab = browserTabs.get(tabId);
-        if (!tab || tab.view.webContents.isDestroyed()) return suspendedTabs.get(tabId) ?? null;
+        if (!tab || (tab.view.webContents?.isDestroyed() ?? true)) return suspendedTabs.get(tabId) ?? null;
         return browserTabToPanelTab(tabId, tab);
       })
       .filter(Boolean);
@@ -696,7 +696,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   async function showBrowserTabContextMenu(tabId, point) {
     const tab = getBrowserTab(String(tabId ?? ""));
-    if (!window() || !tab || tab.view.webContents.isDestroyed()) return;
+    if (!window() || !tab || (tab.view.webContents?.isDestroyed() ?? true)) return;
 
     await showContextMenu(tabMenuRequest(tab, point));
   }
@@ -776,7 +776,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = request.tabId ? getBrowserTab(request.tabId) : null;
     const isCurrent = () => showSerial === menuShowSerial && menuWindow() === host
       && !host.isDestroyed() && !host.webContents.isDestroyed()
-      && (!tab || (getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed() && registry.ownerOf(tab.tabId) === request.ownerSessionId))
+      && (!tab || (getBrowserTab(tab.tabId) === tab && !(tab.view.webContents?.isDestroyed() ?? true) && registry.ownerOf(tab.tabId) === request.ownerSessionId))
       && (request.source !== "page" || browserTabVisible(request.tabId));
     const dismiss = () => { if (menuRequest === request) hideContextMenu(); };
     const invalidate = () => {
@@ -1422,7 +1422,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function queueBrowserTabEmulation(tab, label, operation) {
-    const isOwned = () => browserTabs.get(tab.tabId) === tab && !tab.view.webContents.isDestroyed();
+    const isOwned = () => browserTabs.get(tab.tabId) === tab && !(tab.view.webContents?.isDestroyed() ?? true);
     // Emulating a tab whose renderer is gone crashes Electron's main process
     // (see render-process-gone in createBrowserTab), so a dead tab is not
     // current. Detaching the debugger is still safe: use `isOwned` for that.
@@ -1482,7 +1482,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function emulateAgentViewport(tab) {
     // Panel resizes arrive every frame; one queued update reads the latest bounds.
-    if (tab.view.webContents.isDestroyed() || tab.agentViewportQueued) return;
+    if ((tab.view.webContents?.isDestroyed() ?? true) || tab.agentViewportQueued) return;
     tab.agentViewportQueued = true;
     const cdp = tab.view.webContents.debugger;
     queueBrowserTabEmulation(tab, "emulate agent browser viewport", async (isCurrent) => {
@@ -1553,7 +1553,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     tab.agentViewportAwaitsPanel = false;
     tab.viewportScale = 1;
     if (tab.background) enterBackgroundSize(tab);
-    else if (!tab.view.webContents.isDestroyed()) {
+    else if (!(tab.view.webContents?.isDestroyed() ?? true)) {
       placeOnScreenView(tab);
       const cdp = tab.view.webContents.debugger;
       queueBrowserTabEmulation(tab, "release agent browser viewport", async (isCurrent, isOwned) => {
@@ -1654,7 +1654,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const owner = registry.ownerOf(tab.tabId);
     if (browserPresentation?.mode !== "fullscreen" || browserPresentation.sessionId !== owner
       || registry.visibleSessionId() !== owner || registry.onScreenTabId() !== tab.tabId || !browserViewVisible
-      || getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed()
+      || getBrowserTab(tab.tabId) !== tab || (tab.view.webContents?.isDestroyed() ?? true)
       || !window()?.contentView.children.includes(tab.view)) return false;
     browserPresentation = null;
     window()?.webContents.focus();
@@ -1842,24 +1842,31 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false, reason = undefined, { deferNativeClose = false } = {}) {
     const tab = getBrowserTab(tabId);
     if (!registry.has(tabId)) return null;
-    taskHost.invalidate(tabId, { closed: true, reason });
-    // A closed, destroyed or suspended tab sends nothing more for a secret.
-    secrets?.tabClosed(tabId);
-    if (tab && secretInterception) runDetachedTask("end secret interception for a closed tab", () => secretInterception.release(tab));
-    if (!preserve) suspendedTabs.delete(tabId);
-    if (menuRequest?.tabId === tabId) hideContextMenu();
     const wasOnScreen = registry.onScreenTabId() === tabId;
-    if (tab) {
-      tab.background = false;
-      tab.finishSuspension?.(preserve ? null : new Error("Browser tab was closed."));
-      detachBrowserView(tab.view);
+    let removed = null;
+    try {
+      taskHost.invalidate(tabId, { closed: true, reason });
+      // A closed, destroyed or suspended tab sends nothing more for a secret.
+      secrets?.tabClosed(tabId);
+      if (tab && secretInterception) runDetachedTask("end secret interception for a closed tab", () => secretInterception.release(tab));
+      if (!preserve) suspendedTabs.delete(tabId);
+      if (menuRequest?.tabId === tabId) hideContextMenu();
+      if (tab) {
+        tab.background = false;
+        tab.finishSuspension?.(preserve ? null : new Error("Browser tab was closed."));
+        detachBrowserView(tab.view);
+      }
+      webMcpBroker.invalidateTab(tabId);
+      const refreshTimer = webMcpRefreshTimers.get(tabId);
+      if (refreshTimer) clearTimeout(refreshTimer);
+      webMcpRefreshTimers.delete(tabId);
+    } finally {
+      // A failed cleanup step must not leave the tab behind: once its contents
+      // are destroyed, every later browser state update would fail on it.
+      // The error itself still propagates and is reported.
+      browserTabs.delete(tabId);
+      removed = preserve ? null : registry.remove(tabId);
     }
-    webMcpBroker.invalidateTab(tabId);
-    const refreshTimer = webMcpRefreshTimers.get(tabId);
-    if (refreshTimer) clearTimeout(refreshTimer);
-    webMcpRefreshTimers.delete(tabId);
-    browserTabs.delete(tabId);
-    const removed = preserve ? null : registry.remove(tabId);
     if (wasOnScreen) {
       if (registry.onScreenTabId()) {
         attachActiveBrowserView();
@@ -1872,7 +1879,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     const closeContents = () => {
       try {
-        if (tab && !tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false });
+        if (tab && !(tab.view.webContents?.isDestroyed() ?? true)) tab.view.webContents.close({ waitForBeforeUnload: false });
       } catch { /* already destroyed */ }
     };
     if (deferNativeClose) setImmediate(closeContents);
@@ -1884,7 +1891,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function isFocusedBrowserTab(tab) {
     return browserViewVisible && registry.onScreenTabId() === tab.tabId
-      && !tab.view.webContents.isDestroyed() && tab.view.webContents.isFocused()
+      && !(tab.view.webContents?.isDestroyed() ?? true) && tab.view.webContents.isFocused()
       && tab.view.getVisible() && viewHost()?.contentView.children.includes(tab.view);
   }
 
@@ -1908,7 +1915,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function closeUserBrowserTab(tabId = registry.onScreenTabId()) {
     if (!registry.has(tabId)) return null;
     const tab = getBrowserTab(tabId);
-    const saved = tab && !tab.view.webContents.isDestroyed()
+    const saved = tab && !(tab.view.webContents?.isDestroyed() ?? true)
       ? browserTabToPanelTab(tabId, tab) : suspendedTabs.get(tabId);
     const ownerSessionId = registry.ownerOf(tabId);
     const focus = shortcutFocus?.ownerSessionId === ownerSessionId ? shortcutFocus : null;
@@ -2010,7 +2017,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = browserTabs.get(tabId);
     const mainWindow = window();
     const check = () => {
-      if (!tab || browserTabs.get(tabId) !== tab || tab.view.webContents.isDestroyed()) throw new Error("Unknown browser tab.");
+      if (!tab || browserTabs.get(tabId) !== tab || (tab.view.webContents?.isDestroyed() ?? true)) throw new Error("Unknown browser tab.");
       if (tab.automationProtected || tab.operation || tab.suspending) throw new Error("Browser tab is protected or busy. Release task protection before suspending.");
       if (tab.view.webContents.isLoading() || tab.downloads.size || tab.mediaPlaying || tab.view.webContents.isCurrentlyAudible()) {
         throw new Error("Browser tab is loading, downloading, or playing media.");
@@ -2090,7 +2097,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
             visible: registry.surfacingFor(tabId) === "foreground",
           };
         } finally {
-          if (!attached && !tab.view.webContents.isDestroyed()) detachTabDebugger(tab);
+          if (!attached && !(tab.view.webContents?.isDestroyed() ?? true)) detachTabDebugger(tab);
         }
       }
       if (browserTabs.get(tabId) !== tab) throw new Error("Browser tab was closed.");
