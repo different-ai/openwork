@@ -27,7 +27,7 @@ export async function loadComputerPolicy(
     organization: { allowed: metadata != null && readOrganizationRemoteSessionSettings(metadata.metadata).access !== "off" },
     owner: { choice: owner?.choice ?? null },
     grants: grants.map(({ sourceKey, folders }) => ({
-      source: sourceKey === "workbot" ? { kind: "workbot" } : { kind: "computer", id: sourceKey },
+      source: sourceKey === "workbot" || sourceKey === "owner" ? { kind: sourceKey } : { kind: "computer", id: sourceKey },
       targetId,
       scope: { surface: "sandbox", folders },
     })),

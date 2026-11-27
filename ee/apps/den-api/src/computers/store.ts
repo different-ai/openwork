@@ -35,16 +35,17 @@ export async function runnerComputer(runner: ComputerRunner, sync = false) {
   return lookup()
 }
 
-export async function replaceComputerAccess(runner: ComputerRunner, device: DeviceRow, report: ComputerAccessReport) {
+export async function replaceComputerAccess(device: DeviceRow, reportedByRunnerId: string, report: ComputerAccessReport) {
+  const { organizationId, id: deviceId } = device
   await db.transaction(async (tx) => {
-    const choice = { ownerChoice: report.choice, reportedByRunnerId: runner.runnerId }
-    await tx.insert(ComputerAccessTable).values({ id: createDenTypeId("computerAccess"), organizationId: runner.organizationId, deviceId: device.id, ...choice })
+    const choice = { ownerChoice: report.choice, reportedByRunnerId }
+    await tx.insert(ComputerAccessTable).values({ id: createDenTypeId("computerAccess"), organizationId, deviceId, ...choice })
       .onDuplicateKeyUpdate({ set: choice })
-    await tx.delete(ComputerGrantTable).where(and(eq(ComputerGrantTable.organizationId, runner.organizationId), eq(ComputerGrantTable.targetDeviceId, device.id)))
+    await tx.delete(ComputerGrantTable).where(and(eq(ComputerGrantTable.organizationId, organizationId), eq(ComputerGrantTable.targetDeviceId, deviceId)))
     if (report.grants.length > 0) {
       await tx.insert(ComputerGrantTable).values(report.grants.map(({ source, folders }) => ({
-        id: createDenTypeId("computerGrant"), organizationId: runner.organizationId, targetDeviceId: device.id,
-        sourceKey: source.kind === "workbot" ? "workbot" : source.id, folders,
+        id: createDenTypeId("computerGrant"), organizationId, targetDeviceId: deviceId,
+        sourceKey: source.kind === "computer" ? source.id : source.kind, folders,
       })))
     }
   })
@@ -60,7 +61,8 @@ export async function enqueueComputerCommand(input: {
 }) {
   const now = Date.now()
   const cutoff = new Date(now - 24 * 60 * 60_000)
-  const command = { ...input, id: createDenTypeId("computerCommand"), expiresAt: new Date(now + 120_000 + (input.action.timeoutMs ?? 30_000)) }
+  const timeoutMs = input.action.type === "shell" ? input.action.timeoutMs : undefined
+  const command = { ...input, id: createDenTypeId("computerCommand"), expiresAt: new Date(now + 120_000 + (timeoutMs ?? 30_000)) }
   await db.delete(ComputerCommandTable).where(and(
     eq(ComputerCommandTable.organizationId, input.organizationId),
     or(lt(ComputerCommandTable.completedAt, cutoff), and(

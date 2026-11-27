@@ -64,7 +64,7 @@ export function registerComputerRunnerRoutes<T extends { Variables: Partial<Orga
     if (exact.some((id) => !isDenTypeId("remoteDevice", id)) || new Set(exact).size !== exact.length || report.grants.length - exact.length > 1) {
       return c.json({ error: "invalid_request", message: "Each grant must name a different computer or Workbot." }, 400)
     }
-    await replaceComputerAccess(runner, device, report)
+    await replaceComputerAccess(device, runner.runnerId, report)
     return c.json({ ok: true }, 200)
   })
 

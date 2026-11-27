@@ -82,7 +82,7 @@ const TOUCH_QUIET_MS = 60_000
 
 export class RemoteDeviceError extends Error {
   constructor(
-    readonly code: "remote_device_exists" | "remote_device_not_found" | "remote_device_forbidden" | "not_disconnectable" | "disconnect_first",
+    readonly code: "remote_device_exists" | "remote_device_not_found" | "remote_device_forbidden" | "not_disconnectable" | "disconnect_first" | "name_taken",
     message: string,
   ) {
     super(message)
@@ -342,6 +342,11 @@ async function viewOne(row: DeviceRow, actor: RemoteDeviceActor, canManageShared
   })
 }
 
+export async function readMemberRemoteDeviceRow(actor: RemoteDeviceActor, deviceId: DeviceId) {
+  const row = await visibleRow(actor, deviceId)
+  return row ? { row, device: await viewOne(row, actor, false, new Date()) } : null
+}
+
 export async function readMemberRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, options: { canManageShared: boolean; now?: Date }) {
   const row = await visibleRow(actor, deviceId)
   if (!row) return null
@@ -402,16 +407,25 @@ async function manageableRow(actor: RemoteDeviceActor, deviceId: DeviceId, canMa
   return row
 }
 
-export async function renameRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, label: string, options: { canManageShared: boolean; now?: Date }): Promise<RemoteDevice> {
+export async function renameRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, label: string, options: { canManageShared: boolean; uniqueName?: boolean; now?: Date }): Promise<RemoteDevice> {
   const now = options.now ?? new Date()
-  const row = await db.transaction(async (tx) => {
+  const rename = () => db.transaction(async (tx) => {
     const existing = await manageableRow(actor, deviceId, options.canManageShared, tx)
     if (existing.source !== "manual") throw new RemoteDeviceError("remote_device_forbidden", "This computer names itself.")
+    if (options.uniqueName) {
+      const owned = await tx.select({ id: RemoteDeviceTable.id, label: RemoteDeviceTable.label }).from(RemoteDeviceTable).where(and(
+        eq(RemoteDeviceTable.organizationId, actor.organizationId), eq(RemoteDeviceTable.ownerMemberId, actor.memberId), isNull(RemoteDeviceTable.removedAt),
+      )).for("update")
+      if (owned.some((device) => device.id !== deviceId && device.label.toLowerCase() === label.toLowerCase())) {
+        throw new RemoteDeviceError("name_taken", "You already have a computer called that. Pick another name.")
+      }
+    }
     if (existing.label === label) return existing
     await tx.update(RemoteDeviceTable).set({ label, updatedAt: now }).where(eq(RemoteDeviceTable.id, existing.id))
     await recordEvent(tx, { organizationId: actor.organizationId, deviceId: existing.id, type: "renamed", actor: "member", actorId: actor.memberId, message: "Renamed", now })
     return { ...existing, label }
   })
+  const row = await (options.uniqueName ? withDeadlockRetry(rename) : rename())
   return viewOne(row, actor, options.canManageShared, now)
 }
 
