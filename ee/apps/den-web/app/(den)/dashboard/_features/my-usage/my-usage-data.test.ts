@@ -9,7 +9,7 @@ import {
   type GatewayMemberUsageResponse,
 } from "@openwork/types/den/gateway-member-usage";
 import { getOrgAccessFlags, type DenOrgCapabilities } from "../../../_lib/den-org";
-import { buildDashboardNavSections } from "../../_lib/dashboard-navigation";
+import { buildDashboardNavSections, buildPersonalPagesSection } from "../../_lib/dashboard-navigation";
 
 /** `model:<hex provider>:<hex model>`, as Den reports usage series. */
 function seriesId(provider: string, model: string): string {
@@ -124,11 +124,12 @@ test("models the member spent on in the period are marked as what they use now",
 
 const capabilities: DenOrgCapabilities = { auditLogs: false, cloud: false, installLinks: false, mcpConnections: false, openworkWeb: false, workflows: false };
 
-test("a member with no admin permissions gets Work › My Usage", () => {
+test("My Usage has no sidebar entry and stays findable as one of the member's own pages", () => {
   const sections = buildDashboardNavSections({
     orgSlug: "acme", access: getOrgAccessFlags("member", false, []), capabilities, orgMode: "multi_org", runtimeConfigLoaded: true,
   });
-  const work = sections.find((section) => section.label === "Work");
-  assert.deepEqual(work?.items.find((item) => item.label === "My Usage")?.href, "/dashboard/my-usage");
+  assert.deepEqual(sections.find((section) => section.label === "Work")?.items.map((item) => item.label), ["Home"]);
   assert.equal(sections.find((section) => section.label === "Observability"), undefined);
+  const personal = buildPersonalPagesSection({ orgSlug: "acme", capabilities, runtimeConfigLoaded: true });
+  assert.equal(personal.items.find((item) => item.label === "My Usage")?.href, "/dashboard/my-usage");
 });

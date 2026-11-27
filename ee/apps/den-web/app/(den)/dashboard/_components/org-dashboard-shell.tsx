@@ -56,7 +56,6 @@ import {
   getPermissionsRoute,
   getLibraryMyAgentRoute,
 } from "../../_lib/den-org";
-import { myAgentAvailable } from "./my-agent-availability";
 import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { countLabel, organizationPlanLabel } from "../../_lib/plan-display";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -487,7 +486,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
     workbotSettingsInTeams: workbotSettingsInTeams(orgContext),
     workbotEntry: workbot.entry,
-    myBot: myAgentAvailable(orgContext),
   });
 
   const orgSwitcher = isSingleOrgMode ? (
@@ -706,8 +704,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                 {section.items.map((item) => {
                   const isDashboardRoot =
                     activeOrg && item.href === getOrgDashboardRoute(activeOrg.slug);
-                  const isLibraryItem =
-                    Boolean(activeOrg && item.href === getLibraryRoute(activeOrg.slug));
                   const childActive = (child: DashboardNavChild) =>
                     pathname === child.href || pathname.startsWith(`${child.href}/`);
                   const groupActive = (item.href !== "#" && (
@@ -719,18 +715,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                       ? groupActive
                       : isDashboardRoot
                         ? pathname === item.href
-                        : isLibraryItem
-                          ? pathname === item.href
-                            || pathname.startsWith(`${item.href}/`)
-                            || (activeOrg != null && (
-                              pathname === getYourConnectionsRoute(activeOrg.slug)
-                              || pathname.startsWith(`${getYourConnectionsRoute(activeOrg.slug)}/`)
-                            ))
-                          : pathname === item.href
-                            || pathname.startsWith(`${item.href}/`)
-                            || (item.matchHrefs ?? []).some(
-                              (href) => pathname === href || pathname.startsWith(`${href}/`),
-                            ));
+                        : pathname === item.href
+                          || pathname.startsWith(`${item.href}/`)
+                          || (item.matchHrefs ?? []).some(
+                            (href) => pathname === href || pathname.startsWith(`${href}/`),
+                          ));
 
                   return (
                     <div key={item.label}>

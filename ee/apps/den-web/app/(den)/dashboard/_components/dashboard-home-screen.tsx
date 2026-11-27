@@ -3,7 +3,7 @@
 import { getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DashboardOverviewScreen } from "./dashboard-overview-screen";
-import { MemberDashboardScreen } from "./member-dashboard-screen";
+import { MemberHomeScreen } from "../_features/member-home/member-home-screen";
 
 export function DashboardHomeScreen() {
   const { orgContext, orgBusy, mutationBusy } = useOrgDashboard();
@@ -23,5 +23,5 @@ export function DashboardHomeScreen() {
     orgContext.currentMember.permissions,
   );
 
-  return access.isAdmin ? <DashboardOverviewScreen /> : <MemberDashboardScreen />;
+  return access.isAdmin ? <DashboardOverviewScreen /> : <MemberHomeScreen orgContext={orgContext} />;
 }
