@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
+import { ArrowLeft, Columns2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { t } from "@/i18n"
 import { childOrigin, prepareChildReturn } from "@/lib/child-navigation"
 import { remoteSessionRouteId } from "@/lib/remote-session-route"
@@ -27,12 +29,17 @@ import { useRemoteThreadConversation } from "./use-remote-thread-conversation"
 export type RemoteHelperNavigation = {
   scope: string
   openParent: (sessionId: string) => void
+  resolveParentTitle?: (sessionId: string) => string | null
 }
 
-function fallbackOriginFromEntry(entry: RemoteThreadEntry | null): RemoteHelperOrigin | null {
-  if (!entry) return null
-  const owner = Object.values(entry.owners)[0] ?? { workspaceId: "", sessionId: "" }
-  return { start: entry.start, owner, parentTitle: null }
+function fallbackOriginFromEntry(entry: RemoteThreadEntry | null, saved: RemoteHelperOrigin | null = null): RemoteHelperOrigin | null {
+  if (!entry) return saved
+  const owner = Object.values(entry.owners)[0] ?? saved?.owner ?? { workspaceId: "", sessionId: "" }
+  return {
+    start: entry.start,
+    owner,
+    parentTitle: saved?.parentTitle ?? null,
+  }
 }
 
 function useRemoteHelper(threadKey: string) {
@@ -41,8 +48,9 @@ function useRemoteHelper(threadKey: string) {
   const liveHydrated = useRemoteThreadLiveHydrated()
   const scope = useRemoteHelperScope()
   const entry = useRemoteThread(threadKey)
+  const savedOrigin = scope ? remoteHelperOrigin(threadKey, scope) : null
   const origin = scope
-    ? (liveSyncEnabled ? (fallbackOriginFromEntry(entry) ?? remoteHelperOrigin(threadKey, scope)) : (remoteHelperOrigin(threadKey, scope) ?? fallbackOriginFromEntry(entry)))
+    ? (liveSyncEnabled ? fallbackOriginFromEntry(entry, savedOrigin) : (savedOrigin ?? fallbackOriginFromEntry(entry)))
     : null
   const checking = denAuth.status === "checking" || (liveSyncEnabled && Boolean(scope) && !liveHydrated && !entry)
   if (liveSyncEnabled && scope && !liveHydrated && !entry) void fetchBoundRemoteSessions()
@@ -65,39 +73,57 @@ export function RemoteSessionHeader({ threadKey, navigation }: { threadKey: stri
   const [stopping, setStopping] = useState(false)
   if (!origin) return null
   const view = remoteThreadView(origin.start, entry, Date.now())
-  const parentTitle = origin.parentTitle?.trim() || t("session.remote_task_parent_fallback")
-  const hasParent = Boolean(origin.owner.sessionId)
+  const routeId = remoteSessionRouteId(threadKey)
+  const rememberedParent = childOrigin(navigation.scope, routeId)
+  const parentSessionId = rememberedParent?.parentId ?? origin.owner.sessionId
+  const parentTitle = origin.parentTitle?.trim()
+    || rememberedParent?.title?.trim()
+    || (parentSessionId ? navigation.resolveParentTitle?.(parentSessionId)?.trim() : null)
+    || t("session.remote_task_parent_fallback")
+  const hasParent = Boolean(parentSessionId)
   return (
     <div className="flex min-w-0 items-center gap-2 text-[13px]" data-remote-session-header={threadKey}>
-      <nav className="flex min-w-0 items-center gap-1" aria-label={view.title}>
-        {hasParent ? (
-          <>
-            <button
-              type="button"
-              className="max-w-48 shrink-0 cursor-pointer truncate rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none titlebar-no-drag"
-              aria-label={t("session.remote_task_back_to", { title: parentTitle })}
-              data-remote-session-parent={origin.owner.sessionId}
-              onClick={returnToParent}
-            >
-              {parentTitle}
-            </button>
-            <span aria-hidden="true" className="text-muted-foreground/60">/</span>
-          </>
-        ) : null}
-        <h1 className="min-w-0 truncate font-medium text-foreground" data-session-header-title>{view.title}</h1>
+      {hasParent ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 shrink-0 cursor-pointer gap-1 rounded-lg px-1.5 text-[12px] text-gray-10 transition-colors hover:bg-muted hover:text-foreground titlebar-no-drag"
+                aria-label={t("session.remote_task_back_to", { title: parentTitle })}
+                data-remote-session-parent={parentSessionId}
+                onClick={returnToParent}
+              >
+                <ArrowLeft size={14} />
+                <span className="max-w-44 truncate max-lg:hidden">{parentTitle}</span>
+              </Button>
+            }
+          />
+          <TooltipContent>{t("session.remote_task_back_to", { title: parentTitle })}</TooltipContent>
+        </Tooltip>
+      ) : null}
+      <nav className="flex min-w-0 items-center gap-1 text-[13px] titlebar-no-drag" aria-label={view.title}>
+        <span className="max-w-44 shrink-0 truncate px-1 text-dls-secondary" data-remote-thread-computer="">
+          {view.computer}
+        </span>
+        <span aria-hidden="true" className="text-dls-secondary/50">/</span>
+        <h1 className="min-w-0 truncate px-1 text-[13px] font-medium text-dls-text" data-session-header-title>
+          {view.title}
+        </h1>
       </nav>
-      <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline" data-remote-thread-computer="">{view.computer}</span>
       {hasParent ? (
         <Button
           variant="ghost"
           size="xs"
-          className="shrink-0 titlebar-no-drag"
+          className="shrink-0 gap-1.5 text-muted-foreground hover:text-foreground titlebar-no-drag"
           data-remote-session-open-beside=""
           onClick={() => {
             returnToParent()
-            openRemoteThreadPanel(origin.owner.sessionId, origin.owner.workspaceId, origin.start, view.title)
+            openRemoteThreadPanel(parentSessionId, origin.owner.workspaceId, origin.start, view.title)
           }}
         >
+          <Columns2 className="size-3.5" aria-hidden="true" />
           {t("session.remote_task_open_beside")}
         </Button>
       ) : null}

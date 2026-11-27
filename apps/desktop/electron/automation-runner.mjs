@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import {
   connectionBlockerFromToolCalls,
   connectionBlockerMessage,
@@ -1651,11 +1652,19 @@ export function createDesktopAutomationRunner(options) {
     if (!state.recoveryKey) throw new Error("Session recovery was not negotiated")
     let entry = sessionRunners.get(state.recoveryKey)
     if (entry) return entry.runner
-    entry = { runner: null, reconcilePromise: null, watching: true }
+    entry = {
+      runner: null,
+      adapter: null,
+      deliver: null,
+      reconcilePromise: null,
+      watching: true,
+      tailPush: new Map(),
+    }
     const recoveryKey = state.recoveryKey
     const accessKey = state.accessKey
     const baseUrl = state.configuration.baseUrl
     const account = state.account
+    const tailDigest = (tail) => createHash("sha256").update(JSON.stringify(tail?.messages ?? [])).digest("hex")
     // Loaded only after Den negotiated the feature-gated recovery capability;
     // released and feature-off credentials keep the legacy path untouched.
     entry.runner = (async () => {
@@ -1684,6 +1693,8 @@ export function createDesktopAutomationRunner(options) {
         computerRequests: options.computerRequests,
         creationOwner: journal.desktopSessionRunnerPartition(baseUrl, account),
       })
+      entry.adapter = adapter
+      entry.deliver = deliver
       return createSessionRunner({
         // Read on every use. A runner outlives its credential, so it allows
         // nothing more than sessions started remotely unless its own account
@@ -1700,14 +1711,18 @@ export function createDesktopAutomationRunner(options) {
             let tail = null
             try {
               const snapshot = await store.load()
-              const entry = snapshot.commands.find((item) => item.command.commandId === id)
-              if (entry?.receipt) {
-                tail = await adapter.read(entry.receipt, { from: "end", limit: 20, cursor: null }, signal)
+              const cmd = snapshot.commands.find((item) => item.command.commandId === id)
+              if (cmd?.receipt) {
+                tail = await adapter.read(cmd.receipt, { from: "end", limit: 20, cursor: null }, signal)
               }
             } catch {
               tail = null
             }
-            return deliver(`/v1/remote-session-commands/${encodeURIComponent(id)}/session`, tail ? { ...body, tail } : body, signal)
+            const res = await deliver(`/v1/remote-session-commands/${encodeURIComponent(id)}/session`, tail ? { ...body, tail } : body, signal)
+            if (tail) {
+              entry.tailPush.set(id, { digest: tailDigest(tail), at: now(), observedAt: body.observedAt ?? now() })
+            }
+            return res
           },
           completeRequest: (id, body, signal) => deliver(`/v1/remote-session-requests/${encodeURIComponent(id)}/complete`, body, signal),
         },
@@ -1745,9 +1760,40 @@ export function createDesktopAutomationRunner(options) {
       // only while its owner allows all sessions, so until then it has no
       // report for the fast poll to wait for.
       const access = sessionAccess()
-      entry.watching = access !== "off" && journal.commands.some((command) => command.phase === "delivered"
-        && (command.command.kind !== "remote_session_attach" || access === "all")
-        && (!command.reportedProgress || !["idle", "error"].includes(command.reportedProgress.status)))
+      const activeCommands = access === "off"
+        ? []
+        : journal.commands.filter((command) => command.phase === "delivered"
+          && (command.command.kind !== "remote_session_attach" || access === "all")
+          && (!command.reportedProgress || !["idle", "error"].includes(command.reportedProgress.status)))
+      if (entry.adapter && entry.deliver && activeCommands.length > 0) {
+        const tailDigest = (tail) => createHash("sha256").update(JSON.stringify(tail?.messages ?? [])).digest("hex")
+        for (const command of activeCommands) {
+          if (state.controller.signal.aborted || !command.receipt || !command.reportedProgress) continue
+          const id = command.command.commandId
+          const prev = entry.tailPush.get(id)
+          const currentNow = now()
+          if (prev && currentNow - prev.at < REMOTE_SESSION_WATCH.fastPollMs) continue
+          if (currentNow <= Math.max(command.lastObservedAt ?? 0, prev?.observedAt ?? 0)) continue
+          try {
+            const tail = await entry.adapter.read(command.receipt, { from: "end", limit: 20, cursor: null }, state.controller.signal)
+            const digest = tailDigest(tail)
+            if (prev?.digest === digest) {
+              entry.tailPush.set(id, { digest, at: currentNow, observedAt: prev.observedAt })
+              continue
+            }
+            const observedAt = now()
+            if (observedAt <= Math.max(command.lastObservedAt ?? 0, prev?.observedAt ?? 0)) continue
+            await entry.deliver(
+              `/v1/remote-session-commands/${encodeURIComponent(id)}/session`,
+              { ...command.reportedProgress, observedAt, tail },
+              state.controller.signal,
+            )
+            entry.tailPush.set(id, { digest, at: observedAt, observedAt })
+          } catch {
+          }
+        }
+      }
+      entry.watching = activeCommands.length > 0
     })().finally(() => {
       if (entry.reconcilePromise === promise) entry.reconcilePromise = null
     })

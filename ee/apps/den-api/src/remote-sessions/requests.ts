@@ -87,6 +87,11 @@ export interface RemoteSessionRequestStore {
     now: number
     limit: number
   }): Promise<RemoteSessionRequest[]>
+  listLatestSendCreatedAt?(input: {
+    organizationId: string
+    createdByUserId: string
+    commandIds: readonly string[]
+  }): Promise<Map<string, number>>
 }
 
 type RequestRow = typeof RemoteSessionRequestTable.$inferSelect
@@ -94,6 +99,14 @@ type RequestRow = typeof RemoteSessionRequestTable.$inferSelect
 function requestIdOrNull(value: string): DenTypeId<"remoteSessionRequest"> | null {
   try {
     return normalizeDenTypeId("remoteSessionRequest", value)
+  } catch {
+    return null
+  }
+}
+
+function commandIdOrNull(value: string): DenTypeId<"remoteSessionCommand"> | null {
+  try {
+    return normalizeDenTypeId("remoteSessionCommand", value)
   } catch {
     return null
   }
@@ -341,5 +354,29 @@ export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
       gt(RemoteSessionRequestTable.expires_at, new Date(input.now)),
     )).orderBy(asc(RemoteSessionRequestTable.claimed_at), asc(RemoteSessionRequestTable.id)).limit(input.limit)
     return rows.map(mapRequest)
+  },
+
+  async listLatestSendCreatedAt(input) {
+    const result = new Map<string, number>()
+    const commandIds = input.commandIds
+      .map(commandIdOrNull)
+      .filter((id): id is DenTypeId<"remoteSessionCommand"> => Boolean(id))
+    if (commandIds.length === 0) return result
+    const rows = await db.$primary.select({
+      commandId: RemoteSessionRequestTable.command_id,
+      createdAt: RemoteSessionRequestTable.created_at,
+    }).from(RemoteSessionRequestTable).where(and(
+      eq(RemoteSessionRequestTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+      eq(RemoteSessionRequestTable.created_by_user_id, normalizeDenTypeId("user", input.createdByUserId)),
+      eq(RemoteSessionRequestTable.action, "send"),
+      inArray(RemoteSessionRequestTable.status, ["pending", "claimed", "done"]),
+      inArray(RemoteSessionRequestTable.command_id, commandIds),
+    ))
+    for (const row of rows) {
+      const ts = row.createdAt.getTime()
+      const prev = result.get(row.commandId)
+      if (prev === undefined || ts > prev) result.set(row.commandId, ts)
+    }
+    return result
   },
 }

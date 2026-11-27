@@ -54,14 +54,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function truncateText(value: string, maxChars: number): string {
-  return value.length <= maxChars ? value : `${value.slice(0, Math.max(0, maxChars - 1))}…`
+function truncateText(value: string, maxChars: number | null): string {
+  if (maxChars === null || value.length <= maxChars) return value
+  return `${value.slice(0, Math.max(0, maxChars - 1))}…`
 }
 
-function compactMessage(message: RemoteSessionTranscriptMessage, maxText: number, maxToolField: number): RemoteSessionTranscriptMessage {
-  const parts = message.parts?.slice(-12).map((part) => {
+function compactMessage(
+  message: RemoteSessionTranscriptMessage,
+  maxText: number | null,
+  maxToolField: number,
+  maxParts: number,
+): RemoteSessionTranscriptMessage {
+  const parts = message.parts?.slice(-maxParts).map((part) => {
     if (part.type === "text") return { ...part, text: truncateText(part.text, maxText) }
-    if (part.type === "reasoning") return { ...part, text: truncateText(part.text, Math.min(400, maxText)) }
+    if (part.type === "reasoning") return { ...part, text: truncateText(part.text, maxText === null ? 1600 : Math.min(400, maxText)) }
     return {
       ...part,
       input: part.input === null ? null : truncateText(part.input, maxToolField),
@@ -69,7 +75,7 @@ function compactMessage(message: RemoteSessionTranscriptMessage, maxText: number
       error: part.error === null ? null : truncateText(part.error, maxToolField),
     }
   })
-  const toolCalls = message.toolCalls.slice(-12).map((call) => ({
+  const toolCalls = message.toolCalls.slice(-maxParts).map((call) => ({
     ...call,
     input: call.input === null ? null : truncateText(call.input, maxToolField),
     output: call.output === null ? null : truncateText(call.output, maxToolField),
@@ -90,14 +96,17 @@ export function boundRemoteSessionTailPayload(
   const maxMessages = options.maxMessages ?? REMOTE_SESSION_TAIL_MAX_MESSAGES
   const maxBytes = options.maxBytes ?? REMOTE_SESSION_TAIL_MAX_BYTES
   const rawMessages = page.messages.slice(-maxMessages)
-  const tiers: Array<[number, number]> = [
-    [1600, 400],
-    [800, 200],
-    [400, 120],
-    [200, 80],
+  const tiers: Array<[number | null, number, number]> = [
+    [null, 1200, 40],
+    [8000, 400, 24],
+    [3200, 300, 16],
+    [1600, 200, 12],
+    [800, 120, 12],
+    [400, 80, 12],
+    [200, 80, 12],
   ]
-  for (const [maxText, maxTool] of tiers) {
-    const compacted = rawMessages.map((message) => compactMessage(message, maxText, maxTool))
+  for (const [maxText, maxTool, maxParts] of tiers) {
+    const compacted = rawMessages.map((message) => compactMessage(message, maxText, maxTool, maxParts))
     for (let keep = compacted.length; keep >= 1; keep -= 1) {
       const candidate: RemoteSessionReadResult = {
         ...page,

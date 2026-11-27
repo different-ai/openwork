@@ -1661,7 +1661,14 @@ export function SessionRoute() {
   const remoteHelperNavigation = useMemo(() => ({
     scope: JSON.stringify([opencodeBaseUrl?.trim() ?? "", selectedWorkspaceEndpoint?.workspaceId || null, sessionDraftScope]),
     openParent: (sessionId: string) => navigateToWorkspaceSession(selectedWorkspaceId, sessionId),
-  }), [opencodeBaseUrl, selectedWorkspaceEndpoint?.workspaceId, sessionDraftScope, navigateToWorkspaceSession, selectedWorkspaceId]);
+    resolveParentTitle: (sessionId: string) => {
+      for (const group of workspaceSessionGroups) {
+        const match = group.sessions.find((session) => session.id === sessionId);
+        if (match?.title?.trim()) return getDisplaySessionTitle(match.title);
+      }
+      return null;
+    },
+  }), [opencodeBaseUrl, selectedWorkspaceEndpoint?.workspaceId, sessionDraftScope, navigateToWorkspaceSession, selectedWorkspaceId, workspaceSessionGroups]);
   const openRemoteTask = useCallback((threadKey: string) => {
     navigateToWorkspaceSession(selectedWorkspaceId, remoteSessionRouteId(threadKey));
   }, [navigateToWorkspaceSession, selectedWorkspaceId]);

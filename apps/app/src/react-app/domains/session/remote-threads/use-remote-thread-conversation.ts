@@ -7,6 +7,7 @@ import { remoteTranscriptToUIMessages } from "@/lib/remote-transcript-messages"
 import { readRemoteThread, sendRemoteFollowUp, stopRemoteThread } from "./remote-thread-actions"
 import {
   fetchRemoteSessionTail,
+  useRemoteThreadStore,
   useRemoteThreadTail,
   type RemoteThreadEntry,
 } from "./remote-thread-store"
@@ -23,16 +24,38 @@ import {
 export const REMOTE_THREAD_PAGE_SIZE = 30
 export const REMOTE_THREAD_PAGE_MAX = 100
 const READ_GAP_MS = 3_000
+const LIVE_FALLBACK_POLL_MS = 10_000
 const RETRY_BASE_MS = 2_000
 const RETRY_MAX_MS = 15_000
 const MAX_AUTO_RETRIES = 6
 const FOLLOW_SLACK_PX = 48
 const REMOTE_DRAFT_WORKSPACE = "remote"
 
-type FollowUp = { id: string; text: string }
+export function remoteTailIsStale(
+  entry: Pick<RemoteThreadEntry, "status" | "activeSince" | "tailUpdatedAt">,
+  tail?: Pick<RemoteTranscriptPage, "messageCount"> | null,
+): boolean {
+  if (
+    typeof entry.status?.messageCount === "number"
+    && typeof tail?.messageCount === "number"
+    && entry.status.messageCount > tail.messageCount
+  ) {
+    return true
+  }
+  const latestSignal = Math.max(entry.status?.observedAt ?? 0, entry.activeSince ?? 0)
+  if (latestSignal <= 0) return false
+  return (entry.tailUpdatedAt ?? 0) < latestSignal
+}
 
-function userTurn(id: string, text: string): UIMessage {
-  return { id, role: "user", parts: [{ type: "text", text }] }
+type FollowUp = { id: string; text: string; createdAt: number }
+
+function userTurn(id: string, text: string, createdAt?: number): UIMessage {
+  return {
+    id,
+    role: "user",
+    ...(typeof createdAt === "number" ? { metadata: { opencode: { created: createdAt } } } : {}),
+    parts: [{ type: "text", text }],
+  }
 }
 
 function canAutoRetry(): boolean {
@@ -50,6 +73,7 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry) {
   const view = remoteThreadView(entry.start, entry, now, stoppedHere)
   const streamedTail = useRemoteThreadTail(liveSyncEnabled ? entry.start.key : null)
   const [page, setPage] = useState<RemoteTranscriptPage | null>(null)
+  const [pageFetchedAt, setPageFetchedAt] = useState(0)
   const [readError, setReadError] = useState<string | null>(null)
   const [limit, setLimit] = useState(REMOTE_THREAD_PAGE_SIZE)
   const [sent, setSent] = useState<FollowUp[]>([])
@@ -58,7 +82,10 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry) {
   const draft = unsaved?.scopeKey === scopeKey ? unsaved.text : snapshot?.text ?? ""
   const draftRevision = useRef(0)
   const sendInFlight = useRef(false)
-  const activePage = liveSyncEnabled && limit <= REMOTE_THREAD_PAGE_SIZE ? (streamedTail ?? page) : (page ?? streamedTail)
+  const tailIsFresher = Boolean(streamedTail) && (!page || (entry.tailUpdatedAt ?? 0) >= pageFetchedAt)
+  const activePage = liveSyncEnabled && limit <= REMOTE_THREAD_PAGE_SIZE
+    ? (tailIsFresher ? streamedTail : (page ?? streamedTail))
+    : (page ?? streamedTail)
 
   function setDraft(text: string) {
     draftRevision.current += 1
@@ -123,16 +150,23 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry) {
         if (tail) {
           state.retryCount = 0
           setPage(tail)
+          setPageFetchedAt(Date.now())
           setReadError(null)
           setSent((current) => current.filter((followUp) => !tail.messages.some((message) => message.role === "user" && message.text.trim() === followUp.text)))
-          return
+          const updatedEntry = useRemoteThreadStore.getState().threads[currentEntry.start.key] ?? currentEntry
+          if (!remoteTailIsStale(updatedEntry, tail)) return
         }
       }
       const outcome = await readRemoteThread(currentEntry, { limit: currentLimit, signal: controller.signal })
       if (controller.signal.aborted || !state.mounted) return
       if (outcome.kind === "page") {
         state.retryCount = 0
+        const fetchedAt = Date.now()
         setPage(outcome.page)
+        setPageFetchedAt(fetchedAt)
+        if (useLiveSync && currentLimit <= REMOTE_THREAD_PAGE_SIZE) {
+          useRemoteThreadStore.getState().setTail(currentEntry.start.key, outcome.page, fetchedAt)
+        }
         setReadError(null)
         setSent((current) => current.filter((followUp) => !outcome.page.messages.some((message) => message.role === "user" && message.text.trim() === followUp.text)))
       } else if (outcome.kind === "pending") {
@@ -154,9 +188,13 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry) {
       if (state.inflight === controller) {
         state.inflight = null
         if (state.mounted && !controller.signal.aborted) {
-          if (state.again && !latest.current.liveSyncEnabled) {
+          if (state.again) {
             state.again = false
-            state.timer = window.setTimeout(() => void read(), Math.max(0, state.lastAt + READ_GAP_MS - Date.now()))
+            const current = latest.current
+            const currentTail = useRemoteThreadStore.getState().tailsByKey[current.entry.start.key] ?? null
+            if (!current.liveSyncEnabled || remoteTailIsStale(current.entry, currentTail)) {
+              state.timer = window.setTimeout(() => void read(current.liveSyncEnabled), Math.max(0, state.lastAt + READ_GAP_MS - Date.now()))
+            }
           } else if (retryDelayMs !== null && canAutoRetry()) {
             state.timer = window.setTimeout(() => void read(), retryDelayMs)
           }
@@ -165,20 +203,37 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry) {
     }
   }, [])
 
+  const staleTail = remoteTailIsStale(entry, streamedTail)
+  const tailUpdatedAt = entry.tailUpdatedAt ?? 0
+  const liveActive = view.state === "running" || view.state === "waiting"
+
   useEffect(() => {
     if (liveSyncEnabled) {
       if (limit > REMOTE_THREAD_PAGE_SIZE) {
         if (view.started) void read(true)
         return
       }
-      if (!streamedTail) void read(false)
-      return
+      if (!streamedTail) {
+        void read(false)
+        return
+      }
+      if (!view.started) return
+      if (staleTail) {
+        const wait = reads.current.lastAt === 0 ? 0 : Math.max(0, reads.current.lastAt + READ_GAP_MS - Date.now())
+        const timer = window.setTimeout(() => void read(true), wait)
+        return () => window.clearTimeout(timer)
+      }
+      if (!liveActive) return
+      const timer = window.setTimeout(() => {
+        if (canAutoRetry()) void read(true)
+      }, LIVE_FALLBACK_POLL_MS)
+      return () => window.clearTimeout(timer)
     }
     if (!view.started) return
     const wait = reads.current.lastAt === 0 ? 0 : Math.max(0, reads.current.lastAt + READ_GAP_MS - Date.now())
     const timer = window.setTimeout(() => void read(), wait)
     return () => window.clearTimeout(timer)
-  }, [liveSyncEnabled, entry.version, view.started, limit, streamedTail, read])
+  }, [liveSyncEnabled, entry.version, view.started, limit, streamedTail, staleTail, liveActive, tailUpdatedAt, pageFetchedAt, read])
 
   const transcript = activePage?.messages ?? []
   const running = view.state === "running"
@@ -189,8 +244,8 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry) {
       ? sent.filter((followUp) => !activePage.messages.some((message) => message.role === "user" && message.text.trim() === followUp.text))
       : sent
     return [
-      ...(activePage ? shown : prompt ? [userTurn(`${entry.start.key}:prompt`, prompt)] : []),
-      ...pendingSent.map((followUp) => userTurn(followUp.id, followUp.text)),
+      ...(activePage ? shown : prompt ? [userTurn(`${entry.start.key}:prompt`, prompt, entry.activeSince ?? undefined)] : []),
+      ...pendingSent.map((followUp) => userTurn(followUp.id, followUp.text, followUp.createdAt)),
     ]
   }, [activePage, running, view.waitingFor, entry.start.key, prompt, sent])
 
@@ -226,7 +281,8 @@ export function useRemoteThreadConversation(entry: RemoteThreadEntry) {
     const storedDraft = getSessionDraft(draftScope, REMOTE_DRAFT_WORKSPACE, draftSessionId)?.text
     if (draftRevision.current === revision && draftRef.current.trim() === text && (storedDraft === undefined || storedDraft.trim() === text)) setDraft("")
     following.current = true
-    setSent((current) => [...current, { id: `follow-up:${Date.now()}`, text }])
+    const sentAt = Date.now()
+    setSent((current) => [...current, { id: `follow-up:${sentAt}`, text, createdAt: sentAt }])
   }
 
   async function stop() {

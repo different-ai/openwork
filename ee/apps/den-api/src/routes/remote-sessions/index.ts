@@ -328,11 +328,11 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       return streamSSE(c, async (stream) => {
         const waiter = createSignalWaiter((wake) => onRemoteSessionUserUpdate(organizationId, userId, wake))
         let lastKeepaliveAt = Date.now()
-        const seen = new Map<string, { version: string; tailUpdatedAt: number | null }>()
+        const seen = new Map<string, { version: string; activeSince: number | null; tailUpdatedAt: number | null }>()
         try {
           const initial = await listBoundRemoteSessions({ organizationId, userId, limit: 50 }, options.deps)
           for (const session of initial) {
-            seen.set(session.threadKey, { version: session.status.version, tailUpdatedAt: session.tailUpdatedAt })
+            seen.set(session.threadKey, { version: session.status.version, activeSince: session.activeSince, tailUpdatedAt: session.tailUpdatedAt })
           }
           const snapshot = remoteSessionStreamSnapshotEventSchema.parse({ type: "snapshot", sessions: initial })
           await stream.writeSSE({ event: "snapshot", data: JSON.stringify(snapshot) })
@@ -351,13 +351,13 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
             const tailKeysToRead: string[] = []
             for (const session of latest) {
               const previous = seen.get(session.threadKey)
-              const versionChanged = !previous || previous.version !== session.status.version
+              const versionChanged = !previous || previous.version !== session.status.version || previous.activeSince !== session.activeSince
               const tailChanged = session.tailUpdatedAt !== null && (!previous || previous.tailUpdatedAt !== session.tailUpdatedAt)
               if (versionChanged || tailChanged) {
                 changed.push(session)
                 if (tailChanged) tailKeysToRead.push(session.threadKey)
               }
-              seen.set(session.threadKey, { version: session.status.version, tailUpdatedAt: session.tailUpdatedAt })
+              seen.set(session.threadKey, { version: session.status.version, activeSince: session.activeSince, tailUpdatedAt: session.tailUpdatedAt })
             }
             if (changed.length > 0) {
               const tails: Record<string, RemoteSessionReadResult> = {}
