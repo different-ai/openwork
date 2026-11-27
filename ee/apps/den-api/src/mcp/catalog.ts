@@ -383,6 +383,10 @@ export type CatalogApp<Bindings> = {
   fetch: (request: Request, env: Bindings) => Response | Promise<Response>
 }
 
+export type InternalApp = {
+  fetch(request: Request, env?: unknown): Response | Promise<Response>
+}
+
 export async function loadOpenApiDocument<Bindings>(app: CatalogApp<Bindings>, env: Bindings): Promise<OpenApiDocument> {
   const response = await app.fetch(new Request("http://den-api.local/openapi.json"), env)
   if (!response.ok) {

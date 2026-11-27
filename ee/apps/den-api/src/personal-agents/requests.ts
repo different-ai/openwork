@@ -9,6 +9,7 @@ import { canManagePersonalAgent, personalAgentOwnerScope, personalAgentPeople, p
 import { personalAgentRequestEventDetail, recordPersonalAgentEvent } from "./events.js"
 import { CONNECTOR_ONLY_TOOL_NAME, decideToolApproval, listAgentToolApprovals, pendingToolApprovalCutoff, toolApprovalRequiresAsk, toolApprovalRules, type ToolApprovalRow } from "../tool-permissions/approvals.js"
 import { organizationFeatureEnabled } from "../features.js"
+import { isBuiltInAgentConnection } from "./builtin-connection.js"
 import { personalAgentConnectorState } from "./connector-access.js"
 import { readSubjectToolPolicy } from "../tool-permissions/rules.js"
 import { appendPersonalAgentMemoryNote } from "./memory.js"
@@ -23,10 +24,12 @@ function decisions(access: PersonalAgentAccess, memberId: string, row: RequestRo
   if (row.connector_access) {
     if (row.owner_requested_at && access.role !== "owner") return []
     const choices: PersonalAgentRequestDecision[] = []
+    const namesTool = row.tool_name !== CONNECTOR_ONLY_TOOL_NAME
     if (access.role === "owner" || row.requested_by_member_id === memberId) {
       choices.push("deny")
-      if (connectorApprovals && !row.owner_requested_at && row.tool_name !== CONNECTOR_ONLY_TOOL_NAME) choices.push("allow_once")
+      if (connectorApprovals && !row.owner_requested_at && namesTool) choices.push("allow_once")
     }
+    if (connectorApprovals && access.role === "owner" && namesTool && !requiresAsk) choices.push("always_allow")
     if (connectorApprovals && canManagePersonalAgent(access.role)) choices.push("turn_on")
     return choices
   }
@@ -59,7 +62,7 @@ async function requestViews(access: PersonalAgentAccess, memberId: string, rows:
     toolTitle: row.kind === "tool" && row.tool_title ? row.tool_title : null, summary: row.kind === "change" ? row.summary : null,
     change: row.kind === "change" ? row.change : null, decidedBy: row.decided_by_member_id ? personOrUnknown(people, row.decided_by_member_id) : null,
     decidedAt: row.decided_at?.toISOString() ?? null, createdAt: row.created_at.toISOString(),
-    canDecide: decisions(access, memberId, row, row.kind === "tool" && !row.connector_access && row.status === "pending" && access.role === "owner" && await toolApprovalRequiresAsk(row), approvalsEnabledFor.has(row.requested_by_member_id)),
+    canDecide: decisions(access, memberId, row, row.kind === "tool" && row.status === "pending" && access.role === "owner" && await toolApprovalRequiresAsk(row), approvalsEnabledFor.has(row.requested_by_member_id)),
   })))
 }
 
@@ -148,15 +151,17 @@ async function decidePersonalAgentToolRequest(access: PersonalAgentAccess, membe
       if (!member?.userId || !await organizationFeatureEnabled(access.organizationId, "personalAgents", {
         userId: member.userId, database: tx, lock: "share",
       })) return "disabled"
-      if (!isDenTypeId("externalMcpConnection", approval.connection_id)) return "blocked"
-      const [connection] = await tx.select({ toolPolicy: ExternalMcpConnectionTable.toolPolicy }).from(ExternalMcpConnectionTable).where(and(
-        eq(ExternalMcpConnectionTable.organizationId, approval.organization_id), eq(ExternalMcpConnectionTable.id, approval.connection_id),
-        eq(ExternalMcpConnectionTable.kind, "external_mcp"),
-      )).limit(1).for("share")
-      if (!connection || isToolDisabled(connection.toolPolicy, approval.tool_name)) return "blocked"
+      if (!isBuiltInAgentConnection(approval.connection_id)) {
+        if (!isDenTypeId("externalMcpConnection", approval.connection_id)) return "blocked"
+        const [connection] = await tx.select({ toolPolicy: ExternalMcpConnectionTable.toolPolicy }).from(ExternalMcpConnectionTable).where(and(
+          eq(ExternalMcpConnectionTable.organizationId, approval.organization_id), eq(ExternalMcpConnectionTable.id, approval.connection_id),
+        )).limit(1).for("share")
+        if (!connection || isToolDisabled(connection.toolPolicy, approval.tool_name)) return "blocked"
+      }
       const rules = await toolApprovalRules(approval, { mode: "agent", agentId: agent.id }, tx)
       if (rules.some(({ kind, toolName, rule }) => rule === "block" && (kind !== "agent" || toolName !== CONNECTOR_ONLY_TOOL_NAME))) return "blocked"
       const policy = await readSubjectToolPolicy({ organizationId: access.organizationId, kind: "agent", id: agent.id }, tx)
+      if (policy.connections[approval.connection_id] === "ask") return "limited"
       return personalAgentConnectorState({ defaultConnectorsOff: approval.chat_turn_id !== null, legacyConnectorAccess: agent.legacy_connector_access, neverConnectionIds: agent.never_connection_ids ?? [] }, policy, approval.connection_id)
     }, onAlwaysAllow: (tx) => recordPersonalAgentEvent({
       organizationId: access.organizationId, agentId: access.agentId, actorMemberId: memberId,

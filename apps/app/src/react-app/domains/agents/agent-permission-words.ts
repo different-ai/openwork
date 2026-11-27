@@ -15,8 +15,11 @@ export function toolControlState(tool: Pick<PersonalAgentTool, "access" | "chose
   return { access: tool.access, allowDisabled: false, hint: null };
 }
 
-export function toolAccessSummary(connection: Pick<PersonalAgentConnectionTools, "available" | "blocked" | "lockedByOrganization" | "tools">): string {
+export function toolAccessSummary(connection: Pick<PersonalAgentConnectionTools, "available" | "blocked" | "lockedByOrganization" | "tools"> & { onlyChosenTools?: boolean }): string {
   if (connection.lockedByOrganization) return t("agents.permissions_admin_blocked");
+  if (connection.blocked && connection.onlyChosenTools) {
+    return t("agents.permissions_only_chosen", { count: connection.tools.filter((tool) => tool.chosen !== null && tool.chosen !== "block").length });
+  }
   if (connection.blocked) return t("agents.permissions_connection_off");
   if (!connection.available) return t("agents.permissions_not_connected");
   const counts = { allow: 0, ask: 0, block: 0 };
@@ -96,4 +99,11 @@ export function agentSpendLine(spend: Pick<PersonalAgentSpend, "monthMicros" | "
   return spend.budgetMicros === null
     ? t("agents.permissions_spend_month", { amount })
     : t("agents.permissions_spend_limit", { amount, limit: formatAgentMoney(spend.budgetMicros) });
+}
+
+export function parseBudgetDollars(text: string): number | null {
+  const match = /^\$?\s*(\d{1,7})(?:\.(\d{1,2}))?$/.exec(text.trim().replace(/,/g, ""));
+  if (!match) return null;
+  const micros = Number(match[1]) * 1_000_000 + Number((match[2] ?? "").padEnd(2, "0")) * 10_000;
+  return micros > 0 && micros <= 1_000_000_000_000 ? micros : null;
 }

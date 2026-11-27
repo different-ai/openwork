@@ -165,7 +165,7 @@ test("Sam can open an agent’s details from the compact chat header without rep
     const agentBreadcrumb = trigger?.closest("nav");
     expect(agentBreadcrumb?.textContent).toContain("Agents");
     expect(agentBreadcrumb?.querySelector('[role="img"][aria-label="Runs in OpenWork Cloud"] svg.lucide-cloud')).not.toBeNull();
-    expect(container.querySelector('[data-session-header] [data-agent-can-use="header"]')).not.toBeNull();
+    expect(container.querySelector("[data-session-header] [data-agent-can-use]")).toBeNull();
     expect(panel()).toBeNull();
     await act(async () => trigger?.click());
     expect(trigger?.getAttribute("aria-expanded")).toBe("true");

@@ -38,7 +38,7 @@ export function AgentToolDecision({ runtime, agent, request, onAllowed }: {
       title={connectorAccess
         ? (request.toolName ? t("agents.connector_ask_tool_title", { agent: name, tool, connection }) : t("agents.connector_ask_title", { agent: name, connection }))
         : t("agents.permission_ask_title", { agent: name, tool, connection })}
-      line={connectorAccess ? t("agents.connector_ask_line") : t("agents.permission_ask_accounts")}
+      line={connectorAccess ? t(request.toolName ? "agents.connector_ask_tool_line" : "agents.connector_ask_line", { connection }) : t("agents.permission_ask_accounts")}
       decisions={request.canDecide.filter((choice) => choice !== "approve" && choice !== "turn_on")}
       turnOn={connectorAccess && request.canDecide.includes("turn_on") ? {
         label: t(agent.role === "manager" ? "agents.connector_ask_request_on" : "agents.connector_ask_turn_on", { connection }),
@@ -65,7 +65,7 @@ export function AgentToolReceipt({ agent, request }: { agent: PersonalAgentDetai
   const name = agent.agent.name;
   const connectorAccess = request.connectorAccess === true;
   const deniedByYou = agent.role === "owner" && request.decidedBy?.memberId === agent.agent.ownerMemberId;
-  const receipt = connectorAccess && request.status === "always_allowed"
+  const receipt = connectorAccess && request.status === "always_allowed" && (!request.toolName || (request.connectionId !== null && agent.revision.toolPolicy.connections[request.connectionId] === "allow"))
     ? t("agents.connector_ask_enabled", { connection, agent: name })
     : toolRequestReceipt(request.toolName || !connectorAccess ? request : { ...request, toolTitle: connection }, name, deniedByYou);
   if (!receipt) return null;

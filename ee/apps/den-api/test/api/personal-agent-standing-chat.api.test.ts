@@ -115,3 +115,135 @@ test("standing chat keeps a private serialized thread and dispatches approved co
   assert.equal((await call(sent[1].token, "execute_capability", args)).status, 403)
   assert.equal((await asOwner("GET", chat)).status, 404)
 })
+
+test("OpenWork's own tools start off for an agent: its owner gives it one tool, one use, or the whole connection, and an admin can block it", async () => {
+  const { orgId, owner } = await den.createOrg(await den.signUp("Routine Owner", "routines@acme.test"), "OpenWork tools fixture")
+  const asOwner = den.as(owner, orgId)
+  await grantGatewayModels(den, owner, orgId, [owner])
+  assert.equal((await den.setFeature(orgId, "personalAgents", true)).status, 200)
+  const created = await asOwner("POST", "/v1/personal-agents", { name: "Pipeline assistant", brief: "Keep the pipeline tidy." })
+  assert.equal(created.status, 201, summary(created))
+  const agentId = personalAgentDetailSchema.parse(created.body).agent.id
+  const path = `/v1/personal-agents/${agentId}`
+  const chat = `${path}/standing-chat`
+  const names = (response: Awaited<ReturnType<typeof call>>) => {
+    const content = field(result(response), "content")
+    const payload: unknown = JSON.parse(text(field(Array.isArray(content) ? content[0] : null, "text"), response.text))
+    const matches = field(payload, "matches")
+    const off = field(payload, "offConnectors")
+    return {
+      matches: Array.isArray(matches) ? matches.map((match) => text(field(match, "name"), "match name")) : [],
+      off: Array.isArray(off) ? off.map((name) => text(name, "connector name")) : [],
+    }
+  }
+  const turn = async (clientMessageId: string) => {
+    const before = sent.length
+    const response = await asOwner("POST", chat, { clientMessageId, message: "Add a routine that lists the pipeline every morning." })
+    assert.equal(response.status, 202, summary(response))
+    assert.equal(sent.length, before + 1)
+    return sent[before]
+  }
+  const finish = async (entry: (typeof sent)[number]) => {
+    entry.status = "completed"
+    assert.equal((await asOwner("GET", chat)).status, 200)
+  }
+  const routine = { name: "createPersonalAgentRoutine", path: { id: agentId }, body: {
+    name: "Morning pipeline", instructions: "List every open deal.", schedule: { kind: "daily", timezone: "America/Los_Angeles", hour: 8, minute: 0 },
+  } }
+  const errorText = (response: Awaited<ReturnType<typeof call>>) => JSON.stringify(result(response))
+
+  const pendingRoutine = async () => {
+    const items = field((await asOwner("GET", `${path}/requests`)).body, "items")
+    const waiting = Array.isArray(items) ? items.find((item) => field(item, "status") === "pending" && field(item, "toolName") === "createPersonalAgentRoutine") : null
+    return text(field(waiting, "id"), "a pending request to add the routine")
+  }
+
+  const openWorkTools = async () => {
+    const connections = field((await asOwner("GET", `${path}/tools`)).body, "connections")
+    const openWork: unknown = Array.isArray(connections) ? connections[0] : null
+    assert.equal(field(openWork, "name"), "OpenWork")
+    return openWork
+  }
+  const search = async (token: string, query = "agent routine") => names(await call(token, "search_capabilities", { query }))
+  const list = (token: string) => call(token, "execute_capability", { name: "listPersonalAgentRoutines", path: { id: agentId } })
+  const ask = async (token: string, action: string) => {
+    const asked = await call(token, "request_agent_connector_access", { connectionName: "OpenWork", action })
+    return text(field(result(asked), "structuredContent", "requestId"), asked.text)
+  }
+  const decide = (requestId: string, decision: string) => asOwner("POST", `${path}/requests/${requestId}/decision`, { decision })
+
+  const start = await openWorkTools()
+  assert.equal(field(start, "blocked"), true)
+  assert.equal(field(start, "onlyChosenTools"), false)
+  const startTools = field(start, "tools")
+  assert.ok(Array.isArray(startTools) && startTools.some((tool) => field(tool, "name") === "listPersonalAgentRoutines" && field(tool, "access") === "block"), JSON.stringify(startTools).slice(0, 400))
+
+  const first = await turn("openwork-first")
+  const closed = await search(first.token)
+  assert.deepEqual(closed.matches, [])
+  assert.ok(closed.off.includes("OpenWork"), JSON.stringify(closed))
+  assert.equal(field(result(await list(first.token)), "isError"), true)
+  const listAsk = await ask(first.token, "listPersonalAgentRoutines")
+  const items = field((await asOwner("GET", `${path}/requests`)).body, "items")
+  const waiting: unknown = Array.isArray(items) ? items.find((item) => field(item, "id") === listAsk) : null
+  assert.deepEqual(field(waiting, "canDecide"), ["deny", "allow_once", "always_allow", "turn_on"])
+  assert.equal((await decide(listAsk, "always_allow")).status, 200)
+  const picked = personalAgentDetailSchema.parse((await asOwner("GET", path)).body).revision.toolPolicy
+  assert.deepEqual(picked, { connections: { openwork: "ask" }, tools: { openwork: { listPersonalAgentRoutines: "allow" } } })
+  const limited = await openWorkTools()
+  assert.equal(field(limited, "blocked"), true)
+  assert.equal(field(limited, "onlyChosenTools"), true)
+  await finish(first)
+
+  const second = await turn("openwork-second")
+  assert.deepEqual((await search(second.token, "list agent routines")).matches, ["listPersonalAgentRoutines"])
+  assert.equal(field(result(await list(second.token)), "isError"), false)
+  assert.equal(field(result(await call(second.token, "execute_capability", routine)), "isError"), true)
+  assert.deepEqual(personalAgentDetailSchema.parse((await asOwner("GET", path)).body).routines, [])
+  assert.equal((await decide(await ask(second.token, "createPersonalAgentRoutine"), "allow_once")).status, 200)
+  await finish(second)
+
+  const third = await turn("openwork-third")
+  const made = await call(third.token, "execute_capability", routine)
+  assert.equal(field(result(made), "isError"), false, made.text)
+  assert.deepEqual(personalAgentDetailSchema.parse((await asOwner("GET", path)).body).routines.map(({ name }) => name), ["Morning pipeline"])
+  assert.equal(field(result(await call(third.token, "execute_capability", routine)), "isError"), true)
+  await finish(third)
+
+  const chosenInPanel = await asOwner("PATCH", path, { toolPolicy: { connections: { openwork: "ask" }, tools: { openwork: { listPersonalAgentRoutines: "ask" } } } })
+  assert.equal(chosenInPanel.status, 200, summary(chosenInPanel))
+  const asksFirst = await turn("openwork-asks-first")
+  assert.match(errorText(await list(asksFirst.token)), /needs a yes from a person first/)
+  await finish(asksFirst)
+
+  const on = await asOwner("PATCH", path, { toolPolicy: { connections: { openwork: "allow" }, tools: {} } })
+  assert.equal(on.status, 200, summary(on))
+  assert.equal(field(await openWorkTools(), "blocked"), false)
+  const fourth = await turn("openwork-fourth")
+  const open = await search(fourth.token)
+  assert.ok(open.matches.includes("listPersonalAgentRoutines") && open.matches.includes("createPersonalAgentRoutine"), JSON.stringify(open))
+  assert.ok(!open.off.includes("OpenWork"))
+  assert.equal(field(result(await list(fourth.token)), "isError"), false)
+  assert.match(errorText(await call(fourth.token, "execute_capability", routine)), /needs a yes from a person first/)
+  assert.equal((await decide(await pendingRoutine(), "deny")).status, 200)
+  await finish(fourth)
+
+  const adminBlock = await asOwner("PUT", "/v1/org/personal-agent-policy", { toolPolicy: { connections: { openwork: "block" }, tools: {} } })
+  assert.equal(adminBlock.status, 200, summary(adminBlock))
+  assert.equal(field(await openWorkTools(), "lockedByOrganization"), true)
+  const blocked = await turn("openwork-admin-blocked")
+  const shut = await search(blocked.token)
+  assert.deepEqual(shut.matches, [])
+  assert.ok(!shut.off.includes("OpenWork"), JSON.stringify(shut))
+  assert.equal(field(result(await list(blocked.token)), "isError"), true)
+  assert.equal(field(result(await call(blocked.token, "request_agent_connector_access", { connectionName: "OpenWork", action: "listPersonalAgentRoutines" })), "structuredContent", "status"), "unavailable")
+  await finish(blocked)
+  assert.equal((await asOwner("PUT", "/v1/org/personal-agent-policy", { toolPolicy: { connections: {}, tools: {} } })).status, 200)
+
+  const fifth = await turn("openwork-fifth")
+  const widened = await call(fifth.token, "execute_capability", { name: "updatePersonalAgent", path: { id: agentId }, body: { toolPolicy: { connections: {}, tools: {} } } })
+  assert.match(errorText(widened), /cannot change what it is allowed to use or spend/)
+  const another = await call(fifth.token, "execute_capability", { name: "createPersonalAgent", body: { name: "Second", brief: "Another agent." } })
+  assert.match(errorText(another), /cannot make another agent/)
+  assert.deepEqual(personalAgentDetailSchema.parse((await asOwner("GET", path)).body).routines.map(({ name }) => name), ["Morning pipeline"])
+})

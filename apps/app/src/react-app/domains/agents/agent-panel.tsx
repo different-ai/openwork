@@ -78,7 +78,7 @@ function AgentPanelBody({ runtime, agent, view, compact, setView }: {
             role: agent.role === "manager" ? t("agents.share_manager") : t("agents.share_collaborator"),
           })}</p>}
         </div>
-        <AgentCanUse runtime={runtime} agentId={agentId} placement="panel" onOpen={() => setView("settings")} />
+        <AgentCanUse runtime={runtime} agentId={agentId} onOpen={() => setView("settings")} />
         <div className="flex min-h-12 items-center justify-between gap-3 border-y border-dls-border py-2">
           {paused ? <p className="text-sm font-medium">{t("agents.panel_admin_paused")}</p> : <>
             <span className="min-w-0">
