@@ -7,7 +7,10 @@ import type { ConnectionActionPayload } from "@openwork/types/connection-action-
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
+import { CLOUD_CODING_CONNECTION_ID } from "@openwork/types/den/cloud-coding"
+import { CloudCodingConnectionCard } from "@/react-app/domains/cloud-coding/cloud-coding-connection-card"
+import { useSessionExtensions } from "@/react-app/kernel/session-extensions"
+import { ServiceMark, GITHUB_SERVICE_MARK } from "./service-mark"
 import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
 import { useChatToolReconnect, type ChatToolReconnectCallbacks } from "@/components/tools/use-chat-tool-reconnect"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
@@ -35,18 +38,6 @@ function blockedTitle(connection: ConnectionActionPayload): string {
   return `${owner} must ${verb} ${connection.connectionName}`
 }
 
-function ServiceMark({ name, iconUrl }: { name: string; iconUrl: string | null | undefined }) {
-  const [failedIcon, setFailedIcon] = useState<string | null>(null)
-  const showImage = Boolean(iconUrl) && iconUrl !== failedIcon
-  return (
-    <span
-      aria-hidden="true"
-      className={cn("flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md", !showImage && "bg-muted text-xs font-medium text-foreground")}
-    >
-      {showImage && iconUrl ? <img src={iconUrl} alt="" className="size-4 object-contain" onError={() => setFailedIcon(iconUrl)} /> : name.charAt(0).toUpperCase()}
-    </span>
-  )
-}
 
 export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectScope, connectorIdentities, allowDiscovery = false, subject }: {
   callbacks?: ChatToolReconnectCallbacks
@@ -58,9 +49,11 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   subject?: string
 }) {
   const messageList = useOptionalMessageList()
+  const { cloudCoding } = useSessionExtensions()
   const found = connectionFromChatToolPart(part, { allowDiscovery })
   const connection = found?.connection ?? null
-  const action = connection && connection.actor === "member" && (connection.action?.type === "connect" || connection.action?.type === "reconnect" || connection.action?.type === "update_credentials")
+  const isCloudCoding = connection?.connectionId === CLOUD_CODING_CONNECTION_ID
+  const action = connection && (!isCloudCoding || cloudCoding?.scope) && connection.actor === "member" && (connection.action?.type === "connect" || connection.action?.type === "reconnect" || connection.action?.type === "update_credentials")
     ? found?.action ?? null
     : null
   const {
@@ -72,11 +65,11 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
     onReopenAuthorization: callbacks?.onReopenAuthorization ?? messageList?.onMcpReopenAuthorization,
   }, action, reconnectScope, connection?.connectionId)
   const [detailsOpen, setDetailsOpen] = useState(false)
-  if (!connection) return null
+  if (!connection || (isCloudCoding && (cloudCoding?.enabled === false || (!cloudCoding && connection.actor === "member")))) return null
 
   const name = connection.connectionName
   const identity = (connectorIdentities ?? messageList?.connectorIdentities ?? []).find(entry => entry.connectionId === connection.connectionId)
-  const iconUrl = identity?.iconUrl
+  const iconUrl = isCloudCoding ? GITHUB_SERVICE_MARK : identity?.iconUrl
   const readOnly = messageList?.readOnly ?? false
   const skipped = reconnectState === "skipped"
   const connected = connection.state === "connected" || reconnectState === "connected" || identity?.connectedForMe === true
@@ -103,7 +96,7 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   const actionable = !readOnly && (!settled || decisionAvailable)
   const showDetails = actionable && Boolean(reconnectError)
 
-  return (
+  const card = (
     <section data-testid="desktop-connection-card" aria-label={`${name} connection`} aria-live="polite" className="w-full max-w-full self-start text-sm text-foreground">
       <div className="flex min-h-10 min-w-0 flex-wrap items-center gap-3 px-3 py-1">
         <ServiceMark name={name} iconUrl={iconUrl} />
@@ -157,4 +150,11 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
       ) : null}
     </section>
   )
+  if (isCloudCoding && cloudCoding?.scope && actionable && blocked && connection.state === "needs_connection"
+    && connection.actor === "organization_admin" && connection.action?.surface === "openwork_organization_connections") {
+    const { scope } = cloudCoding
+    return <CloudCodingConnectionCard key={JSON.stringify([scope.denBaseUrl, scope.organizationId, scope.principal])}
+      scope={scope} fallback={card} dismiss={handleDismiss} />
+  }
+  return card
 }

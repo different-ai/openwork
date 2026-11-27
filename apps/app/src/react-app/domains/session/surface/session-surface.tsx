@@ -1,4 +1,6 @@
 /** @jsxImportSource react */
+import { CLOUD_CODING_CONNECTION_ID } from "@openwork/types/den/cloud-coding";
+import { authenticateCloudCodingGitHub } from "@/react-app/domains/cloud-coding/authenticate-github";
 import { openMemberApiKeyDialog } from "../../connections/member-api-key-dialog";
 import { childOrigin, rememberChildOrigin, prepareChildReturn, consumeChildReturn, registerChildDraftPersistence } from "@/lib/child-navigation";
 import { remoteSessionRouteId } from "@/lib/remote-session-route";
@@ -3501,6 +3503,13 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
     try {
       const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
       const isAuthorizationCurrent = () => isCurrent() && isChatMcpReconnectScopeCurrent(scope, currentScope());
+      if (action.connectionId === CLOUD_CODING_CONNECTION_ID) {
+        const feature = extensions.cloudCoding?.scope;
+        if (!feature || feature.organizationId !== organizationId || feature.denBaseUrl !== settings.baseUrl) {
+          throw new Error(t("cloud_coding.link_changed"));
+        }
+        return authenticateCloudCodingGitHub({ client: denClient, organizationId, isCurrent: isAuthorizationCurrent, onProgress, openUrl: openDesktopUrl });
+      }
       const result = await authenticateChatConnection({
         connectionId: action.connectionId,
         connectionName: action.connectionName,
@@ -3528,7 +3537,7 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
       });
       throw error;
     }
-  }, [props.onOpenConnect, props.sessionId, props.workspaceId, refreshOrgMcpConnections]);
+  }, [extensions.cloudCoding?.scope, props.onOpenConnect, props.sessionId, props.workspaceId, refreshOrgMcpConnections]);
 
   const handleMcpReopenAuthorization = useCallback(async (
     action: ChatToolReconnectAction,
@@ -3545,9 +3554,11 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
     });
   }, [props.sessionId, props.workspaceId]);
 
-  const nativeConnectionRequest = props.respondQuestion && props.draftScope && props.isControlTarget && !archived && archiveStateKnown && !archiveHeld
+  const nativeConnectionCandidate = props.respondQuestion && props.draftScope && props.isControlTarget && !archived && archiveStateKnown && !archiveHeld
     ? nativeChatConnectionDecision({ question: props.activeQuestion, owner: sessionOwner, sessionId: props.sessionId, messages: baseRenderedMessages })
     : null;
+  const nativeConnectionRequest = nativeConnectionCandidate?.connectionId === CLOUD_CODING_CONNECTION_ID && !extensions.cloudCoding?.scope
+    ? null : nativeConnectionCandidate;
   const connectionContextRef = useRef({ owner: sessionOwner, messages: baseRenderedMessages, request: nativeConnectionRequest, respond: props.respondQuestion });
   connectionContextRef.current = { owner: sessionOwner, messages: baseRenderedMessages, request: nativeConnectionRequest, respond: props.respondQuestion };
   const getConnectionDecision = useCallback((toolCallId: string): ChatConnectionDecisionBinding | null => {
@@ -4167,7 +4178,7 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
                   />
                   </div>
                 ) : null}
-                {approvalsEnabled && !archived && extensions.renderChatApprovalDock?.(completedAt)}
+                {approvalsEnabled && !archived && extensions.renderChatApprovalDock?.(completedAt, props.isControlTarget)}
               </div>
             ) : null
           }

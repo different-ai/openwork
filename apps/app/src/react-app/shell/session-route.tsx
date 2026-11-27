@@ -126,6 +126,8 @@ import { agentFeatureSnapshotKey, usePersonalAgentSessionExtensions, useStanding
 import { PersonalAgentsProvider, type AgentScope, type AgentsRuntime } from "@/react-app/domains/agents/agents-runtime";
 import { useAgentNames } from "@/react-app/domains/agents/use-agents";
 import { SessionExtensionsProvider } from "@/react-app/kernel/session-extensions";
+import { CloudCodingApprovalDock } from "@/react-app/domains/cloud-coding/cloud-coding-approval-dock";
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import { ApprovalLoadError, ApprovalRefresh, ChatApprovalDock } from "@/react-app/domains/tool-approvals/tool-approvals-stack";
 import { RunApprovalSlot, useAutomationApprovals } from "@/react-app/domains/tool-approvals/run-approval-slot";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
@@ -2820,10 +2822,17 @@ export function SessionRoute() {
   const approvalsScope = useMemo(() => toolPermissionsEnabled && agentsDen.ready && agentsDen.client && personalAgentsScope
     ? { ...personalAgentsScope, client: agentsDen.client } : null, [agentsDen.client, agentsDen.ready, personalAgentsScope, toolPermissionsEnabled]);
   const automationApprovals = useAutomationApprovals(automationsRouteActive ? approvalsScope : null);
-  const sessionExtensions = useMemo(() => approvalsScope ? {
+  const cloudCodingEnabled = useOrgFeature("cloudCoding", { active: !automationsRouteRequested && !dashboardRouteRequested && !appsRouteActive && !activityRouteRequested });
+  const cloudCodingScope = useMemo(() => cloudCodingEnabled && agentsDen.ready && agentsDen.client && personalAgentsScope
+    ? { ...personalAgentsScope, client: agentsDen.client } : null, [agentsDen.client, agentsDen.ready, cloudCodingEnabled, personalAgentsScope]);
+  const sessionExtensions = useMemo(() => ({
     ...agentExtensions,
-    renderChatApprovalDock: (completedAt: number) => <ChatApprovalDock scope={approvalsScope} completedAt={completedAt} />,
-  } : agentExtensions, [agentExtensions, approvalsScope]);
+    cloudCoding: personalAgentsScope ? { enabled: cloudCodingEnabled, scope: cloudCodingScope } : undefined,
+    renderChatApprovalDock: approvalsScope || cloudCodingScope ? (completedAt: number, active: boolean) => <>
+      {approvalsScope && <ChatApprovalDock scope={approvalsScope} completedAt={completedAt} />}
+      <CloudCodingApprovalDock scope={cloudCodingScope} completedAt={completedAt} active={active} />
+    </> : undefined,
+  }), [agentExtensions, approvalsScope, cloudCodingEnabled, cloudCodingScope, personalAgentsScope]);
   const agentNames = useAgentNames(agentsRuntime);
 
   const createNewSessionInSelectedWorkspace = useCallback(() => {

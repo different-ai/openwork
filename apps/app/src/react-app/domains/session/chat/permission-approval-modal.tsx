@@ -1,8 +1,9 @@
 /** @jsxImportSource react */
-import { Check, ChevronRight, Clock3, RefreshCcw, ShieldCheck, XCircle } from "lucide-react";
+import { Check, ChevronRight, RefreshCcw, ShieldCheck } from "lucide-react";
 import { useMemo } from "react";
 import type { RemoteSessionPending } from "@openwork/types/automations";
 
+import { ComposerApprovalActions, ComposerApprovalHeader, ComposerApprovalPanel } from "@/react-app/design-system/composer-approval-panel";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
 import type { PendingPermission } from "@/app/types";
@@ -255,55 +256,11 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
   };
 
   return (
-    <div data-permission-approval="" className="overflow-hidden border-b border-dls-border bg-transparent">
-        <div className={`flex flex-col gap-3 px-4 py-3 ${canAlways ? "" : "sm:flex-row sm:items-center sm:justify-between"}`}>
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
-              <Icon size={16} strokeWidth={1.9} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[13px] font-medium leading-5 text-dls-text">{presentation?.title ?? remote?.remotePermission.title}</div>
-              <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{presentation?.message ?? remote?.remotePermission.detail}</div>
-              {local?.sourceTitle ? (
-                <div
-                  data-permission-source="child-session"
-                  className="mt-1 text-[12px] font-medium leading-5 text-amber-11"
-                >
-                  {t("session.permission_requested_by", { session: local.sourceTitle })}
-                </div>
-              ) : null}
-              {remote ? (
-                <div className="mt-1 text-[12px] leading-5 text-dls-secondary">
-                  {t("session.remote_answer_permission_on", { computer: remote.computer })}
-                </div>
-              ) : null}
-              {presentation?.note ? (
-                <div className="mt-1 text-[12px] leading-5 text-dls-secondary">{presentation.note}</div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className={`flex shrink-0 flex-wrap items-center gap-2 ${canAlways ? "" : "sm:justify-end"}`}>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="border-red-7/25 text-red-11 hover:bg-red-1/40"
-              onClick={() => respond("reject")}
-              disabled={props.busy || !(remote || local?.respondPermission)}
-            >
-              <XCircle data-icon="inline-start" />
-              {t("session.deny")}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => respond("once")}
-              disabled={props.busy || !(remote || local?.respondPermission)}
-            >
-              <Clock3 data-icon="inline-start" />
-              {t("session.allow_once")}
-            </Button>
+    <ComposerApprovalPanel data-permission-approval="">
+      <ComposerApprovalHeader stacked={canAlways} icon={<Icon size={16} strokeWidth={1.9} />}
+        title={presentation?.title ?? remote?.remotePermission.title}
+        actions={<ComposerApprovalActions disabled={props.busy || !(remote || local?.respondPermission)}
+          onDeny={() => respond("reject")} onAllowOnce={() => respond("once")}>
             {canRemember ? (
               <Button
                 type="button"
@@ -328,8 +285,25 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
                 {t("session.file_send_allow_always")}
               </Button>
             ) : null}
-          </div>
-        </div>
+        </ComposerApprovalActions>}>
+        <div>{presentation?.message ?? remote?.remotePermission.detail}</div>
+              {local?.sourceTitle ? (
+                <div
+                  data-permission-source="child-session"
+                  className="mt-1 text-[12px] font-medium leading-5 text-amber-11"
+                >
+                  {t("session.permission_requested_by", { session: local.sourceTitle })}
+                </div>
+              ) : null}
+              {remote ? (
+                <div className="mt-1 text-[12px] leading-5 text-dls-secondary">
+                  {t("session.remote_answer_permission_on", { computer: remote.computer })}
+                </div>
+              ) : null}
+              {presentation?.note ? (
+                <div className="mt-1 text-[12px] leading-5 text-dls-secondary">{presentation.note}</div>
+              ) : null}
+      </ComposerApprovalHeader>
 
         {remote?.remotePermission.command ? (
           <pre className="mx-4 mb-3 max-h-32 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-lg bg-dls-hover/45 px-3 py-2 text-[12px] leading-5 text-dls-text">{remote.remotePermission.command}</pre>
@@ -368,6 +342,6 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
           ) : null}
         </div>
         ) : null}
-    </div>
+    </ComposerApprovalPanel>
   );
 }
