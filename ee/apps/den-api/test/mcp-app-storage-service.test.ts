@@ -14,7 +14,7 @@ after(() => rmSync(directory, { recursive: true, force: true }))
 
 const ORGANIZATION = "org_01kq0000000000000000000001"
 const ANA = { memberId: "om_01kq0000000000000000000001", name: "Ana" }
-const BEN = { memberId: "om_01kq0000000000000000000002", name: "Ben" }
+const BEN = { memberId: "om_01kq0000000000000000000002", name: "Bea" }
 
 const storage: McpAppStorage = {
   collections: [
@@ -91,7 +91,7 @@ test("another member changes a shared row and both see the change", async () => 
   const changed = await writeMcpAppStorage(as(BEN), { collection: "requests", action: "update", id: added.id, values: { status: "approved" } })
   assert.equal(changed.row?.values.status, "approved")
   assert.equal(changed.row?.values.title, "Monitor")
-  assert.equal(changed.row?.updatedBy, "Ben")
+  assert.equal(changed.row?.updatedBy, "Bea")
   assert.equal(changed.row?.createdBy, "Ana")
   const seen = await readMcpAppStorage(as(ANA), { collection: "requests", where: { status: "approved" } })
   assert.equal(seen.rows.length, 1)
