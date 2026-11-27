@@ -19,6 +19,7 @@ import type { OrgRouteVariables } from "./shared.js"
 import { driveIdSchema, driveItemNameSchema, driveItemSchema, graphError, graphErrorStatus, graphItemIdSchema, needsConnectionSchema, upstreamErrorSchema, type Microsoft365Access, type Microsoft365Identity } from "./microsoft-365-shared.js"
 import { registerMicrosoftDriveFileRoutes, type MicrosoftDriveFileRouteOptions } from "./microsoft-drive-files.js"
 import { registerMicrosoftDocumentRoutes } from "./microsoft-documents.js"
+import { registerMicrosoftTeamsMeetingRoutes } from "./microsoft-teams-meetings.js"
 
 const FILE_WRITE_FEATURES: readonly string[] = ["filesWrite", "filesFull"]
 
@@ -549,6 +550,8 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       return { ok: true, accessToken: token.accessToken, graphBaseUrl: token.graphBaseUrl, otherDrives: { read: !ownDriveOnly(token, false) } }
     },
   })
+
+  registerMicrosoftTeamsMeetingRoutes(app, { access, memberRoute: orgMemberRouteMiddleware })
 
   app.post(
     "/v1/capabilities/microsoft-365/mail-drafts/:messageId/send",

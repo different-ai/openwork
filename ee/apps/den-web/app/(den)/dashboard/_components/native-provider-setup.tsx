@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
-import { getAddConnectorRoute, getLibraryMyAgentRoute, getMcpConnectionRoute, getMcpConnectionsRoute } from "../../_lib/den-org";
+import { getAddConnectorRoute, getLibraryMyAgentRoute, getMcpConnectionRoute, getMcpConnectionsRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { GOOGLE_WORKSPACE_QUICK_ADD_ID, MICROSOFT_365_QUICK_ADD_ID, type NativeProviderKey } from "./connector-catalog";
 import { useDenToast } from "./den-toast";
@@ -12,6 +12,7 @@ import {
   GOOGLE_WORKSPACE_DEFAULT_FEATURES,
   GOOGLE_WORKSPACE_PERMISSION_GROUPS,
   type NativePermissionGroup,
+  visibleNativePermissionGroups,
 } from "./google-workspace-permissions";
 import { ItemHeader, ItemPage, SectionTitle, StepFooter } from "./item-header";
 import { DetailRows, ItemPanel } from "./item-list";
@@ -117,6 +118,7 @@ export function NativeProviderSettings({ providerKey, clientProviderId, create, 
   footer: (input: { save: () => void; saving: boolean; disabled: boolean; label: string }) => ReactNode;
 }) {
   const provider = PROVIDERS[providerKey];
+  const { orgContext } = useOrgDashboard();
   const clientConfig = useNativeProviderClient(clientProviderId, true);
   const createNative = useCreateNativeProviderConnection();
   const saveClient = useSaveNativeProviderClient();
@@ -145,6 +147,7 @@ export function NativeProviderSettings({ providerKey, clientProviderId, create, 
   const credentialsIncomplete = showCredentials && (!clientId.trim() || !clientSecret.trim() || (provider.tenant && !tenantId.trim()));
   const disabled = clientConfig.isLoading || saving || credentialsIncomplete || (creatingGoogle && !name.trim());
   const label = configured && !replacing ? "Save permissions" : configured ? "Save new credentials" : `Add ${provider.name}`;
+  const groups = visibleNativePermissionGroups(provider.groups, (key) => orgFeatureEnabled(orgContext, key), features);
 
   function toggle(feature: string) {
     setFeatures((current) => current.includes(feature) ? current.filter((entry) => entry !== feature) : [...current, feature]);
@@ -248,7 +251,7 @@ export function NativeProviderSettings({ providerKey, clientProviderId, create, 
       <section className="flex flex-col gap-2.5">
         <SectionTitle title="What your AI can do" meta={`${features.length} on`} />
         <ItemPanel>
-          {provider.groups.map((group) => (
+          {groups.map((group) => (
             <fieldset key={group.name} className="flex flex-col gap-2 px-5 py-3.5">
               <legend className="sr-only">{group.name}</legend>
               <p className="text-[13px] font-medium text-gray-900" aria-hidden>{group.name}</p>

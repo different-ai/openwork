@@ -143,6 +143,9 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   access("GET", `${MS}/teams-chats`, "capability.teams.chat.list", MSK, res("teams_chat"), `${CAP} Response lists chat names and participants.`),
   access("GET", `${MS}/teams-chats/:chatId/messages`, "capability.teams.chat_message.list", MSK, res("teams_chat", "chatId"), CAP_CONTENT),
   external("POST", `${MS}/teams-chats/:chatId/messages`, "capability.teams.chat_message.send", MSK, res("teams_chat", "chatId"), GRAPH, `${CAP} Posts a Teams message.`),
+  access("GET", `${MS}/teams-meetings`, "capability.teams.meeting.find", MSK, res("teams_meeting"), `${CAP} Response carries the meeting subject, times and organizer. The join link in the query is matched by Microsoft Graph and is not audit evidence.`),
+  access("GET", `${MS}/teams-meetings/:meetingId/transcripts`, "capability.teams.meeting_transcript.list", MSK, res("teams_meeting", "meetingId"), `${CAP} Response lists transcript ids and times, no transcript text.`),
+  access("GET", `${MS}/teams-meetings/:meetingId/transcripts/:transcriptId`, "capability.teams.meeting_transcript.read", MSK, res("teams_meeting_transcript", "transcriptId"), `${CAP_CONTENT} Transcript text is never audit evidence.`),
 
   read("/v1/apps", "app.list", APP, res("artifact_view")),
   access("GET", "/v1/apps/:appId", "app.open", "app.access", res("artifact_view", "appId"), "Live apps execute their workflow (tool calls, run receipt write); response carries workflow result data and compiled HTML."),

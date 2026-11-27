@@ -107,7 +107,7 @@ and choose **Save permissions**.
 | Calendar | Read events, or create and manage events |
 | OneDrive | Read or update the member's own files, or every file they can open, including SharePoint libraries, files shared with them, and Teams files |
 | SharePoint | Find sites and list their document libraries |
-| Teams | Read chats, or send messages in existing chats |
+| Teams | Read chats, send messages in existing chats, or read meeting transcripts |
 
 Draft access requires mailbox read/write permission. It does not enable the
 separate **Send Outlook email** option. Drafts, reply drafts, and calendar
@@ -129,14 +129,25 @@ sent. If a file cannot be attached, the draft is moved to Deleted Items rather
 than left without it. Agents can also read the files attached to an Outlook
 message.
 
+With the **Teams meeting transcripts** feature turned on for your organization,
+**Read Teams meeting transcripts** appears under Teams. It lets an agent find a
+Teams meeting from the join link on a calendar event and read its transcript,
+for meetings the member organized or was invited to. A recurring meeting has
+one transcript per occurrence, so the agent picks the one for the date you ask
+about. Transcripts must be turned on for the meeting, and a Teams administrator
+can block Microsoft Graph access to transcripts or hide speaker names; the
+agent then says so, or returns the text without names. Recordings and
+attendance reports are not included.
+
 File permissions that mention “all
 files” can include shared files the member can access beyond their own drive,
 such as SharePoint libraries and files shared in Teams. Without them, file search
 and pulls cover only the member's own OneDrive.
 
-Microsoft's default consent policy does not let members approve the all-files
-or SharePoint sites permissions themselves, so an administrator must grant
-consent for the organization (step 5) before members can connect with them.
+Microsoft's default consent policy does not let members approve the all-files,
+SharePoint sites, or meeting transcript permissions themselves, so an
+administrator must grant consent for the organization (step 5) before members
+can connect with them.
 
 Review Microsoft's permission descriptions before consenting. They can cover
 more than one OpenWork action.
@@ -160,6 +171,7 @@ The enabled choices determine the scopes requested during sign-in:
 | Find SharePoint sites and libraries | `Sites.Read.All` |
 | Read Teams chats | `Chat.Read` |
 | Send Teams chat messages | `Chat.Read` and `ChatMessage.Send` |
+| Read Teams meeting transcripts | `OnlineMeetings.Read` and `OnlineMeetingTranscript.Read.All` |
 
 Sign-in also requests `openid`, `profile`, `email`, `offline_access`, and
 `User.Read` to identify the member and renew their connection. If you configure
@@ -196,7 +208,7 @@ Permissions**.
 If you grant consent through **App registrations › API permissions**, first
 check that the declared permissions match OpenWork's enabled features.
 Approving only the default `User.Read` permission does not cover mail,
-calendar, file, or chat access. See Microsoft's
+calendar, file, chat, or meeting transcript access. See Microsoft's
 [admin consent guide](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/grant-admin-consent).
 
 ## 6. Connect and test a member account

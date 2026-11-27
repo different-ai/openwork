@@ -157,6 +157,32 @@ export type Microsoft365TeamsMessage = {
   webUrl: string
 }
 
+export type Microsoft365TeamsMeeting = {
+  id: string
+  subject: string
+  startDateTime: string
+  endDateTime: string
+  joinWebUrl: string
+  organizer: Microsoft365EmailAddress | null
+}
+
+export type Microsoft365TeamsTranscript = {
+  id: string
+  meetingId: string
+  createdDateTime: string
+  endDateTime: string
+}
+
+export type Microsoft365TeamsTranscriptContent = {
+  format: "vtt" | "text"
+  speakerAttribution: boolean
+  content: string
+  offset: number
+  totalCharacters: number
+  nextOffset: number | null
+  contentUnavailableReason: "transcript_too_large" | null
+}
+
 type MutationStatus = 200 | 201 | 202 | 204
 
 type MicrosoftGraphClientOptions = {
@@ -521,6 +547,103 @@ export function extractMicrosoftTeamsMessages(json: unknown): Microsoft365TeamsM
   return readArray(root, "value")
     .map(extractMicrosoftTeamsMessage)
     .filter((message) => Boolean(message.id))
+}
+
+function readMeetingOrganizer(meeting: Record<string, unknown>): Microsoft365EmailAddress | null {
+  const participants = readRecord(meeting, "participants")
+  const organizer = participants ? readRecord(participants, "organizer") : null
+  if (!organizer) return null
+  const identity = readRecord(organizer, "identity")
+  const user = identity ? readRecord(identity, "user") : null
+  const address = readString(organizer, "upn")
+  const name = user ? readString(user, "displayName") : ""
+  return address || name ? { name, address } : null
+}
+
+export function extractMicrosoftTeamsMeetings(json: unknown): Microsoft365TeamsMeeting[] {
+  const root = isRecord(json) ? json : {}
+  return readArray(root, "value")
+    .filter(isRecord)
+    .map((meeting) => ({
+      id: readString(meeting, "id"),
+      subject: readString(meeting, "subject"),
+      startDateTime: readString(meeting, "startDateTime"),
+      endDateTime: readString(meeting, "endDateTime"),
+      joinWebUrl: readString(meeting, "joinWebUrl"),
+      organizer: readMeetingOrganizer(meeting),
+    }))
+    .filter((meeting) => Boolean(meeting.id))
+}
+
+export function extractMicrosoftTeamsTranscripts(json: unknown): Microsoft365TeamsTranscript[] {
+  const root = isRecord(json) ? json : {}
+  return readArray(root, "value")
+    .filter(isRecord)
+    .map((transcript) => ({
+      id: readString(transcript, "id"),
+      meetingId: readString(transcript, "meetingId"),
+      createdDateTime: readString(transcript, "createdDateTime"),
+      endDateTime: readString(transcript, "endDateTime"),
+    }))
+    .filter((transcript) => Boolean(transcript.id))
+}
+
+const TRANSCRIPT_VTT = "text/vtt"
+const TRANSCRIPT_UNATTRIBUTED_TEXT = "application/vnd.microsoft.graph.transcript+text"
+
+const TEAMS_JOIN_HOSTS: readonly string[] = ["teams.microsoft.com", "teams.cloud.microsoft", "gov.teams.microsoft.us", "dod.teams.microsoft.us"]
+
+export function isTeamsJoinUrl(value: string): boolean {
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return false
+  try {
+    const url = new URL(value)
+    return url.protocol === "https:" && !url.username && !url.password && !url.port && TEAMS_JOIN_HOSTS.includes(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+export function escapeODataString(value: string): string {
+  return value.replace(/'/g, "''")
+}
+
+const GRAPH_ERROR_CODE = /^[A-Za-z0-9_.-]{1,80}$/
+
+export function microsoftGraphErrorCodes(error: unknown): { status: number; code: string; innerCode: string } | null {
+  if (!(error instanceof MicrosoftGraphRequestError)) return null
+  const safe = (value: string) => GRAPH_ERROR_CODE.test(value) ? value : ""
+  try {
+    const body: unknown = JSON.parse(error.responseBody)
+    const graphError = isRecord(body) ? readRecord(body, "error") : null
+    const inner = graphError ? readRecord(graphError, "innerError") ?? readRecord(graphError, "innererror") : null
+    return { status: error.status, code: graphError ? safe(readString(graphError, "code")) : "", innerCode: inner ? safe(readString(inner, "code")) : "" }
+  } catch {
+    return { status: error.status, code: "", innerCode: "" }
+  }
+}
+
+function graphForbids(error: unknown, innerCode: string): boolean {
+  const codes = microsoftGraphErrorCodes(error)
+  return codes?.status === 403 && codes.innerCode === innerCode
+}
+
+export function isGraphTranscriptAccessDisabled(error: unknown): boolean {
+  return graphForbids(error, "GraphAccessToTranscriptsDisabled")
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
+}
+
+export function sliceTranscript(text: string, offset: number, maxCharacters: number): { content: string; nextOffset: number | null } {
+  if (offset >= text.length) return { content: "", nextOffset: null }
+  let end = Math.min(text.length, offset + maxCharacters)
+  if (end < text.length) {
+    const cueBreak = text.lastIndexOf("\n\n", end - 2)
+    if (cueBreak > offset) end = cueBreak + 2
+    else if (end - 1 > offset && isHighSurrogate(text.charCodeAt(end - 1))) end -= 1
+  }
+  return { content: text.slice(offset, end), nextOffset: end < text.length ? end : null }
 }
 
 function escapeGraphSearch(value: string): string {
@@ -1044,5 +1167,45 @@ export class MicrosoftGraphClient {
     return extractMicrosoftTeamsMessage(await this.requestMutation(
       "Microsoft 365 Teams message send", `chats/${encodeURIComponent(chatId)}/messages`, "POST", 201, { body: { contentType: "text", content } },
     ))
+  }
+
+  async findTeamsMeetingByJoinUrl(joinUrl: string): Promise<Microsoft365TeamsMeeting | null> {
+    const url = this.url("me/onlineMeetings")
+    url.search = `$filter=${encodeURIComponent(`JoinWebUrl eq '${escapeODataString(joinUrl)}'`)}`
+    return extractMicrosoftTeamsMeetings(await this.requestJson("Microsoft 365 Teams meeting lookup", url))[0] ?? null
+  }
+
+  async listTeamsMeetingTranscripts(input: { meetingId: string; maxResults: number; pageToken?: string }): Promise<{ transcripts: Microsoft365TeamsTranscript[]; nextPageToken: string | null; hasMore: boolean }> {
+    const url = this.url(`me/onlineMeetings/${encodeURIComponent(input.meetingId)}/transcripts`)
+    url.searchParams.set("$top", String(input.maxResults))
+    if (input.pageToken) url.searchParams.set("$skiptoken", input.pageToken)
+    const json = await this.requestJson("Microsoft 365 Teams transcript list", url)
+    return {
+      transcripts: extractMicrosoftTeamsTranscripts(json),
+      nextPageToken: nextSkipToken(json),
+      hasMore: isRecord(json) && Boolean(readString(json, "@odata.nextLink")),
+    }
+  }
+
+  async getTeamsMeetingTranscriptContent(input: { meetingId: string; transcriptId: string; offset: number; maxCharacters: number }): Promise<Microsoft365TeamsTranscriptContent> {
+    const url = this.url(`me/onlineMeetings/${encodeURIComponent(input.meetingId)}/transcripts/${encodeURIComponent(input.transcriptId)}/content`)
+    const operation = "Microsoft 365 Teams transcript read"
+    let speakerAttribution = true
+    let response: Response
+    try {
+      response = await this.request(operation, url, { headers: { accept: TRANSCRIPT_VTT } })
+    } catch (error) {
+      if (!graphForbids(error, "SpeakerAttributionNotAllowed")) throw error
+      speakerAttribution = false
+      response = await this.request(operation, url, { headers: { accept: TRANSCRIPT_UNATTRIBUTED_TEXT } })
+    }
+    const format = speakerAttribution ? "vtt" as const : "text" as const
+    const downloaded = await readBytesWithByteLimit(response, this.maxDownloadBytes)
+    if (downloaded.limitExceeded) {
+      return { format, speakerAttribution, content: "", offset: input.offset, totalCharacters: 0, nextOffset: null, contentUnavailableReason: "transcript_too_large" }
+    }
+    const text = new TextDecoder().decode(downloaded.bytes).replace(/\r\n?/g, "\n")
+    const page = sliceTranscript(text, input.offset, Math.min(input.maxCharacters, this.maxContentCharacters))
+    return { format, speakerAttribution, ...page, offset: input.offset, totalCharacters: text.length, contentUnavailableReason: null }
   }
 }
