@@ -20,6 +20,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   MCP_APP_INITIAL_RESULTS_META,
   MCP_APP_LAUNCH_TOOL_NAME,
+  MCP_APP_STORAGE_META,
   mcpAppIdSchema,
   parseMcpAppResourceUri,
   type McpAppToolBinding,
@@ -41,6 +42,7 @@ import { executeCapabilityWithBudget } from "./agent.js"
 import { runsWithoutClick } from "./app-tool-access.js"
 import { launchInitialResults, launchReadHandoff, requiredScope, type LaunchReadHandoff, type McpAppLaunchDataStore } from "./app-launch-data.js"
 import { APP_SITE_HEADER } from "./app-site.js"
+import { bindMcpAppStorage, callMcpAppStorageTool, MCP_APP_STORAGE_TOOL_NAMES, mcpAppStorageTools, type McpAppStorageBinding } from "./app-storage-tools.js"
 import { callMcpAppTool, mcpAppToolKeepable } from "./app-tools.js"
 import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
@@ -157,8 +159,13 @@ export function createMcpAppServer(input: {
   canKeep?: (binding: McpAppToolBinding) => boolean
   launchReads?: LaunchReadHandoff
   instructions?: string
+  /** Present only for an artifact that saves data. Its tools are listed only while that data can be used. */
+  storage?: McpAppStorageBinding
+  storageUsage?: { organizationId: string; memberId: string }
 }) {
   const { app, tools } = input.definition
+  const storage = input.storage
+  const storageTools = storage?.access ? mcpAppStorageTools(app.title, storage.storage) : []
   const server = new Server({ name: app.title, version: "1.0.0" }, {
     capabilities: {
       tools: { listChanged: false },
@@ -169,7 +176,7 @@ export function createMcpAppServer(input: {
   })
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [launchTool(input.definition), ...tools.map(boundTool)],
+    tools: [launchTool(input.definition), ...tools.map(boundTool), ...storageTools],
   }))
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = toolArguments(request.params.arguments)
@@ -182,8 +189,16 @@ export function createMcpAppServer(input: {
       return {
         content: [{ type: "text", text: app.textFallback }],
         structuredContent: { app, input: launchInput },
-        ...(initialResults.length > 0 ? { _meta: { [MCP_APP_INITIAL_RESULTS_META]: initialResults } } : {}),
+        ...(initialResults.length > 0 || storage ? {
+          _meta: {
+            ...(initialResults.length > 0 ? { [MCP_APP_INITIAL_RESULTS_META]: initialResults } : {}),
+            ...(storage ? { [MCP_APP_STORAGE_META]: storage.status } : {}),
+          },
+        } : {}),
       }
+    }
+    if (storage && MCP_APP_STORAGE_TOOL_NAMES.has(request.params.name)) {
+      return callMcpAppStorageTool({ binding: storage, name: request.params.name, args, scopes: input.scopes, usage: input.storageUsage })
     }
     const binding = tools.find((tool) => tool.name === request.params.name)
     if (!binding) throw new McpError(ErrorCode.InvalidParams, `Tool ${request.params.name} is not available on ${app.title}.`)
@@ -271,6 +286,16 @@ async function handleMcpAppServerRequestUntimed(input: {
   const server = createMcpAppServer({
     definition,
     scopes: principal.scopes,
+    ...(definition.storage ? {
+      storage: bindMcpAppStorage({
+        organizationId,
+        appId: definition.app.appId,
+        storage: definition.storage,
+        memberId: member.orgMembershipId,
+        enabled: organizationFeatures.artifactStorage,
+      }),
+      storageUsage: { organizationId, memberId: member.orgMembershipId },
+    } : {}),
     loadResource: (revision) => loadMcpAppResource({ ...access, ...revision }),
     callTool: (binding, args) => executeCapabilityWithBudget({
       capability: binding.capability,

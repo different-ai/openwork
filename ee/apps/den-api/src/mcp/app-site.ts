@@ -69,6 +69,9 @@ const SITE_SCRIPT = `
         post({ method: "ui/notifications/tool-input", params: { arguments: { input: {} } } })
         return post({ method: "ui/notifications/tool-result", params: opened })
       case "tools/call":
+        if (params.name === "storage_write" && !(navigator.userActivation && navigator.userActivation.isActive)) {
+          return refuse("Saving needs a click on a button in this artifact.")
+        }
         try { return reply(await rpc("tools/call", { name: params.name, arguments: params.arguments || {} })) }
         catch (error) { return refuse(error.message) }
       case "ui/open-link": {

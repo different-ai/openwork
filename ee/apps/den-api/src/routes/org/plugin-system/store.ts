@@ -124,6 +124,7 @@ import {
   upsertPluginMcpRequirementBinding,
   type PluginMcpRequirementBindingRow,
 } from "../../../mcp/plugin-mcp-requirement-bindings.js"
+import { deleteMcpAppStorage } from "../../../mcp-app-storage/lifecycle.js"
 import { openworkYourConnectionsUrl } from "../../../mcp/connection-navigation.js"
 import {
   declaredPluginMcpAuthType,
@@ -1877,6 +1878,9 @@ export async function setConfigObjectLifecycle(input: { context: PluginArchActor
       : { deletedAt: null, status: "active" as const, updatedAt: now }
 
   await db.update(ConfigObjectTable).set(patch).where(eq(ConfigObjectTable.id, row.id))
+  if (input.action === "delete" && row.objectType === "app") {
+    await deleteMcpAppStorage({ organizationId: row.organizationId, appId: row.id })
+  }
   await syncPluginMcpRequirementAccessForResource({
     context: input.context,
     resourceId: row.id,
@@ -3797,7 +3801,7 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
   const configObjectRows = instanceIds.length === 0
     ? []
     : await db
-      .select({ id: ConfigObjectTable.id })
+      .select({ id: ConfigObjectTable.id, objectType: ConfigObjectTable.objectType })
       .from(ConfigObjectTable)
       .where(inArray(ConfigObjectTable.connectorInstanceId, instanceIds))
   const configObjectIds = configObjectRows.map((entry) => entry.id)
@@ -3851,6 +3855,10 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
 
     await tx.delete(ConnectorAccountTable).where(eq(ConnectorAccountTable.id, row.id))
   })
+
+  for (const row of configObjectRows) {
+    if (row.objectType === "app") await deleteMcpAppStorage({ organizationId, appId: row.id })
+  }
 
   return {
     deletedConfigObjectCount: configObjectIds.length,
@@ -4284,7 +4292,7 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
   const pluginIds = [...new Set(mappingRows.map((entry) => entry.pluginId).filter((value): value is PluginId => Boolean(value)))]
 
   const configObjectRows = await db
-    .select({ id: ConfigObjectTable.id })
+    .select({ id: ConfigObjectTable.id, objectType: ConfigObjectTable.objectType })
     .from(ConfigObjectTable)
     .where(eq(ConfigObjectTable.connectorInstanceId, instance.id))
   const configObjectIds = configObjectRows.map((entry) => entry.id)
@@ -4332,6 +4340,10 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
 
     await deleteConnectorImportedResources({ organizationId: instance.organizationId, plan: importedResourceCleanupPlan, tx })
   })
+
+  for (const row of configObjectRows) {
+    if (row.objectType === "app") await deleteMcpAppStorage({ organizationId: instance.organizationId, appId: row.id })
+  }
 
   return {
     deletedConfigObjectCount: configObjectIds.length,

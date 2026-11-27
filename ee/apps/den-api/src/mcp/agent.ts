@@ -4,6 +4,7 @@ import { registerMcpEventTools } from "../mcp-events/tools.js"
 import { createAgentMcpServer, WORKFLOW_SAVE_INSTRUCTIONS } from "./agent-server.js"
 export { createAgentMcpServer, AGENT_MCP_INSTRUCTIONS, LEGACY_AGENT_MCP_INSTRUCTIONS, AGENT_MCP_GUIDANCE_URI } from "./agent-server.js"
 import { appAuthoringStarter, registerAppStarterResources } from "./app-authoring-starter.js"
+import type { BuildAnAppSkillOptions } from "./build-an-app-skill.js"
 import { startMcpAppTiming } from "@openwork/types/mcp-app-timing"
 import {
   McpServer,
@@ -134,6 +135,7 @@ import {
 import { needsGeneratedArtifactCatalog } from "./generated-artifact-catalog-request.js"
 import { AppBuilderError, mcpAppLaunchResult, registerAppBuilderTools, searchMcpApps } from "./app-builder-tools.js"
 import { resolveMcpAppTools } from "./app-tools.js"
+import { bindMcpAppStorage, registerAppStorageTools } from "./app-storage-tools.js"
 import { createMcpApp, isActiveMcpApp, listAccessibleMcpApps, loadMcpAppServerDefinition, McpAppError, readMcpApp, updateMcpApp, type McpAppEntry } from "../mcp-apps.js"
 import {
   createConfigObjectVersion,
@@ -280,11 +282,12 @@ export async function resolveAgentSkills(input: {
   skills: RemoteSkillDescriptor[]
   organizationId: string
   member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
+  buildAnApp?: BuildAnAppSkillOptions
 }): Promise<ResolvedSkill[]> {
   const marketplace = await listAccessibleMarketplaceSkillSources({ organizationId: input.organizationId, member: input.member })
   const sources = new Map<string, RemoteSkillSource>(marketplace)
   for (const skill of input.skills) {
-    const builtin = await executeBuiltinSkillCapability(skill.capability, input.organizationId)
+    const builtin = await executeBuiltinSkillCapability(skill.capability, input.organizationId, input.buildAnApp)
     if (builtin) sources.set(skill.capability, { content: builtin.content, provenance: builtin.provenance })
   }
   return resolveSkills(input.skills, sources)
@@ -295,8 +298,9 @@ export async function readRemoteSkillSource(input: {
   organizationId: string
   member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
   recordUse: boolean
+  buildAnApp?: BuildAnAppSkillOptions
 }): Promise<RemoteSkillSource> {
-  const builtinResult = await executeBuiltinSkillCapability(input.skill.capability, input.organizationId)
+  const builtinResult = await executeBuiltinSkillCapability(input.skill.capability, input.organizationId, input.buildAnApp)
   if (builtinResult) return { content: builtinResult.content, provenance: builtinResult.provenance }
   const marketplace = parseMarketplaceCapabilityName(input.skill.capability)
   if (!marketplace) return null
@@ -394,6 +398,7 @@ export function registerAgentSkillResources(input: {
   skills: RemoteSkillDescriptor[]
   organizationId: string
   member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
+  buildAnApp?: BuildAnAppSkillOptions
   resolveSkills?: () => Promise<ResolvedSkill[]>
   onSkillRead?: (uri: string, text: string) => void
   indexSync?: { revision: string | null; known?: Record<string, string> }
@@ -442,6 +447,7 @@ export function registerAgentSkillResources(input: {
         organizationId: input.organizationId,
         member: input.member,
         recordUse: false,
+        buildAnApp: input.buildAnApp,
       })
       if (!source) {
         throw new ProtocolError(ProtocolErrorCode.InvalidRequest, "Skill is no longer available")
@@ -612,10 +618,12 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const nativeSkills = Boolean(memberIdentity)
     const skillsExtension = Boolean(memberIdentity)
     let resolvedSkillsPromise: Promise<ResolvedSkill[]> | null = null
+    const buildAnApp: BuildAnAppSkillOptions = { storage: organizationFeatures.artifactStorage }
     const loadResolvedSkills = (): Promise<ResolvedSkill[]> => resolvedSkillsPromise ??= (async () => resolveAgentSkills({
       skills: await loadRemoteSkills(),
       organizationId: principal.organizationId,
       member: memberIdentity,
+      buildAnApp,
     }))()
     if (skillBatch && requestInfo.id !== null) {
       const skills = await loadRemoteSkills()
@@ -629,7 +637,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           contents.push({ uri, text: cached })
           continue
         }
-        const source = await readRemoteSkillSource({ skill, organizationId: principal.organizationId, member: memberIdentity, recordUse: skillBatch.use })
+        const source = await readRemoteSkillSource({ skill, organizationId: principal.organizationId, member: memberIdentity, recordUse: skillBatch.use, buildAnApp })
         if (!source || "blocked" in source) continue
         const text = standardSkillMarkdown(skill, source.content)
         if (key) rememberSkillRead(key, text)
@@ -724,10 +732,27 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         }
       }
       const resolveTools = (tools: Parameters<typeof resolveMcpAppTools>[1]) => resolveMcpAppTools(capabilityContext, tools)
+      const storageEnabled = organizationFeatures.artifactStorage
+      if (storageEnabled && memberIdentity) {
+        const storageMember = memberIdentity
+        registerAppStorageTools({
+          server,
+          scopes: principal.scopes,
+          bind: async (appId) => {
+            const definition = await loadMcpAppServerDefinition({ ...appAccess, appId }).catch(() => null)
+            if (!definition?.storage) return null
+            return {
+              binding: bindMcpAppStorage({ organizationId, appId: definition.app.appId, storage: definition.storage, memberId: storageMember.orgMembershipId, enabled: true }),
+              usage: { organizationId, memberId: storageMember.orgMembershipId },
+            }
+          },
+        })
+      }
       registerAppBuilderTools({
         server,
         scopes: principal.scopes,
         publicOrigin: redirectUriBase,
+        storage: storageEnabled,
         service: {
           prepare: (request) => appOperation(async () => {
             await appActor()
@@ -737,13 +762,13 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           }),
           create: (request) => appOperation(async () => {
             const context = await appActor()
-            return runMcpServiceAction("mcp_app.create", appAuditPrincipal(), null, () => createMcpApp({ ...request, context, resolveTools }))
+            return runMcpServiceAction("mcp_app.create", appAuditPrincipal(), null, () => createMcpApp({ ...request, context, resolveTools, storageEnabled }))
           }),
           update: (request) => appOperation(async () => {
             const context = await appActor()
-            return runMcpServiceAction("mcp_app.update", appAuditPrincipal(), serviceAuditResourceId(request.appId), () => updateMcpApp({ ...request, context, resolveTools }))
+            return runMcpServiceAction("mcp_app.update", appAuditPrincipal(), serviceAuditResourceId(request.appId), () => updateMcpApp({ ...request, context, resolveTools, storageEnabled }))
           }),
-          read: (request) => appOperation(async () => readMcpApp({ ...request, context: await appActor() })),
+          read: (request) => appOperation(async () => readMcpApp({ ...request, context: await appActor(), storageEnabled })),
         },
         canOpen: async (appId) => (await loadOpenableApps()).some((app) => app.appId === appId),
         notifyCatalogChanged: () => {
@@ -776,6 +801,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         skills: await loadRemoteSkills(),
         organizationId: principal.organizationId,
         member: memberIdentity,
+        buildAnApp,
         ...(nativeSkills ? { resolveSkills: loadResolvedSkills } : {}),
         ...(indexSync ? { indexSync: { revision: inventoryRevision, known: indexSync.known } } : {}),
         ...(skillFileReadUri ? { fileRead: { uri: skillFileReadUri, resolveSkills: loadResolvedSkills } } : {}),
@@ -783,7 +809,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           if (uri === skillReadKey.uri) rememberSkillRead(skillReadKey, text)
         } } : {}),
       })
-      if (appServersEnabled) registerAppStarterResources(server)
+      if (appServersEnabled) registerAppStarterResources(server, { storage: organizationFeatures.artifactStorage })
       if (env.automations.runtimeEnabled) {
         const automations = memberIdentity
           ? await automationService.list({
@@ -881,6 +907,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         skill,
         organizationId: principal.organizationId,
         member: memberIdentity,
+        buildAnApp,
         recordUse: read.file === undefined,
       }),
       readFile: (file) => readSkillFileBytes(principal.organizationId, file),
