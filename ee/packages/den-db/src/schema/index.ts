@@ -53,5 +53,6 @@ export * from "./feature-intros"
 export * from "./config-blobs"
 export * from "./public-mcp-app-names"
 export * from "./remote-devices"
+export * from "./computers"
 
 export * from "./mcp-thread-events"
