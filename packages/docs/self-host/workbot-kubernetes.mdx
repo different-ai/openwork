@@ -7,7 +7,7 @@ description: "Enable the private runner and Workbot on a self-hosted OpenWork He
   Requires an OpenWork release newer than `v0.18.73` (`v0.18.74` or later) whose `openwork-ee` OCI chart includes `headlessRunner` and `workbot` support.
 </Note>
 
-Add Workbot to an existing OpenWork Kubernetes deployment so members can chat from your own dashboard. Workbot needs the headless runner. Roll out the runner first so you can verify it before opening Workbot to members.
+Add Workbot to an existing OpenWork Kubernetes deployment so members can chat from your own dashboard. Workbot needs the headless runner. You can enable both in one Helm upgrade, but rolling out the runner first is recommended on initial setup so you can verify storage and runner health before troubleshooting Workbot DNS, TLS, and ingress.
 
 ## Prepare your release and model access
 
