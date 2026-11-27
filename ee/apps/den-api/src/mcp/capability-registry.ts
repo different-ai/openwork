@@ -145,6 +145,7 @@ export type CapabilityRegistryContext = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   managedDeploymentsEnabled: boolean
+  artifactStorageEnabled?: boolean
   toolPermissionsEnabled?: boolean
   limitedAgentRun: boolean
   remoteSessionAnswersAllowed: boolean
@@ -164,7 +165,7 @@ export type CapabilityRegistryContextInput = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "microsoft365ReadResources" | "personalAgents">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "microsoft365ReadResources" | "personalAgents" | "artifactStorage">>
   organizationToolPermissions?: boolean
   audit?: McpAuditPrincipal | null
   usageSource: CapabilityUsageSource
@@ -197,6 +198,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
+    artifactStorageEnabled: input.organizationFeatures.artifactStorage === true,
     toolPermissionsEnabled: input.organizationToolPermissions,
     limitedAgentRun: isLimitedAgentRun(input.principal.scopes),
     remoteSessionAnswersAllowed: input.usageSource === "agent",
@@ -727,11 +729,11 @@ const builtinSkillSource: CapabilitySource = {
     description: skill.description,
     readOnly: true,
     authority: "den",
-    run: async () => (await executeBuiltinSkillCapability(skill.capability, ctx.organizationId))?.content ?? "",
+    run: async () => (await executeBuiltinSkillCapability(skill.capability, ctx.organizationId, { storage: ctx.artifactStorageEnabled === true }))?.content ?? "",
   }))),
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "builtinSkill")) return unknownCapabilityResult(input.name)
-    const result = await executeBuiltinSkillCapability(parsed.name, ctx.organizationId)
+    const result = await executeBuiltinSkillCapability(parsed.name, ctx.organizationId, { storage: ctx.artifactStorageEnabled === true })
     return result
       ? { content: textContent(JSON.stringify(result, null, 2)) }
       : unknownCapabilityResult(input.name)

@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto"
 import type { McpServer } from "@modelcontextprotocol/server"
-import type { McpAppToolBinding, McpAppToolDeclaration, PrepareMcpAppInput, PrepareMcpAppOutput } from "@openwork/types/mcp-app"
+import { MCP_APP_STORAGE_META, MCP_APP_STORAGE_READ_TOOL_NAME, MCP_APP_STORAGE_WRITE_TOOL_NAME } from "@openwork/types/mcp-app"
+import type { McpAppStorage, McpAppStorageCollection, McpAppToolBinding, McpAppToolDeclaration, PrepareMcpAppInput, PrepareMcpAppOutput } from "@openwork/types/mcp-app"
 import { generatedAppLibrariesNextStep } from "../generated-app-libraries.js"
 import { runsWithoutClick } from "./app-tool-access.js"
 
-export type AppStarterPattern = "lookup" | "action" | "standalone"
+export type AppStarterPattern = "lookup" | "action" | "standalone" | "records"
 
 export const APP_STARTER_RESOURCE_ROOT = "openwork://apps/starters"
 export const appStarterResourceUri = (pattern: AppStarterPattern) => `${APP_STARTER_RESOURCE_ROOT}/${pattern}.json`
 
 export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[]): PrepareMcpAppOutput {
-  const starter = appStarter(tools)
+  const starter = appStarter(tools, input.storage)
   return {
     preparationId: randomUUID(),
     title: input.title,
@@ -41,7 +42,21 @@ export function appStarterPattern(tools: McpAppToolBinding[]): AppStarterPattern
   return tools.some((tool) => !runsWithoutClick(tool)) ? "action" : "lookup"
 }
 
-export function appStarter(tools: McpAppToolBinding[]) {
+export function appStarter(tools: McpAppToolBinding[], storage?: McpAppStorage) {
+  const collection = storage?.collections[0]
+  if (collection) {
+    return {
+      pattern: "records" as const,
+      reactSource: [STARTER_HEADER, collectionLiteral(collection), sharedSource(true), RECORDS_SOURCE].join("\n"),
+      cssSource: STARTER_CSS + RECORDS_CSS,
+      nextSteps: [
+        "Starter: records. It shows the latest rows in the first collection and adds, edits a choice, or deletes a row from its own button.",
+        "Rename the row and button labels to the person’s words. Choose the fields that matter most in each row. The list starts at 8 rows and can expand to 200; add filters or paging if the person needs older rows.",
+        ...(tools.length ? [`Also declared but not wired yet: ${tools.map((tool) => tool.name).join(", ")}. Give each write its own button.`] : []),
+        "Keep useTheme, the load on open, and the saved-data blocked state. Then call create_app with this preparationId and the same storage declaration.",
+      ],
+    }
+  }
   const pattern = appStarterPattern(tools)
   if (pattern === "standalone") {
     return {
@@ -187,7 +202,31 @@ function jsString(text: string): string {
 const STARTER_HEADER = `// OpenWork App starter. Keep useTheme, useToolCall and the state components:
 // they follow the host's rules. Make the App component the view the person asked for.`
 
-const SHARED_SOURCE = `
+function collectionLiteral(collection: McpAppStorageCollection): string {
+  const label = humanize(collection.name).toLowerCase()
+  const singular = label.replace(/ies$/u, "y").replace(/(ch|sh|x|ss|zz)es$/u, "$1").replace(/(?<![su])s$/u, "")
+  const plural = singular === label ? label + (/(?:ch|sh|x|ss|zz|us)$/u.test(label) ? "es" : "s") : label
+  const fields = collection.fields.map((field) => `    { ${[
+    `name: ${jsString(field.name)}`,
+    `label: ${jsString(humanize(field.name))}`,
+    `type: ${jsString(field.type)}`,
+    `kind: ${jsString(field.options ? "select" : field.type === "boolean" ? "checkbox" : field.type)}`,
+    `required: ${field.required ?? false}`,
+    ...(field.options ? [`options: [${field.options.map(jsString).join(", ")}]`] : []),
+  ].join(", ")} },`)
+  return [
+    "const COLLECTION = {",
+    `  name: ${jsString(collection.name)},`,
+    `  singular: ${jsString(singular)},`,
+    `  plural: ${jsString(plural)},`,
+    `  scope: ${jsString(collection.scope ?? "shared")},`,
+    `  edit: ${jsString(collection.edit ?? "anyone")},`,
+    "  fields: [", ...fields, "  ],", "};",
+  ].join("\n")
+}
+
+function sharedSource(records = false) {
+  return `
 const MAX_ROWS = 8;
 const MAX_COLUMNS = 4;
 const numberFormat = new Intl.NumberFormat();
@@ -304,26 +343,28 @@ function useToolCall(app, name) {
       ? { status: previous.status === "loading" ? "loading" : "ready", value: valueOf(response), updatedAt: dateOf(meta["openwork/cachedAt"]) ?? new Date(), cached: true }
       : previous);
   }, [app, name, available, cacheable]);
-  const call = React.useCallback(async (args) => {
+  const call = React.useCallback(async (${records ? "args, onSuccess" : "args"}) => {
     if (!available) return false;
     latestArgs.current = JSON.stringify(args);
     const id = ++latest.current;
     setState((previous) => ({ ...previous, status: "loading" }));
     let response;
     try {
-      response = await app.callServerTool({ name, arguments: args, _meta: { "openwork/cache": "store" } });
+      response = await app.callServerTool({ name, arguments: args${records ? "" : ', _meta: { "openwork/cache": "store" }'} });
     } catch (reason) {
       response = { isError: true, content: [{ type: "text", text: reason instanceof Error ? reason.message : String(reason) }] };
     }
     if (id !== latest.current) return false;
     if (response?.isError) {
-      const message = messageOf(response);
-      setState((previous) => ({ ...previous, status: /approv/i.test(message) ? "approval" : "error", message }));
+      ${records ? `const failure = valueOf(response);
+      const error = isRecord(failure) ? failure.error : undefined;
+      const message = isRecord(failure) && typeof failure.message === "string" ? failure.message : messageOf(response);` : "const message = messageOf(response);"}
+      setState((previous) => ({ ...previous, status: /approv/i.test(message) ? "approval" : "error", message${records ? ", error" : ""} }));
       return false;
     }
     // An answer OpenWork already loaded for this open carries the time it loaded.
-    setState({ status: "ready", value: valueOf(response), updatedAt: dateOf(response?._meta?.["openwork/cachedAt"]) ?? new Date() });
-    return true;
+    ${records ? "const value = valueOf(response);\n    " : ""}setState({ status: "ready", value${records ? "" : ": valueOf(response)"}, updatedAt: dateOf(response?._meta?.["openwork/cachedAt"]) ?? new Date() });
+    ${records ? "onSuccess?.(value);\n    " : ""}return true;
   }, [app, name, available]);
   // A result that came with the launch answers like a call that just
   // finished, and wins over any earlier peek or call still running.
@@ -333,7 +374,7 @@ function useToolCall(app, name) {
     ++latestPeek.current;
     setState({ status: "ready", value: valueOf(loaded.result), updatedAt: dateOf(loaded.loadedAt) ?? new Date() });
   }, []);
-  return { ...state, available, call, peek, seed };
+  ${records ? 'const clearUnavailable = () => setState((previous) => previous.error === "storage_unavailable" ? { status: "idle" } : previous);\n  ' : ""}return { ...state, available, call, peek, seed${records ? ", clearUnavailable" : ""} };
 }
 
 function humanize(key) {
@@ -385,7 +426,7 @@ function initialValues(fields, launchInput) {
   const values = {};
   for (const field of fields) {
     const source = field.placement ? launchInput?.[field.placement] : launchInput;
-    const launched = isRecord(source) ? source[field.name] : undefined;
+    const launched = isRecord(source)${records ? " && Object.hasOwn(source, field.name)" : ""} ? source[field.name] : undefined;
     // A required choice starts on its first option, as the select shows it.
     const value = launched ?? field.defaultValue ?? (field.kind === "select" && field.required ? field.options[0] : undefined);
     values[field.name] = field.kind === "checkbox" ? value === true : value === undefined || value === null ? "" : String(value);
@@ -440,12 +481,12 @@ function Field({ field, value, onChange, onEnter }) {
       <span>{field.label}</span>
       {field.kind === "select" ? (
         <select value={value} required={field.required} onChange={(event) => onChange(event.target.value)}>
-          {field.required ? null : <option value="">Any</option>}
+          {field.required ? null : <option value="">${records ? "None" : "Any"}</option>}
           {field.options.map((option) => <option key={String(option)} value={String(option)}>{optionLabel(option)}</option>)}
         </select>
       ) : (
         <input
-          type={field.kind === "text" ? "text" : "number"}
+          type={${records ? "field.kind" : 'field.kind === "text" ? "text" : "number"'}}
           step={field.kind === "integer" ? 1 : "any"}
           value={value}
           required={field.required}
@@ -532,6 +573,10 @@ function ResultView({ value, emptyText }) {
   return <p className="focal">{formatValue(value)}</p>;
 }
 `
+
+}
+
+const SHARED_SOURCE = sharedSource()
 
 const LOOKUP_SOURCE = `
 export default function App({ app, input, result, hostContext }) {
@@ -712,6 +757,197 @@ export default function App({ input, hostContext }) {
 }
 `
 
+const RECORDS_SOURCE = `
+const READ = ${jsString(MCP_APP_STORAGE_READ_TOOL_NAME)};
+const WRITE = ${jsString(MCP_APP_STORAGE_WRITE_TOOL_NAME)};
+const READ_ARGS = { collection: COLLECTION.name };
+const EXPANDED_LIMIT = 200;
+const choice = COLLECTION.fields.find((field) => field.options);
+const leadField = COLLECTION.fields.find((field) => field !== choice && field.type === "text") ?? COLLECTION.fields[0];
+
+function recordTitle(row) {
+  const value = row.values[leadField.name];
+  return value === null || value === undefined || value === "" ? "Untitled " + COLLECTION.singular
+    : leadField.options ? optionLabel(value) : formatValue(value);
+}
+
+function RecordRow({ row, pending, setPending, disabled, save }) {
+  const canChange = row.mine || (COLLECTION.scope === "shared" && COLLECTION.edit === "anyone");
+  const active = pending?.id === row.id ? pending : null;
+  const title = recordTitle(row);
+  const author = row.mine ? "You" : row.createdBy || "A member";
+  return (
+    <li className="record-row">
+      <div className="record-text">
+        <span className="record-title" title={title}>{title}</span>
+        <span className="meta">{author}, {formatValue(row.createdAt)}</span>
+      </div>
+      {canChange ? (
+        <div className="record-actions">
+          {active?.kind === "delete" ? (
+            <>
+              <button type="button" className="quiet" data-tone="danger" disabled={disabled} onClick={() => save({ action: "delete", id: row.id })}>Delete?</button>
+              <button type="button" className="quiet" disabled={disabled} onClick={() => setPending(null)}>Cancel</button>
+            </>
+          ) : active?.kind === "edit" ? (
+            <>
+              <select aria-label={choice.label} value={active.value} disabled={disabled} onChange={(event) => setPending({ ...active, value: event.target.value })}>
+                <option value="" disabled={choice.required}>{choice.required ? "Choose" : "None"}</option>
+                {choice.options.map((option) => <option key={option} value={option}>{optionLabel(option)}</option>)}
+              </select>
+              <button type="button" className="quiet" disabled={disabled || (choice.required && !active.value) || active.value === (row.values[choice.name] ?? "")} onClick={() => save({ action: "update", id: row.id, values: { [choice.name]: active.value || null } })}>Save {choice.label.toLowerCase()}</button>
+              <button type="button" className="quiet" disabled={disabled} onClick={() => setPending(null)}>Cancel</button>
+            </>
+          ) : (
+            <>
+              {choice ? (
+                <button type="button" className="quiet record-choice" aria-label={"Change " + choice.label.toLowerCase() + " for " + title} disabled={disabled} onClick={() => setPending({ kind: "edit", id: row.id, value: row.values[choice.name] ?? "" })}>
+                  {row.values[choice.name] ? optionLabel(row.values[choice.name]) : "Set " + choice.label.toLowerCase()}
+                </button>
+              ) : null}
+              <button type="button" className="quiet" aria-label={"Delete " + title} disabled={disabled} onClick={() => setPending({ kind: "delete", id: row.id })}>Delete</button>
+            </>
+          )}
+        </div>
+      ) : choice && row.values[choice.name] ? <span className="meta">{optionLabel(row.values[choice.name])}</span> : null}
+    </li>
+  );
+}
+
+export default function App({ app, input, result, hostContext }) {
+  const theme = useTheme(hostContext);
+  const load = useToolCall(app, READ);
+  const write = useToolCall(app, WRITE);
+  const [values, setValues] = React.useState(() => initialValues(COLLECTION.fields, input));
+  const [data, setData] = React.useState(null);
+  const [pending, setPending] = React.useState(null);
+  const loadedLaunch = React.useRef(null);
+  const wanted = React.useRef(MAX_ROWS);
+  const writing = React.useRef(false);
+  const writeBusy = write.status === "loading";
+  const availability = result?._meta?.[${jsString(MCP_APP_STORAGE_META)}];
+  const unavailable = availability?.available === false;
+
+  function readRows() {
+    return load.call({ ...READ_ARGS, limit: wanted.current }, (page) => {
+      const loadedAt = new Date();
+      setData({ ...page, loadedAt, updatedAt: loadedAt });
+      write.clearUnavailable();
+    });
+  }
+
+  function showAll() {
+    wanted.current = EXPANDED_LIMIT;
+    readRows();
+  }
+
+  // Wait for the launch and for the host to support tools. A later launch
+  // refreshes behind the visible rows; let any in-flight change finish first.
+  React.useEffect(() => {
+    if (result === undefined || !load.available || unavailable || writing.current || loadedLaunch.current === result) return;
+    loadedLaunch.current = result;
+    readRows();
+  }, [result, load.available, unavailable, writeBusy]);
+
+  const busy = load.status === "loading" || writeBusy;
+  const entries = argumentsFor(COLLECTION, values);
+  const ready = isReady(COLLECTION.fields, values) && COLLECTION.fields.every((field) => !field.required || Object.hasOwn(entries, field.name));
+  async function save(changes) {
+    if (busy || writing.current || !data || unavailable || !write.available) return;
+    writing.current = true;
+    try {
+      await write.call({ collection: COLLECTION.name, ...changes }, (answer) => {
+        const rows = answer.action === "delete" ? data.rows.filter((row) => row.id !== answer.id)
+          : answer.action === "insert" ? [answer.row, ...data.rows].slice(0, data.limit)
+          : data.rows.map((row) => row.id === answer.id ? answer.row : row);
+        const total = data.total + (answer.action === "insert" ? 1 : answer.action === "delete" ? -1 : 0);
+        setData({ ...data, rows, total, updatedAt: new Date() });
+        if (answer.action === "insert") setValues(initialValues(COLLECTION.fields, {}));
+        if (answer.action === "delete" && rows.length < Math.min(total, wanted.current)) readRows();
+        setPending(null);
+      });
+    } finally {
+      writing.current = false;
+    }
+  }
+
+  if (unavailable || load.error === "storage_unavailable" || write.error === "storage_unavailable") {
+    return <main className="app" style={theme}><p className="notice storage-blocked" role="status"><span className="storage-lock" aria-hidden="true" /><span>Saved data is unavailable. An OpenWork admin can turn it back on.</span></p></main>;
+  }
+  if (!load.available) {
+    return <main className="app" style={theme}><ToolNotice call={load} /></main>;
+  }
+
+  const shown = data?.rows ?? [];
+  const readFailed = load.status === "error" || load.status === "approval";
+  const refreshing = load.status === "loading";
+  const showSkeleton = (!data && load.status === "idle") || (refreshing && shown.length === 0 && data?.total !== 0);
+  return (
+    <main className="app" style={theme}>
+      <fieldset className="controls record-fields" aria-label={"Add " + COLLECTION.singular} disabled={writeBusy}>
+        <Fields fields={COLLECTION.fields} values={values} onChange={setValues} />
+        <button type="button" className="primary" disabled={!data || !ready || busy} onClick={() => { if (ready) save({ action: "insert", values: entries }); }}>Add {COLLECTION.singular}</button>
+      </fieldset>
+      {write.status === "error" || write.status === "approval" ? <p className="notice" role="alert" data-tone="danger">{write.message}</p> : null}
+      <section className="result" aria-label={humanize(COLLECTION.plural)} aria-busy={showSkeleton || refreshing}>
+        {readFailed ? (
+          <div className="notice records-recovery" role="alert" data-tone="danger">
+            <span>{load.message}</span>
+            {shown.length > 0 ? <span className="meta">Couldn't refresh. Showing what loaded at {timeOf(data.loadedAt)}.</span> : null}
+            <button type="button" className="quiet" disabled={busy} onClick={readRows}>Try again</button>
+          </div>
+        ) : null}
+        {showSkeleton ? <div className="records-loading"><Skeleton /></div> : null}
+        {data && (shown.length > 0 || (data.total === 0 && !readFailed)) ? (
+          <p className="meta" role="status">{formatValue(data.total)} {data.total === 1 ? COLLECTION.singular : COLLECTION.plural} · updated {timeOf(data.updatedAt)}</p>
+        ) : null}
+        {data?.total === 0 && !readFailed ? <p className="notice">Nothing saved yet. Add your first {COLLECTION.singular} above.</p> : null}
+        {shown.length > 0 ? (
+          <>
+            <ul className="records">
+              {shown.map((row) => <RecordRow key={row.id} row={row} pending={pending} setPending={setPending} disabled={busy} save={save} />)}
+            </ul>
+            {data.total > shown.length ? (
+              <div className="records-more">
+                <span className="meta">{shown.length < data.limit ? "Showing " : "Showing the latest "}{shown.length}</span>
+                {data.limit < EXPANDED_LIMIT && !readFailed ? <button type="button" className="quiet" disabled={busy} onClick={showAll}>Show all {formatValue(data.total)}</button> : null}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </section>
+    </main>
+  );
+}
+`
+
+const RECORDS_CSS = `
+.record-fields { margin: 0; padding: 0; min-inline-size: 0; border: 0; }
+.records-more, .records-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.records-recovery .meta { flex-basis: 100%; }
+.records-recovery button { margin-left: 0; }
+.records { list-style: none; margin: 0; padding: 0; }
+.record-row { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--color-border-primary, GrayText); }
+.record-text { min-width: 0; display: grid; }
+.record-text > *, .record-choice { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.record-title { font-weight: 500; }
+.record-actions { display: flex; gap: 4px; align-items: center; max-inline-size: 65%; min-width: 0; }
+.record-actions select { min-width: 0; width: auto; flex: 1 1 auto; }
+button.quiet { border-color: transparent; background: transparent; padding: 4px; }
+button.quiet[data-tone="danger"] { color: var(--color-text-danger, CanvasText); }
+.records-loading .skeleton { gap: 0; }
+.records-loading .skeleton-row { height: 44px; border-radius: 0; background: none; border-top: 1px solid var(--color-border-primary, GrayText); display: grid; align-content: center; gap: 4px; }
+.records-loading .skeleton-row::before, .records-loading .skeleton-row::after { content: ""; height: 9px; width: 36%; border-radius: 4px; background: var(--color-background-tertiary, GrayText); }
+.records-loading .skeleton-row::after { width: 24%; }
+.storage-blocked { display: flex; align-items: baseline; gap: 8px; }
+.storage-lock { position: relative; flex: none; width: 10px; height: 8px; border: 1px solid currentColor; border-radius: 2px; }
+.storage-lock::before { content: ""; position: absolute; inset: -6px 1px auto; height: 5px; border: 1px solid currentColor; border-bottom: 0; border-radius: 4px 4px 0 0; }
+@container (max-width: 380px) {
+  .record-row:has(select) { flex-wrap: wrap; padding-block: 4px; }
+  .record-row:has(select) .record-actions { width: 100%; max-inline-size: none; }
+}
+`
+
 const STARTER_CSS = `:root { color-scheme: light dark; }
 body { margin: 0; }
 .app { box-sizing: border-box; container-type: inline-size; display: grid; gap: 12px; min-width: 0; padding: 12px 14px; color: var(--color-text-primary, CanvasText); background: var(--color-background-primary, Canvas); font: 13px/1.5 var(--font-sans, system-ui, sans-serif); }
@@ -817,15 +1053,34 @@ function sampleDeclaration(tool: McpAppToolBinding): McpAppToolDeclaration {
   return { name: tool.name, description: tool.description, capability: tool.capability, ...(tool.mode === "live" ? { mode: "live" as const } : {}) }
 }
 
-export function registerAppStarterResources(server: McpServer) {
-  for (const sample of STARTER_SAMPLES) {
+const RECORDS_SAMPLE = {
+  pattern: "records",
+  title: "Records artifact starter",
+  useWhen: "An intake, tracker, approval queue, or checklist whose rows live in the artifact.",
+  tools: [],
+  textFallback: "Adds requests and shows the latest saved requests.",
+} satisfies StarterSample
+
+const SAMPLE_STORAGE: McpAppStorage = {
+  collections: [{
+    name: "requests",
+    fields: [
+      { name: "title", type: "text", required: true },
+      { name: "status", type: "text", options: ["open", "in_review", "done"], required: true },
+    ],
+  }],
+}
+
+export function registerAppStarterResources(server: McpServer, options?: { storage?: boolean }) {
+  for (const sample of options?.storage ? [...STARTER_SAMPLES, RECORDS_SAMPLE] : STARTER_SAMPLES) {
     const uri = appStarterResourceUri(sample.pattern)
     server.registerResource(`app-starter-${sample.pattern}`, uri, {
       title: sample.title,
       description: sample.useWhen,
       mimeType: "application/json",
     }, async () => {
-      const starter = appStarter(sample.tools)
+      const storage = sample.pattern === "records" ? SAMPLE_STORAGE : undefined
+      const starter = appStarter(sample.tools, storage)
       return {
         contents: [{
           uri,
@@ -837,7 +1092,10 @@ export function registerAppStarterResources(server: McpServer) {
             reactSource: starter.reactSource,
             cssSource: starter.cssSource,
             textFallback: sample.textFallback,
-            note: "prepare_app returns this starter already wired to your verified tools; this copy uses sample tools.",
+            ...(storage ? { storage } : {}),
+            note: storage
+              ? "prepare_app returns this starter wired to your first collection; this copy uses a sample collection."
+              : "prepare_app returns this starter already wired to your verified tools; this copy uses sample tools.",
           }),
         }],
       }

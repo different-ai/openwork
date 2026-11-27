@@ -47,6 +47,7 @@ const publicSharingResponse = z.object({
   revisionId: mcpAppRevisionIdSchema,
   publicUrl: z.url().nullable(),
   canPublish: z.boolean(),
+  blockedBy: z.enum(["tools", "storage"]).nullable(),
 }).meta({ ref: "McpAppPublicSharingResponse" })
 
 const publicSharingError = z.object({ error: z.string(), message: z.string() })
@@ -57,7 +58,7 @@ function describePublicSharing(write: boolean) {
     tags: ["Artifacts"],
     ...{ "x-mcp": false },
     summary: write ? "Change an artifact's public link" : "Read an artifact's public link settings",
-    description: "Requires manager access to the artifact. Only artifacts with no bound tools can be public. A public link allows anyone to open the artifact without signing in and does not grant access to the Plugin or connected data.",
+    description: "Requires manager access to the artifact. Only artifacts with no bound tools and no saved data can be public; blockedBy names what prevents it. A public link allows anyone to open the artifact without signing in and does not grant access to the Plugin or connected data.",
     responses: {
       200: jsonResponse("Current public link settings.", publicSharingResponse),
       400: jsonResponse("Invalid artifact or request.", invalidRequestSchema),
@@ -65,7 +66,7 @@ function describePublicSharing(write: boolean) {
       403: jsonResponse("The caller must manage this artifact.", forbiddenSchema),
       404: jsonResponse("The artifact is unavailable.", notFoundSchema),
       ...(write ? {
-        409: jsonResponse("The artifact has changed or uses tools.", publicSharingError),
+        409: jsonResponse("The artifact has changed, uses tools, or saves data.", publicSharingError),
         422: jsonResponse("The revision failed its integrity check.", publicSharingError),
       } : {}),
     },
@@ -77,7 +78,7 @@ async function publicSharing<T extends { Variables: OrgRouteVariables }>(
 ) {
   c.header("Cache-Control", "no-store")
   try {
-    const { revisionId, public: isPublic, canPublish } = await changeMcpAppPublicSharing({
+    const { revisionId, public: isPublic, canPublish, blockedBy } = await changeMcpAppPublicSharing({
       context: {
         organizationContext: c.get("organizationContext"),
         memberTeams: c.get("memberTeams") ?? [],
@@ -87,7 +88,7 @@ async function publicSharing<T extends { Variables: OrgRouteVariables }>(
       change,
     })
     const publicUrl = isPublic ? `${resolvePublicOrigin(c.req.raw, env.apiPublicUrl)}${mcpAppPublicPath(appId)}` : null
-    return c.json({ revisionId, publicUrl, canPublish })
+    return c.json({ revisionId, publicUrl, canPublish, blockedBy })
   } catch (error) {
     if (error instanceof McpAppError) return c.json({ error: error.code, message: error.message }, error.status)
     if (error instanceof PluginArchAuthorizationError) return c.json({ error: error.error, message: error.message }, error.status)
