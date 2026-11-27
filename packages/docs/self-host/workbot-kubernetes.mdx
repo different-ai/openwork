@@ -42,7 +42,8 @@ headlessRunner:
   enabled: true
   model:
     protocol: openai-responses
-    alias: REPLACE_WITH_YOUR_GATEWAY_ALIAS
+    # Copy the full Gateway model ID (gwm_…) from step 4 above.
+    alias: REPLACE_WITH_GATEWAY_MODEL_ID
   secret:
     existingSecret: runner-runtime
   persistence:
