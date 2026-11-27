@@ -11,6 +11,16 @@ asked sees the repository, the new branch, the files changed and the test
 result, and chooses **Deny** or **Allow once**. The pull request then opens
 under that person's own GitHub identity.
 
+![Cloud coding in Den, connected to GitHub](./connected.png)
+
+| | |
+| --- | --- |
+| Before GitHub is connected | ![Cloud coding before GitHub is connected](./not-connected.png) |
+| People and their GitHub links | ![People and their GitHub link status](./people.png) |
+| Who can use it | ![Choosing who can use Cloud coding](./who-can-use-it.png) |
+| What a member who cannot manage sees | ![The same page read-only for a member](./member-read-only.png) |
+| Linking your own account | ![The personal GitHub link page](./link-your-account.png) |
+
 ## Try it
 
 1. A person creates the "OpenWork Cloud coding" GitHub App once per deployment
@@ -245,6 +255,24 @@ changes.
 The cloud computer image needs `git` (added to
 `ee/apps/den-worker-runtime/Dockerfile.daytona-snapshot`); rebuild the snapshot
 before turning the feature on.
+
+## Rollout
+
+1. Create the GitHub App and set the variables above on Den API (cloud).
+2. Rebuild the cloud computer snapshot so it has `git`.
+3. Turn `cloudCoding` on for our own organization in `/admin`, connect one
+   test repository and open one pull request end to end.
+4. Turn it on for more organizations one at a time, watching the
+   `cloud_coding.*` audit events (`push.refused` with its reason is the one to
+   read first).
+5. Anything wrong: turn it off everywhere in `/admin`. Cloud computers that are
+   mid-task get `feature_disabled` on their next gateway call; nothing is
+   pushed without an approval either way.
+
+Nobody is affected until the feature is turned on for their organization: the
+tables are new, the routes answer `feature_disabled`, and the only code that
+runs for every organization is the cleanup on member removal, which deletes
+from the new tables.
 
 ## Not in this feature
 
