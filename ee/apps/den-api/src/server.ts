@@ -15,6 +15,7 @@ import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
 import { startScimMaintenanceLoop } from "./scim-maintenance.js"
+import { startMcpAppStorageDeleteRetries } from "./mcp-app-storage/lifecycle.js"
 import { startBillingInvitationExpiryLoop } from "./billing-invitation-expiry.js"
 import { startSandboxExpiryLoop } from "./sandbox-organizations.js"
 import { startLifecycleEmailLoop } from "./lifecycle-emails/index.js"
@@ -46,6 +47,7 @@ const stopHarnessFeedbackWorker = startHarnessFeedbackWorker()
 const stopSupportTriageWorker = startSupportTriageWorker()
 const stopHarnessFeedbackNotifier = startHarnessFeedbackNotifier()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
+const stopMcpAppStorageDeleteRetries = startMcpAppStorageDeleteRetries()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
 const stopSandboxExpiryLoop = startSandboxExpiryLoop()
 const stopLifecycleEmailLoop = startLifecycleEmailLoop()
@@ -89,6 +91,7 @@ const OBSERVABILITY_SHUTDOWN_TIMEOUT_MS = 2_500
 async function stopBackgroundLoops() {
   clearInterval(toolCacheMaintenance)
   stopModelsAnalyticsExportLoop()
+  stopMcpAppStorageDeleteRetries()
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
     stopBillingInvitationExpiryLoop(),

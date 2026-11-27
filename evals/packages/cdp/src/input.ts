@@ -2,7 +2,7 @@ import { callFunctionOnSurface, evaluateOnSurface } from "./surface.ts";
 import type { Surface } from "./surface.ts";
 import type { CdpClient } from "./cdp.ts";
 
-export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar" | "radio" | "dialog";
+export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar" | "radio" | "dialog" | "status";
 export type TargetMatcher = string | RegExp;
 
 export type Target = string | {
@@ -258,8 +258,8 @@ async function nodeRect(client: CdpClient, nodeId: unknown): Promise<Located["re
 type FrameBoundary = { client: CdpClient; node: Record<string, unknown> };
 
 async function locateMcpApp(surface: Surface, target: Exclude<Target, string>): Promise<Located> {
-  if (!target.mcpApp || !["button", "heading"].includes(target.role ?? "")) {
-    throw new Error("MCP App targets require an explicit button or heading role.");
+  if (!target.mcpApp || !["button", "heading", "textbox", "status"].includes(target.role ?? "")) {
+    throw new Error("MCP App targets require an explicit button, heading, textbox or status role.");
   }
   await surface.client.send("DOM.enable");
   const document = await surface.client.send("DOM.getDocument", { depth: -1, pierce: true });
@@ -277,8 +277,11 @@ async function locateMcpApp(surface: Surface, target: Exclude<Target, string>): 
   const candidates: { node: Record<string, unknown>; client: CdpClient; boundaries: FrameBoundary[]; ancestors: FrameBoundary[] }[] = [];
   const visit = async (value: unknown, client: CdpClient, boundaries: FrameBoundary[], insideFrame: boolean, ancestors: FrameBoundary[] = []): Promise<void> => {
     if (!isRecord(value)) return;
-    const role = domAttribute(value, "role") ?? (value.nodeName === "BUTTON" ? "button" : /^H[1-6]$/.test(String(value.nodeName)) ? "heading" : "");
-    if (insideFrame && role === target.role && matches(target.label, domAttribute(value, "aria-label") ?? text(value)) && matches(target.text, text(value))) {
+    const textbox = value.nodeName === "TEXTAREA" || (value.nodeName === "INPUT" && !["checkbox", "radio", "button", "submit"].includes(domAttribute(value, "type") ?? "text"));
+    const role = domAttribute(value, "role") ?? (value.nodeName === "BUTTON" ? "button" : /^H[1-6]$/.test(String(value.nodeName)) ? "heading" : textbox ? "textbox" : "");
+    const labelled = textbox ? ancestors.findLast(ancestor => ancestor.node.nodeName === "LABEL") : undefined;
+    const name = domAttribute(value, "aria-label") ?? (labelled ? text(labelled.node) : text(value));
+    if (insideFrame && role === target.role && matches(target.label, name) && matches(target.text, text(value))) {
       candidates.push({ node: value, client, boundaries, ancestors });
     }
     const parents = String(value.nodeName).startsWith("#") ? ancestors : [...ancestors, { client, node: value }];

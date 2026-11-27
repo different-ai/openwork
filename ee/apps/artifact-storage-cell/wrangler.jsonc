@@ -1,0 +1,12 @@
+// Keep the script and class names stable: celld derives each cell's identity
+// from both. Renaming either orphans every existing artifact database.
+{
+  "name": "openwork-artifact-storage",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "ARTIFACT_DATABASE", "class_name": "ArtifactDatabase" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ArtifactDatabase"] }]
+}

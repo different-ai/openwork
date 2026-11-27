@@ -12,6 +12,19 @@ export const MCP_APP_LAUNCH_TOOL_NAME = "open_app"
  */
 export const MCP_APP_INITIAL_RESULTS_META = "openwork/initialResults"
 export const MCP_APP_MAX_TOOLS = 20
+/**
+ * The two tools an App that declares storage gets from OpenWork itself: one
+ * reads its saved rows, the other adds, changes or removes one row.
+ */
+export const MCP_APP_STORAGE_READ_TOOL_NAME = "storage_read"
+export const MCP_APP_STORAGE_WRITE_TOOL_NAME = "storage_write"
+/** Launch result _meta key that says whether an App's saved data can be used right now. */
+export const MCP_APP_STORAGE_META = "openwork/storage"
+export const MCP_APP_STORAGE_MAX_COLLECTIONS = 8
+export const MCP_APP_STORAGE_MAX_FIELDS = 24
+export const MCP_APP_STORAGE_MAX_TEXT_LENGTH = 4_000
+export const MCP_APP_STORAGE_MAX_ROW_BYTES = 16 * 1024
+export const MCP_APP_STORAGE_MAX_READ_ROWS = 200
 
 export const mcpAppIdSchema = z.string().length(30).regex(/^cob_[0-7][0-9a-hjkmnp-tv-z]{25}$/u)
 export const mcpAppRevisionIdSchema = z.string().length(30).regex(/^cov_[0-7][0-9a-hjkmnp-tv-z]{25}$/u)
@@ -75,6 +88,95 @@ export const mcpAppToolBindingSchema = z.object({
   schemaDigest: digestSchema.optional(),
 }).strict()
 
+const storageNameSchema = z.string().regex(/^[a-z][a-z0-9_]{0,39}$/u, "Use a lowercase snake_case name of at most 40 characters.")
+
+/**
+ * One value a saved row holds. `options` limits a text field to a fixed set,
+ * such as the stages of a tracker. OpenWork checks every value against its
+ * field before it is saved, so App code cannot store anything else.
+ */
+export const mcpAppStorageFieldSchema = z.object({
+  name: storageNameSchema.refine((name) => name !== "id", "id is set by OpenWork."),
+  type: z.enum(["text", "number", "boolean", "date"]),
+  required: z.boolean().optional(),
+  options: z.array(z.string().trim().min(1).max(80)).min(1).max(50).optional(),
+}).strict().refine((field) => field.options === undefined || field.type === "text", "Only a text field can have options.")
+
+/**
+ * A named set of rows in the App's own database. `scope` decides who sees a
+ * row: `shared` (default) is everyone who can use the App, `personal` is only
+ * the person who added it. `edit` decides who may change or remove a shared
+ * row: `anyone` (default) who can use the App, or only its `creator`.
+ * OpenWork enforces both on every read and write.
+ */
+export const mcpAppStorageCollectionSchema = z.object({
+  name: storageNameSchema,
+  description: z.string().trim().max(300).optional(),
+  fields: z.array(mcpAppStorageFieldSchema).min(1).max(MCP_APP_STORAGE_MAX_FIELDS)
+    .refine((fields) => new Set(fields.map((field) => field.name)).size === fields.length, "Field names must be unique."),
+  scope: z.enum(["shared", "personal"]).optional(),
+  edit: z.enum(["anyone", "creator"]).optional(),
+}).strict()
+
+/** What an App saves. The data belongs to the App, not to one revision: updating the App keeps its rows. */
+export const mcpAppStorageSchema = z.object({
+  collections: z.array(mcpAppStorageCollectionSchema).min(1).max(MCP_APP_STORAGE_MAX_COLLECTIONS)
+    .refine((collections) => new Set(collections.map((collection) => collection.name)).size === collections.length, "Collection names must be unique."),
+}).strict()
+
+const storageValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()])
+
+export const mcpAppStorageReadInputSchema = z.object({
+  collection: storageNameSchema,
+  where: z.record(z.string(), storageValueSchema).optional(),
+  orderBy: z.string().max(40).optional(),
+  order: z.enum(["asc", "desc"]).optional(),
+  limit: z.number().int().min(1).max(MCP_APP_STORAGE_MAX_READ_ROWS).optional(),
+  offset: z.number().int().min(0).max(1_000_000).optional(),
+}).strict()
+
+export const mcpAppStorageWriteInputSchema = z.object({
+  collection: storageNameSchema,
+  action: z.enum(["insert", "update", "delete"]),
+  id: z.string().min(1).max(64).optional(),
+  values: z.record(z.string(), storageValueSchema).optional(),
+}).strict()
+
+export const mcpAppStorageRowSchema = z.object({
+  id: z.string(),
+  values: z.record(z.string(), storageValueSchema),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  createdBy: z.string(),
+  updatedBy: z.string(),
+  mine: z.boolean(),
+}).strict()
+
+export const mcpAppStorageReadOutputSchema = z.object({
+  collection: z.string(),
+  rows: z.array(mcpAppStorageRowSchema),
+  total: z.number().int().min(0),
+  limit: z.number().int(),
+  offset: z.number().int(),
+}).strict()
+
+export const mcpAppStorageWriteOutputSchema = z.object({
+  collection: z.string(),
+  action: z.enum(["insert", "update", "delete"]),
+  id: z.string(),
+  row: mcpAppStorageRowSchema.optional(),
+}).strict()
+
+/**
+ * What the launch result tells an App about its saved data. `available: false`
+ * means the data is kept but cannot be read or changed right now, and the App
+ * says so instead of showing an empty list.
+ */
+export const mcpAppStorageStatusSchema = z.object({
+  available: z.boolean(),
+  collections: z.array(z.string()),
+}).strict()
+
 export const mcpAppAuthoringSchema = mcpAppSourceSchema.extend({
   title: titleSchema,
   description: descriptionSchema.optional(),
@@ -84,6 +186,7 @@ export const mcpAppAuthoringSchema = mcpAppSourceSchema.extend({
   public: z.boolean().optional(),
   site: z.boolean().optional(),
   publicName: mcpAppPublicNameSchema.optional(),
+  storage: mcpAppStorageSchema.optional(),
 })
 
 /** Correlates preparation and publication in chat; it grants no access or validation. */
@@ -91,6 +194,7 @@ export const prepareMcpAppInputSchema = z.object({
   title: titleSchema,
   description: descriptionSchema.optional(),
   tools: toolDeclarationsSchema.optional(),
+  storage: mcpAppStorageSchema.optional(),
 }).strict()
 export const prepareMcpAppOutputSchema = z.object({
   preparationId: z.uuid(),
@@ -106,6 +210,7 @@ export const createMcpAppInputSchema = mcpAppAuthoringSchema.extend({
 export const updateMcpAppInputSchema = mcpAppAuthoringSchema.extend({
   appId: mcpAppIdSchema,
   expectedRevisionId: mcpAppRevisionIdSchema,
+  storage: mcpAppStorageSchema.nullable().optional(),
 })
 export const readMcpAppInputSchema = z.object({ appId: mcpAppIdSchema }).strict()
 
@@ -135,6 +240,7 @@ export const mcpAppCompiledRevisionSchema = z.object({
   loadsWithLaunch: z.literal(true).optional(),
   public: z.literal(true).optional(),
   site: z.literal(true).optional(),
+  storage: mcpAppStorageSchema.optional(),
 }).strict().refine((value) => byteLength(JSON.stringify(value)) <= MCP_APP_MAX_STORAGE_BYTES)
 
 export const mcpAppToolSummarySchema = z.object({
@@ -168,6 +274,7 @@ export const readMcpAppOutputSchema = z.object({
   app: mcpAppSummarySchema,
   reactSource: z.string(),
   cssSource: z.string(),
+  storage: mcpAppStorageSchema.optional(),
 }).strict()
 
 export type McpAppSummary = z.infer<typeof mcpAppSummarySchema>
@@ -182,6 +289,15 @@ export type PrepareMcpAppOutput = z.infer<typeof prepareMcpAppOutputSchema>
 export type UpdateMcpAppInput = z.infer<typeof updateMcpAppInputSchema>
 export type ReadMcpAppInput = z.infer<typeof readMcpAppInputSchema>
 export type ReadMcpAppOutput = z.infer<typeof readMcpAppOutputSchema>
+export type McpAppStorage = z.infer<typeof mcpAppStorageSchema>
+export type McpAppStorageCollection = z.infer<typeof mcpAppStorageCollectionSchema>
+export type McpAppStorageField = z.infer<typeof mcpAppStorageFieldSchema>
+export type McpAppStorageReadInput = z.infer<typeof mcpAppStorageReadInputSchema>
+export type McpAppStorageWriteInput = z.infer<typeof mcpAppStorageWriteInputSchema>
+export type McpAppStorageRow = z.infer<typeof mcpAppStorageRowSchema>
+export type McpAppStorageReadOutput = z.infer<typeof mcpAppStorageReadOutputSchema>
+export type McpAppStorageWriteOutput = z.infer<typeof mcpAppStorageWriteOutputSchema>
+export type McpAppStorageStatus = z.infer<typeof mcpAppStorageStatusSchema>
 
 /**
  * Each App is served as its own MCP server beside directly exposed Connect
