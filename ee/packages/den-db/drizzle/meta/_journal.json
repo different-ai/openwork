@@ -1548,6 +1548,13 @@
       "when": 1795730817749,
       "tag": "0221_personal_agent_standing_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 222,
+      "version": "5",
+      "when": 1795753228965,
+      "tag": "0222_mcp_app_storage",
+      "breakpoints": true
     }
   ]
 }
