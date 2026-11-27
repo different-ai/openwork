@@ -1,5 +1,7 @@
 import { generateKeyPairSync, randomUUID, verify } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { z } from "zod";
+import { startAcmeGithubGit } from "./mock-github-cloud-coding-git.ts";
 
 export const acmeCloudCodingRepositories = ["acme/storefront", "acme/billing-api", "acme/docs", "acme/mobile-app"] as const;
 type RepositoryName = typeof acmeCloudCodingRepositories[number];
@@ -50,14 +52,16 @@ async function bodyText(request: IncomingMessage) {
 }
 
 /** GitHub's external HTTP seam for the browser proof. No calls leave this lab. */
-export async function startMockGithubCloudCoding(): Promise<MockGithubCloudCodingHandle> {
+export async function startMockGithubCloudCoding(options: { gitDirectory?: string } = {}) {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const clientSecret = randomUUID();
   const webhookSecret = randomUUID();
   const basicAuth = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
   const codes = new Map<string, Login>();
   const userTokens = new Map<string, { login: Login; refresh: string }>();
-  const installTokens = new Map<string, number>();
+  const installTokens = new Map<string, { expires: number; ids?: number[]; contents?: string }>();
+  const isInstallationToken = (token: string) => (installTokens.get(token)?.expires ?? 0) > Date.now();
+  const requestScope = z.object({ repository_ids: z.array(z.number()).optional(), permissions: z.object({ contents: z.string().optional() }).optional() });
   const confirmations = new Map<string, { state: string; login: Login }>();
   let denWebOrigin: string | undefined;
   let login: Login = "maya-chen";
@@ -156,7 +160,9 @@ export async function startMockGithubCloudCoding(): Promise<MockGithubCloudCodin
       if (route === `POST /app/installations/${installationId}/access_tokens`) {
         const access = `ghs_${randomUUID()}`;
         const expires = Date.now() + 3_600_000;
-        installTokens.set(access, expires);
+        const scope = requestScope.parse(JSON.parse(await bodyText(request)));
+        if (scope.repository_ids?.some(id => !selected.some(repo => repo.id === id))) return notFound();
+        installTokens.set(access, { expires, ids: scope.repository_ids, contents: scope.permissions?.contents });
         return json(response, 201, { token: access, expires_at: new Date(expires).toISOString() });
       }
     }
@@ -166,7 +172,7 @@ export async function startMockGithubCloudCoding(): Promise<MockGithubCloudCodin
       const installations = installed ? [installation()] : [];
       return json(response, 200, { total_count: installations.length, installations });
     }
-    const installationToken = (installTokens.get(token) ?? 0) > Date.now();
+    const installationToken = isInstallationToken(token);
     if (route === "GET /installation/repositories") {
       return installationToken ? json(response, 200, { total_count: selected.length, repositories: selected }) : unauthorized();
     }
@@ -174,9 +180,22 @@ export async function startMockGithubCloudCoding(): Promise<MockGithubCloudCodin
       const repository = selected.find(repo => url.pathname === `/repositories/${repo.id}` || url.pathname === `/repos/${repo.full_name}`);
       if (repository) return json(response, 200, repository);
     }
+    if (await git?.handle(request, response, url, {
+      userLogin: user?.login,
+      installationToken: token,
+      installationExists: isInstallationToken,
+      repositorySelected: name => installed && selected.some(repo => repo.full_name === name),
+      installationCanRead: (candidate, name) => {
+        const scope = installTokens.get(candidate);
+        return installed && isInstallationToken(candidate) && scope?.contents === "read"
+          && selected.some(repo => repo.full_name === name && scope.ids?.includes(repo.id));
+      },
+    })) return;
     return notFound();
   }
 
+  await using setup = new AsyncDisposableStack();
+  const git = options.gitDirectory === undefined ? undefined : setup.use(await startAcmeGithubGit(acmeCloudCodingRepositories, options.gitDirectory));
   const server = createServer((req, res) => {
     void handle(req, res).catch(() => json(res, 400, { message: "Invalid request" }));
   });
@@ -187,7 +206,9 @@ export async function startMockGithubCloudCoding(): Promise<MockGithubCloudCodin
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("The GitHub lab did not bind an HTTP port.");
   base = `http://127.0.0.1:${address.port}`;
-  const stop = () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  setup.defer(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const resources = setup.move();
+  const stop = () => resources.disposeAsync();
   return {
     env: {
       GITHUB_CLOUD_CODING_APP_ID: appId,
@@ -199,9 +220,10 @@ export async function startMockGithubCloudCoding(): Promise<MockGithubCloudCodin
       GITHUB_CLOUD_CODING_API_BASE: base,
       GITHUB_CLOUD_CODING_WEB_BASE: base,
     },
-    setDenWebOrigin(origin) { denWebOrigin = new URL(origin).origin; },
-    signInAs(who) { login = who; },
-    setRepositories(names) { selected = repositories.filter(repo => names.includes(repo.full_name)); },
+    git,
+    setDenWebOrigin(origin: string) { denWebOrigin = new URL(origin).origin; },
+    signInAs(who: Login) { login = who; },
+    setRepositories(names: readonly RepositoryName[]) { selected = repositories.filter(repo => names.includes(repo.full_name)); },
     stop,
     [Symbol.asyncDispose]: stop,
   };
