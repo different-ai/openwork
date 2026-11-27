@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { assessFleet, builtCelldVersion, highestPerInstance, liveLeases, publicSummary, renderSummary, slackText, slackWarningsText } from "./celld-fleet-health.mjs"
+import { FLEETS, assessFleet, builtCelldVersion, highestPerInstance, liveLeases, publicSummary, renderSummary, slackText, slackWarningsText } from "./celld-fleet-health.mjs"
 
 const MB = 1024 * 1024
 const LIMIT = 4096 * MB
@@ -103,4 +103,19 @@ test("the celld release is read from the build command", () => {
   assert.equal(builtCelldVersion("curl https://github.com/denoland/celld/releases/download/v0.6.3/celld.gz"), "v0.6.3")
   assert.equal(builtCelldVersion("bash build.sh"), null)
   assert.equal(builtCelldVersion(undefined), null)
+})
+
+test("the artifact storage fleet is reported under its own name", () => {
+  const fleet = FLEETS["artifact-storage"]
+  const instances = [node("r9vw8", 3540), node("tbmtq", 310)]
+  const result = assessFleet({ instances, memoryLimitBytes: LIMIT, logs: { capacityRefusals: 0, fences: 1, windowMinutes: 20 }, settings: healthySettings, fleet })
+  assert.deepEqual(codes(result), ["node_closed", "node_fenced"])
+  assert.match(result.findings[0].text, /the artifact databases it owns stop answering/)
+  assert.match(slackText(result, null, fleet), /^:rotating_light: \*Artifact storage fleet needs attention\*/)
+  assert.match(slackWarningsText(result, fleet), /^:warning: \*Artifact storage fleet: warnings\*/)
+  assert.match(renderSummary(result, { instances, memoryLimitBytes: LIMIT }, fleet), /^### Artifact storage fleet needs attention/)
+  assert.match(publicSummary(result, fleet), /^Artifact storage fleet check: 1 alert, 1 warning\./)
+  assert.equal(publicSummary({ level: "ok", findings: [] }, fleet), "Artifact storage fleet check: healthy.")
+  // The runner's wording is unchanged when no fleet is named.
+  assert.match(assessFleet({ instances, memoryLimitBytes: LIMIT, settings: healthySettings }).findings[0].text, /the conversations it owns stop answering/)
 })

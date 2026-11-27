@@ -1,6 +1,7 @@
 name: Back up the celld bucket
 
-# Copies the production runner's bucket (celld cells under fleet/, kept files under sessions/) into a backup bucket
+# Copies the production celld bucket (the runner's cells under fleet/ and its kept files under sessions/, artifact
+# storage's cells under artifact-storage/) into a backup bucket
 # in another region, one dated snapshot per run. celld's replication protects against losing a node, not against a
 # bug or a bad write deleting data: that would replicate. R2 has no object versioning, so this is the backup.
 #
@@ -61,7 +62,7 @@ jobs:
           set -euo pipefail
           stamp="$(date -u +%Y-%m-%dT%H%MZ)"
           target="s3://$BACKUP_BUCKET/snapshots/$stamp"
-          # ci/ holds throwaway deploy preflights; everything else (fleet/, sessions/) is kept.
+          # ci/ holds throwaway deploy preflights; everything else (fleet/, sessions/, artifact-storage/) is kept.
           # The fleet keeps running while this copies, so celld can delete an object between the listing and its copy
           # (old epochs it cleans up, leases of nodes that left): those fail with NoSuchKey and are skipped. Any other
           # copy failure fails the backup.
@@ -101,15 +102,17 @@ jobs:
           printf '{"snapshot":"%s","objects":%s,"source_objects":%s,"commit":"%s"}\n' "$stamp" "$copied_count" "$source_count" "$GITHUB_SHA" \
             | aws s3 cp - "$target/_snapshot.json" --endpoint-url "$S3_ENDPOINT" --content-type application/json --only-show-errors
 
-      # A cell whose change data is in the bucket but whose ownership record (fleet/cells/<cell>/own.json) is gone: celld
-      # ≥ 0.6.3 refuses it, so its conversation fails until the record is restored, and older nodes start it empty.
+      # A cell whose change data is in the bucket but whose ownership record (<fleet>/cells/<cell>/own.json, where <fleet>
+      # is fleet for the runner and artifact-storage for artifact storage) is gone: celld ≥ 0.6.3 refuses it, so its
+      # conversation or artifact's saved data fails until the record is restored, and older nodes start it empty.
       # celld never deletes the record, so this means something else did (a lifecycle rule, a script). The snapshot above
       # is kept either way. Restoring: OWNER-CELLS.md ("A lost ownership record").
       - name: Check every cell still has its ownership record
         if: steps.configured.outputs.ready == 'true'
         run: |
           set -euo pipefail
-          lost="$(sed -n -E 's#^fleet/cells/([^/]+)/(ltx/.+|own\.json)$#\1 \2#p' "$RUNNER_TEMP/source-keys.txt" \
+          # Cells are told apart by fleet and name: "<fleet>/<cell>".
+          lost="$(sed -n -E 's#^(fleet|artifact-storage)/cells/([^/]+)/(ltx/.+|own\.json)$#\1/\2 \3#p' "$RUNNER_TEMP/source-keys.txt" \
             | awk '{ if ($2 == "own.json") own[$1] = 1; else data[$1] = 1 } END { for (cell in data) if (!(cell in own)) print cell }' \
             | sort)"
           if [ -n "$lost" ]; then
@@ -118,9 +121,9 @@ jobs:
             if printf '%s\n' "$lost" | aws s3 cp - "s3://$BACKUP_BUCKET/$report" --endpoint-url "$S3_ENDPOINT" --only-show-errors > /dev/null 2>&1; then
               echo "The cells are listed in the backup bucket at $report."
             else
-              echo "The list could not be saved to the backup bucket; list fleet/cells/ by hand to find them."
+              echo "The list could not be saved to the backup bucket; list fleet/cells/ and artifact-storage/cells/ by hand to find them."
             fi
-            echo "::error title=celld ownership record lost::$(printf '%s\n' "$lost" | wc -l | tr -d ' ') cell(s) have LTX under fleet/cells/<cell>/ltx/ but no own.json; see OWNER-CELLS.md (\"A lost ownership record\")"
+            echo "::error title=celld ownership record lost::$(printf '%s\n' "$lost" | wc -l | tr -d ' ') cell(s) have LTX under <fleet>/cells/<cell>/ltx/ but no own.json; see OWNER-CELLS.md (\"A lost ownership record\")"
             exit 1
           fi
-          echo "Every cell with change data has its ownership record ($(grep -c '^fleet/cells/[^/]*/own\.json$' "$RUNNER_TEMP/source-keys.txt" || true) records)."
+          echo "Every cell with change data has its ownership record ($(grep -c -E '^(fleet|artifact-storage)/cells/[^/]*/own\.json$' "$RUNNER_TEMP/source-keys.txt" || true) records)."

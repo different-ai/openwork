@@ -2,3 +2,4 @@
 .env
 .env.local
 .celld/
+.deploy.*/

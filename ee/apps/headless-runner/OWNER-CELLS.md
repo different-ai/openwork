@@ -285,7 +285,7 @@ before.
 ## Backups and restore
 
 `.github/workflows/celld-backup.yml` copies the whole bucket (celld cells under `fleet/`, kept files under
-`sessions/`, not `ci/`) once a day into `s3://$CELLD_BACKUP_BUCKET/snapshots/<UTC time>/`, with a `_snapshot.json`
+`sessions/`, artifact storage's own fleet under `artifact-storage/`, not `ci/`) once a day into `s3://$CELLD_BACKUP_BUCKET/snapshots/<UTC time>/`, with a `_snapshot.json`
 recording object counts. The backup bucket's lifecycle rule deletes snapshots after 15 days, which bounds how long a
 deleted conversation survives in backups. Configure it on the `celld-backup` environment: secrets
 `CELLD_BACKUP_R2_ACCESS_KEY_ID` / `CELLD_BACKUP_R2_SECRET_ACCESS_KEY` (an R2 token that reads the live bucket and
@@ -298,12 +298,19 @@ A snapshot is copied from a running fleet, so it is consistent per object, not a
    (`aws s3 sync s3://<backup>/snapshots/<time>/fleet s3://<live>/fleet --delete`, same for `sessions`).
 3. Start the nodes. Cells restore from the restored change chains; writes after the snapshot are lost.
 
+Artifact storage (`ee/apps/artifact-storage-cell`) is a second fleet on the same bucket, under `artifact-storage/`,
+served by its own nodes. Restore it the same way and separately: stop its nodes, sync the snapshot's
+`artifact-storage` over the live prefix, start them. Den's registry of which artifacts have saved data is in Den's
+database, not in the bucket, so an artifact deleted after the snapshot stays deleted in Den even though its database
+is back in the bucket. This restore has not been rehearsed yet.
+
 Rehearse a restore into a throwaway bucket prefix before relying on it.
 
 ### A lost ownership record
 
 Each cell's ownership record, `fleet/cells/<cell>/own.json`, must stay in the bucket for the life of the cell; celld
-never deletes it. If it is gone while the cell's LTX remains, celld ≥ 0.6.3 refuses the cell (requests for it fail and
+never deletes it. The same holds for artifact storage's cells under `artifact-storage/cells/`, which the daily backup
+checks too; read `fleet/` below as that fleet's prefix. If it is gone while the cell's LTX remains, celld ≥ 0.6.3 refuses the cell (requests for it fail and
 nodes log `celld ownership record lost`) instead of starting it with an empty database. The daily backup fails with
 "celld ownership record lost" and saves the list of such cells to the backup bucket under `reports/` (its public
 run log only counts them). Find what deleted the record (a lifecycle rule, a script) and stop

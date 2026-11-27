@@ -120,15 +120,26 @@ bucket prefix beside the headless runner's.
 Run the contract and the row rules against a real celld node with
 `CELLD_BIN=/path/to/celld pnpm --filter @openwork-ee/artifact-storage-cell test:celld`.
 
+OpenWork Cloud runs it as a two-node fleet on its own bucket prefix, beside
+the runner's. The same checks watch both fleets: node memory and settings
+every 15 minutes, and a daily copy of the bucket that also confirms every
+database still has its ownership record. Nothing redeploys the Worker when
+its package changes; that is `deploy:celld`, by hand.
+
 ## Not yet proven
 
-- celld is verified on one `celld dev` node (v0.6.3, macOS arm64) with its
-  local object store: the backend contract, every row rule and cap including
-  racing writers, export, delete, and rows surviving a node restart. An
-  S3-compatible bucket, a fleet of two or more nodes, failover, backup and
-  restore, production latency and exports near the size cap have not been run.
-- No celld fleet for artifact storage is deployed, so the feature cannot be
-  turned on in production until one is and Den has its URL and token.
+- celld (v0.6.3) is verified on one `celld dev` node with its local object
+  store (the backend contract, every row rule and cap including racing
+  writers, export, delete, rows surviving a restart) and on a two-node fleet
+  on a real S3-compatible bucket (the contract, token refusal, write and read
+  latency, a database filled to just under the cap, every node restarted at
+  once with no row lost). The cell package's README has the figures. Losing
+  one node abruptly while it owns busy databases, restoring from a backup,
+  sustained load and a Den export near the size cap have not been run.
+- A running desktop app learns its tool list when it connects. After the
+  feature is turned on for an organization, an agent in an app that was
+  already open has no `read_app_data` or `write_app_data`, and no `storage`
+  on `create_app`, until the app is restarted.
 - A write whose answer is lost on the way back from the backend may have been
   saved; trying again then adds a second row. There is no request id yet.
 - An export taken while people are writing is not a single snapshot.
