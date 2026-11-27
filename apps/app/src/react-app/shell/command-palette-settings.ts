@@ -1,6 +1,6 @@
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import type { PlatformCapabilities } from "@/app/lib/platform-capabilities";
-import { isSettingsTabAllowed, type DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
+import type { DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
 import type { SettingsTab } from "@/app/types";
 import {
   getSettingsNavGroups,
@@ -13,7 +13,6 @@ import { ADVANCED_SETTINGS_SECTIONS } from "@/react-app/domains/settings/advance
 import type { PaletteItem } from "./command-palette-search";
 
 const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
-  ollama: ["local models", "llama", "offline", "on device"],
   ai: ["provider", "providers", "api key", "anthropic", "openai", "openrouter", "google", "gemini", "claude", "gpt", "connect model", "models"],
   preferences: ["default model", "reasoning", "thinking", "compaction", "effort"],
   permissions: ["authorized folders", "folder access", "file access", "allow", "permission denied", "sandbox", "approvals", "file sharing", "uploads", "always allow", "drive", "gmail", "outlook"],
@@ -53,7 +52,6 @@ export function buildCommandPaletteSettingsItems(input: {
     ...nav.hub,
     ...nav.workspace,
     ...nav.global,
-    ...(isSettingsTabAllowed({ tab: "ollama", checkRestriction }) ? ["ollama" as const] : []),
     ...nav.cloud,
   ];
 

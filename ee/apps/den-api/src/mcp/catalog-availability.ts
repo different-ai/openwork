@@ -14,6 +14,12 @@ export function filterGmailThreadRead<T extends { path: string }>(catalog: reado
   return enabled ? catalog : catalog.filter((operation) => operation.path !== GMAIL_THREAD_READ_PATH)
 }
 
+const TEAMS_EVENT_TRANSCRIPT_PATH = "/v1/capabilities/microsoft-365/calendar-events/{eventId}/transcript"
+
+export function filterTeamsMeetingTranscripts<T extends { path: string }>(catalog: readonly T[], enabled?: boolean): readonly T[] {
+  return enabled ? catalog : catalog.filter(({ path }) => path !== TEAMS_EVENT_TRANSCRIPT_PATH)
+}
+
 const microsoftGraphResourceFlags = new Map(microsoftGraphResources.map(({ route, flag }) => [
   `${MICROSOFT_GRAPH_RESOURCE_PREFIX}${route.replace(/:(\w+)/g, "{$1}")}`, flag,
 ]))

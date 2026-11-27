@@ -89,6 +89,15 @@ test("the flag defaults off for every route and both MCP catalogs without blocki
   assert.equal(enabled.status, 200, summary(enabled))
 })
 
+test("turning these resources on leaves the meeting transcript tool off", async () => {
+  const transcript = await api("GET", `${base}/calendar-events/sample-event/transcript`)
+  assert.equal(transcript.status, 404, summary(transcript))
+  assert.deepEqual(transcript.body, { error: "feature_disabled", feature: "teamsMeetingTranscripts" })
+  const token = await den.mintMcpToken(owner, orgId)
+  const found = await den.callMcpTool(token, "search_capabilities", { query: "Teams meeting transcript calendar event", type: "api", limit: 20 })
+  assert.equal(list(field(found.structured ?? found.body, "matches")).some((match) => String(match.name).endsWith("readMicrosoft365CalendarEventTranscript")), false)
+})
+
 test("every enabled resource requires a signed-in member", async () => {
   for (const { route } of cases) {
     const result = await den.request(null, "GET", `${base}${route}`, { orgId })

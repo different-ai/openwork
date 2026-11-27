@@ -99,6 +99,13 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
         detail: "Includes chat read access so OpenWork can find an existing chat; it cannot create a new chat.",
       },
       {
+        key: "teamsTranscriptRead",
+        label: "Read Teams meeting transcripts",
+        scope: "OnlineMeetings.Read + OnlineMeetingTranscript.Read.All",
+        detail: "Reads the transcript of a Teams meeting on the member's calendar. Also needs calendar read. Needs admin consent.",
+        requiresFeature: "teamsMeetingTranscripts",
+      },
+      {
         key: "teamsChannelList",
         label: "List teams and channels",
         scope: "Team.ReadBasic.All + Channel.ReadBasic.All",
