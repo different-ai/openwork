@@ -1123,6 +1123,7 @@ export function SessionPage(props: SessionPageProps) {
   const hasMainContentTakeover = Boolean(props.mainContentTakeover);
   const sidebarOnlyChrome = isMobile && !isElectronRuntime() && shellConfig.sidebar && (!props.primarySlot || props.primarySlotIsConversation) && !hasMainContentTakeover && !props.mainContentHeaderActionsRef && !props.primaryTitle && !props.mainContentTitle;
   const showWorkspaceSetupEmptyState = props.workspaces.length === 0 && !props.selectedSessionId;
+  const compactHeaderTitle = compactChrome && !props.primaryTitle && !props.mainContentTitle && !showWorkspaceSetupEmptyState;
   const showStartupSkeleton =
     !bootOverlayVisible &&
     !props.primarySlot &&
@@ -1644,64 +1645,69 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Back to parent chat</TooltipContent>
                 </Tooltip>
               ) : null}
-              {props.primaryHeader && !hasMainContentTakeover ? null : compactChrome && !props.primaryTitle && !props.mainContentTitle && !showWorkspaceSetupEmptyState ? (
-                <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-[13px] titlebar-no-drag" data-session-header-workspace={workspaceName}>
-                  <span className="max-w-40 shrink-0 truncate px-1 text-dls-secondary">{workspaceName}</span>
-                  <span aria-hidden="true" className="text-dls-secondary/50">/</span>
-                  {!showSessionHeaderFind && !props.currentSessionMenuActions ? (
-                    <h1 data-session-header-title className="truncate px-1.5 text-[13px] font-medium text-dls-text">{selectedSessionTitle || t("session.default_title")}</h1>
-                  ) : <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <Button variant="ghost" size="sm" className="h-7 min-w-0 gap-1 rounded-lg px-1.5 font-normal text-dls-text" aria-label="Session menu" data-session-header-menu>
-                          <h1 data-session-header-title className="truncate text-[13px] font-medium">{selectedSessionTitle || t("session.default_title")}</h1>
-                          <ChevronDown className="size-3.5 shrink-0 text-dls-secondary" />
-                        </Button>
-                      }
-                    />
-                    <DropdownMenuContent align="start" className={cn("w-56", COMPACT_MENU_CONTENT_CLASS)}>
-                      {showSessionHeaderFind && findButtonSessionId ? (
-                        <DropdownMenuItem onClick={() => useSessionFindStore.getState().openFind({ sessionId: findButtonSessionId })}>
-                          <TextSearch className="size-4" />
-                          Find in conversation
-                          <DropdownMenuShortcut>{isMacPlatform() ? "⌘F" : "Ctrl+F"}</DropdownMenuShortcut>
-                        </DropdownMenuItem>
-                      ) : null}
-                      {showSessionHeaderFind && props.currentSessionMenuActions ? <DropdownMenuSeparator /> : null}
-                      {props.currentSessionMenuActions ? <ActionMenuItems actions={props.currentSessionMenuActions} variant="dropdown" /> : null}
-                    </DropdownMenuContent>
-                  </DropdownMenu>}
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span className="relative ms-1 inline-flex size-6 shrink-0 items-center justify-center text-dls-secondary" data-session-header-origin={sessionRunsLocally ? "local" : "remote"}>
-                          {sessionRunsLocally ? <Laptop className="size-4" strokeWidth={1.5} /> : <Cloud className="size-4" strokeWidth={1.5} />}
-                          <span className={cn("absolute end-0.5 top-0.5 size-1.5 rounded-full ring-2 ring-background", props.clientConnected ? "bg-green-9" : "bg-amber-9")} />
-                        </span>
-                      }
-                    />
-                    <TooltipContent>{sessionRunsLocally ? "Runs on this computer" : "Runs remotely"} · {props.clientConnected ? "Connected" : "Not connected"}</TooltipContent>
-                  </Tooltip>
-                </nav>
-              ) : <extensions.HeaderTitle sessionId={props.primaryTitle || props.mainContentTitle ? null : props.selectedSessionId}>
-              <h1 data-session-header-title className={cn("truncate font-medium text-dls-text", !isElectronRuntime() && !props.primaryTitle && !props.mainContentTitle && "max-lg:hidden", props.mainContentHeaderActionsRef ? "text-base leading-6" : "text-[13px]")}>
-                {props.primaryTitle
-                  ? props.primaryTitle
-                  : props.mainContentTitle
-                  ? props.mainContentTitle
-                  : showWorkspaceSetupEmptyState
-                  ? t("session.create_or_connect_workspace")
-                  : selectedSessionTitle || t("session.default_title")}
-              </h1>
-              {!props.primaryTitle && !props.mainContentTitle && !showWorkspaceSetupEmptyState ? (
-                <span
-                  className="hidden min-w-0 shrink-0 items-center gap-1.5 text-[12px] text-dls-secondary lg:flex"
-                  data-session-header-workspace={workspaceName}
-                >
-                  <span aria-hidden="true">·</span>
-                  <span className="max-w-40 truncate">{workspaceName}</span>
-                </span>
-              ) : null}
+              {props.primaryHeader && !hasMainContentTakeover ? null : <extensions.HeaderTitle
+                sessionId={props.primaryTitle || props.mainContentTitle ? null : props.selectedSessionId}
+                layout={compactHeaderTitle ? "compact" : undefined}
+              >
+                {compactHeaderTitle ? (
+                  <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-[13px] titlebar-no-drag" data-session-header-workspace={workspaceName}>
+                    <span className="max-w-40 shrink-0 truncate px-1 text-dls-secondary">{workspaceName}</span>
+                    <span aria-hidden="true" className="text-dls-secondary/50">/</span>
+                    {!showSessionHeaderFind && !props.currentSessionMenuActions ? (
+                      <h1 data-session-header-title className="truncate px-1.5 text-[13px] font-medium text-dls-text">{selectedSessionTitle || t("session.default_title")}</h1>
+                    ) : <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button variant="ghost" size="sm" className="h-7 min-w-0 gap-1 rounded-lg px-1.5 font-normal text-dls-text" aria-label="Session menu" data-session-header-menu>
+                            <h1 data-session-header-title className="truncate text-[13px] font-medium">{selectedSessionTitle || t("session.default_title")}</h1>
+                            <ChevronDown className="size-3.5 shrink-0 text-dls-secondary" />
+                          </Button>
+                        }
+                      />
+                      <DropdownMenuContent align="start" className={cn("w-56", COMPACT_MENU_CONTENT_CLASS)}>
+                        {showSessionHeaderFind && findButtonSessionId ? (
+                          <DropdownMenuItem onClick={() => useSessionFindStore.getState().openFind({ sessionId: findButtonSessionId })}>
+                            <TextSearch className="size-4" />
+                            Find in conversation
+                            <DropdownMenuShortcut>{isMacPlatform() ? "⌘F" : "Ctrl+F"}</DropdownMenuShortcut>
+                          </DropdownMenuItem>
+                        ) : null}
+                        {showSessionHeaderFind && props.currentSessionMenuActions ? <DropdownMenuSeparator /> : null}
+                        {props.currentSessionMenuActions ? <ActionMenuItems actions={props.currentSessionMenuActions} variant="dropdown" /> : null}
+                      </DropdownMenuContent>
+                    </DropdownMenu>}
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span className="relative ms-1 inline-flex size-6 shrink-0 items-center justify-center text-dls-secondary" data-session-header-origin={sessionRunsLocally ? "local" : "remote"}>
+                            {sessionRunsLocally ? <Laptop className="size-4" strokeWidth={1.5} /> : <Cloud className="size-4" strokeWidth={1.5} />}
+                            <span className={cn("absolute end-0.5 top-0.5 size-1.5 rounded-full ring-2 ring-background", props.clientConnected ? "bg-green-9" : "bg-amber-9")} />
+                          </span>
+                        }
+                      />
+                      <TooltipContent>{sessionRunsLocally ? "Runs on this computer" : "Runs remotely"} · {props.clientConnected ? "Connected" : "Not connected"}</TooltipContent>
+                    </Tooltip>
+                  </nav>
+                ) : <>
+                  <h1 data-session-header-title className={cn("truncate font-medium text-dls-text", !isElectronRuntime() && !props.primaryTitle && !props.mainContentTitle && "max-lg:hidden", props.mainContentHeaderActionsRef ? "text-base leading-6" : "text-[13px]")}>
+                    {props.primaryTitle
+                      ? props.primaryTitle
+                      : props.mainContentTitle
+                      ? props.mainContentTitle
+                      : showWorkspaceSetupEmptyState
+                      ? t("session.create_or_connect_workspace")
+                      : selectedSessionTitle || t("session.default_title")}
+                  </h1>
+                  {!props.primaryTitle && !props.mainContentTitle && !showWorkspaceSetupEmptyState ? (
+                    <span
+                      className="hidden min-w-0 shrink-0 items-center gap-1.5 text-[12px] text-dls-secondary lg:flex"
+                      data-session-header-workspace={workspaceName}
+                    >
+                      <span aria-hidden="true">·</span>
+                      <span className="max-w-40 truncate">{workspaceName}</span>
+                    </span>
+                  ) : null}
+                </>}
               </extensions.HeaderTitle>}
               {props.developerMode && !props.mainContentHeaderActionsRef ? (
                 <span className="hidden text-[12px] text-dls-secondary lg:inline">
