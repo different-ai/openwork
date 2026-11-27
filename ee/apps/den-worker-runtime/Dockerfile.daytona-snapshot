@@ -71,7 +71,7 @@ ARG OPENCODE_VERSION
 ARG OPENCODE_DOWNLOAD_URL=
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl tar unzip \
+  && apt-get install -y --no-install-recommends ca-certificates curl git tar unzip \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=openwork-builder /tmp/openwork-server /usr/local/bin/openwork-server
@@ -130,6 +130,7 @@ RUN if [ "$RUNTIME_ASSERTS" = "1" ]; then \
     && test -f /opt/openwork/opencode-plugins/openwork-office-attachments.js \
     && test -f /opt/openwork/opencode-plugins/openwork-anthropic-adaptive-thinking.js \
     && test -f /opt/openwork/opencode-plugins/openwork-anthropic-tool-schema.js \
+    && git --version \
     && test "$(openwork-server --version)" = "$OPENWORK_SERVER_VERSION" \
     && opencode --version \
     && "$OPENWORK_OPENCODE2_BIN" --version | node -e 'const fs=require("node:fs"); const expected=require("/tmp/openwork-constants.json").opencodeV2Version; const actual=fs.readFileSync(0,"utf8").trim().replace(/^opencode v?/, ""); if(actual!==expected) throw new Error(`OpenCode v2 version mismatch: ${actual}`)'; \
