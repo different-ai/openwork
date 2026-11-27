@@ -5,13 +5,17 @@ import { localSandboxRuntime, type createLocalSandboxRuntime } from "./local-san
 import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 
+import { createComputerService } from "./computers/service.js";
+import { computersSandboxConflict } from "./computers/tool-names.js";
+
 const requestSchema = z.object({
-  operation: z.enum(["status", "prompt", "execute", "host"]), directory: z.string().min(1).max(4096),
+  operation: z.enum(["status", "prompt", "execute", "host", "computers-status", "computer-binding", "computer-select", "computer-execute"]), directory: z.string().min(1).max(4096),
   name: z.string().min(1).max(80).optional(), input: z.unknown().optional(),
   sessionId: z.string().min(1).max(256).optional(), callId: z.string().min(1).max(256).optional(),
 }).strict();
 
 export async function createSandboxToolsBridge(config: ServerConfig, runtime: ReturnType<typeof createLocalSandboxRuntime> = localSandboxRuntime(config)) {
+  const computers = createComputerService(config, managedDesktopPolicy(config).computersDen);
   const token = randomBytes(32).toString("base64url");
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     const supplied = Buffer.from(request.headers.get("authorization") ?? "");
@@ -31,6 +35,22 @@ export async function createSandboxToolsBridge(config: ServerConfig, runtime: Re
       if (call.operation === "host") {
         await managedDesktopPolicy(config).assertHostExecution();
         return Response.json({ allowed: true });
+      }
+      if (call.operation === "computers-status") return Response.json(await computers.status());
+      if (call.operation === "computer-binding" || call.operation === "computer-select" || call.operation === "computer-execute") {
+        if (!call.sessionId) return new Response(null, { status: 400 });
+        if (call.operation === "computer-select") {
+          if ((await runtime.status(call.directory)).mode !== "off") throw new Error(computersSandboxConflict);
+          const { computer } = z.strictObject({ computer: z.string().max(256).optional() }).parse(call.input);
+          return Response.json({ text: await computers.select(call.directory, call.sessionId, computer) });
+        }
+        const binding = await computers.binding(call.directory, call.sessionId);
+        if (call.operation === "computer-binding") return Response.json({ binding });
+        if (!binding) return Response.json({ result: null });
+        if (!call.name) return new Response(null, { status: 400 });
+        if ((await runtime.status(call.directory)).mode !== "off") throw new Error(computersSandboxConflict);
+        const result = await computers.execute(binding, call.name, call.input, request.signal);
+        return Response.json({ result }, { headers: { "Cache-Control": "no-store" } });
       }
       if (!call.name || !call.sessionId) return new Response(null, { status: 400 });
       const result = await runtime.execute(call.directory, call.name, call.input, {

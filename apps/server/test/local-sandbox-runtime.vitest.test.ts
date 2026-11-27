@@ -45,7 +45,7 @@ test("the managed v2 config registers the sandbox plugin only with the host brid
   const base = { providers: [], skills: [], sandboxPluginDirectory: "/plugins/sandbox" };
   expect(renderOpencodeV2Config(base).plugins).toBeUndefined();
   const rendered = renderOpencodeV2Config({ ...base, contextTools: { url: "http://127.0.0.1:1/read", token: "read", sandbox: { url: "http://127.0.0.1:2/sandbox", token: "sandbox" } } });
-  expect(rendered.plugins).toEqual([{ package: "file:///plugins/sandbox", options: { url: "http://127.0.0.1:2/sandbox", token: "sandbox" } }]);
+  expect(rendered.plugins).toEqual([{ package: "file:///plugins/sandbox", options: { url: "http://127.0.0.1:2/sandbox", token: "sandbox", computers: true } }]);
 });
 
 test("fresh verification refuses an unreachable Den and never bypasses existing edit restrictions", async () => {
