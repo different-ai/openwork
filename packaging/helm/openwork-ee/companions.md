@@ -51,6 +51,7 @@ include real member sign-in, a granted model reply and stored-data recovery.
   mount its claim in another writer. Take a consistent SQLite backup including
   its WAL, and back up `/var/data/files` together with the database.
 - Create operator-owned Secrets before the upgrade, in the release namespace.
+  The deployment operator generates all four values. OpenWork does not issue them.
   The chart never creates, updates, rotates or deletes these companion Secrets.
   Use your secret manager, External Secrets, or another approved secure path.
   Never put the values in Helm values, command-line flags or Git.

@@ -18,7 +18,11 @@ Add Workbot to an existing OpenWork Kubernetes deployment so members can chat fr
 
 ## Prepare Secrets, storage and HTTPS
 
-Create two existing Kubernetes Secrets in the release namespace through your secret manager. Keep them separate from the shared Den Secret. Use independent, stable values of at least 32 characters and restrict access to the Secrets. Put only their names in Helm values.
+Generate a different random value for each of the four keys below using your secret manager. These are credentials for your deployment. OpenWork and your model provider do not supply them. Use single-line values of at least 32 characters with no whitespace.
+
+If you generate the values locally, `openssl rand -hex 32` produces 64 hexadecimal characters per run. Generate each value separately and pass the output directly to your secret manager's secure import mechanism without the trailing newline. Do not print the values to the terminal or pass them as command-line arguments.
+
+Provision the two Kubernetes Secrets below in the Helm release namespace, separate from the shared Den Secret. Helm references these Secrets but does not create or rotate them. Restrict access to both Secrets. Put only the Secret names in Helm values, and reuse the same values across upgrades and if you disable and re-enable the workloads.
 
 | Secret name in the example | Required keys | Who receives them |
 | --- | --- | --- |
