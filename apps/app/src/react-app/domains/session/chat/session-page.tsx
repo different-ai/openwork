@@ -2,6 +2,8 @@
 import { focusPaneComposerSoon } from "./workbench-pane-focus";
 import { isOpencodeConfigErrorMessage } from "@openwork/types/opencode-config-error";
 import { childOrigin, prepareChildReturn } from "@/lib/child-navigation";
+import { remoteThreadKeyFromRouteId } from "@/lib/remote-session-route";
+import { RemoteThreadPanel } from "../remote-threads/remote-thread-panel";
 import { newSessionDraftOwnerKey } from "./new-session-destination";
 import { usePendingConversationStore } from "./pending-conversation-store";
 import { PendingConversationView } from "./pending-conversation";
@@ -513,14 +515,15 @@ export function SessionPage(props: SessionPageProps) {
     secondary: splitSession,
     focusedPane: focusedWorkbenchPane,
   } = useRouteWorkbench(workbenchInput);
+  const splitRemoteThreadKey = splitSession ? remoteThreadKeyFromRouteId(splitSession.sessionId) : null;
   const splitPanelOpen = useUiStateStore((state) => (
-    splitSession ? state.sidePanelState[getSidePanelSessionKey(splitSession.sessionId)] != null : false
+    splitSession && !splitRemoteThreadKey ? state.sidePanelState[getSidePanelSessionKey(splitSession.sessionId)] != null : false
   ));
   const primarySidePanelSessionKey = getSidePanelSessionKey(props.selectedSessionId);
   const panelSessionId = panelSessionForWorkbench({
     primarySessionId: props.selectedSessionId ?? null,
     primaryWorkspaceId: props.selectedWorkspaceId,
-    split: splitSession,
+    split: splitRemoteThreadKey ? null : splitSession,
     splitPanelOpen,
     focusedPane: focusedWorkbenchPane,
   });
@@ -1180,7 +1183,7 @@ export function SessionPage(props: SessionPageProps) {
     ? splitSession.workspaceTitle ?? workspaceTitleForId(props.sidebar.workspaceSessionGroups, splitSession.workspaceId)
     : "";
   const splitPaneRuntime: SessionPagePaneRuntime | null = (() => {
-    if (!splitSession) return null;
+    if (!splitSession || splitRemoteThreadKey) return null;
     if (splitSession.workspaceId !== props.selectedWorkspaceId) {
       return props.resolvePaneRuntime?.(splitSession) ?? {
         status: "unavailable",
@@ -1292,8 +1295,13 @@ export function SessionPage(props: SessionPageProps) {
   const closePrimaryWorkbenchPane = useCallback(() => {
     if (!splitSession || splitSession.draftDestination) return;
     setWorkbenchSplit(null);
+    const remoteKey = remoteThreadKeyFromRouteId(splitSession.sessionId);
+    if (remoteKey && props.onOpenRemoteTask) {
+      props.onOpenRemoteTask(remoteKey);
+      return;
+    }
     openSessionTab(splitSession.workspaceId, splitSession.sessionId);
-  }, [openSessionTab, setWorkbenchSplit, splitSession]);
+  }, [openSessionTab, props, setWorkbenchSplit, splitSession]);
 
   const openSubagentSession = useCallback((sessionId: string) => {
     const workspaceId = props.runtimeWorkspaceId ?? props.selectedWorkspaceId;
@@ -2017,7 +2025,7 @@ export function SessionPage(props: SessionPageProps) {
                       </div>
                       </ResizablePanel>
                     ) : null}
-                    {canRenderSplitSurface && splitSession && splitPaneRuntime && (!isMobile || narrowPane === "split") ? (
+                    {canRenderSplitSurface && splitSession && (splitPaneRuntime || splitRemoteThreadKey) && (!isMobile || narrowPane === "split") ? (
                       <>
                         {!isMobile ? <ResizableHandle /> : null}
                         <ResizablePanel
@@ -2030,6 +2038,22 @@ export function SessionPage(props: SessionPageProps) {
                           onPointerDown={() => focusWorkbenchPane("secondary")}
                           onFocusCapture={() => focusWorkbenchPane("secondary")}
                         >
+                          {splitRemoteThreadKey ? (
+                            <RemoteThreadPanel
+                              key={splitSession.sessionId}
+                              tab={{
+                                id: `remote-thread:${splitRemoteThreadKey}`,
+                                type: "remote-thread",
+                                label: splitSession.title?.trim() || "",
+                                threadKey: splitRemoteThreadKey,
+                                owner: { workspaceId: props.selectedWorkspaceId, sessionId: props.selectedSessionId ?? "" },
+                              }}
+                              focused={activeWorkbenchPane === "secondary"}
+                              onFocus={() => focusWorkbenchPane("secondary")}
+                              onExpand={closePrimaryWorkbenchPane}
+                              onClose={closeSecondaryWorkbenchPane}
+                            />
+                          ) : splitPaneRuntime ? (
                           <div className="flex h-full min-h-0 flex-col">
                             <WorkbenchPaneHeader
                               pane="secondary"
@@ -2119,6 +2143,7 @@ export function SessionPage(props: SessionPageProps) {
                               />
                             )}
                           </div>
+                          ) : null}
                         </ResizablePanel>
                       </>
                     ) : null}

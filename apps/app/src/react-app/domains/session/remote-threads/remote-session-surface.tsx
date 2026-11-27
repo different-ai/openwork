@@ -29,6 +29,7 @@ import { useRemoteThreadConversation } from "./use-remote-thread-conversation"
 export type RemoteHelperNavigation = {
   scope: string
   openParent: (sessionId: string) => void
+  openBeside?: (parentSessionId: string, threadKey: string, title: string) => void
   resolveParentTitle?: (sessionId: string) => string | null
 }
 
@@ -119,6 +120,11 @@ export function RemoteSessionHeader({ threadKey, navigation }: { threadKey: stri
           className="shrink-0 gap-1.5 text-muted-foreground hover:text-foreground titlebar-no-drag"
           data-remote-session-open-beside=""
           onClick={() => {
+            if (navigation.openBeside) {
+              navigation.openBeside(parentSessionId, origin.start.key, view.title)
+              returnToParent()
+              return
+            }
             returnToParent()
             openRemoteThreadPanel(parentSessionId, origin.owner.workspaceId, origin.start, view.title)
           }}

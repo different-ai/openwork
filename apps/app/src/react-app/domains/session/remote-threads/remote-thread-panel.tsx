@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { t } from "@/i18n"
 import { cn } from "@/lib/utils"
 import { useLocal } from "@/react-app/kernel/local-provider"
+import { WorkbenchPaneStatus } from "../chat/workbench-pane-status"
 import type { RemoteThreadPanelTab } from "../panel/panel-tab-store"
 import { RemoteThreadAnswerSlot } from "./remote-thread-answer-card"
 import { useFollowRemoteThread, useRemoteThread, type RemoteThreadEntry } from "./remote-thread-store"
@@ -13,8 +14,10 @@ import { REMOTE_THREAD_PAGE_MAX, REMOTE_THREAD_PAGE_SIZE, useRemoteThreadConvers
 import { RemoteFollowUpComposer } from "./remote-follow-up-composer"
 import { RemoteTranscriptView } from "./remote-transcript-view"
 
-export function RemoteThreadPanel({ tab, onClose, onExpand }: {
+export function RemoteThreadPanel({ tab, focused = false, onFocus, onClose, onExpand }: {
   tab: RemoteThreadPanelTab
+  focused?: boolean
+  onFocus?: () => void
   onClose?: () => void
   onExpand?: () => void
 }) {
@@ -23,7 +26,7 @@ export function RemoteThreadPanel({ tab, onClose, onExpand }: {
   if (!entry) {
     return (
       <div className="flex h-full flex-col bg-dls-surface">
-        <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
+        <div className={cn("flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border px-3", focused && "bg-muted/40")}>
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-dls-text">{tab.label}</span>
           {onClose ? (
             <Button variant="ghost" size="icon-xs" aria-label={t("session_management.close_split_view")} title={t("session_management.close_split_view")} onClick={onClose}>
@@ -35,25 +38,28 @@ export function RemoteThreadPanel({ tab, onClose, onExpand }: {
       </div>
     )
   }
-  return <RemoteThreadConversation key={entry.start.key} entry={entry} onClose={onClose} onExpand={onExpand} />
+  return <RemoteThreadConversation key={entry.start.key} entry={entry} focused={focused} onFocus={onFocus} onClose={onClose} onExpand={onExpand} />
 }
 
-function RemoteThreadConversation({ entry, onClose, onExpand }: {
+function RemoteThreadConversation({ entry, focused = false, onFocus, onClose, onExpand }: {
   entry: RemoteThreadEntry
+  focused?: boolean
+  onFocus?: () => void
   onClose?: () => void
   onExpand?: () => void
 }) {
   const conversation = useRemoteThreadConversation(entry)
   const { view, stopping } = conversation
+  const paneStatus = view.waitingFor ? "waiting" : view.state === "running" || view.state === "starting" ? "thinking" : view.state === "error" ? "error" : undefined
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-dls-surface" data-remote-thread-panel={entry.start.key} data-remote-thread-state={view.state}>
-      <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border bg-dls-surface px-3">
-        <div className="flex min-w-0 flex-1 items-center gap-1 text-xs">
-          <span className="max-w-36 shrink-0 truncate text-dls-secondary" data-remote-thread-computer="">{view.computer}</span>
-          <span aria-hidden="true" className="text-dls-secondary/50">/</span>
-          <span className="min-w-0 truncate font-medium text-dls-text" title={view.title}>{view.title}</span>
-        </div>
+      <div className={cn("flex h-10 shrink-0 items-center gap-1 border-b border-border px-3", focused && "bg-muted/40")} data-workbench-pane-header="secondary">
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs" onClick={onFocus}>
+          <WorkbenchPaneStatus status={paneStatus} attentionLabel={view.waitingFor ? view.status : undefined} />
+          <span className="truncate font-medium text-dls-text" title={view.title}>{view.title}</span>
+          <span className="shrink-0 truncate text-muted-foreground" data-remote-thread-computer="">{view.computer}</span>
+        </button>
         {view.active && view.started ? (
           <Button
             variant="ghost"
@@ -92,23 +98,25 @@ function RemoteThreadConversation({ entry, onClose, onExpand }: {
       <RemoteThreadTranscriptBody
         entry={entry}
         conversation={conversation}
-        className="py-4 [&_.md\:px-10]:md:px-4 [&_.md\:px-8]:md:px-3"
+        className="py-4 [&_.md\:px-10]:md:px-6 [&_.md\:px-8]:md:px-4"
       />
 
       <RemoteThreadAnswerSlot entry={entry} conversation={conversation} />
 
-      <RemoteFollowUpComposer
-        draft={conversation.draft}
-        onDraftChange={conversation.setDraft}
-        onSend={() => void conversation.sendFollowUp()}
-        onStop={() => void conversation.stop()}
-        computer={view.computer}
-        running={view.active && view.started}
-        disabled={!view.started}
-        sending={conversation.sending}
-        stopping={stopping}
-        error={conversation.actionError}
-      />
+      <div className="mx-auto w-full max-w-3xl">
+        <RemoteFollowUpComposer
+          draft={conversation.draft}
+          onDraftChange={conversation.setDraft}
+          onSend={() => void conversation.sendFollowUp()}
+          onStop={() => void conversation.stop()}
+          computer={view.computer}
+          running={view.active && view.started}
+          disabled={!view.started}
+          sending={conversation.sending}
+          stopping={stopping}
+          error={conversation.actionError}
+        />
+      </div>
     </div>
   )
 }

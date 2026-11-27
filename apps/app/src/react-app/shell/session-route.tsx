@@ -1658,17 +1658,36 @@ export function SessionRoute() {
   const [automationsHeaderActionsTarget, setAutomationsHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
 
   const remoteTaskRouteActive = Boolean(remoteThreadKey) && !activityRouteActive && !pendingConversation;
+  const resolveParentSessionTitle = useCallback((sessionId: string) => {
+    for (const group of workspaceSessionGroups) {
+      const match = group.sessions.find((session) => session.id === sessionId);
+      if (match?.title?.trim()) return getDisplaySessionTitle(match.title);
+    }
+    return null;
+  }, [workspaceSessionGroups]);
   const remoteHelperNavigation = useMemo(() => ({
     scope: JSON.stringify([opencodeBaseUrl?.trim() ?? "", selectedWorkspaceEndpoint?.workspaceId || null, sessionDraftScope]),
     openParent: (sessionId: string) => navigateToWorkspaceSession(selectedWorkspaceId, sessionId),
-    resolveParentTitle: (sessionId: string) => {
-      for (const group of workspaceSessionGroups) {
-        const match = group.sessions.find((session) => session.id === sessionId);
-        if (match?.title?.trim()) return getDisplaySessionTitle(match.title);
-      }
-      return null;
+    openBeside: (parentSessionId: string, threadKey: string, title: string) => {
+      if (!selectedWorkspaceId) return;
+      const ownerRef = {
+        workspaceId: selectedWorkspaceId,
+        sessionId: parentSessionId,
+        title: resolveParentSessionTitle(parentSessionId) || undefined,
+      };
+      const remoteRef = {
+        workspaceId: selectedWorkspaceId,
+        sessionId: remoteSessionRouteId(threadKey),
+        title,
+      };
+      const workbench = useWorkbenchStore.getState();
+      workbench.openTab(ownerRef);
+      workbench.openTab(remoteRef);
+      workbench.setSideChat(ownerRef, remoteRef);
+      workbench.focusPane("secondary");
     },
-  }), [opencodeBaseUrl, selectedWorkspaceEndpoint?.workspaceId, sessionDraftScope, navigateToWorkspaceSession, selectedWorkspaceId, workspaceSessionGroups]);
+    resolveParentTitle: resolveParentSessionTitle,
+  }), [opencodeBaseUrl, selectedWorkspaceEndpoint?.workspaceId, sessionDraftScope, navigateToWorkspaceSession, selectedWorkspaceId, resolveParentSessionTitle]);
   const openRemoteTask = useCallback((threadKey: string) => {
     navigateToWorkspaceSession(selectedWorkspaceId, remoteSessionRouteId(threadKey));
   }, [navigateToWorkspaceSession, selectedWorkspaceId]);

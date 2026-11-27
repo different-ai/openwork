@@ -7,6 +7,7 @@ import {
   remoteHelperOrigin,
 } from "../src/react-app/domains/session/remote-threads/remote-helper-navigation"
 import { workspaceSessionRoute } from "../src/react-app/shell/workspace-routes"
+import { openWorkbenchTab, setWorkbenchSideChat, syncWorkbenchSnapshot, type WorkbenchSnapshot } from "../src/react-app/domains/session/chat/workbench-store"
 
 test("a task on another computer gets its own session route that is never a local session id", () => {
   const id = remoteSessionRouteId("command:rsc_01abc")
@@ -51,4 +52,23 @@ test("a stored task origin is read back only when it is complete", () => {
   expect(remoteHelperOrigin(origin.start.key, "cloud:member:org")).toEqual(origin)
   expect(remoteHelperOrigin(origin.start.key, "cloud:another:org")).toBeNull()
   expect(remoteHelperOrigin(origin.start.key, null)).toBeNull()
+})
+
+test("opening a remote task beside its parent keeps it in the native workbench split pane across syncs", () => {
+  const parent = { workspaceId: "ws_1", sessionId: "ses_parent", title: "Parent chat" }
+  const remote = { workspaceId: "ws_1", sessionId: remoteSessionRouteId("command:rsc_split"), title: "Remote task" }
+  let state: WorkbenchSnapshot = { revision: 0, primary: null, tabs: [], secondary: null, focusedPane: "primary", sideChats: {} }
+  state = openWorkbenchTab(state, parent)
+  state = openWorkbenchTab(state, remote)
+  state = setWorkbenchSideChat(state, parent, remote)
+  state = syncWorkbenchSnapshot(state, {
+    workspaceId: "ws_1",
+    workspaceTitle: "openwork-repo",
+    primarySessionId: "ses_parent",
+    sessions: [parent],
+    sessionsKnown: true,
+  })
+  expect(state.primary?.sessionId).toBe("ses_parent")
+  expect(state.secondary?.sessionId).toBe("remote:command:rsc_split")
+  expect(state.secondary?.title).toBe("Remote task")
 })
