@@ -22,12 +22,12 @@ Generate a different random value for each of the four keys below using your sec
 
 If you generate the values locally, `openssl rand -hex 32` produces 64 hexadecimal characters per run. Generate each value separately and pass the output directly to your secret manager's secure import mechanism without the trailing newline. Do not print the values to the terminal or pass them as command-line arguments.
 
-Provision the two Kubernetes Secrets below in the Helm release namespace, separate from the shared Den Secret. Helm references these Secrets but does not create or rotate them. Restrict access to both Secrets. Put only the Secret names in Helm values, and reuse the same values across upgrades and if you disable and re-enable the workloads.
+Provision these two Kubernetes Secrets in the Helm release namespace, separate from the shared Den Secret:
 
-| Secret name in the example | Required keys | Who receives them |
-| --- | --- | --- |
-| `runner-runtime` | `HEADLESS_API_TOKEN`, `HEADLESS_DEN_CALLBACK_TOKEN`, `HEADLESS_GRANT_KEY` | The API token goes to the runner, Den API and Workbot; the callback token goes to the runner and Den API; the grant key goes only to the runner. |
-| `workbot-runtime` | `WORKBOT_SESSION_SECRET` | Workbot only. |
+- **`runner-runtime`:** `HEADLESS_API_TOKEN`, `HEADLESS_DEN_CALLBACK_TOKEN` (must differ from `HEADLESS_API_TOKEN`), `HEADLESS_GRANT_KEY`
+- **`workbot-runtime`:** `WORKBOT_SESSION_SECRET`
+
+Helm references these Secrets but does not create or rotate them. Restrict access to both Secrets, put only their names in Helm values, and reuse the same values across upgrades and if you disable and re-enable the workloads. See [Companion Secrets](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/companions.md#companion-secrets) in the chart reference for each key's purpose, which components receive it, key remapping, and rotation effects.
 
 Use a ReadWriteOnce volume for the runner and plan to back up its SQLite database and files together. The runner is a single writer and restarts with a brief interruption during upgrades. Keep its Service private on a trusted cluster network. The [chart reference](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/companions.md) covers existing claims, backups and Pod Security requirements. The companion workloads as rendered do not meet Restricted Pod Security admission.
 
