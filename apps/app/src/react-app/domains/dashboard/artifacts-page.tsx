@@ -125,7 +125,7 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
                 await cache.invalidateQueries({ queryKey: ["built-dashboard-apps", ...built.scope] });
               }} /> : null}
             {selected.kind === "built" ? <>
-              <ArtifactShare key={`${scope}:${selected.id}`} active={active} pluginId={selected.app.pluginId} title={selected.title} />
+              <ArtifactShare key={`${scope}:${selected.id}`} active={active} appId={selected.app.connectionId} pluginId={selected.app.pluginId} title={selected.title} />
               <Button variant="ghost" size="sm" disabled={discuss.isPending} onClick={() => discuss.mutate({ appId: selected.app.connectionId, title: selected.title })}><MessageSquare className="size-4" />Open in chat</Button>
             </> : null}
           </div>
@@ -167,8 +167,8 @@ function ArtifactDelete({ title, active, onDelete }: { title: string; active: bo
   </>;
 }
 
-function ArtifactShare({ pluginId, title, active }: { pluginId: string; title: string; active: boolean }) {
+function ArtifactShare({ appId, pluginId, title, active }: { appId: string; pluginId: string; title: string; active: boolean }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { if (!active) setOpen(false); }, [active]);
-  return <><Button variant="ghost" size="sm" disabled={!active} onClick={() => setOpen(true)}><Share2 className="size-4" />Share</Button><BuiltAppShareDialog pluginId={pluginId} title={title} open={active && open} onOpenChange={setOpen} /></>;
+  return <><Button variant="ghost" size="sm" disabled={!active} onClick={() => setOpen(true)}><Share2 className="size-4" />Share</Button><BuiltAppShareDialog appId={appId} pluginId={pluginId} title={title} open={active && open} onOpenChange={setOpen} /></>;
 }
