@@ -159,6 +159,15 @@ export type Microsoft365TeamsMessage = {
 
 type MutationStatus = 200 | 201 | 202 | 204
 
+type MicrosoftGraphPageLink = { list: string; url: string }
+
+export type MicrosoftGraphPageTokens = {
+  seal(page: MicrosoftGraphPageLink): string
+  open(token: string): MicrosoftGraphPageLink | null
+}
+
+type MicrosoftGraphPage<T> = { items: T[]; nextPageToken: string | null; hasMore: boolean }
+
 type MicrosoftGraphClientOptions = {
   accessToken: string
   baseUrl?: string
@@ -169,6 +178,7 @@ type MicrosoftGraphClientOptions = {
   maxContentCharacters?: number
   signal?: AbortSignal
   ownDriveOnly?: boolean
+  pageTokens?: MicrosoftGraphPageTokens
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -402,7 +412,7 @@ export function extractMicrosoftDriveItem(json: unknown): Microsoft365DriveItem 
   return extractDriveItem(json)
 }
 
-export function extractMicrosoftSearchHits(json: unknown, from: number): { files: Microsoft365DriveItem[]; nextFrom: number | null } {
+export function extractMicrosoftSearchHits(json: unknown, from: number): { files: Microsoft365DriveItem[]; nextFrom: number | null; hasMore: boolean } {
   const root = isRecord(json) ? json : {}
   const response = readArray(root, "value").find(isRecord) ?? {}
   const container = readArray(response, "hitsContainers").find(isRecord) ?? {}
@@ -412,7 +422,8 @@ export function extractMicrosoftSearchHits(json: unknown, from: number): { files
     const item = extractDriveItem(hit.resource, readString(hit, "hitId"))
     if (item.id) files.push(item)
   }
-  return { files, nextFrom: readBoolean(container, "moreResultsAvailable") && hits.length ? from + hits.length : null }
+  const hasMore = readBoolean(container, "moreResultsAvailable")
+  return { files, nextFrom: hasMore && hits.length ? from + hits.length : null, hasMore }
 }
 
 export function extractMicrosoftSites(json: unknown): Microsoft365Site[] {
@@ -433,18 +444,6 @@ export function extractMicrosoftDrives(json: unknown): Microsoft365Drive[] {
     webUrl: readString(drive, "webUrl"),
     driveType: readString(drive, "driveType"),
   })).filter((drive) => Boolean(drive.id))
-}
-
-function nextSkipToken(json: unknown): string | null {
-  const next = isRecord(json) ? readString(json, "@odata.nextLink") : ""
-  if (!next) return null
-  try {
-    for (const [key, value] of new URL(next).searchParams) {
-      if (key.toLowerCase() === "$skiptoken" && value) return value
-    }
-  } catch {
-  }
-  return null
 }
 
 const DRIVE_ITEM_SELECT = "id,name,size,lastModifiedDateTime,webUrl,file,folder,parentReference,eTag,remoteItem"
@@ -550,6 +549,13 @@ export class MicrosoftGraphRequestError extends Error {
   }
 }
 
+export class MicrosoftGraphPageTokenError extends Error {
+  constructor() {
+    super("This page token is not valid any more. Start the list again.")
+    this.name = "MicrosoftGraphPageTokenError"
+  }
+}
+
 export class MicrosoftGraphScopeError extends Error {
   constructor() {
     super("Files outside your own OneDrive need the Microsoft 365 permission to read all files the member can access (or full file access to save them). An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.")
@@ -574,6 +580,7 @@ export class MicrosoftGraphClient {
   private readonly maxContentCharacters: number
   private readonly signal?: AbortSignal
   private readonly ownDriveOnly: boolean
+  private readonly pageTokens?: MicrosoftGraphPageTokens
   private ownDriveId?: Promise<string>
 
   constructor(options: MicrosoftGraphClientOptions) {
@@ -586,6 +593,7 @@ export class MicrosoftGraphClient {
     this.maxContentCharacters = options.maxContentCharacters ?? DEFAULT_MAX_CONTENT_CHARACTERS
     this.signal = options.signal
     this.ownDriveOnly = options.ownDriveOnly ?? false
+    this.pageTokens = options.pageTokens
   }
 
   private url(path: string): URL {
@@ -626,6 +634,34 @@ export class MicrosoftGraphClient {
     }
   }
 
+  private async requestPage<T>(
+    operation: string,
+    list: string,
+    firstPage: URL,
+    pageToken: string | undefined,
+    extract: (json: unknown) => T[],
+    options?: { headers?: (url: URL) => HeadersInit | undefined; beforeRequest?: (url: URL) => Promise<void> },
+  ): Promise<MicrosoftGraphPage<T>> {
+    const base = this.url("")
+    const pageUrl = (link: string) => {
+      const url = URL.parse(link)
+      return url && url.origin === base.origin && url.pathname.startsWith(base.pathname) && !url.username && !url.password ? url : null
+    }
+    let url = firstPage
+    if (pageToken !== undefined) {
+      const page = this.pageTokens?.open(pageToken)
+      const continuation = page?.list === list ? pageUrl(page.url) : null
+      if (!continuation) throw new MicrosoftGraphPageTokenError()
+      url = continuation
+    }
+    await options?.beforeRequest?.(url)
+    const json = await this.requestJson(operation, url, { headers: options?.headers?.(url), redirect: "error" })
+    const hasMore = isRecord(json) && Object.hasOwn(json, "@odata.nextLink")
+    const nextLink = isRecord(json) ? readString(json, "@odata.nextLink") : ""
+    const nextPageToken = this.pageTokens && pageUrl(nextLink) ? this.pageTokens.seal({ list, url: nextLink }) : null
+    return { items: extract(json), nextPageToken, hasMore }
+  }
+
   private async requestMutation(
     operation: string,
     path: string,
@@ -660,7 +696,7 @@ export class MicrosoftGraphClient {
     }
   }
 
-  async listMailMessages(input: { search?: string; maxResults: number }): Promise<Microsoft365MailMessageSummary[]> {
+  async listMailMessages(input: { search?: string; maxResults: number; pageToken?: string }): Promise<MicrosoftGraphPage<Microsoft365MailMessageSummary>> {
     const url = this.url("me/messages")
     url.searchParams.set("$top", String(input.maxResults))
     url.searchParams.set("$select", "id,conversationId,subject,receivedDateTime,bodyPreview,from,toRecipients,webLink,hasAttachments")
@@ -669,8 +705,9 @@ export class MicrosoftGraphClient {
     } else {
       url.searchParams.set("$orderby", "receivedDateTime desc")
     }
-    const headers = input.search ? { ConsistencyLevel: "eventual" } : undefined
-    return extractMicrosoftMailMessages(await this.requestJson("Microsoft 365 mail list", url, { headers }))
+    return this.requestPage("Microsoft 365 mail list", "mail-messages", url, input.pageToken, extractMicrosoftMailMessages, {
+      headers: (pageUrl) => pageUrl.searchParams.has("$search") ? { ConsistencyLevel: "eventual" } : undefined,
+    })
   }
 
   async getMailMessage(messageId: string): Promise<Microsoft365MailMessage> {
@@ -700,14 +737,14 @@ export class MicrosoftGraphClient {
     }))
   }
 
-  async listCalendarEvents(input: { start: string; end: string; maxResults: number }): Promise<Microsoft365CalendarEvent[]> {
+  async listCalendarEvents(input: { start: string; end: string; maxResults: number; pageToken?: string }): Promise<MicrosoftGraphPage<Microsoft365CalendarEvent>> {
     const url = this.url("me/calendarView")
     url.searchParams.set("startDateTime", input.start)
     url.searchParams.set("endDateTime", input.end)
     url.searchParams.set("$top", String(input.maxResults))
     url.searchParams.set("$orderby", "start/dateTime")
     url.searchParams.set("$select", CALENDAR_EVENT_SELECT)
-    return extractMicrosoftCalendarEvents(await this.requestJson("Microsoft 365 calendar list", url))
+    return this.requestPage("Microsoft 365 calendar list", "calendar-events", url, input.pageToken, extractMicrosoftCalendarEvents)
   }
 
   async sendMailDraft(messageId: string): Promise<{ draftId: string; status: "accepted" }> {
@@ -860,15 +897,25 @@ export class MicrosoftGraphClient {
     if ((await this.ownDriveId) !== driveId) throw new MicrosoftGraphScopeError()
   }
 
-  async searchDriveItems(input: { query: string; maxResults: number }): Promise<Microsoft365DriveItem[]> {
+  private async assertDrivePageReachable(page: URL, driveId: string | undefined) {
+    await this.assertReachable(driveId)
+    if (!this.ownDriveOnly) return
+    const path = page.pathname.slice(this.url("").pathname.length)
+    if (path.startsWith("me/drive/")) return
+    const otherDrive = /^drives\/([^/]+)\//.exec(path)?.[1]
+    if (!otherDrive) throw new MicrosoftGraphPageTokenError()
+    await this.assertReachable(decodeURIComponent(otherDrive))
+  }
+
+  async searchDriveItems(input: { query: string; maxResults: number; pageToken?: string }): Promise<MicrosoftGraphPage<Microsoft365DriveItem>> {
     const escapedQuery = escapeOneDriveSearchPath(input.query)
     const url = this.url(`me/drive/root/search(q='${escapedQuery}')`)
     url.searchParams.set("$top", String(input.maxResults))
     url.searchParams.set("$select", DRIVE_ITEM_SELECT)
-    return extractMicrosoftDriveItems(await this.requestJson("Microsoft 365 OneDrive search", url))
+    return this.requestPage("Microsoft 365 OneDrive search", "onedrive-search", url, input.pageToken, extractMicrosoftDriveItems)
   }
 
-  async searchFiles(input: { query: string; maxResults: number; from: number }): Promise<{ files: Microsoft365DriveItem[]; nextFrom: number | null }> {
+  async searchFiles(input: { query: string; maxResults: number; from: number }): Promise<{ files: Microsoft365DriveItem[]; nextFrom: number | null; hasMore: boolean }> {
     if (this.ownDriveOnly) throw new MicrosoftGraphScopeError()
     const json = await this.requestJson("Microsoft 365 file search", this.url("search/query"), {
       method: "POST",
@@ -879,15 +926,14 @@ export class MicrosoftGraphClient {
     return extractMicrosoftSearchHits(json, input.from)
   }
 
-  async listDriveChildren(input: { driveId?: string; folderId?: string; maxResults: number; pageToken?: string }): Promise<{ files: Microsoft365DriveItem[]; nextPageToken: string | null }> {
-    await this.assertReachable(input.driveId)
+  async listDriveChildren(input: { driveId?: string; folderId?: string; maxResults: number; pageToken?: string }): Promise<MicrosoftGraphPage<Microsoft365DriveItem>> {
     const path = input.folderId ? driveItemPath({ driveId: input.driveId, itemId: input.folderId }, "/children") : `${driveRootPath(input.driveId)}/children`
     const url = this.url(path)
     url.searchParams.set("$top", String(input.maxResults))
     url.searchParams.set("$select", DRIVE_ITEM_SELECT)
-    if (input.pageToken) url.searchParams.set("$skiptoken", input.pageToken)
-    const json = await this.requestJson("Microsoft 365 folder list", url)
-    return { files: extractMicrosoftDriveItems(json), nextPageToken: nextSkipToken(json) }
+    return this.requestPage("Microsoft 365 folder list", "drive-children", url, input.pageToken, extractMicrosoftDriveItems, {
+      beforeRequest: (pageUrl) => this.assertDrivePageReachable(pageUrl, input.driveId),
+    })
   }
 
   async resolveSharingLink(link: string): Promise<Microsoft365DriveItem> {
@@ -897,12 +943,12 @@ export class MicrosoftGraphClient {
     return extractMicrosoftDriveItem(await this.requestJson("Microsoft 365 link lookup", url))
   }
 
-  async searchSites(input: { query: string; maxResults: number }): Promise<Microsoft365Site[]> {
+  async searchSites(input: { query: string; maxResults: number; pageToken?: string }): Promise<MicrosoftGraphPage<Microsoft365Site>> {
     const url = this.url("sites")
     url.searchParams.set("search", input.query)
     url.searchParams.set("$top", String(input.maxResults))
     url.searchParams.set("$select", "id,displayName,name,webUrl,description")
-    return extractMicrosoftSites(await this.requestJson("Microsoft 365 SharePoint site search", url))
+    return this.requestPage("Microsoft 365 SharePoint site search", "sites", url, input.pageToken, extractMicrosoftSites)
   }
 
   async listSiteDrives(siteId: string): Promise<Microsoft365Drive[]> {
@@ -1027,17 +1073,17 @@ export class MicrosoftGraphClient {
     ))
   }
 
-  async listTeamsChats(maxResults: number): Promise<Microsoft365TeamsChat[]> {
+  async listTeamsChats(maxResults: number, pageToken?: string): Promise<MicrosoftGraphPage<Microsoft365TeamsChat>> {
     const url = this.url("me/chats")
     url.searchParams.set("$top", String(maxResults))
     url.searchParams.set("$select", "id,topic,chatType,webUrl,lastUpdatedDateTime")
-    return extractMicrosoftTeamsChats(await this.requestJson("Microsoft 365 Teams chat list", url))
+    return this.requestPage("Microsoft 365 Teams chat list", "teams-chats", url, pageToken, extractMicrosoftTeamsChats)
   }
 
-  async listTeamsMessages(chatId: string, maxResults: number): Promise<Microsoft365TeamsMessage[]> {
+  async listTeamsMessages(chatId: string, maxResults: number, pageToken?: string): Promise<MicrosoftGraphPage<Microsoft365TeamsMessage>> {
     const url = this.url(`chats/${encodeURIComponent(chatId)}/messages`)
     url.searchParams.set("$top", String(maxResults))
-    return extractMicrosoftTeamsMessages(await this.requestJson("Microsoft 365 Teams message list", url))
+    return this.requestPage("Microsoft 365 Teams message list", "teams-messages", url, pageToken, extractMicrosoftTeamsMessages)
   }
 
   async sendTeamsMessage(chatId: string, content: string): Promise<Microsoft365TeamsMessage> {
