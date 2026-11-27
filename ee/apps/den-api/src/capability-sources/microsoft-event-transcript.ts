@@ -46,14 +46,14 @@ export async function readMicrosoftEventTranscript(graph: MicrosoftGraphClient, 
   if (isOnlineMeeting === false || !joinUrl || (onlineMeetingProvider && onlineMeetingProvider !== "teamsForBusiness") || !isTeamsJoinUrl(joinUrl)) {
     return { ...result, status: "not_teams_meeting", retryable: false, message: "This calendar event is not an online Teams meeting." }
   }
-  const meeting = await graph.findTeamsMeetingByJoinUrl(joinUrl)
+  const meetingId = await graph.findTeamsMeetingIdByJoinUrl(joinUrl)
   const noTranscript = (reason: NoTranscriptReason): EventTranscriptResult => ({
     ...result, status: "no_transcript", reason,
     message: "No transcript is available to this member for this calendar event. This does not show whether the meeting was recorded.",
   })
-  if (!meeting) return noTranscript("meeting_not_found")
+  if (!meetingId) return noTranscript("meeting_not_found")
 
-  const matches = selectEventTranscripts(result.event, await graph.listTeamsMeetingTranscripts(meeting.id))
+  const matches = selectEventTranscripts(result.event, await graph.listTeamsMeetingTranscripts(meetingId))
   const { transcriptId } = input
   if (transcriptId === undefined && matches.length > 1) {
     const candidates = matches.map(({ id, createdDateTime, endDateTime }) => ({ id, createdDateTime, endDateTime }))
@@ -63,7 +63,7 @@ export async function readMicrosoftEventTranscript(graph: MicrosoftGraphClient, 
   if (transcriptId !== undefined && !selected) throw new InvalidEventTranscriptError()
   if (!selected) return noTranscript("no_transcript_for_event")
   const { offset: _offset, nextOffset, ...page } = await graph.getTeamsMeetingTranscriptContent({
-    meetingId: meeting.id, transcriptId: selected.id, offset: Number(input.pageToken ?? 0), maxCharacters: input.maxCharacters,
+    meetingId, transcriptId: selected.id, offset: Number(input.pageToken ?? 0), maxCharacters: input.maxCharacters,
   })
   const transcript = { id: selected.id, createdDateTime: selected.createdDateTime, endDateTime: selected.endDateTime, ...page, nextPageToken: nextOffset === null ? null : String(nextOffset) }
   return { ...result, status: "transcript", transcript }

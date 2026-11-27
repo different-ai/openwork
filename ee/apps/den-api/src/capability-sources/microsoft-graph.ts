@@ -157,15 +157,6 @@ export type Microsoft365TeamsMessage = {
   webUrl: string
 }
 
-export type Microsoft365TeamsMeeting = {
-  id: string
-  subject: string
-  startDateTime: string
-  endDateTime: string
-  joinWebUrl: string
-  organizer: Microsoft365EmailAddress | null
-}
-
 export type Microsoft365TeamsTranscript = {
   id: string
   meetingId: string
@@ -571,30 +562,9 @@ export function extractMicrosoftTeamsMessages(json: unknown): Microsoft365TeamsM
     .filter((message) => Boolean(message.id))
 }
 
-function readMeetingOrganizer(meeting: Record<string, unknown>): Microsoft365EmailAddress | null {
-  const participants = readRecord(meeting, "participants")
-  const organizer = participants ? readRecord(participants, "organizer") : null
-  if (!organizer) return null
-  const identity = readRecord(organizer, "identity")
-  const user = identity ? readRecord(identity, "user") : null
-  const address = readString(organizer, "upn")
-  const name = user ? readString(user, "displayName") : ""
-  return address || name ? { name, address } : null
-}
-
-export function extractMicrosoftTeamsMeetings(json: unknown): Microsoft365TeamsMeeting[] {
+export function extractMicrosoftTeamsMeetingIds(json: unknown): string[] {
   const root = isRecord(json) ? json : {}
-  return readArray(root, "value")
-    .filter(isRecord)
-    .map((meeting) => ({
-      id: readString(meeting, "id"),
-      subject: readString(meeting, "subject"),
-      startDateTime: readString(meeting, "startDateTime"),
-      endDateTime: readString(meeting, "endDateTime"),
-      joinWebUrl: readString(meeting, "joinWebUrl"),
-      organizer: readMeetingOrganizer(meeting),
-    }))
-    .filter((meeting) => Boolean(meeting.id))
+  return readArray(root, "value").filter(isRecord).map((meeting) => readString(meeting, "id")).filter(Boolean)
 }
 
 export function extractMicrosoftTeamsTranscripts(json: unknown): Microsoft365TeamsTranscript[] {
@@ -1218,10 +1188,10 @@ export class MicrosoftGraphClient {
     ))
   }
 
-  async findTeamsMeetingByJoinUrl(joinUrl: string): Promise<Microsoft365TeamsMeeting | null> {
+  async findTeamsMeetingIdByJoinUrl(joinUrl: string): Promise<string | null> {
     const url = this.url("me/onlineMeetings")
     url.search = `$filter=${encodeURIComponent(`JoinWebUrl eq '${escapeODataString(joinUrl)}'`)}`
-    return extractMicrosoftTeamsMeetings(await this.requestJson("Microsoft 365 Teams meeting lookup", url, { redirect: "error" }))[0] ?? null
+    return extractMicrosoftTeamsMeetingIds(await this.requestJson("Microsoft 365 Teams meeting lookup", url, { redirect: "error" }))[0] ?? null
   }
 
   async listTeamsMeetingTranscripts(meetingId: string): Promise<Microsoft365TeamsTranscript[]> {
@@ -1251,11 +1221,11 @@ export class MicrosoftGraphClient {
     let speakerAttribution = true
     let response: Response
     try {
-      response = await this.request(operation, url, { redirect: "error", headers: { accept: TRANSCRIPT_VTT } })
+      response = await this.request(operation, url, { headers: { accept: TRANSCRIPT_VTT } })
     } catch (error) {
       if (!graphForbids(error, "SpeakerAttributionNotAllowed")) throw error
       speakerAttribution = false
-      response = await this.request(operation, url, { redirect: "error", headers: { accept: TRANSCRIPT_UNATTRIBUTED_TEXT } })
+      response = await this.request(operation, url, { headers: { accept: TRANSCRIPT_UNATTRIBUTED_TEXT } })
     }
     const format = speakerAttribution ? "vtt" : "text"
     const downloaded = await readBytesWithByteLimit(response, this.maxDownloadBytes)

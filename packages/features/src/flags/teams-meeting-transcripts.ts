@@ -6,7 +6,7 @@ export default defineFeature({
   category: "connect",
   added: "2026-11-27",
   since: "2026-11",
-  author: "getopenwork",
+  author: "benjaminshafii",
   docs: "docs/features/teams-meeting-transcripts/README.md",
   deployments: everywhere,
   default: false,

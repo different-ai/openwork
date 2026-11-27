@@ -1,6 +1,6 @@
 # Read Teams meeting transcripts
 
-`teamsMeetingTranscripts` is off by default on cloud and self-hosted deployments.
+`teamsMeetingTranscripts` is off by default on cloud and self-hosted deployments. Owner: `benjaminshafii`.
 
 ## What changes
 

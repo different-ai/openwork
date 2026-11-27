@@ -41,7 +41,7 @@ function fixture(options: Responses = {}) {
       const url = new URL(String(input))
       const headers = new Headers(init?.headers)
       assert.equal(url.origin, new URL(BASE).origin)
-      assert.equal(init?.redirect, "error")
+      assert.equal(init?.redirect, url.pathname.endsWith("/content") ? undefined : "error")
       assert.equal(headers.get("authorization"), `Bearer ${TOKEN}`)
       const path = url.pathname.replace(/^\/v1\.0/, "")
       const call = { url, path, headers }
@@ -74,7 +74,7 @@ test("event loading requests the transcript fields and UTC, normalizing bare tim
 
 test("meeting lookup passes the escaped link as one OData filter on the member's meetings", async () => {
   const { graph, calls } = fixture()
-  assert.equal((await graph.findTeamsMeetingByJoinUrl(JOIN))?.id, MEETING_ID)
+  assert.equal(await graph.findTeamsMeetingIdByJoinUrl(JOIN), MEETING_ID)
   assert.equal(calls.length, 1)
   assert.equal(calls[0]?.path, "/me/onlineMeetings")
   const params = calls[0]?.url.searchParams
