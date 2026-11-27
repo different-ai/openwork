@@ -125,7 +125,7 @@ import { agentFeatureSnapshotKey, usePersonalAgentSessionExtensions, useStanding
 import { PersonalAgentsProvider, type AgentScope, type AgentsRuntime } from "@/react-app/domains/agents/agents-runtime";
 import { useAgentNames } from "@/react-app/domains/agents/use-agents";
 import { SessionExtensionsProvider } from "@/react-app/kernel/session-extensions";
-import { ApprovalLoadError, ApprovalRefresh, ToolApprovalsStack } from "@/react-app/domains/tool-approvals/tool-approvals-stack";
+import { ApprovalLoadError, ApprovalRefresh, ChatApprovalDock } from "@/react-app/domains/tool-approvals/tool-approvals-stack";
 import { RunApprovalSlot, useAutomationApprovals } from "@/react-app/domains/tool-approvals/run-approval-slot";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { remoteThreadAttentionBySession, setRemoteSessionLiveSync, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
@@ -2821,7 +2821,7 @@ export function SessionRoute() {
   const automationApprovals = useAutomationApprovals(automationsRouteActive ? approvalsScope : null);
   const sessionExtensions = useMemo(() => approvalsScope ? {
     ...agentExtensions,
-    renderChatApprovals: (completedAt: number) => <ToolApprovalsStack scope={approvalsScope} surface="chat" completedAt={completedAt} />,
+    renderChatApprovalDock: (completedAt: number) => <ChatApprovalDock scope={approvalsScope} completedAt={completedAt} />,
   } : agentExtensions, [agentExtensions, approvalsScope]);
   const agentNames = useAgentNames(agentsRuntime);
 

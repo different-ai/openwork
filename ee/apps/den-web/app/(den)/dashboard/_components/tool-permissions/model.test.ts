@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { accessForTool, defaultToolAccess, rulesForSubject, toolActivityLabel, toolRowAccess, withPendingRule, type PermissionRule } from "./model";
+import { accessForTool, rulesForSubject, toolActivityLabel, toolRowAccess, withPendingRule, type PermissionRule } from "./model";
 
 const organization = { kind: "organization" } as const;
 const team = { kind: "team", id: "support" } as const;
@@ -21,32 +21,27 @@ function rulesOf(rules: readonly PermissionRule[]) {
 }
 
 test("a tool reads only with an explicit read hint and no destructive hint", () => {
-  assert.equal(defaultToolAccess({ readOnlyHint: true }), "allow");
   assert.equal(toolActivityLabel({ readOnlyHint: true, destructiveHint: false }), "reads");
-  assert.equal(defaultToolAccess({ readOnlyHint: true, destructiveHint: true }), "ask");
   assert.equal(toolActivityLabel({ readOnlyHint: true, destructiveHint: true }), "changes things");
-  assert.equal(defaultToolAccess(), "ask");
-  assert.equal(defaultToolAccess({ readOnlyHint: false }), "ask");
 });
 
 test("block wins over ask, and ask wins over allow across audience layers", () => {
   const allow = rule(person, "allow");
-  assert.equal(accessForTool(toolName, "ask", rulesOf([allow])).access, "allow");
-  assert.equal(accessForTool(toolName, "allow", rulesOf([orgRule("ask"), allow])).access, "ask");
-  assert.equal(accessForTool(toolName, "allow", rulesOf([orgRule("ask"), rule(team, "block"), allow])).access, "block");
-  assert.equal(accessForTool(toolName, "allow", rulesOf([orgRule("block", "*"), allow])).access, "block");
-  assert.equal(accessForTool(toolName, "allow", rulesOf([orgRule("allow"), rule(team, "block", "*")])).access, "block");
+  assert.equal(accessForTool(toolName, rulesOf([allow])).access, "allow");
+  assert.equal(accessForTool(toolName, rulesOf([orgRule("ask"), allow])).access, "ask");
+  assert.equal(accessForTool(toolName, rulesOf([orgRule("ask"), rule(team, "block"), allow])).access, "block");
+  assert.equal(accessForTool(toolName, rulesOf([orgRule("block", "*"), allow])).access, "block");
+  assert.equal(accessForTool(toolName, rulesOf([orgRule("allow"), rule(team, "block", "*")])).access, "block");
 });
 
 test("rules are scoped to the exact connection, audience and tool name", () => {
   const rules = [rule(team, "block", toolName, "another-board"), rule({ kind: "team", id: "other-team" }, "block"), orgRule("block", "updateissue")];
-  assert.deepEqual(accessForTool(toolName, "allow", rulesOf(rules)), { rule: null, access: "allow" });
+  assert.deepEqual(accessForTool(toolName, rulesOf(rules)), { rule: null, access: "allow" });
 });
 
-function row(rules: readonly PermissionRule[], subject: typeof organization | typeof team | typeof person, fallback: PermissionRule["rule"] | null = "ask") {
+function row(rules: readonly PermissionRule[], subject: typeof organization | typeof team | typeof person) {
   return toolRowAccess({
     toolName,
-    fallback,
     ownRules: rulesForSubject(rules, connectionId, subject),
     orgRules: rulesForSubject(rules, connectionId, organization),
     memberTeams: subject.kind === "member" ? [{ name: "Support", rules: rulesForSubject(rules, connectionId, team) }] : [],
@@ -55,9 +50,8 @@ function row(rules: readonly PermissionRule[], subject: typeof organization | ty
 }
 
 test("Everyone's Default is built in, even with an explicit rule", () => {
-  assert.equal(row([], organization, "allow").defaultLabel, "Default (Allow)");
-  assert.equal(row([orgRule("block")], organization).defaultLabel, "Default (Ask)");
-  assert.equal(row([orgRule("block")], organization, null).defaultLabel, "Default");
+  assert.equal(row([], organization).defaultLabel, "Allowed (no rule)");
+  assert.equal(row([orgRule("block")], organization).defaultLabel, "Allowed (no rule)");
   assert.equal(row([orgRule("block")], organization).notice, null);
 });
 
@@ -67,17 +61,17 @@ test("team and person defaults ignore their own rules and use applicable inherit
   assert.equal(row(rules, person).defaultLabel, "Default (Ask)");
   assert.equal(row([orgRule("block"), ...rules.slice(1)], person).defaultLabel, "Default (Block)");
   assert.equal(row([orgRule("ask"), rule(team, "block", "*")], person).defaultLabel, "Default (Block)");
-  assert.equal(row([], team).defaultLabel, "Default (Ask)");
+  assert.equal(row([], team).defaultLabel, "Allowed (no rule)");
 });
 
 test("without a catalog, Default still names a known inherited rule", () => {
-  assert.equal(row([orgRule("ask")], team, null).defaultLabel, "Default (Ask)");
-  assert.equal(row([rule(team, "block")], person, null).defaultLabel, "Default (Block)");
-  assert.equal(row([rule(person, "allow")], person, null).defaultLabel, "Default");
+  assert.equal(row([orgRule("ask")], team).defaultLabel, "Default (Ask)");
+  assert.equal(row([rule(team, "block")], person).defaultLabel, "Default (Block)");
+  assert.equal(row([rule(person, "allow")], person).defaultLabel, "Allowed (no rule)");
 });
 
 test("the pressed segment is the audience's own rule, or Default after removal", () => {
-  assert.equal(row([orgRule("allow")], organization, "allow").pressed, "allow");
+  assert.equal(row([orgRule("allow")], organization).pressed, "allow");
   assert.equal(row([orgRule("block")], team).pressed, "default");
   const rules = [orgRule("ask"), rule(person, "allow")];
   assert.equal(row(rules, person).pressed, "allow");
@@ -92,14 +86,13 @@ test("a saved choice reports whichever stricter rule wins, or that the choice ap
   assert.equal(row([orgRule("block"), rule(team, "block"), rule(person, "allow")], person).notice, "Applies now: Block, from Everyone.");
   assert.equal(row([orgRule("ask"), rule(person, "block")], person).notice, "This rule applies.");
   assert.equal(row([orgRule("ask"), rule(person, "ask")], person).notice, "This rule applies.");
-  assert.equal(row([rule(person, "allow")], person, "ask").notice, "This rule applies.");
+  assert.equal(row([rule(person, "allow")], person).notice, "This rule applies.");
 });
 
-test("Default reports its source, including when the built-in default is unknown", () => {
+test("Default reports its source or indicates that no rule applies", () => {
   assert.equal(row([orgRule("ask")], team).notice, "From Everyone: Ask.");
   assert.equal(row([rule(team, "ask")], person).notice, "From the team Support: Ask.");
-  assert.equal(row([], person).notice, "Built-in default: Ask.");
-  assert.equal(row([], person, null).notice, "Built-in default: Unknown.");
+  assert.equal(row([], person).notice, "Allowed (no rule).");
 });
 
 test("an Everyone tool lock keeps the saved segment pressed and explains the effective block", () => {
@@ -124,7 +117,7 @@ test("a whole-connection block applies without changing the pressed segment or i
 test("a pending edit replaces or removes only the chosen rule, without changing confirmed rules", () => {
   const confirmed = [orgRule("allow"), rule(team, "ask")];
   const target = { subject: team, connectionId, toolName };
-  assert.equal(accessForTool(toolName, "allow", rulesOf(withPendingRule(confirmed, { ...target, rule: "block" }))).access, "block");
-  assert.equal(accessForTool(toolName, "allow", rulesOf(withPendingRule(confirmed, { ...target, rule: null }))).access, "allow");
-  assert.equal(accessForTool(toolName, "allow", rulesOf(withPendingRule(confirmed))).access, "ask");
+  assert.equal(accessForTool(toolName, rulesOf(withPendingRule(confirmed, { ...target, rule: "block" }))).access, "block");
+  assert.equal(accessForTool(toolName, rulesOf(withPendingRule(confirmed, { ...target, rule: null }))).access, "allow");
+  assert.equal(accessForTool(toolName, rulesOf(withPendingRule(confirmed))).access, "ask");
 });

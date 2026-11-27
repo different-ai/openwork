@@ -191,6 +191,16 @@ test("allow once is for the requester and applies to exactly one run; only Dana 
   const once = await decide(asPriya, waiting.id, "allow_once")
   assert.equal(once.status, 200, summary(once))
   assert.equal(personalAgentRequestSchema.parse(once.body).status, "allowed_once")
+  assert.equal((await den.setFeature(orgId, "toolPermissions", true)).status, 200)
+  const rule = { connectionId, subject: { kind: "organization" }, toolName: "create_issue" }
+  const permissionsPath = "/v1/org/tool-permissions/rule"
+  assert.equal((await asDana("PUT", permissionsPath, { ...rule, rule: "ask" })).status, 200)
+  const calls = providerCalls()
+  await asks(await den.mintMcpToken(priya, orgId))
+  assert.equal(providerCalls(), calls)
+  assert.equal((await requests()).find((row) => row.id === waiting.id)?.status, "allowed_once")
+  assert.equal((await asDana("PUT", permissionsPath, { ...rule, rule: null })).status, 200)
+  assert.equal((await den.setFeature(orgId, "toolPermissions", false)).status, 200)
   const already = await decide(asSam, waiting.id, "deny")
   assert.equal(already.status, 403, summary(already))
   const ownerRun = await admitted(asDana)
@@ -236,6 +246,15 @@ test("agent and organization blocks beat allowances and explicit Ask works on re
   const blocked = await execute((await admitted()).token)
   assert.equal(field(blocked.body, "error"), "policy_blocked", blocked.raw)
   assert.equal(providerCalls(), calls)
+
+  assert.equal((await den.setFeature(orgId, "toolPermissions", true)).status, 200)
+  const chatToken = await den.mintMcpToken(priya, orgId)
+  const chatWrite = await execute(chatToken, "delete_issue")
+  assert.equal(chatWrite.isError, false, chatWrite.raw)
+  const chatRead = await execute(chatToken, "list_issues")
+  assert.equal(chatRead.isError, false, chatRead.raw)
+  assert.equal(providerCalls(), calls + 2)
+  assert.equal((await den.setFeature(orgId, "toolPermissions", false)).status, 200)
 })
 
 test("a collaborator can request a schedule change and only the owner can approve it", async () => {

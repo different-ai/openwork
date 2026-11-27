@@ -15,11 +15,11 @@ Tool permissions are turned on separately for each organization. They work even 
 
 1. In the [OpenWork Cloud dashboard](https://app.openworklabs.com), open **Connectors** and choose a connection.
 2. Under **Tool permissions**, use **For** to choose everyone, a team, or one person.
-3. Next to a tool, choose **Allow**, **Ask**, or **Block**. To remove your rule for that tool and group or person, choose **Default**. It shows what applies without your rule, for example **Default (Ask)**. Other rules can still apply.
+3. Next to a tool, choose **Allow**, **Ask**, or **Block**. The first choice clears your rule for that group or person. It reads **Allowed (no rule)** if no other rule applies, or shows the inherited rule, such as **Default (Ask)**.
 
 To block every tool in the connection for the people you picked, turn on **Block this whole connection**.
 
-A **Block** always wins, even if someone approved a request. If there's no block, **Ask** wins over **Allow**. If no rule applies, tools that only read are allowed. Tools that change something ask first.
+A **Block** always wins, even if someone approved a request. If there's no block, **Ask** wins over **Allow**. If no rule applies, an ordinary chat can use tools it already has access to, whether they read or change something. [Agents have separate tool settings](/agents/permissions).
 
 On the **Connectors** page, use **Rules every run follows** to give agents and cloud Automations written instructions. Use tool rules when you need to enforce access.
 

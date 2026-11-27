@@ -34,8 +34,9 @@ settings stay with the agent.
   denials. Then the evaluator checks matching organization, team, member and
   (for agent runs) agent rules. Rules match the exact, case-sensitive tool
   name or a connection-wide `*` block.
-- Any Block wins, then Ask, then Allow. Without a match, allow tools with
-  `readOnlyHint === true` and `destructiveHint !== true`; ask for other tools.
+- Any Block wins, then Ask, then Allow. Without a match, ordinary calls are
+  allowed if the member already has access. Agent calls also apply the agent's
+  connector settings and permission rules.
 - Ask refuses the call before reaching the connector. It records one pending
   approval per requester, context, connection, and exact tool. Agent,
   Automation, and chat are separate contexts; Workbot approvals use the chat
