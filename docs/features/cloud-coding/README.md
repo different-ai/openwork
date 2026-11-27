@@ -110,6 +110,8 @@ All routes are active-organization routes behind `orgMemberRoute()` and
 | `GET /v1/cloud-coding` | member | `CloudCodingOverview`. Members who cannot manage get the same page read-only. |
 | `PUT /v1/cloud-coding/settings` | manage | On/off and who can use it. |
 | `POST /v1/cloud-coding/github/install/start` | manage | `{ redirectUrl }` to `https://github.com/apps/<slug>/installations/new?state=…`. |
+| `GET /v1/cloud-coding/github/installations` | manage | GitHub accounts the caller can connect when the app is already installed on more than one. |
+| `POST /v1/cloud-coding/github/install/complete` | manage | Connects one of those accounts after checking the caller can reach it on GitHub. |
 | `POST /v1/cloud-coding/github/sync` | manage | Re-reads the installation and its repositories from GitHub. Removes the connection when GitHub says the app was uninstalled. |
 | `POST /v1/cloud-coding/github/link/start` | member who can use it | `{ redirectUrl }` to GitHub's "Authorize OpenWork" page. |
 | `DELETE /v1/cloud-coding/github/link` | member | Revokes the token at GitHub and deletes the link. |

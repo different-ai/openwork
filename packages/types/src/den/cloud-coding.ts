@@ -114,12 +114,50 @@ export type CloudCodingSettingsInput = z.infer<typeof cloudCodingSettingsInputSc
 export const cloudCodingRedirectSchema = z.object({ redirectUrl: z.string().url() }).meta({ ref: "CloudCodingRedirect" })
 export type CloudCodingRedirect = z.infer<typeof cloudCodingRedirectSchema>
 
+/** `POST /v1/cloud-coding/github/install/start`. `existing` finishes connecting an app that is already installed on GitHub. */
+export const cloudCodingInstallStartInputSchema = z.object({ existing: z.boolean().optional() }).strict()
+  .meta({ ref: "CloudCodingInstallStartInput" })
+
+/** `GET /v1/cloud-coding/github/installations`: GitHub accounts the caller can connect, when there is more than one. */
+export const cloudCodingInstallationChoiceSchema = z.object({
+  installationId: z.number().int().positive(),
+  accountLogin: z.string(),
+  accountType: z.enum(["Organization", "User"]),
+}).meta({ ref: "CloudCodingInstallationChoice" })
+export type CloudCodingInstallationChoice = z.infer<typeof cloudCodingInstallationChoiceSchema>
+
+export const cloudCodingInstallationChoicesSchema = z.object({ installations: z.array(cloudCodingInstallationChoiceSchema) })
+  .meta({ ref: "CloudCodingInstallationChoices" })
+
+/** `POST /v1/cloud-coding/github/install/complete`. */
+export const cloudCodingInstallCompleteInputSchema = z.object({ installationId: z.number().int().positive() }).strict()
+  .meta({ ref: "CloudCodingInstallCompleteInput" })
+
+/**
+ * Where GitHub's callback sends the browser in Den web, as `?github=<outcome>`
+ * (plus `&reason=<code>` on `error`) on `/dashboard/cloud-coding` for a
+ * connect and `/dashboard/cloud-coding/link` for a personal link.
+ */
+export const CLOUD_CODING_CALLBACK_OUTCOMES = ["connected", "linked", "choose", "error"] as const
+export const CLOUD_CODING_CALLBACK_ERROR_REASONS = [
+  "state_invalid",
+  "not_configured",
+  "not_allowed",
+  "not_installed",
+  "not_your_installation",
+  "installation_in_use",
+  "account_in_use",
+  "github_error",
+] as const
+export type CloudCodingCallbackErrorReason = (typeof CLOUD_CODING_CALLBACK_ERROR_REASONS)[number]
+
 /**
  * Why a person cannot use Cloud coding right now, in the order checked. The
  * first one that applies is returned; `ready` means a task can start.
  */
 export const cloudCodingReadinessSchema = z.enum([
   "ready",
+  "feature_disabled",
   "not_configured",
   "github_not_connected",
   "turned_off",
