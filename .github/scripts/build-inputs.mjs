@@ -133,6 +133,11 @@ export function buildInputPatterns(target, options = {}) {
     "ee/apps/den-worker-runtime/scripts/cloud-desktop.sh",
     ".github/workflows/celld-runner-deploy.yml",
   ];
+  // The Worker Den keeps artifact data in. It is deployed to its own celld fleet and is in no image or installer.
+  const artifactStorage = () => [
+    ...closure("@openwork-ee/artifact-storage-cell"),
+    ".github/workflows/celld-artifact-storage-deploy.yml",
+  ];
   const contract = () => [
     ...api(), ...closure("@openwork/sdk"), ...CONTRACT_SCRIPTS,
     ".github/workflows/api-contract.yml", ".github/workflows/ci-sdk.yml",
@@ -151,6 +156,7 @@ export function buildInputPatterns(target, options = {}) {
     case "client-web": patterns = [...client(), ...render, EE_WORKFLOW, EE_SELECTION]; break;
     case "headless-runner": patterns = [...runner(), ...copies("packaging/docker/Dockerfile.headless-runner"), EE_WORKFLOW, EE_SELECTION]; break;
     case "workbot": patterns = [...workbot(), ...copies("packaging/docker/Dockerfile.workbot"), EE_WORKFLOW, EE_SELECTION]; break;
+    case "artifact-storage-cell": patterns = artifactStorage(); break;
     case "desktop": patterns = desktop(); break;
     // Everything the packaged desktop contains.
     case "desktop-smoke": patterns = [...desktop(), ...PACKAGED_SMOKE_CI, ...APP_SMOKE_HARNESS]; break;
