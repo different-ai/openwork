@@ -167,6 +167,13 @@ export const idTypesMapNameToPrefix = {
   personalAgentSharedLogin: "pgl",
   toolPermissionRule: "tpr",
   toolApproval: "tpa",
+  cloudCodingInstallation: "cdi",
+  cloudCodingRepository: "cdr",
+  cloudCodingAccessGrant: "cdg",
+  cloudCodingGithubLink: "cdl",
+  cloudCodingTask: "cdt",
+  cloudCodingPushApproval: "cda",
+  cloudCodingPullRequest: "cdp",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix
