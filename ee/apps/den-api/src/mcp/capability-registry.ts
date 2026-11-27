@@ -9,6 +9,7 @@ import type { FeatureMap } from "../features.js"
 import { markFeaturesUsed } from "../feature-usage.js"
 import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus, type McpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import type { AuditServiceActionName } from "../audit/service-actions.js"
+import { cloudCodingSource } from "../cloud-coding/mcp/capabilities.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
 import { catalogOperationAvailableToCapabilities, filterGmailThreadRead, filterMicrosoftGraphResources, filterPersonalAgents, filterTeamsMeetingTranscripts } from "./catalog-availability.js"
@@ -102,7 +103,7 @@ import {
 import { externalToolContent } from "./tool-content.js"
 import { capabilityCallInput } from "./capability-tool.js"
 
-export const CAPABILITY_SOURCE_KINDS = ["catalog", "native", "externalMcp", "marketplace", "builtinSkill", "remoteSession", "slackSendAsBot", "admin"] as const
+export const CAPABILITY_SOURCE_KINDS = ["catalog", "native", "externalMcp", "marketplace", "builtinSkill", "remoteSession", "slackSendAsBot", "cloudCoding", "admin"] as const
 export type CapabilitySourceKind = (typeof CAPABILITY_SOURCE_KINDS)[number]
 
 const SCRIPT_SOURCE_KINDS: readonly CapabilitySourceKind[] = CAPABILITY_SOURCE_KINDS.filter((kind) => kind !== "admin")
@@ -115,6 +116,7 @@ export type ParsedCapability =
   | { kind: "builtinSkill"; name: string }
   | { kind: "remoteSession"; name: string; action: RemoteSessionAction }
   | { kind: "slackSendAsBot"; name: string }
+  | { kind: "cloudCoding"; name: string; action: "start" | "status" | "repositories" }
   | { kind: "admin"; name: string; toolName: string }
 
 export type ExecuteCapabilityToolResult = {
@@ -309,7 +311,7 @@ function capabilityErrorResult(payload: Record<string, unknown>): ExecuteCapabil
   return { isError: true, content: textContent(JSON.stringify(payload)), structuredContent: payload }
 }
 
-function unknownCapabilityResult(name: string): ExecuteCapabilityToolResult {
+export function unknownCapabilityResult(name: string): ExecuteCapabilityToolResult {
   return capabilityErrorResult({
     error: "unknown_capability",
     message: `No capability named "${name}". Call search_capabilities to find a valid name.`,
@@ -909,6 +911,7 @@ export const CAPABILITY_SOURCES: Record<CapabilitySourceKind, CapabilitySource> 
   builtinSkill: builtinSkillSource,
   remoteSession: remoteSessionSource,
   slackSendAsBot: slackSendAsBotSource,
+  cloudCoding: cloudCodingSource,
   admin: adminSource,
 }
 
@@ -995,6 +998,7 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
 
 function capabilityHasNoApprovalPath(parsed: ParsedCapability): boolean {
   if (parsed.kind === "admin" || parsed.kind === "slackSendAsBot") return true
+  if (parsed.kind === "cloudCoding") return parsed.action === "start"
   return parsed.kind === "remoteSession" && !["read", "list", "targets", "status"].includes(parsed.action)
 }
 

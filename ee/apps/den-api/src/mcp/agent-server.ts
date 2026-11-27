@@ -5,6 +5,7 @@ import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 
 function agentMcpDetailedInstructions(appServers: boolean): string {
   return [
+    "When someone asks to change, fix, or add code in a GitHub repository, search capabilities for cloud coding. When search returns cloud-coding:start, use it rather than editing the repository locally or using another GitHub tool to push. Relay connection blockers exactly, including who must connect GitHub. The person approves the push themselves; never approve on their behalf. Give them the pull request link from cloud-coding:status once it is available.",
     "When asked what can be connected or to browse quick adds, call search_capabilities with type connectors and any descriptive query. This returns the legacy version 1 connectorCatalog envelope, including Google Workspace and Microsoft 365. Released clients may render their existing browse catalog; new clients intentionally ignore it. No new setup card is introduced. Setup options are not executable capabilities or proof of connection. Organization administrators manage setup in the organization Connections dashboard. Named-service searches include legacy setup suggestions only with explicit intent connect, type omitted, all, or mcp, and no matching mcp connection; modern clients ignore these catalogs. Never invent credentials or claim setup is finished. Existing connection actions take priority.",
     "This OpenWork Cloud MCP server uses standard MCP tools, resources, structured results, and list-changed notifications.",
     "For connection actions and saved Workflows, call search_capabilities with 2-4 keyword variants before concluding something is unavailable. Use execute_capability only with exact names returned by search_capabilities. A successful search_capabilities call proves this connection is authorized: Never tell the user to reconnect OpenWork Cloud because a downstream connector failed.",
@@ -52,6 +53,7 @@ function agentMcpInstructions(appServers: boolean): string {
     appServers
       ? "For artifacts, read build-an-app with get_skill and use prepare_app/create_app/read_app/update_app. Open artifacts via their discovered capability."
       : "For Workflow result views use save_artifact_view and follow its prerequisites; never substitute local HTML.",
+    "For requests to change code in a GitHub repository, search for cloud coding and use cloud-coding:start when returned; the person must approve any push.",
     "Honor requests to work remotely by delegating the whole request with remote-session:create/send, then reading its receipt; do not perform that work here. Only schedule an Automation when asked.",
   ].join("\n")
 }

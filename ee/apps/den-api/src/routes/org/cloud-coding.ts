@@ -1,28 +1,26 @@
-import { and, eq } from "@openwork-ee/den-db/drizzle"
-import { CloudCodingInstallationTable as Installations, MemberTable } from "@openwork-ee/den-db/schema"
+import { createHash } from "node:crypto"
+import { and, eq, lt } from "@openwork-ee/den-db/drizzle"
+import { AuthVerificationTable, CloudCodingInstallationTable as Installations } from "@openwork-ee/den-db/schema"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
-import { CLOUD_CODING_CALLBACK_OUTCOMES, cloudCodingInstallationChoicesSchema, cloudCodingInstallCompleteInputSchema, cloudCodingInstallStartInputSchema, cloudCodingOverviewSchema, cloudCodingRedirectSchema, cloudCodingSettingsInputSchema, type CloudCodingCallbackErrorReason } from "@openwork/types/den/cloud-coding"
+import { CLOUD_CODING_CALLBACK_OUTCOMES, cloudCodingGithubCallbackInputSchema, cloudCodingGithubCallbackResultSchema, cloudCodingInstallationChoicesSchema, cloudCodingInstallCompleteInputSchema, cloudCodingInstallStartInputSchema, cloudCodingOverviewSchema, cloudCodingRedirectSchema, cloudCodingSettingsInputSchema, type CloudCodingCallbackErrorReason } from "@openwork/types/den/cloud-coding"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { attributeAuditRequest, auditUserPrincipalKey } from "../../audit/request-capture.js"
-import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
 import { getCloudCodingReadiness, writeAccess } from "../../cloud-coding/access.js"
 import { cloudCodingInstallationAudit, recordCloudCodingEvent } from "../../cloud-coding/audit.js"
 import { cloudCodingAppConfig, type CloudCodingAppConfig } from "../../cloud-coding/config.js"
 import { buildAuthorizeUrl, buildInstallUrl, CloudCodingGithubError, exchangeOAuthCode, getAuthenticatedUser, listUserInstallations } from "../../cloud-coding/github-api.js"
-import { availableCloudCodingInstallations, bindCloudCodingInstallation, syncCloudCodingInstallation } from "../../cloud-coding/installation.js"
+import { availableCloudCodingInstallations, bindCloudCodingInstallation, duplicateCloudCodingEntry, syncCloudCodingInstallation } from "../../cloud-coding/installation.js"
 import { getMemberGithubAccessToken, getMemberGithubLink, removeMemberGithubLink, saveMemberGithubLink, type CloudCodingMemberScope } from "../../cloud-coding/links.js"
 import { sendCloudCodingAdminRequest, sendCloudCodingLinkReminder } from "../../cloud-coding/notifications.js"
 import { cloudCodingOverview } from "../../cloud-coding/overview.js"
 import { createCloudCodingState, verifyCloudCodingState } from "../../cloud-coding/state.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled, requireFeature } from "../../features.js"
-import { jsonValidator, orgMemberRoute, publicRoute, requireOrgPermission } from "../../middleware/index.js"
+import { requireFeature } from "../../features.js"
+import { jsonValidator, orgMemberRoute, requireOrgPermission } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
-import { peopleMemberCondition } from "../../setup-agent-members.js"
 import { hasPermission, type OrgRouteVariables } from "./shared.js"
 
 const root = "/v1/cloud-coding"
@@ -55,9 +53,31 @@ function dashboard(kind: "install" | "link", outcome: Outcome, reason?: CloudCod
   return `${env.webUrl}/dashboard/cloud-coding${kind === "link" ? "/link" : ""}?${new URLSearchParams({ github: outcome, ...(reason ? { reason } : {}) })}`
 }
 
-function redirectUri(c: Context) {
-  return `${resolvePublicOrigin(c.req.raw, env.apiPublicUrl)}${callbackPath}`
+const redirectUri = `${env.webUrl}/dashboard/cloud-coding/github/callback`
+
+async function claimGithubCallbackState(state: NonNullable<ReturnType<typeof verifyCloudCodingState>>): Promise<boolean> {
+  const now = new Date()
+  if (state.exp <= now.getTime()) return false
+  const identifier = `cloud-coding-github-callback:${state.memberId}`
+  const id = createHash("sha256").update(`${identifier}:${state.nonce}`).digest("hex")
+  await db.delete(AuthVerificationTable).where(and(eq(AuthVerificationTable.identifier, identifier), lt(AuthVerificationTable.expiresAt, now)))
+  try {
+    await db.insert(AuthVerificationTable).values({ id, identifier, value: "used", expiresAt: new Date(state.exp) })
+    return true
+  } catch (error) {
+    if (duplicateCloudCodingEntry(error)) return false
+    throw error
+  }
 }
+
+const invalidCallbackState = { error: "state_invalid", message: "This GitHub link is invalid, has expired, or has already been used. Start again from Cloud coding." }
+const callbackFailures = {
+  not_configured: { status: 409, message: "Cloud coding has not been set up yet." },
+  not_allowed: { status: 403, message: "You no longer have permission to finish this GitHub connection." },
+  not_your_installation: { status: 403, message: "Your GitHub account cannot access this installation." },
+  installation_in_use: { status: 409, message: "This GitHub installation is already connected to another organization." },
+  account_in_use: { status: 409, message: "This GitHub account is already linked to someone else in this organization." },
+} as const
 
 function actor(context: OrgRouteVariables["organizationContext"]) {
   if (!context) throw new Error("Cloud coding requires an active organization.")
@@ -111,7 +131,7 @@ export function registerCloudCodingRoutes<T extends { Variables: OrgRouteVariabl
       }
     }
     const state = createCloudCodingState({ ...input, kind: "install" })
-    const redirectUrl = !reachable && c.req.valid("json").existing ? buildAuthorizeUrl({ config, state, redirectUri: redirectUri(c) }) : buildInstallUrl({ config, state })
+    const redirectUrl = !reachable && c.req.valid("json").existing ? buildAuthorizeUrl({ config, state, redirectUri }) : buildInstallUrl({ config, state })
     return c.json({ redirectUrl })
   })
 
@@ -152,7 +172,7 @@ export function registerCloudCodingRoutes<T extends { Variables: OrgRouteVariabl
     if (readiness === "github_not_connected") return c.json({ error: readiness, message: "Ask an admin to connect GitHub first." }, 409)
     if (readiness === "turned_off") return c.json({ error: readiness, message: "Cloud coding is turned off in this organization." }, 409)
     if (readiness === "not_allowed") return c.json({ error: readiness, message: "Ask an admin for access to Cloud coding." }, 409)
-    return c.json({ redirectUrl: buildAuthorizeUrl({ config, state: createCloudCodingState({ ...input, kind: "link" }), redirectUri: redirectUri(c) }) })
+    return c.json({ redirectUrl: buildAuthorizeUrl({ config, state: createCloudCodingState({ ...input, kind: "link" }), redirectUri }) })
   })
 
   app.delete("/v1/cloud-coding/github/link", docs("Unlink your GitHub account", "Removes the signed-in member’s link, cancels their open tasks, and tries to revoke access at GitHub."), noStore, orgMemberRoute(), feature, async c => {
@@ -161,41 +181,44 @@ export function registerCloudCodingRoutes<T extends { Variables: OrgRouteVariabl
     return c.body(null, 204)
   })
 
-  app.get(callbackPath, describeRoute({ tags: ["Organizations"], summary: "Finish GitHub authorization", description: "Verifies signed state from the browser and returns it to Cloud coding or GitHub.", security: [], responses: { 302: emptyResponse("Returns to Cloud coding or GitHub.") } }), publicRoute, noStore, async c => {
-    c.header("Referrer-Policy", "no-referrer")
-    const state = verifyCloudCodingState(c.req.query("state") ?? "")
-    if (!state) return c.redirect(dashboard("install", "error", "state_invalid"))
-    const failure = (reason: CloudCodingCallbackErrorReason) => c.redirect(dashboard(state.kind, "error", reason))
-    const [member] = await db.$primary.select({ id: MemberTable.id }).from(MemberTable).where(and(
-      eq(MemberTable.id, state.memberId), eq(MemberTable.organizationId, state.organizationId), eq(MemberTable.userId, state.userId), peopleMemberCondition(),
-    )).limit(1)
-    if (!member || !await organizationFeatureEnabled(state.organizationId, "cloudCoding", { userId: state.userId })) return failure("not_allowed")
+  app.post(callbackPath, docs("Finish GitHub authorization", "Completes GitHub authorization for the signed-in member and organization that started it.", cloudCodingGithubCallbackResultSchema), noStore, orgMemberRoute(), feature, jsonValidator(cloudCodingGithubCallbackInputSchema), async c => {
+    const session = c.get("session")
+    if (!session || session.id === "mcp_internal" || c.get("apiKey")) {
+      return c.json({ error: "unauthorized", message: "Sign in to OpenWork to finish linking GitHub." }, 401)
+    }
+    const { code, state: signedState, installationId } = c.req.valid("json")
+    const state = verifyCloudCodingState(signedState)
+    if (!state) return c.json(invalidCallbackState, 400)
+    const input = actor(c.get("organizationContext"))
+    if (state.userId !== input.userId || state.memberId !== input.memberId || state.organizationId !== input.organizationId) {
+      return c.json({ error: "different_account", message: "This GitHub link was started from a different OpenWork account or organization. Start again from where you began." }, 409)
+    }
+    const failure = (error: keyof typeof callbackFailures) => {
+      const { status, message } = callbackFailures[error]
+      return c.json({ error, message }, status)
+    }
     const config = cloudCodingAppConfig()
     if (!config) return failure("not_configured")
-    const attribution = await attributeAuditRequest(c, { organizationId: state.organizationId, actor: { type: "user", id: state.userId, memberId: state.memberId }, principalKey: auditUserPrincipalKey(state) })
-    if (!attribution.ok) return attribution.response
-    if (state.kind === "install" && !(await resolvePermissionsForMember(state)).has("connections.manage")) return failure("not_allowed")
-    const code = c.req.query("code")
-    if (!code) return failure("github_error")
+    if (state.kind === "install" && !(await resolvePermissionsForMember(input)).has("connections.manage")) return failure("not_allowed")
+    if (!await claimGithubCallbackState(state)) return c.json(invalidCallbackState, 400)
     try {
-      const tokens = await exchangeOAuthCode({ config, code, redirectUri: redirectUri(c) })
+      const tokens = await exchangeOAuthCode({ config, code, redirectUri })
       const user = await getAuthenticatedUser({ config, token: tokens.access_token })
-      const link = await saveMemberGithubLink({ ...state, user, tokens, onLinked: (tx, linked) => recordCloudCodingEvent(c, tx, "cloud_coding.account.linked", state, { githubLogin: linked.githubLogin }) })
+      const link = await saveMemberGithubLink({ ...input, user, tokens, onLinked: (tx, linked) => recordCloudCodingEvent(c, tx, "cloud_coding.account.linked", input, { githubLogin: linked.githubLogin }) })
       if (!link.ok) return failure(link.error)
-      if (state.kind === "link") return c.redirect(dashboard("link", "linked"))
-      if (!(await resolvePermissionsForMember(state)).has("connections.manage")) return failure("not_allowed")
+      if (state.kind === "link") return c.json({ outcome: "linked" })
+      if (!(await resolvePermissionsForMember(input)).has("connections.manage")) return failure("not_allowed")
       const reachable = await listUserInstallations({ config, token: tokens.access_token })
-      const selected = c.req.query("installation_id")
-      const available = selected === undefined ? await availableCloudCodingInstallations(state.organizationId, reachable) : reachable.filter(row => String(row.id) === selected)
-      if (selected !== undefined && !available.length) return failure("not_your_installation")
-      if (available.length > 1) return c.redirect(dashboard("install", "choose"))
+      const available = installationId === undefined ? await availableCloudCodingInstallations(input.organizationId, reachable) : reachable.filter(row => row.id === installationId)
+      if (installationId !== undefined && !available.length) return failure("not_your_installation")
+      if (available.length > 1) return c.json({ outcome: "choose" })
       const [installation] = available
-      if (!installation) return c.redirect(buildInstallUrl({ config, state: createCloudCodingState({ kind: "install", organizationId: state.organizationId, userId: state.userId, memberId: state.memberId }) }))
-      const bound = await bindCloudCodingInstallation({ ...state, installation, ...cloudCodingInstallationAudit(c, state.memberId) })
-      return bound.ok ? c.redirect(dashboard("install", "connected")) : failure(bound.error)
+      if (!installation) return c.json({ outcome: "install", redirectUrl: buildInstallUrl({ config, state: createCloudCodingState({ ...input, kind: "install" }) }) })
+      const bound = await bindCloudCodingInstallation({ ...input, installation, ...cloudCodingInstallationAudit(c, input.memberId) })
+      return bound.ok ? c.json({ outcome: "connected" }) : failure(bound.error)
     } catch (error) {
-      if (error instanceof CloudCodingGithubError) return failure("github_error")
-      throw error
+      if (!(error instanceof CloudCodingGithubError)) throw error
+      return c.json({ error: "github_error", message: "GitHub could not complete the request. Start again from Cloud coding." }, 502)
     }
   })
 

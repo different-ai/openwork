@@ -6,6 +6,13 @@ const cloudCodingChangeEmitters = {
   "cloud_coding.account.unlinked": "cloud-coding/audit.ts",
   "cloud_coding.link_reminder.sent": "cloud-coding/audit.ts",
   "cloud_coding.admin_request.sent": "cloud-coding/audit.ts",
+  "cloud_coding.task.started": "cloud-coding/mcp/capabilities.ts",
+  "cloud_coding.push.requested": "cloud-coding/gateway/audit.ts",
+  "cloud_coding.push.approved": "cloud-coding/gateway/audit.ts",
+  "cloud_coding.push.denied": "cloud-coding/gateway/audit.ts",
+  "cloud_coding.push.completed": "cloud-coding/gateway/audit.ts",
+  "cloud_coding.push.refused": "cloud-coding/gateway/audit.ts",
+  "cloud_coding.pull_request.opened": "cloud-coding/gateway/audit.ts",
 }
 
 export const domainChangeEmitters: Readonly<Record<string, string>> = {

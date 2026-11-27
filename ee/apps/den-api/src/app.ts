@@ -61,6 +61,8 @@ import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerFeatureRoutes } from "./routes/features/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
+import { registerCloudCodingHelperRoute } from "./routes/cloud-coding-gateway/helper.js"
+import { registerCloudCodingGatewayRoutes } from "./routes/cloud-coding-gateway/index.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
 import { inventoryRevisionMiddleware } from "./middleware/inventory-revision.js"
@@ -295,6 +297,8 @@ registerFeatureRoutes(app)
 registerWebhookRoutes(app)
 registerInternalRoutes(app)
 registerWorkerRoutes(app)
+registerCloudCodingHelperRoute(app)
+registerCloudCodingGatewayRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
 registerAgentMcpRoutes(app)

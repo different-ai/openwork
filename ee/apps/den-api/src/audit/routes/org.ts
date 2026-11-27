@@ -43,7 +43,20 @@ const SCIM_PROOF = "Org proof: SCIM bearer token resolved by resolveRequestScimP
 const SEAT_SYNC = "stripe (seat/web/inference quantity sync via runPostOrganizationMemberChangeHooks)"
 const DOMAIN = (area: string) => `audit/domain/${area}.ts`
 
+const cloudTaskProof = "The setup code or task bearer resolves to a stored task, and an active membership identifies its user and organization. No credentials appear in evidence."
+const cloudPushEvidence = "cloud-coding/gateway/audit.ts"
+
 export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
+  member("GET", "/v1/cloud-coding/approvals", "tenant_read", "cloud_coding.approval.list", "cloud_coding.management", "cloud_coding_approval", null),
+  member("GET", "/v1/cloud-coding/approvals/:approvalId", "tenant_read", "cloud_coding.approval.read", "cloud_coding.management", "cloud_coding_approval", "approvalId"),
+  member("POST", "/v1/cloud-coding/approvals/:approvalId/decision", "tenant_change", "cloud_coding.approval.decide", "cloud_coding.management", "cloud_coding_approval", "approvalId", { changeEvidence: cloudPushEvidence }),
+  handler("POST", "/v1/cloud-coding/gateway/setup", "tenant_access", "cloud_coding.gateway.setup", "cloud_coding.gateway", "cloud_coding_task", null, cloudTaskProof),
+  handler("GET", "/v1/cloud-coding/gateway/task", "tenant_read", "cloud_coding.gateway.task", "cloud_coding.gateway", "cloud_coding_task", null, cloudTaskProof),
+  handler("POST", "/v1/cloud-coding/gateway/read-token", "tenant_access", "cloud_coding.gateway.read_token", "cloud_coding.gateway", "cloud_coding_task", null, cloudTaskProof),
+  handler("POST", "/v1/cloud-coding/gateway/push-approvals", "tenant_change", "cloud_coding.gateway.request_push", "cloud_coding.gateway", "cloud_coding_approval", null, cloudTaskProof, { changeEvidence: cloudPushEvidence }),
+  handler("GET", "/v1/cloud-coding/gateway/push-approvals/:approvalId", "tenant_read", "cloud_coding.gateway.approval", "cloud_coding.gateway", "cloud_coding_approval", "approvalId", cloudTaskProof),
+  handler("POST", "/v1/cloud-coding/gateway/push-approvals/:approvalId/push", "tenant_external", "cloud_coding.gateway.push_commit", "cloud_coding.gateway", "cloud_coding_approval", "approvalId", cloudTaskProof, { external: "GitHub Git Data API", changeEvidence: cloudPushEvidence }),
+  handler("POST", "/v1/cloud-coding/gateway/pull-requests", "tenant_external", "cloud_coding.gateway.open_pull_request", "cloud_coding.gateway", "pull_request", null, cloudTaskProof, { external: "GitHub Pulls API", changeEvidence: cloudPushEvidence }),
   member("GET", "/v1/cloud-coding", "tenant_read", "cloud_coding.read", "cloud_coding.management", "organization", null),
   member("PUT", "/v1/cloud-coding/settings", "tenant_change", "cloud_coding.settings.save", "cloud_coding.management", "organization", null),
   member("POST", "/v1/cloud-coding/github/install/start", "tenant_external", "cloud_coding.github.install.start", "cloud_coding.management", "organization", null, { external: "GitHub Cloud coding App" }),
@@ -54,7 +67,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("DELETE", "/v1/cloud-coding/github/link", "tenant_external", "cloud_coding.github.link.delete", "cloud_coding.management", "organization", null, { external: "GitHub Cloud coding App" }),
   member("POST", "/v1/cloud-coding/people/:memberId/send-link", "tenant_external", "cloud_coding.link_reminder.send", "cloud_coding.management", "organization", null, { external: "Organization email delivery" }),
   member("POST", "/v1/cloud-coding/admin-requests", "tenant_external", "cloud_coding.admin_request.send", "cloud_coding.management", "organization", null, { external: "Organization email delivery" }),
-  handler("GET", "/v1/cloud-coding/github/callback", "tenant_external", "cloud_coding.github.callback", "cloud_coding.management", "organization", null, "Signed state identifies the initiating member and organization; membership and the feature are checked before attribution.", { external: "GitHub Cloud coding App OAuth" }),
+  member("POST", "/v1/cloud-coding/github/callback", "tenant_external", "cloud_coding.github.callback", "cloud_coding.management", "organization", null, { external: "GitHub Cloud coding App OAuth", notes: "A signed-in member can complete authorization only with unused signed state for their own membership and active organization." }),
   handler("POST", "/v1/webhooks/cloud-coding/github", "tenant_external", "cloud_coding.github.webhook", "cloud_coding.management", "organization", null, "After signature verification, the stored installation identifies the organization. Authorization revocations can span organizations and have no single tenant.", { external: "GitHub Cloud coding App" }),
   member("GET", "/v1/org/service-readiness", "tenant_read", "service_readiness.read", "service.readiness", "service_readiness", null, { notes: "Minimal cached deployment facts, never settings or tenant credentials. Does not initiate probes." }),
   member("GET", "/v1/org/diagnostics", "tenant_read", "diagnostics.read", "diagnostics", "diagnostic", null, { notes: "Settings > Diagnostics for the caller: sections the caller's permissions do not open are locked; installation details only for self-hosted local operators. Missing or expired provider/connector results start a rate-limited background check (read-only listings and token checks; never a model request). No credentials, upstream bodies or other members' identities." }),

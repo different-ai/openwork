@@ -94,6 +94,12 @@ export const auditServiceActionDeclarations = [
     notes: `Saved Workflow run and its workflow_run receipt; REST equivalent workflow.run. Route and Automation callers of executeMarketplaceCapability pass no audit hook (recorded by their route or not operation-audited). ${MCP_PRINCIPAL}`,
   },
   {
+    action: "cloud_coding.task.start", kind: "cloud_coding.execution", class: "tenant_job", resource: { type: "cloud_coding_task", idFrom: null }, origin: "mcp",
+    tools: ["execute_capability cloud-coding:start"], callSites: ["src/cloud-coding/mcp/capabilities.ts:cloudCodingSource.execute"],
+    jobOutcome: "The session starts on the member's OpenWork Cloud computer. The cloud_coding.task.started change records its task, repository and base branch.",
+    notes: MCP_PRINCIPAL,
+  },
+  {
     action: "remote_session.create", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: null }, origin: "mcp",
     tools: ["execute_capability remote-session:create"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],
     jobOutcome: "Desktop: runner callbacks POST /v1/remote-session-commands/:id/{claim,complete,session} (declared routes). Cloud: not_recorded: the session runs on the member's OpenWork Web worker.",

@@ -5,7 +5,7 @@ import type { CloudCodingGithubInstallation, CloudCodingGithubRepository, CloudC
 import { startFakeHttpServer, type FakeHandler } from "./harness.js"
 
 type FakeInstallation = CloudCodingGithubInstallation & { repositoryIds: number[] }
-type FakeUser = CloudCodingGithubUser & { installationIds: number[] }
+type FakeUser = CloudCodingGithubUser & { installationIds: number[]; writableRepositoryIds?: number[] }
 type Credential = { userId: number; accessToken: string; refreshToken: string; accessExpiresAt: number; refreshExpiresAt: number }
 type InstallationCredential = { installationId: number; repositoryIds?: number[]; permissions?: Record<string, "read" | "write">; expiresAt: number }
 export type FakeGithubState = {
@@ -16,6 +16,8 @@ export type FakeGithubState = {
   userTokens: Map<string, Credential>
   installationTokens: Map<string, InstallationCredential>
   revoked: string[]
+  codeExchanges: number
+  lastCodeExchangeRedirectUri: string | null
   refreshes: number
   rejectRefresh: boolean
   accessTokenLifetimeSeconds: number
@@ -33,7 +35,9 @@ function json(response: ServerResponse, status: number, data?: unknown) {
   response.end(data === undefined ? undefined : JSON.stringify(data))
 }
 
-export async function startFakeGithub() {
+export type FakeGithubExtension = (input: { url: URL; request: Parameters<FakeHandler>[0]; raw: string; response: ServerResponse; user: FakeUser | undefined; installation: InstallationCredential | undefined; allowedIds: number[]; state: FakeGithubState }) => boolean | Promise<boolean>
+
+export async function startFakeGithub({ extend }: { extend?: FakeGithubExtension } = {}) {
   const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
   const privateKeyPem = privateKey.export({ format: "pem", type: "pkcs8" }).toString()
   const appId = "42"
@@ -42,7 +46,7 @@ export async function startFakeGithub() {
   const webhookSecret = "acme-fake-webhook-secret"
   const state: FakeGithubState = {
     installations: new Map(), users: new Map(), repositories: new Map(), codes: new Map(), userTokens: new Map(),
-    installationTokens: new Map(), revoked: [], refreshes: 0, rejectRefresh: false, accessTokenLifetimeSeconds: 28_800, pageSize: 100,
+    installationTokens: new Map(), revoked: [], codeExchanges: 0, lastCodeExchangeRedirectUri: null, refreshes: 0, rejectRefresh: false, accessTokenLifetimeSeconds: 28_800, pageSize: 100,
   }
 
   function validJwt(token: string) {
@@ -74,7 +78,7 @@ export async function startFakeGithub() {
     return values.slice((current - 1) * size, current * size)
   }
 
-  const handle: FakeHandler = (request, raw, response) => {
+  const handle: FakeHandler = async (request, raw, response) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host}`)
     const { pathname } = url
     const method = request.method
@@ -90,6 +94,8 @@ export async function startFakeGithub() {
         state.userTokens.delete(current.accessToken)
         return json(response, 200, issue(current.userId))
       }
+      state.codeExchanges++
+      state.lastCodeExchangeRedirectUri = params.get("redirect_uri")
       const code = params.get("code") ?? ""
       const userId = state.codes.get(code)
       if (!userId) return json(response, 200, { error: "bad_verification_code" })
@@ -142,6 +148,7 @@ export async function startFakeGithub() {
         : repositories.find(row => row.full_name.toLowerCase() === decodeURIComponent(pathname.slice(7)).toLowerCase())
       if (repo) return json(response, 200, repo)
     }
+    if (extend && await extend({ url, request, raw, response, user, installation: installed ? installationCredential : undefined, allowedIds, state })) return
     return notFound()
   }
 

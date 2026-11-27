@@ -12,7 +12,7 @@ test("Cloud coding is off by default and cannot connect without a GitHub App", a
   const root = "/v1/cloud-coding"
   const routes = [
     ["GET", ""], ["PUT", "/settings"], ["POST", "/github/install/start"], ["GET", "/github/installations"],
-    ["POST", "/github/install/complete"], ["POST", "/github/sync"], ["POST", "/github/link/start"],
+    ["POST", "/github/install/complete"], ["POST", "/github/sync"], ["POST", "/github/link/start"], ["POST", "/github/callback"],
     ["DELETE", "/github/link"], ["POST", `/people/${org.owner.memberId}/send-link`], ["POST", "/admin-requests"],
   ] as const
   for (const [method, path] of routes) {

@@ -93,9 +93,7 @@ async function deleteLink(tx: AuditTx, input: CloudCodingMemberScope, onUnlinked
 }
 
 async function closeMemberTasks(tx: AuditTx, input: CloudCodingMemberScope, failureCode: string) {
-  await tx.update(Tasks).set({ status: "cancelled", failureCode, tokenHash: null, setupCodeHash: null }).where(and(
-    eq(Tasks.organizationId, input.organizationId), eq(Tasks.orgMembershipId, input.memberId), inArray(Tasks.status, ["created", "running", "awaiting_approval", "pushed"]),
-  ))
+  await closeCloudCodingTasksForMember({ ...input, failureCode }, tx)
   await tx.update(Approvals).set({ status: "expired" }).where(and(
     eq(Approvals.organizationId, input.organizationId), eq(Approvals.orgMembershipId, input.memberId), inArray(Approvals.status, ["pending", "approved"]),
   ))
@@ -111,12 +109,11 @@ export async function removeMemberGithubLink(input: CloudCodingMemberScope, onUn
 }
 
 export async function removeGithubLinksForGithubUser(githubUserId: number): Promise<void> {
-  const links = await db.transaction(async tx => {
+  await db.transaction(async tx => {
     const links = await tx.select({ organizationId: Links.organizationId, memberId: Links.orgMembershipId }).from(Links).where(eq(Links.githubUserId, githubUserId)).for("update")
     await tx.delete(Links).where(eq(Links.githubUserId, githubUserId))
-    return links
+    for (const link of links) await closeMemberTasks(tx, link, "account_unlinked")
   })
-  await Promise.all(links.map(link => closeCloudCodingTasksForMember({ ...link, failureCode: "account_unlinked" })))
 }
 
 export async function deleteCloudCodingMemberData(input: CloudCodingMemberScope, tx?: AuditTx): Promise<string[]> {
