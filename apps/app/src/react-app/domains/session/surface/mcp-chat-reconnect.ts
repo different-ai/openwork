@@ -1,4 +1,5 @@
 import type { DenExternalMcpConnection, DenMcpConnectionConnectStart } from "@/app/lib/den"
+import { CHAT_MCP_RECONNECT_POLL_INTERVAL_MS, CHAT_MCP_RECONNECT_TIMEOUT_MS } from "@/react-app/kernel/connection-authentication"
 import type { UIMessage } from "ai"
 import { z } from "zod"
 import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
@@ -166,9 +167,6 @@ export async function authenticateChatConnection(input: {
 }
 
 export const CHAT_CONNECTION_CONTINUE_PROMPT = "I've connected it. Go ahead."
-
-export const CHAT_MCP_RECONNECT_POLL_INTERVAL_MS = 2_000
-export const CHAT_MCP_RECONNECT_TIMEOUT_MS = 3 * 60_000
 
 export type ChatMcpReconnectScope = {
   baseUrl: string

@@ -1,6 +1,6 @@
 import { createContext, useContext, type ComponentType, type ReactNode } from "react";
 import type { DynamicToolUIPart } from "ai";
-import type { DenClient } from "@/app/lib/den";
+import type { ConnectionAuthentication } from "./connection-authentication";
 
 export type SessionProposalCardProps = {
   sessionId: string;
@@ -30,7 +30,7 @@ export type SessionExtensions = {
   TranscriptFooter: ComponentType<{ sessionId: string }>;
   renderStandingChat?: (sessionId: string) => ReactNode;
   renderChatApprovalDock?: (completedAt: number, active: boolean) => ReactNode;
-  cloudCoding?: { enabled: boolean; scope: { client: DenClient; denBaseUrl: string; organizationId: string; principal: string } | null };
+  connectionAuthentication?: ReadonlyMap<string, ConnectionAuthentication>;
   Panel: ComponentType<{ sessionId: string | null; compact?: boolean }>;
   proposalCards: boolean;
   ownedSessionIds: ReadonlySet<string>;

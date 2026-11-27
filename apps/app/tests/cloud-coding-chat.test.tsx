@@ -14,6 +14,9 @@ Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 const { QueryClient, QueryClientProvider, notifyManager, timeoutManager } = await import("@tanstack/react-query");
 const { CloudCodingApprovalDock, useCloudCodingApprovals } = await import("../src/react-app/domains/cloud-coding/cloud-coding-approval-dock");
 const { CloudCodingConnectionCard } = await import("../src/react-app/domains/cloud-coding/cloud-coding-connection-card");
+const { ConnectionCard, ConnectionCardResolverProvider } = await import("../src/components/chat/connection-card");
+const { cloudCodingSessionConnections } = await import("../src/react-app/shell/cloud-coding-session");
+const { createDenClient } = await import("../src/app/lib/den");
 const { PushApprovalPanel } = await import("../src/react-app/domains/cloud-coding/push-approval-panel");
 const { connectionFromChatToolPart } = await import("../src/components/tools/error-attribution");
 const { nativeChatConnectionDecision } = await import("../src/react-app/domains/session/surface/mcp-chat-reconnect");
@@ -252,7 +255,7 @@ function roleFixture(canManage: boolean) {
   const openUrl = mock(async (_url: string) => {});
   const scope = { denBaseUrl: "https://den.example.test/", organizationId: "acme", principal: "maya",
     client: { getCloudCodingOverview: async () => ({ ...overview, canManage }), requestCloudCodingAdmin: ask } };
-  return { ask, openUrl, card: <CloudCodingConnectionCard scope={scope} dismiss={() => {}} fallback={null} openUrl={openUrl} /> };
+  return { ask, openUrl, scope, card: <CloudCodingConnectionCard scope={scope} dismiss={() => {}} fallback={null} openUrl={openUrl} /> };
 }
 
 test("a connection manager opens the configured Cloud coding dashboard", async () => {
@@ -264,15 +267,46 @@ test("a connection manager opens the configured Cloud coding dashboard", async (
   expect(f.ask).not.toHaveBeenCalled();
 });
 
-test("a member sees the locked state and can ask their admins", async () => {
+test("the session shell gives the legacy card the member's ask-an-admin action", async () => {
   const f = roleFixture(false);
-  await render(f.card);
+  const part: DynamicToolUIPart = { type: "dynamic-tool", toolName: "openwork-cloud_execute_capability", toolCallId: "call-admin", input: {}, state: "output-available", output: {
+    version: 1, kind: "connection_action", source: "openwork-cloud", connectionId: "github-cloud-coding", connectionName: "GitHub", actor: "organization_admin", authType: "oauth",
+    credentialMode: "shared", state: "needs_connection", action: { type: "connect", surface: "openwork_organization_connections", retry: "search_capabilities" },
+  } };
+  const renderCard = (scope: typeof f.scope | null, enabled: boolean | undefined) => render(
+    <ConnectionCardResolverProvider value={cloudCodingSessionConnections(scope, enabled).resolveCard}>
+      <ConnectionCard part={part} />
+    </ConnectionCardResolverProvider>,
+  );
+  await renderCard(null, false);
+  expect(host.textContent).toBe("");
+  await renderCard(null, undefined);
+  expect(host.textContent).toContain("Your organization admin must configure GitHub");
+  await renderCard(f.scope, true);
   expect(host.textContent).toContain("An admin needs to connect GitHub first.");
   expect(button("Dismiss")).toBeDefined();
   await click("Ask an admin");
   expect(f.ask).toHaveBeenCalledWith("acme");
   expect(host.textContent).toContain("Asked your admins");
   expect(host.textContent).not.toContain("Ask an admin");
+});
+
+test("the shell registers GitHub authentication for the current organization only", async () => {
+  const { scope } = roleFixture(false);
+  const getCloudCodingOverview = mock(async (_orgId: string) => ({ ...overview,
+    me: { ...overview.me, github: { login: "maya", linkedAt: first.requestedAt } } }));
+  const client = { ...createDenClient({ baseUrl: scope.denBaseUrl }), getCloudCodingOverview };
+  const input = { client, baseUrl: scope.denBaseUrl, organizationId: scope.organizationId,
+    isCurrent: () => true, onProgress: () => {}, openUrl: async () => {} };
+  const disabled = cloudCodingSessionConnections(null, false).authentication.get("github-cloud-coding");
+  expect(disabled?.enabled).toBe(false);
+  const registered = cloudCodingSessionConnections(scope, true).authentication.get("github-cloud-coding");
+  if (!registered) throw new Error("GitHub authentication was not registered");
+  expect(registered.enabled).toBe(true);
+  await expect(registered.authenticate({ ...input, organizationId: "another-org" })).rejects.toThrow("connection request changed");
+  expect(getCloudCodingOverview).not.toHaveBeenCalled();
+  expect(await registered.authenticate(input)).toBe("connected");
+  expect(getCloudCodingOverview).toHaveBeenCalledWith(scope.organizationId);
 });
 
 test("Cloud coding member link uses the existing inline action and native question", () => {

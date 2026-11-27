@@ -4,7 +4,7 @@ import { toast } from "sonner";
 
 import { DenApiError, type DenClient } from "@/app/lib/den";
 import { ToolApprovalCard } from "@/react-app/design-system/tool-approval-card";
-import { Button } from "@/components/ui/button";
+import { ApprovalLoadError } from "@/react-app/design-system/composer-approval-panel";
 import { t } from "@/i18n";
 
 import { approvalsForSurface, approvalWords } from "./tool-approval-words";
@@ -66,13 +66,6 @@ function PendingChatApproval({ scope, approval }: { scope: ToolApprovalsScope; a
     decisions={["deny", "allow_once"]} busy={decision.isPending} onDecide={(choice) => {
       if (choice !== "always_allow") decision.mutate(choice);
     }} />;
-}
-
-export function ApprovalLoadError({ onRetry }: { onRetry: () => void }) {
-  return <div className="flex items-center gap-2">
-    <p role="status" className="text-xs text-dls-secondary">{t("tool_approvals.load_failed")}</p>
-    <Button type="button" size="sm" variant="ghost" onClick={onRetry}>{t("tool_approvals.retry")}</Button>
-  </div>;
 }
 
 export function ChatApprovalDock({ scope, completedAt }: { scope: ToolApprovalsScope; completedAt: number }) {

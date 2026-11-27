@@ -4,7 +4,7 @@ import type { CloudCodingPushApproval, CloudCodingPushDecisionInput } from "@ope
 
 import { markFeatureUsed, type DenClient } from "@/app/lib/den";
 import { openDesktopUrlWithStatus } from "@/app/lib/desktop";
-import { ApprovalLoadError } from "../tool-approvals/tool-approvals-stack";
+import { ApprovalLoadError } from "@/react-app/design-system/composer-approval-panel";
 import { PushApprovalPanel } from "./push-approval-panel";
 
 type Choice = CloudCodingPushDecisionInput["decision"];

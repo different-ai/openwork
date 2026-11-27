@@ -4,7 +4,7 @@ import { Lock } from "lucide-react";
 
 import type { DenClient } from "@/app/lib/den";
 import { openDesktopUrlWithStatus } from "@/app/lib/desktop";
-import { ServiceMark, GITHUB_SERVICE_MARK } from "@/components/chat/service-mark";
+import { ServiceMark, GITHUB_SERVICE_MARK } from "@/components/ui/service-mark";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
 

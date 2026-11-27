@@ -2,7 +2,7 @@ import { ChevronRight, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { CloudCodingPushApproval, CloudCodingPushDecisionInput } from "@openwork/types/den/cloud-coding";
 
-import { ServiceMark, GITHUB_SERVICE_MARK } from "@/components/chat/service-mark";
+import { ServiceMark, GITHUB_SERVICE_MARK } from "@/components/ui/service-mark";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
 import { ComposerApprovalActions, ComposerApprovalHeader, ComposerApprovalPanel } from "@/react-app/design-system/composer-approval-panel";

@@ -1,6 +1,6 @@
 import type { DenClient } from "@/app/lib/den";
 import { t } from "@/i18n";
-import { CHAT_MCP_RECONNECT_POLL_INTERVAL_MS, CHAT_MCP_RECONNECT_TIMEOUT_MS } from "../session/surface/mcp-chat-reconnect";
+import { CHAT_MCP_RECONNECT_POLL_INTERVAL_MS, CHAT_MCP_RECONNECT_TIMEOUT_MS } from "@/react-app/kernel/connection-authentication";
 
 export async function authenticateCloudCodingGitHub({ client, organizationId, isCurrent, onProgress, openUrl }: {
   client: Pick<DenClient, "getCloudCodingOverview" | "startCloudCodingGitHubLink">;

@@ -47,3 +47,10 @@ export function ComposerApprovalActions({ disabled, onDeny, onAllowOnce, childre
     {children}
   </>;
 }
+
+export function ApprovalLoadError({ onRetry }: { onRetry: () => void }) {
+  return <div className="flex items-center gap-2">
+    <p role="status" className="text-xs text-dls-secondary">{t("tool_approvals.load_failed")}</p>
+    <Button type="button" size="sm" variant="ghost" onClick={onRetry}>{t("tool_approvals.retry")}</Button>
+  </div>;
+}
