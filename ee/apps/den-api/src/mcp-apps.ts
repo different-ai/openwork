@@ -10,6 +10,8 @@ import {
   MCP_APP_INITIAL_RESULTS_META,
   MCP_APP_MAX_STORAGE_BYTES,
   MCP_APP_PAYLOAD_KIND,
+  MCP_APP_STORAGE_READ_TOOL_NAME,
+  MCP_APP_STORAGE_WRITE_TOOL_NAME,
   mcpAppCompiledRevisionSchema,
   mcpAppIdSchema,
   mcpAppPublicNameSchema,
@@ -21,6 +23,7 @@ import {
   type McpAppCompiledRevision,
   type McpAppCsp,
   type McpAppSource,
+  type McpAppStorage,
   type McpAppSummary,
   type McpAppToolBinding,
   type McpAppToolDeclaration,
@@ -59,7 +62,7 @@ type DatabaseReader = Pick<typeof db, "select">
 export type McpAppAccessInput = { organizationId: string; member: McpMemberIdentity | null; requestScope?: object }
 export type McpAppResource = { app: McpAppSummary; html: string; csp: McpAppCsp; resourceDigest: string }
 export type McpAppEntry = { appId: string; pluginId: string; revisionId: string; title: string; description: string | null; serverPath: string }
-export type McpAppServerDefinition = { app: McpAppSummary; tools: McpAppToolBinding[]; loadsWithLaunch?: boolean; site?: boolean }
+export type McpAppServerDefinition = { app: McpAppSummary; tools: McpAppToolBinding[]; loadsWithLaunch?: boolean; site?: boolean; storage?: McpAppStorage }
 export type ResolveMcpAppTools = (tools: McpAppToolDeclaration[]) => Promise<McpAppToolBinding[]>
 
 function notFound(): never {
@@ -219,10 +222,25 @@ async function addWorkflows(context: PluginArchActorContext, pluginId: DenTypeId
   for (const configObjectId of workflowIds) await attachConfigObjectToPlugin({ context, configObjectId, pluginId })
 }
 
-async function requirePublishable(tools: McpAppToolBinding[]) {
+async function requirePublishable(tools: McpAppToolBinding[], storage: McpAppStorage | undefined) {
   if (tools.length > 0) {
     throw new McpAppError(409, "public_app_has_tools", "A public artifact cannot have tools, because visitors are not signed in. Remove its tools (tools: []) or pass public: false. No revision was published.")
   }
+  if (storage) {
+    throw new McpAppError(409, "public_app_has_storage", "A public artifact cannot save data, because visitors are not signed in. Remove its storage or pass public: false. No revision was published.")
+  }
+}
+
+function requireStorage(input: { declared: McpAppStorage | null | undefined; current: McpAppStorage | undefined; enabled: boolean; tools: McpAppToolDeclaration[] | McpAppToolBinding[] }): McpAppStorage | undefined {
+  const storage = input.declared === undefined ? input.current : input.declared ?? undefined
+  if (input.declared && !input.enabled) {
+    throw new McpAppError(409, "artifact_storage_off", "Artifacts that save data are not turned on for this organization. Leave storage out, or ask an OpenWork admin to turn it on. No revision was published.")
+  }
+  if (storage) {
+    const reserved = input.tools.find((tool) => tool.name === MCP_APP_STORAGE_READ_TOOL_NAME || tool.name === MCP_APP_STORAGE_WRITE_TOOL_NAME)
+    if (reserved) throw new McpAppError(400, "invalid_mcp_app_input", `${reserved.name} is the name of a tool OpenWork gives an artifact that saves data. Rename your tool. No revision was published.`)
+  }
+  return storage
 }
 
 function publicNameTaken(name: string, saved: boolean): McpAppError {
@@ -263,7 +281,7 @@ function isDuplicateEntry(error: unknown): boolean {
   return "cause" in error && error.cause !== error && isDuplicateEntry(error.cause)
 }
 
-async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpAppToolBinding[]) {
+async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpAppToolBinding[], storage?: McpAppStorage) {
   const reactSource = input.reactSource.trim()
   const cssSource = input.cssSource?.trim() ?? ""
   const description = input.description?.trim() || null
@@ -293,6 +311,7 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
     ...(reactSource.includes(MCP_APP_INITIAL_RESULTS_META) ? { loadsWithLaunch: true } : {}),
     ...(input.public ? { public: true } : {}),
     ...(input.site ? { site: true } : {}),
+    ...(storage ? { storage } : {}),
   })
   if (!parsed.success) throw new McpAppError(422, "mcp_app_invalid_build", "The compiler did not produce a valid bounded artifact revision. No revision was published.")
   const payload = parsed.data
@@ -309,7 +328,11 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
   return { payload, rawSourceText }
 }
 
-type McpAppWriteInput<TInput> = TInput & { context: PluginArchActorContext; resolveTools: ResolveMcpAppTools }
+type McpAppWriteInput<TInput> = TInput & {
+  context: PluginArchActorContext
+  resolveTools: ResolveMcpAppTools
+  storageEnabled?: boolean
+}
 
 export function createMcpApp(input: McpAppWriteInput<CreateMcpAppInput>): Promise<McpAppSummary> {
   return withPrimaryReads(() => createMcpAppOnPrimary(input))
@@ -319,16 +342,17 @@ export function updateMcpApp(input: McpAppWriteInput<UpdateMcpAppInput>): Promis
   return withPrimaryReads(() => updateMcpAppOnPrimary(input))
 }
 
-async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAppWriteInput<CreateMcpAppInput>): Promise<McpAppSummary> {
+async function createMcpAppOnPrimary({ context, resolveTools, storageEnabled, ...source }: McpAppWriteInput<CreateMcpAppInput>): Promise<McpAppSummary> {
   const parsed = createMcpAppInputSchema.safeParse(source)
   if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide a title, complete React/CSS source, a non-empty text fallback, and uniquely named tools within the artifact limits.")
   const input = parsed.data
   let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId) : null
+  const storage = requireStorage({ declared: input.storage, current: undefined, enabled: storageEnabled === true, tools: input.tools ?? [] })
   const resolved = await resolveTools(input.tools ?? [])
-  if (input.public) await requirePublishable(resolved)
+  if (input.public) await requirePublishable(resolved, storage)
   if (input.publicName) await requirePublicNameFree({ name: input.publicName, isPublic: input.public === true, appId: null })
   const workflows = await workflowsToAdd(context, pluginId, workflowTools(resolved))
-  const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), resolved)
+  const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), resolved, storage)
   let createdPluginId: DenTypeId<"plugin"> | null = null
   if (pluginId) {
     await editablePlugin(context, pluginId)
@@ -374,7 +398,7 @@ async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   return summarizeMcpAppRevision({ appId: saved.id, revisionId: saved.latestVersion.id, payload })
 }
 
-async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAppWriteInput<UpdateMcpAppInput>): Promise<McpAppSummary> {
+async function updateMcpAppOnPrimary({ context, resolveTools, storageEnabled, ...source }: McpAppWriteInput<UpdateMcpAppInput>): Promise<McpAppSummary> {
   const parsed = updateMcpAppInputSchema.safeParse(source)
   if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide appId, expectedRevisionId, and complete replacement artifact source, title, text fallback, and uniquely named tools.")
   const input = parsed.data
@@ -385,17 +409,19 @@ async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   const pluginId = normalizeDenTypeId("plugin", current.payload.pluginId)
   const resolved = input.tools ? await resolveTools(input.tools) : current.payload.tools
   const isPublic = input.public ?? current.payload.public === true
-  if (isPublic) await requirePublishable(resolved)
+  const storage = requireStorage({ declared: input.storage, current: current.payload.storage, enabled: storageEnabled === true, tools: resolved })
+  if (isPublic) await requirePublishable(resolved, storage)
   const isSite = input.site ?? current.payload.site === true
   if (input.publicName) await requirePublicNameFree({ name: input.publicName, isPublic, appId: id })
   const workflows = input.tools ? await workflowsToAdd(context, pluginId, workflowTools(resolved)) : []
+  const { storage: _declared, ...authored } = input
   const compiled = await compile({
-    ...input,
+    ...authored,
     public: isPublic,
     site: isSite,
     cssSource: input.cssSource ?? storedSource(current.version, current.payload).cssSource,
     description: input.description ?? current.payload.description ?? undefined,
-  }, pluginId, throughPlugin(resolved, pluginId))
+  }, pluginId, throughPlugin(resolved, pluginId), storage)
   await requireEditor(context, id)
   await addWorkflows(context, pluginId, workflows)
   const organizationId = context.organizationContext.organization.id
@@ -437,11 +463,18 @@ async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   return updated
 }
 
-type PublicSharingState = { appId: string; revisionId: string; public: boolean; canPublish: boolean }
+type PublicSharingBlocker = "tools" | "storage"
+type PublicSharingState = { appId: string; revisionId: string; public: boolean; canPublish: boolean; blockedBy: PublicSharingBlocker | null }
+
+function publicSharingBlocker(payload: McpAppCompiledRevision): PublicSharingBlocker | null {
+  if (payload.tools.length > 0) return "tools"
+  return payload.storage ? "storage" : null
+}
 
 function publicSharingState(versionId: string, id: string, payload: McpAppCompiledRevision): PublicSharingState {
-  const canPublish = payload.tools.length === 0
-  return { appId: id, revisionId: versionId, public: payload.public === true && canPublish, canPublish }
+  const blockedBy = publicSharingBlocker(payload)
+  const canPublish = blockedBy === null
+  return { appId: id, revisionId: versionId, public: payload.public === true && canPublish, canPublish, blockedBy }
 }
 
 export function changeMcpAppPublicSharing(input: {
@@ -478,7 +511,7 @@ export function changeMcpAppPublicSharing(input: {
         throw new McpAppError(409, "mcp_app_revision_conflict", "This artifact has changed. Review the latest version before changing its public link.")
       }
       if (change.public) {
-        await requirePublishable(payload.tools)
+        await requirePublishable(payload.tools, payload.storage)
         if (digest(payload.html) !== payload.resourceDigest || Buffer.byteLength(payload.html) !== payload.htmlBytes) {
           throw new McpAppError(422, "mcp_app_digest_mismatch", "The artifact revision failed its integrity check.")
         }
@@ -512,10 +545,14 @@ export function changeMcpAppPublicSharing(input: {
   })
 }
 
-export async function readMcpApp(input: { context: PluginArchActorContext; appId: string }): Promise<ReadMcpAppOutput> {
+export async function readMcpApp(input: { context: PluginArchActorContext; appId: string; storageEnabled?: boolean }): Promise<ReadMcpAppOutput> {
   const { version, payload } = await editableApp(input.context, appId(input.appId))
   const source = storedSource(version, payload)
-  return { app: summarizeMcpAppRevision({ appId: version.configObjectId, revisionId: version.id, payload }), ...source }
+  return {
+    app: summarizeMcpAppRevision({ appId: version.configObjectId, revisionId: version.id, payload }),
+    ...source,
+    ...(input.storageEnabled && payload.storage ? { storage: payload.storage } : {}),
+  }
 }
 
 async function accessibleAppPlugins(input: McpAppAccessInput): Promise<Map<string, string>> {
@@ -678,6 +715,7 @@ export async function loadMcpAppServerDefinition(input: McpAppAccessInput & { ap
     tools: payload.tools,
     ...(payload.loadsWithLaunch ? { loadsWithLaunch: true } : {}),
     ...(payload.site ? { site: true } : {}),
+    ...(payload.storage ? { storage: payload.storage } : {}),
   }
 }
 
@@ -737,7 +775,7 @@ async function loadPublicMcpAppOnPrimary(input: { appIdOrName: string }): Promis
   const content = head ? await revisionContent(app.organizationId, id, head) : null
   if (!head || !content) return null
   const { payload } = content
-  if (payload.public !== true || payload.tools.length > 0) return null
+  if (payload.public !== true || payload.tools.length > 0 || payload.storage) return null
   content.intact ??= digest(payload.html) === payload.resourceDigest && Buffer.byteLength(payload.html) === payload.htmlBytes
   if (!content.intact) return null
   return {

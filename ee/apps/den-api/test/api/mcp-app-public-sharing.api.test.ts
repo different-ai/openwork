@@ -34,7 +34,7 @@ test("a manager can publish and revoke a self-contained artifact without sharing
   const browser = () => den.request(null, "GET", publicPath, { headers: { accept: "text/html" } })
   const state = await ownerRequest("GET", path)
   assert.equal(state.status, 200, summary(state))
-  assert.deepEqual(state.body, { revisionId, publicUrl: null, canPublish: true })
+  assert.deepEqual(state.body, { revisionId, publicUrl: null, canPublish: true, blockedBy: null })
   assert.equal((await browser()).status, 405)
   assert.equal(field(await readAsMcp(publicPath, "tools/list"), "error", "data", "error"), "public_app_unavailable")
 
@@ -86,7 +86,7 @@ test("an artifact with a bound data tool cannot be published from Share", async 
   const revisionId = text(field(created.structured, "app", "revisionId"), "artifact revision")
   const path = `/v1/mcp-apps/${appId}/public-sharing`
   const ownerRequest = den.as(owner, orgId)
-  assert.deepEqual((await ownerRequest("GET", path)).body, { revisionId, publicUrl: null, canPublish: false })
+  assert.deepEqual((await ownerRequest("GET", path)).body, { revisionId, publicUrl: null, canPublish: false, blockedBy: "tools" })
   const refused = await ownerRequest("PUT", path, { public: true, expectedRevisionId: revisionId })
   assert.equal(refused.status, 409, summary(refused))
   assert.equal(field(refused.body, "error"), "public_app_has_tools")

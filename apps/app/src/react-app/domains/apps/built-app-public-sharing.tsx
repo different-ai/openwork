@@ -73,7 +73,7 @@ export function BuiltAppPublicSharing({ client, orgId, appId }: {
     </div>
   );
 
-  const { publicUrl, revisionId, canPublish } = query.data;
+  const { publicUrl, revisionId, canPublish, blockedBy } = query.data;
   const saving = mutation.isPending;
   return (
     <div className="space-y-4">
@@ -103,7 +103,7 @@ export function BuiltAppPublicSharing({ client, orgId, appId }: {
         </>
       ) : (
         <>
-          {!canPublish ? <p className="flex items-center gap-2 text-muted-foreground"><Lock className="size-4 shrink-0" />This artifact uses connected tools. Ask its editor to remove them before publishing.</p> : null}
+          {!canPublish ? <p className="flex items-center gap-2 text-muted-foreground"><Lock className="size-4 shrink-0" />{blockedBy === "storage" ? "This artifact saves data, so it can't have a public link." : "This artifact uses connected tools. Ask its editor to remove them before publishing."}</p> : null}
           <Button size="sm" disabled={saving || !canPublish} onClick={() => void changeSharing(true, revisionId)}>
             {saving ? "Publishing…" : "Publish public link"}
           </Button>

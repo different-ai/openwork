@@ -8,7 +8,25 @@ const SERIAL_FORMS: Record<CodemodeLanguage, string> = {
   ecmascript: "A for...of loop that awaits each item runs one item at a time, and forEach, filter, and reduce never await an async callback, so pass async callbacks only to map.",
 }
 
-export function buildAnAppSkillSource(language: CodemodeLanguage): string {
+export type BuildAnAppSkillOptions = { storage?: boolean }
+
+const SAVED_DATA = `
+## Saved data
+
+Use saved data for an intake form, tracker, approval queue, or shared checklist when people will come back and the rows need to be there. Bind a connection's tool instead when the data belongs in another system.
+
+- Pass the same storage declaration to prepare_app and create_app, for example: storage: { collections: [{ name: "requests", scope: "shared", edit: "creator", fields: [{ name: "title", type: "text", required: true }, { name: "status", type: "text", options: ["open", "done"] }] }] }. A collection can have a description; fields are text, number, boolean, or date (YYYY-MM-DD), with optional required and text-only options. Use the records starter.
+- The artifact gets two built-in tools; do not list these reserved names in tools. Values are strings, numbers, booleans, or null. A row is { id, values: { field: value }, createdAt, updatedAt, createdBy, updatedBy, mine }; the authors are names, dates are strings, and mine says who added the row relative to the current person.
+- storage_read({ collection, where?: { field: value }, orderBy?: field name | "createdAt" | "updatedAt", order?: "asc" | "desc", limit?: 1..200, offset? }) returns structuredContent { collection, rows, total, limit, offset }. It defaults to 50 rows, newest first. Read on open after the launch arrives, without a click.
+- storage_write({ collection, action: "insert" | "update" | "delete", id?, values?: { field: value } }) returns structuredContent { collection, action, id, row? }, with the saved row for insert/update. Insert includes all required fields; update and delete need id, and update sends only changed fields (null clears an optional field). One write per action button click. Update the list from the saved row, not a full reload.
+- OpenWork checks fields, types, options, required values, row access and per-artifact row/size caps (storage_full). Errors are isError results with JSON text { error, message }; show the message. Shared rows are visible to people who can use the artifact; edit: "anyone" lets them all change/remove rows, edit: "creator" only lets the author do so (hide those controls unless mine). Personal rows are only visible and changeable by their author. The defaults are shared and anyone. Do not implement access checks or fake persistence in React state.
+- Launch result._meta["openwork/storage"] is { available, collections: string[] }. If available is false or either tool returns storage_unavailable, hide write controls and say "Saved data is unavailable. An OpenWork admin can turn it back on." Do not show an empty list: the rows are kept.
+- update_app keeps rows; omit storage to keep the declaration, or pass the full replacement to add fields or collections. Older rows read null for added fields; removing a field hides it but keeps its data. Public artifacts cannot use storage.
+- To answer a question in chat, use read_app_data with the same read arguments plus appId; no need to open the artifact. write_app_data takes the write arguments plus appId.
+`
+
+export function buildAnAppSkillSource(language: CodemodeLanguage, options?: BuildAnAppSkillOptions): string {
+  const storage = options?.storage === true
   return `---
 name: build-an-app
 description: |
@@ -28,14 +46,16 @@ An artifact is a small interactive React view that OpenWork compiles and publish
 
 - Build an artifact when the person will come back to it or needs inputs, filters, or buttons. When one answer settles the question, answer in chat.
 - One artifact does one job. Name its focal element before writing anything: the list, number, status, or button the person came for.
-- A self-contained artifact, such as a calculator or checklist, binds no tools. Anything that shows or changes the person's data binds the tools it needs.
+${storage
+  ? "- A calculator can work from input alone. An artifact can keep its own saved data without a connection; bind tools for data that belongs elsewhere."
+  : "- A self-contained artifact, such as a calculator or checklist, binds no tools. Anything that shows or changes the person's data binds the tools it needs."}
 
 ## Steps
 
 1. Find the data and actions it needs, unless it is self-contained: search_capabilities with 2-4 keyword variants, then pick exact matches that create_app can bind. Prefer tools that only read (readOnly: true). When the data must be combined or computed each time, save a live Workflow first, as execute_capability_script describes, and time it as Make it fast says.
-2. Call prepare_app with a title that names the outcome ("Open Linear issues", not "Dashboard"), one sentence on what the person sees and does, and those exact tools. It verifies them and returns their input schemas and a starter already wired to them.
+2. Call prepare_app with a title that names the outcome ("Open Linear issues", not "Dashboard"), one sentence on what the person sees and does, and those exact tools${storage ? " or a storage declaration (or both)" : ""}. It verifies them and returns their input schemas and a starter already wired to them.
 3. Write the artifact from that starter. Keep its theme, state handling, and tool calls. Replace the general result view with the focal view, rename buttons to their outcome, and keep only the inputs the person needs.
-4. Call create_app with the preparationId, the same tools, the complete React and CSS, and a textFallback of one or two sentences on what the artifact shows. If it fails, fix exactly what the error names and call create_app again with the same preparationId. Never fall back to a local HTML file, save_artifact_view, or config-object writes.
+4. Call create_app with the preparationId, the same tools${storage ? " and storage declaration" : ""}, the complete React and CSS, and a textFallback of one or two sentences on what the artifact shows. If it fails, fix exactly what the error names and call create_app again with the same preparationId. Never fall back to a local HTML file, save_artifact_view, or config-object writes.
 5. Reply in one or two sentences: what the artifact shows and one thing to try in it. OpenWork shows the build as it happens and opens the artifact, so do not narrate the steps, claim stages in prose, or paste the source. After create_app or update_app the artifact is already open and reloaded beside the chat: never ask the person to reopen it or say you have not seen it.
 
 To change an artifact, keep its purpose and tools unless the person asks otherwise. Call read_app first: it returns app (the latest summary), reactSource, and cssSource, not tool input schemas. Copy app.revisionId into update_app's expectedRevisionId. Supply complete replacement React source, title, and textFallback; omit cssSource, description, or tools to keep them, or pass complete replacements.
@@ -47,13 +67,13 @@ To change an artifact, keep its purpose and tools unless the person asks otherwi
 - React is injected: use React.useState and other React APIs without imports. Do not use fetch, browser or host globals, timers, dynamic code, external resources, URL-bearing elements, or <form>, <svg>, <style>, or <math> elements; use labeled inputs and type=button controls.
 - When prepare_app's nextSteps lists built-in libraries, import only those, by name, and follow its note on drawing; otherwise use no imports. OpenWork bundles its own pinned copy, so never install packages or load scripts.
 - A saved Workflow answers with its run receipt, { kind: "workflow", status, value, ... }: the data is its value. The starter's valueOf unwraps it; keep it, or read structuredContent.value yourself, or every section renders empty.
-- Call only declared tools, with app.callServerTool({ name, arguments }): a Workflow or connection tool takes the capability's arguments, an OpenWork action { path, query, body }, and a live Workflow only an optional { timeZone }. Show a blocked state if app.getHostCapabilities()?.serverTools is absent.
+- Call only declared tools${storage ? " and the built-ins for declared storage" : ""}, with app.callServerTool({ name, arguments }): a Workflow or connection tool takes the capability's arguments, an OpenWork action { path, query, body }, and a live Workflow only an optional { timeZone }. Show a blocked state if app.getHostCapabilities()?.serverTools is absent.
 - Once the launch result arrives (result is no longer undefined), call the read-only tools the focal view needs with the launch input, with no click, and show the data. OpenWork runs a call without a click only for a tool that needs no approval, once per open and once the artifact is on screen.
 - An artifact opened without launch input often arrives with its data: result._meta["openwork/initialResults"] lists { name, arguments, loadedAt, result } for read-only tools that need no input. Show the entry whose name and arguments match the call the artifact would make instead of making it; call as usual when none matches. An entry marked kept matches this person's earlier snapshot, confirmed by this open's checked read. Show it and, if an older launch producer supplies a loadedAt over a minute old, load again behind it. The starter's loadWith does this; keep it.
 - A dashboard keeps an artifact open and refreshes it by delivering a new launch result (a new result object, with _meta "openwork/launchedAt"). When result changes after the first one, load the same reads again with the current inputs, in the background: keep the data on screen, marked as refreshing, and never go back to placeholders. OpenWork runs each such reload once per refresh.
 - A tool that changes something (send, create, update, delete) or needs approval runs only from its own button: OpenWork allows one such call per click. Never call a tool on every keystroke; load again on Enter or a button. If the host refuses a call because it needs approval (its error mentions approval), keep that button so the person can approve and try again.
 - To show data instantly, pass _meta { "openwork/cache": "store" } on a call so OpenWork keeps its result when the tool is read-only. When app.getHostContext()?.experimental?.["openwork/result-cache"] is true, call the same tool and arguments with _meta { "openwork/cache": "read" } as the artifact opens, then load it live. That read runs no tool: OpenWork answers from this person's own storage with the last result (_meta "openwork/cached": true and "openwork/cachedAt"), or isError when none is kept. Make the read as soon as the inputs are known, without waiting for the launch result: a dashboard shows its saved artifact at once and answers the kept read as soon as it has confirmed the artifact may still read it, before the live load returns. If the live load fails, keep showing what the artifact already has, marked stale with its time; OpenWork drops the kept result, so the next open starts without it.
-
+${storage ? SAVED_DATA : ""}
 ## Publication and results
 
 - prepare_app verifies bindings without running tools or saving an artifact. It returns preparationId, title, tools with their input schemas and readOnly/kind/mode, starter { reactSource, cssSource }, and nextSteps. The starter wires an initial tool or tools, not necessarily every declaration; nextSteps names any remaining tools to wire.
@@ -63,11 +83,12 @@ To change an artifact, keep its purpose and tools unless the person asks otherwi
 
 ## Starters
 
-prepare_app picks one from the tools you declare. Each is also a resource you can read before you start:
+prepare_app picks one from ${storage ? "the storage or tools you declare" : "the tools you declare"}. Each is also a resource you can read before you start:
 
 - lookup (${appStarterResourceUri("lookup")}): every tool only reads. It loads when the artifact opens, with inputs filled from the launch input, shows the last result for them at once while it refreshes, and loads again on Enter or its button. For dashboards, lists, status boards, and search.
 - action (${appStarterResourceUri("action")}): at least one tool changes data. Inputs, one primary button that makes one call, the outcome, and a read that loads on open and again from its own button.
-- standalone (${appStarterResourceUri("standalone")}): no tools. Its logic runs on the inputs and the launch input. For calculators, converters, and planners.
+- standalone (${appStarterResourceUri("standalone")}): no tools. Its logic runs on the inputs and the launch input. For calculators, converters, and planners.${storage ? `
+- records (${appStarterResourceUri("records")}): storage is declared, with or without connected tools. Show the first collection; add, edit a choice, or delete from a button.` : ""}
 
 ## Make it fast
 
@@ -79,7 +100,7 @@ The first load comes before everything else in this guide. Design the read so th
 - Ask the source for less: a date window, a summary or report endpoint, and no expanded records the view does not show. Each page of records can add a second or more, so never page through history for a number the source can give you directly.
 - When the whole picture cannot be fast, split it: a quick read for the focal view, and a slower tool for the detail that fills in behind it.
 - Load on open. Opening the artifact is enough intent, from the chat, a dashboard, or the catalog, so its read-only data loads with no click; never leave an empty "click to load" state for data it can read. Clicks are for changes (send, create, update, delete) and anything that needs approval.
-- Keep the starter's cached read: the last result for its inputs shows at once while the live load refreshes it, with its "Updated" time, and stays on screen, marked stale, if the refresh fails; OpenWork then forgets it, so the next open starts fresh.
+- ${storage ? "For connected reads, keep" : "Keep"} the starter's cached read: the last result for its inputs shows at once while the live load refreshes it, with its "Updated" time, and stays on screen, marked stale, if the refresh fails; OpenWork then forgets it, so the next open starts fresh.
 - Let the launch input carry the record or filter, so the chat opens the artifact on it without a lookup first.
 - Return only what the view shows: the top rows and a count, not full records.
 - Show data the moment it arrives: no entrance animations, staggered reveals, or chart draw-in (recharts isAnimationActive={false}). Import a built-in library only when the view needs it: charts add about 400 KB to every open.

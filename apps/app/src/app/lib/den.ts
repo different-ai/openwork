@@ -569,6 +569,7 @@ export type DenBuiltMcpAppPublicSharing = {
   revisionId: string;
   publicUrl: string | null;
   canPublish: boolean;
+  blockedBy: "tools" | "storage" | null;
 };
 
 function parseBuiltMcpAppPublicSharing(payload: unknown): DenBuiltMcpAppPublicSharing {
@@ -578,7 +579,8 @@ function parseBuiltMcpAppPublicSharing(payload: unknown): DenBuiltMcpAppPublicSh
     (payload.publicUrl !== null && (typeof payload.publicUrl !== "string" || !payload.publicUrl)) ||
     typeof payload.canPublish !== "boolean"
   ) throw new Error("Invalid public sharing response.");
-  return { revisionId: payload.revisionId, publicUrl: payload.publicUrl, canPublish: payload.canPublish };
+  const blockedBy = payload.blockedBy === "tools" || payload.blockedBy === "storage" ? payload.blockedBy : null;
+  return { revisionId: payload.revisionId, publicUrl: payload.publicUrl, canPublish: payload.canPublish, blockedBy };
 }
 
 function readStringArray(value: unknown): string[] {
