@@ -31,7 +31,7 @@ export function CloudCodingApprovalView({ approval, unavailable, loadError, deci
   const visible = unavailable ? undefined : approval;
   const status = visible?.pullRequest ? "pushed" : visible?.status;
   const pending = status === "pending";
-  const title = pending && visible ? `Push to ${visible.repositoryFullName}?` : "Push request";
+  const title = visible ? `Push to ${visible.repositoryFullName}?` : "Push request";
   const remainingFiles = visible ? visible.fileCount - visible.files.length : 0;
   const pull = visible?.pullRequest;
   return (
@@ -49,10 +49,10 @@ export function CloudCodingApprovalView({ approval, unavailable, loadError, deci
               { label: "New branch", value: <code className="break-all">{visible.branch}</code> },
               { label: "From", value: <code>{visible.baseBranch}</code> },
               { label: "Commit", value: <code>{visible.headSha.slice(0, 7)}</code> },
-              { label: "Tests", wrap: true, value: <span className="flex flex-col gap-1">
+              { label: "Tests", value: <span className="block whitespace-normal">
                 <span className={visible.tests.status === "failed" ? "text-[var(--ow-danger)]" : undefined}>{testLabels[visible.tests.status]}</span>
-                {visible.tests.command ? <code className="whitespace-pre-wrap break-all">{visible.tests.command}</code> : null}
-                {visible.tests.summary ? <span>{visible.tests.summary}</span> : null}
+                {visible.tests.command ? <>{" "}<code className="whitespace-pre-wrap break-words">{visible.tests.command}</code></> : null}
+                {visible.tests.summary ? <span className="block break-words text-[12px] leading-4 text-[var(--dls-text-secondary)]">{visible.tests.summary}</span> : null}
               </span> },
               { label: "Files changed", value: `${visible.fileCount} ${visible.fileCount === 1 ? "file" : "files"}` },
             ]} />

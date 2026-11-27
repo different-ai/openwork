@@ -14,6 +14,7 @@ export type DenTableProps<T> = {
   getRowKey: (row: T) => string;
   rowClassName?: string;
   density?: "default" | "compact";
+  cellAlign?: "top" | "middle";
   renderRowDetail?: (row: T) => ReactNode;
   emptyLabel?: string;
   headerTone?: "muted" | "plain";
@@ -28,9 +29,11 @@ export function DenTable<T>({
   emptyLabel = "Nothing here yet.",
   headerTone = "muted",
   density = "default",
+  cellAlign,
 }: DenTableProps<T>) {
   const compact = density === "compact";
-  const cellClass = compact ? "px-3 py-2 text-[13px] align-top" : "px-6 py-3";
+  const headerClass = compact ? "px-3 py-2 text-[13px] align-top" : "px-6 py-3";
+  const cellClass = `${compact ? "px-3 py-2 text-[13px]" : "px-6 py-3"} ${cellAlign === "middle" ? "align-middle" : cellAlign === "top" || compact ? "align-top" : ""}`;
   if (rows.length === 0) {
     return <p className="px-6 py-5 text-[13px] text-gray-500">{emptyLabel}</p>;
   }
@@ -51,7 +54,7 @@ export function DenTable<T>({
                 key={column.key}
                 scope="col"
                 style={column.width ? { width: column.width } : undefined}
-                className={`${cellClass} font-medium ${column.align === "right" ? "text-right" : ""}`}
+                className={`${headerClass} font-medium ${column.align === "right" ? "text-right" : ""}`}
               >
                 {column.header}
               </th>

@@ -9,7 +9,7 @@ import { DenSwitch } from "../../../_components/ui/switch";
 import { DenTable } from "../../../_components/ui/table";
 import { ROW_NAME_CLASS, ROW_SECOND_LINE_CLASS } from "../../_features/computers/computer-rows";
 import { AccessRow, Avatar } from "../access-rows";
-import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "../item-list";
+import { ItemPanel, ItemRow, ItemRowsSkeleton } from "../item-list";
 import { RelativeTime } from "../permissions-ui";
 import { CloudCodingLoadError, GithubMark, Locked } from "./cloud-coding-ui";
 
@@ -83,6 +83,7 @@ export type CloudCodingViewProps = {
 export function CloudCodingView({ overview, loadError, callbackError, actionError, settingsError, installations, finishConnecting, installPending, asked, askPending, settingsPending, linkPending, sentMemberIds, sendPending, onRetry, onInstall, onAsk, onOpenGithub, onToggle, onChangeAudience, onLink, onSendLink }: CloudCodingViewProps) {
   const canManage = overview?.canManage;
   const connection = overview?.connection;
+  const people = [...(overview?.people ?? [])].sort((a, b) => Number(b.isYou) - Number(a.isYou) || a.name.localeCompare(b.name));
   const addRepositories = canManage ? <DenButton variant="ghost" size="sm" onClick={onOpenGithub}>Add repositories</DenButton> : null;
   return (
     <DashboardPageTemplate title="Cloud coding" description={descriptionFor(overview)} action={connection && canManage ? <DenButton variant="secondary" size="sm" onClick={onOpenGithub}>Change on GitHub</DenButton> : null}>
@@ -105,7 +106,7 @@ export function CloudCodingView({ overview, loadError, callbackError, actionErro
             </ItemPanel>
             {overview.configured && canManage && installations ? (
               <section>
-                <DenSectionHeader title="Choose a GitHub account" />
+                <DenSectionHeader density="compact" title="Choose a GitHub account" />
                 {installations.error ? <CloudCodingLoadError message={installations.error} onRetry={installations.onRetry} /> : (
                   <ItemPanel>
                     {!installations.accounts ? <ItemRowsSkeleton label="Loading GitHub accounts" rows={2} /> : installations.accounts.length === 0 ? <ItemRow compact title="No GitHub accounts found" description="Choose Connect GitHub to install OpenWork." /> : installations.accounts.map((account) => (
@@ -116,7 +117,7 @@ export function CloudCodingView({ overview, loadError, callbackError, actionErro
               </section>
             ) : null}
             <section>
-              <DenSectionHeader title="How it works" />
+              <DenSectionHeader density="compact" title="How it works" />
               <ItemPanel>{steps.map((line, index) => (
                 <div key={line} className={`flex min-h-11 items-center gap-3 py-2 ${valueClass}`}>
                   <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[var(--dls-hover)] text-[11px] font-semibold text-[var(--dls-text-secondary)]">{index + 1}</span>{line}
@@ -127,7 +128,8 @@ export function CloudCodingView({ overview, loadError, callbackError, actionErro
         ) : (
           <>
             {connection.suspended ? <DenNotice tone="warning" message="GitHub paused OpenWork's access. Resume it on GitHub." action={<DenButton variant="secondary" size="sm" onClick={onOpenGithub}>Open GitHub</DenButton>} /> : null}
-            <ItemSection title="General" variant="rule">
+            <section>
+              <DenSectionHeader density="compact" title="General" className="border-b border-[var(--den-list-line)]" />
               <div className="divide-y divide-[var(--den-list-line)] border-b border-[var(--den-list-line)]">
                 <AccessRow title="Cloud coding" description={<span className="whitespace-normal">People can ask OpenWork to change code and open pull requests from the desktop app, OpenWork Web, Slack and their agents.</span>}
                   trailing={<span className="flex shrink-0 flex-col-reverse items-end gap-2 sm:flex-row sm:items-center">
@@ -138,23 +140,24 @@ export function CloudCodingView({ overview, loadError, callbackError, actionErro
                 <AccessRow title="Who can use it" trailing={<span className="flex items-center gap-2"><span className={valueClass}>{overview.access.orgWide ? "Everyone" : audienceParts(overview.access).join(", ") || "No one"}</span>{canManage ? <DenButton variant="ghost" size="sm" disabled={settingsPending} onClick={onChangeAudience}>Change</DenButton> : null}</span>} />
               </div>
               {settingsError ? <DenNotice tone="error" className="mt-2" message={settingsError} /> : null}
-            </ItemSection>
+            </section>
             <section>
-              <DenSectionHeader title="Repositories" description="Chosen on GitHub" action={overview.repositories.length > 0 ? addRepositories : null} />
+              <DenSectionHeader density="compact" title="Repositories" description="Chosen on GitHub" action={overview.repositories.length > 0 ? addRepositories : null} />
               <ItemPanel className="[&_[data-item-action]]:w-auto!">{overview.repositories.length ? overview.repositories.map((repository) => (
                 <ItemRow key={repository.id} compact logo={<GithubMark />} title={repository.fullName} description={pullCount(repository.pullRequestCount)} />
               )) : <ItemRow compact title={<span className={mutedClass}>No repositories chosen yet</span>} action={addRepositories} />}</ItemPanel>
             </section>
-            <ItemSection title="Rules" variant="rule">
+            <section>
+              <DenSectionHeader density="compact" title="Rules" className="border-b border-[var(--den-list-line)]" />
               <div className="divide-y divide-[var(--den-list-line)] border-b border-[var(--den-list-line)]">
                 <AccessRow title="Ask before every push" description={<span className="whitespace-normal">The person who asked approves each push in the chat.</span>} trailing={<Locked>Always</Locked>} />
                 <AccessRow title="Push to new branches only" description={<span className="whitespace-normal">OpenWork never pushes to the main branch or rewrites history.</span>} trailing={<Locked>Always</Locked>} />
                 <AccessRow title="Pull requests open as" trailing={<span className={valueClass}>The person who asked</span>} />
               </div>
-            </ItemSection>
+            </section>
             <section>
-              <DenSectionHeader title="People" description="Each person links their own GitHub account the first time they ask" />
-              <DenTable density="compact" rows={overview.people} getRowKey={(person) => person.memberId} columns={[
+              <DenSectionHeader density="compact" title="People" description="Each person links their own GitHub account the first time they ask" />
+              <DenTable density="compact" cellAlign="middle" rows={people} getRowKey={(person) => person.memberId} columns={[
                 { key: "person", header: "Person", width: "45%", render: (person) => <span className="flex min-w-0 items-center gap-3"><Avatar name={person.name} /><Cell title={person.isYou ? `${person.name} (you)` : person.name} detail={person.email} /></span> },
                 { key: "github", header: "GitHub", render: (person) => !person.canUse ? <span className={mutedClass}>Not included</span> : person.github ? <span className={`flex items-center gap-1.5 ${valueClass}`}><GithubMark inline />{person.github.login}</span> : <span className={mutedClass}>Not linked yet</span> },
                 { key: "action", header: "", width: "120px", align: "right", render: (person) => {
@@ -166,8 +169,8 @@ export function CloudCodingView({ overview, loadError, callbackError, actionErro
               ]} />
             </section>
             <section>
-              <DenSectionHeader title="Recent pull requests" />
-              <DenTable density="compact" rows={overview.pullRequests} getRowKey={(pull) => pull.id} emptyLabel="No pull requests yet. They'll show up here after someone's first push." columns={[
+              <DenSectionHeader density="compact" title="Recent pull requests" />
+              <DenTable density="compact" cellAlign="middle" rows={overview.pullRequests} getRowKey={(pull) => pull.id} emptyLabel="No pull requests yet. They'll show up here after someone's first push." columns={[
                 { key: "pull", header: "Pull request", width: "60%", render: (pull) => (
                   <span className="flex min-w-0 items-center gap-3">
                     <GitPullRequest className={`size-4 shrink-0 ${pull.state === "open" ? valueClass : mutedClass}`} strokeWidth={1.5} aria-hidden />

@@ -165,6 +165,32 @@ test("connected manager sees the sections in approved order, people and linked p
   assert.ok(buttons(html).includes("Send link"));
 });
 
+test("Cloud coding section headings share one scale and keep supporting text below the title row", () => {
+  const connected = main({ overview });
+  const setup = main({ overview: disconnected });
+  const headings = [...[...connected.matchAll(/<h2 class="([^"]+)">[^<]+<\/h2>/g)], ...setup.matchAll(/<h2 class="([^"]+)">How it works<\/h2>/g)];
+  assert.equal(headings.length, 6);
+  assert.equal(new Set(headings.map((heading) => heading[1])).size, 1);
+  assert.match(headings[0][1], /text-\[13px\] font-semibold/);
+  assert.match(connected, /<h1[^>]+text-xl[^>]*>Cloud coding<\/h1>/);
+  assert.match(connected, />Repositories<\/h2><button[^>]+text-gray-500[^>]*>.*?Add repositories.*?<\/button><\/div><p[^>]+text-\[12px\][^>]*>Chosen on GitHub<\/p>/);
+  assert.match(connected, />People<\/h2><\/div><p[^>]+text-\[12px\][^>]*>Each person links their own GitHub account the first time they ask<\/p>/);
+});
+
+test("People puts you first then sorts by name, and both tables center every body cell", () => {
+  const people = [...overview.people].reverse();
+  const html = main({ overview: { ...overview, people } });
+  const bodies = [...html.matchAll(/<tbody[^>]*>(.*?)<\/tbody>/gs)].map((match) => match[1]);
+  assert.equal(bodies.length, 2);
+  assert.deepEqual([...bodies[0].matchAll(/>(Maya Chen \(you\)|Arjun Patel|Leo Martin|Sam Rivera)<\/span>/g)].map((match) => match[1]), ["Maya Chen (you)", "Arjun Patel", "Leo Martin", "Sam Rivera"]);
+  assert.deepEqual(people.map((person) => person.memberId), ["arjun", "leo", "sam", "maya"]);
+  for (const body of bodies) {
+    const cells = [...body.matchAll(/<td class="([^"]+)"/g)];
+    assert.ok(cells.length > 0);
+    for (const cell of cells) assert.match(cell[1], /\balign-middle\b/);
+  }
+});
+
 test("audience and repository counts use the correct singular, plural and zero-label forms", () => {
   const single = { ...overview, repositories: overview.repositories.slice(0, 1) };
   assert.match(main({ overview: single }), /On for everyone, 1 repository/);
@@ -202,6 +228,10 @@ test("the link page reports linked and unlinked states and explains what linking
   assert.match(html, /Not linked/);
   assert.match(html, /Pull requests OpenWork opens for you will be in your name\./);
   assert.deepEqual(buttons(html), ["Link your GitHub account"]);
+  for (const state of [linked, html]) {
+    assert.match(state, /<h1[^>]+text-xl[^>]*>Link your GitHub account<\/h1>/);
+    assert.match(state, /class="flex min-h-12 items-center[^>]+data-library-integrated-row="true".*?text-\[13px\][^>]*>GitHub<\/span>.*?data-item-action="true"/s);
+  }
 });
 
 test("the link page shows the reason and no action when blocked", () => {
@@ -228,6 +258,11 @@ test("pending approval names the operation and exactly two decision actions", ()
   disabled(pending, "Allow once");
 });
 
+test("approval lays out the tests label opposite the status and command, with a secondary summary", () => {
+  const html = push({ approval });
+  assert.match(html, /<div class="[^\"]*items-center justify-between"><span[^>]*>Tests<\/span><span class="[^\"]*text-right[^\"]*"><span[^>]*><span>Passed<\/span> <code[^>]*>pnpm test<\/code><span class="block[^\"]*text-\[var\(--dls-text-secondary\)\]">12 tests passed<\/span>/);
+});
+
 test("approval distinguishes test failure from tests not run", () => {
   const failed = push({ approval: { ...approval, tests: { ...approval.tests, status: "failed" } } });
   assert.match(failed, /text-\[var\(--ow-danger\)\]/);
@@ -246,7 +281,8 @@ for (const [status, copy] of [
 ] as const) {
   test(`${status} approval shows its outcome in place and no decision actions`, () => {
     const html = push({ approval: { ...approval, status } });
-    assert.ok(html.includes(copy));
+    assert.match(html, /<h1[^>]*>Push to acme\/storefront\?<\/h1><\/div><\/div><\/div><p[^>]*><span role="status">/);
+    assert.ok(html.includes(`<span role="status">${copy}`));
     assert.match(html, /fix-checkout-rounding/);
     assert.deepEqual(buttons(html), []);
   });
