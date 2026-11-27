@@ -4,10 +4,6 @@ import { createMcpAppStorageBackend } from "./backends.js"
 
 let configured: McpAppStorageBackend | null | undefined
 
-/**
- * This install's artifact storage backend, or null when it has none
- * configured. Den checks who is asking before it calls a backend.
- */
 export function getMcpAppStorageBackend(): McpAppStorageBackend | null {
   if (configured === undefined) {
     const config = env.artifactStorage.backend
@@ -17,7 +13,6 @@ export function getMcpAppStorageBackend(): McpAppStorageBackend | null {
   return configured
 }
 
-/** Tests swap the backend in; passing undefined goes back to the configured one. */
 export function setMcpAppStorageBackendForTests(backend: McpAppStorageBackend | null | undefined): void {
   configured = backend
 }

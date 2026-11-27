@@ -210,7 +210,6 @@ export const createMcpAppInputSchema = mcpAppAuthoringSchema.extend({
 export const updateMcpAppInputSchema = mcpAppAuthoringSchema.extend({
   appId: mcpAppIdSchema,
   expectedRevisionId: mcpAppRevisionIdSchema,
-  /** Omit to keep what the App saves; null stops it using saved data, which is kept until the App is deleted. */
   storage: mcpAppStorageSchema.nullable().optional(),
 })
 export const readMcpAppInputSchema = z.object({ appId: mcpAppIdSchema }).strict()

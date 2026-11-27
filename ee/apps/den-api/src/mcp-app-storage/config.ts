@@ -9,13 +9,9 @@ export type ArtifactStorageBackendConfig =
   | { kind: "local"; directory: string }
 
 export type ArtifactStorageConfig = {
-  /** null when this install has nowhere to keep artifact data; artifacts then report their saved data as unavailable. */
   backend: ArtifactStorageBackendConfig | null
-  /** Why `backend` is null, for the startup log. */
   unavailableReason?: string
-  /** Largest database one artifact may grow to. */
   maxBytes: number
-  /** Most rows one artifact may hold, across its collections. */
   maxRows: number
 }
 
@@ -32,18 +28,6 @@ function positiveInteger(name: string, value: string | undefined, fallback: numb
   return parsed
 }
 
-/**
- * Which storage backend this install uses is install configuration, not a
- * feature: the `artifactStorage` feature decides who gets saved data, this
- * decides where it is kept.
- *
- * - `celld`: a celld fleet (one cell per artifact, state in an S3-compatible
- *   bucket). The only choice for an install that runs more than one Den.
- * - `local`: SQLite files in a directory on this Den's disk, for development
- *   and tests. Outside dev mode it is refused unless the operator states that
- *   this install runs exactly one Den with a persistent disk.
- * - unset: `local` under the system temp directory in dev mode, otherwise none.
- */
 export function resolveArtifactStorageConfig(input: {
   backend: string | undefined
   localDir: string | undefined

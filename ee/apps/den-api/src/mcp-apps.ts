@@ -231,12 +231,6 @@ async function requirePublishable(tools: McpAppToolBinding[], storage: McpAppSto
   }
 }
 
-/**
- * What the new revision saves. Declaring or changing storage needs the
- * artifactStorage feature; an artifact that already saves data keeps its
- * declaration through an update while the feature is off, so turning the
- * feature back on finds its data where it was.
- */
 function requireStorage(input: { declared: McpAppStorage | null | undefined; current: McpAppStorage | undefined; enabled: boolean; tools: McpAppToolDeclaration[] | McpAppToolBinding[] }): McpAppStorage | undefined {
   const storage = input.declared === undefined ? input.current : input.declared ?? undefined
   if (input.declared && !input.enabled) {
@@ -337,7 +331,6 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
 type McpAppWriteInput<TInput> = TInput & {
   context: PluginArchActorContext
   resolveTools: ResolveMcpAppTools
-  /** Whether the artifactStorage feature is on for the member publishing. */
   storageEnabled?: boolean
 }
 

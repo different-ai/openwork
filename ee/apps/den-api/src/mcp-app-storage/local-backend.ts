@@ -24,15 +24,6 @@ function failure(action: string, cause: unknown): McpAppStorageBackendError {
   return new McpAppStorageBackendError(`The local artifact database could not ${action}.`, { cause })
 }
 
-/**
- * SQLite files on this Den's own disk, one per artifact, at
- * `<directory>/<organizationId>/<appId>.sqlite`. For development and tests:
- * a second Den instance would not see these files, so an install that runs
- * more than one Den uses the celld backend instead.
- *
- * Each call opens the file, runs, and closes it, so nothing is held between
- * requests and a deleted database leaves no open handle behind.
- */
 export function createLocalStorageBackend(input: { directory: string; schema: McpAppStorageSchema }): McpAppStorageBackend {
   const fileFor = (ref: StorageDatabaseRef) => {
     if (!DEN_ID.test(ref.organizationId) || !DEN_ID.test(ref.appId)) throw new McpAppStorageBackendError("The artifact database id is not valid.")

@@ -26,14 +26,12 @@ function record(row: typeof McpAppStorageTable.$inferSelect): McpAppStorageRecor
   }
 }
 
-/** The artifact's database as Den last saw it, or null when it has never saved anything. */
 export async function readMcpAppStorageRecord(ref: StorageDatabaseRef): Promise<McpAppStorageRecord | null> {
   const [row] = await db.select().from(McpAppStorageTable)
     .where(eq(McpAppStorageTable.configObjectId, normalizeDenTypeId("configObject", ref.appId))).limit(1)
   return row && row.organizationId === normalizeDenTypeId("organization", ref.organizationId) ? record(row) : null
 }
 
-/** Records that the artifact has a database, with its size and row count after the latest write. */
 export async function recordMcpAppStorageUse(ref: StorageDatabaseRef, usage: { backend: McpAppStorageBackendKind; rowCount: number; sizeBytes: number }): Promise<void> {
   const values = { backend: usage.backend, rowCount: usage.rowCount, sizeBytes: usage.sizeBytes }
   await db.insert(McpAppStorageTable).values({

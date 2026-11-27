@@ -14,9 +14,7 @@ function identifier(name: string): string {
   return `"${name.replaceAll('"', '""')}"`
 }
 
-/** Logical export of ordinary SQLite tables and indexes, not a live snapshot. */
 export async function rebuildSqliteFile(query: (statement: StorageStatement) => Promise<StorageQueryResult>): Promise<Uint8Array | null> {
-  // celld v0.6.3 lets apps read sqlite_schema but exposes runtime tables there.
   const { rows } = await query({ sql: `SELECT type, name, sql FROM sqlite_schema
     WHERE type IN ('table', 'index') AND sql IS NOT NULL
       AND lower(name) NOT GLOB 'sqlite_*' AND lower(tbl_name) NOT GLOB 'sqlite_*'
@@ -32,8 +30,6 @@ export async function rebuildSqliteFile(query: (statement: StorageStatement) => 
   try {
     const database = new DatabaseSync(file, { enableForeignKeyConstraints: false })
     try {
-      // Do not allow catalog text to open another database or change connection
-      // settings. Use prepared statements to execute just one DDL command.
       database.setAuthorizer((action) => [
         constants.SQLITE_ATTACH, constants.SQLITE_DETACH, constants.SQLITE_CREATE_VTABLE,
       ].some((denied) => denied === action) ? constants.SQLITE_DENY : constants.SQLITE_OK)

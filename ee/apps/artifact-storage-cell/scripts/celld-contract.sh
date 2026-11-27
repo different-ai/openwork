@@ -68,7 +68,7 @@ JS
 
 cd "$den"
 start
-node --conditions=development --import tsx --test test/mcp-app-storage-backends.test.ts
+node --conditions=development --import tsx --test test/mcp-app-storage-backends.test.ts test/mcp-app-storage-service.test.ts
 restart_probe write
 stop
 start

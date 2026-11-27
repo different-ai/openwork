@@ -156,7 +156,6 @@ export function registerAppBuilderTools(input: {
   scopes: ReadonlySet<string>
   service: AppBuilderService
   publicOrigin: string
-  /** The artifactStorage feature for this member. Off, the tools are exactly what they were before it existed. */
   storage?: boolean
   canOpen?: (appId: string) => Promise<boolean>
   notifyCatalogChanged: () => void

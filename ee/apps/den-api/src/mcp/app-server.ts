@@ -159,7 +159,6 @@ export function createMcpAppServer(input: {
   canKeep?: (binding: McpAppToolBinding) => boolean
   launchReads?: LaunchReadHandoff
   instructions?: string
-  /** Present only for an artifact that saves data. Its tools are listed only while that data can be used. */
   storage?: McpAppStorageBinding
   storageUsage?: { organizationId: string; memberId: string }
 }) {

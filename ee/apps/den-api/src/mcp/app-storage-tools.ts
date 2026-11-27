@@ -29,11 +29,9 @@ export const STORAGE_UNAVAILABLE_MESSAGE = "Saved data is unavailable. What was 
 
 type StorageToolResult = CallToolResult & { structuredContent?: Record<string, unknown> }
 
-/** What an artifact's storage tools run against for one verified member, or why they cannot run. */
 export type McpAppStorageBinding = {
   status: McpAppStorageStatus
   storage: McpAppStorage
-  /** Absent when saved data cannot be used right now: the feature is off, or the install has no storage backend. */
   access?: () => Promise<McpAppStorageAccess>
 }
 
@@ -53,7 +51,6 @@ function describeCollections(storage: McpAppStorage): string {
 
 const valueSchema = { type: ["string", "number", "boolean", "null"] }
 
-/** The two tools an artifact that saves data gets on its own MCP server. */
 export function mcpAppStorageTools(title: string, storage: McpAppStorage): Tool[] {
   const collection = { type: "string", enum: storage.collections.map((entry) => entry.name), description: "Which saved collection." }
   const collections = describeCollections(storage)
@@ -103,11 +100,6 @@ function failure(error: string, message: string, extra: Record<string, string> =
   return { isError: true, content: [{ type: "text", text: JSON.stringify({ error, message, ...extra }) }] }
 }
 
-/**
- * Runs one storage tool call for a member Den has already verified may use the
- * artifact. Scope, feature and backend checks happen here, so every caller
- * (the artifact's own server, the agent's tools) gets the same answers.
- */
 export async function callMcpAppStorageTool(input: {
   binding: McpAppStorageBinding
   name: string
@@ -140,12 +132,6 @@ async function memberName(memberId: string): Promise<string> {
   return row?.name.trim() || row?.email.split("@")[0] || "A member"
 }
 
-/**
- * Binds an artifact's declared storage to one member. `enabled` is the
- * artifactStorage feature for that member; with it off, or with no storage
- * backend, the binding has no access and the artifact is told its saved data
- * is unavailable. Nothing is deleted either way.
- */
 export function bindMcpAppStorage(input: {
   organizationId: string
   appId: string
@@ -173,15 +159,9 @@ export function bindMcpAppStorage(input: {
 
 const appId = mcpAppIdSchema.describe("Artifact ID (cob_...) from search_capabilities or an artifact result's app.appId.")
 
-/**
- * The agent's own way to an artifact's saved data, so it can answer a question
- * about what was saved, or add a row, without opening the artifact. The same
- * member checks and row rules apply as inside the artifact.
- */
 export function registerAppStorageTools(input: {
   server: McpServer
   scopes: ReadonlySet<string>
-  /** The storage of an artifact this member can use; null when they cannot use it or it saves nothing. */
   bind: (appId: string) => Promise<{ binding: McpAppStorageBinding; usage: { organizationId: string; memberId: string } } | null>
 }) {
   const run = async (name: string, request: { appId: string } & Record<string, unknown>) => {

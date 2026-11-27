@@ -34,8 +34,6 @@ export function createCelldStorageBackend(input: { url: string; token: string; s
       })
       return await parse(response)
     } catch {
-      // Fetch, validation, and remote SQLite errors can contain URLs, request
-      // headers, or row values. Do not expose even the error's cause to Den.
       throw new McpAppStorageBackendError(`The celld artifact database ${action} failed.`)
     }
   }

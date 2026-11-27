@@ -5,6 +5,7 @@ import path from "node:path"
 import { after, test } from "node:test"
 import type { McpAppStorage } from "@openwork/types/mcp-app"
 import { MCP_APP_STORAGE_SCHEMA, McpAppStorageBackendError, type McpAppStorageBackend } from "../src/mcp-app-storage/backend.js"
+import { createCelldStorageBackend } from "../src/mcp-app-storage/celld-backend.js"
 import { createLocalStorageBackend } from "../src/mcp-app-storage/local-backend.js"
 import { McpAppStorageError, readMcpAppStorage, writeMcpAppStorage, type McpAppStorageAccess, type McpAppStorageRegistry } from "../src/mcp-app-storage/service.js"
 
@@ -32,16 +33,23 @@ const storage: McpAppStorage = {
   ],
 }
 
+const celldUrl = process.env.OPENWORK_ARTIFACT_STORAGE_CELLD_URL?.trim()
+const celldToken = process.env.OPENWORK_ARTIFACT_STORAGE_CELLD_TOKEN?.trim()
+const defaultBackend = celldUrl && celldToken
+  ? createCelldStorageBackend({ url: celldUrl, token: celldToken, schema: MCP_APP_STORAGE_SCHEMA })
+  : createLocalStorageBackend({ directory, schema: MCP_APP_STORAGE_SCHEMA })
+const run = `${Date.now().toString(36)}${Math.floor(Math.random() * 36 ** 4).toString(36)}`.replace(/[ilou]/gu, "0").slice(-12).padStart(12, "0")
+
 let nextApp = 0
 function world(overrides: Partial<Pick<McpAppStorageAccess, "limits" | "backend" | "storage">> = {}) {
   nextApp += 1
-  const ref = { organizationId: ORGANIZATION, appId: `cob_01kq${String(nextApp).padStart(22, "0")}` }
+  const ref = { organizationId: ORGANIZATION, appId: `cob_01${run}${String(nextApp).padStart(12, "0")}` }
   const records = new Map<string, { sizeBytes: number; rowCount: number }>()
   const registry: McpAppStorageRegistry = {
     read: async (target) => records.get(target.appId) ?? null,
     record: async (target, usage) => { records.set(target.appId, { sizeBytes: usage.sizeBytes, rowCount: usage.rowCount }) },
   }
-  const backend = overrides.backend ?? createLocalStorageBackend({ directory, schema: MCP_APP_STORAGE_SCHEMA })
+  const backend = overrides.backend ?? defaultBackend
   const as = (actor: typeof ANA): McpAppStorageAccess => ({
     ref,
     storage: overrides.storage ?? storage,

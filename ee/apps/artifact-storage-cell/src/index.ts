@@ -73,7 +73,6 @@ export default {
     if (body instanceof Response) return body
     try {
       const cell = env.ARTIFACT_DATABASE.getByName(`${organizationId}/${appId}`)
-      // Only the validated path, method and bounded body go to the cell. No caller headers.
       return await cell.fetch(new Request(`https://artifact-storage.internal/${action ?? ""}`, { method: request.method, body }))
     } catch {
       return error(503, "unavailable", "The artifact database is unavailable.")
@@ -84,7 +83,6 @@ export default {
 export class ArtifactDatabase extends DurableObject<Env> {
   private appliedVersion = -1
 
-  // Called in a synchronous transaction. Update appliedVersion only after commit.
   private applySchema(next: z.infer<typeof schema>) {
     if (next.version > this.appliedVersion) {
       for (const ddl of next.statements) this.ctx.storage.sql.exec(ddl).toArray()
@@ -114,8 +112,6 @@ export class ArtifactDatabase extends DurableObject<Env> {
       if (new URL(request.url).pathname === "/query") {
         const parsed = queryBody.safeParse(body)
         if (!parsed.success) return error(400, "invalid_body", "Invalid query body.")
-        // A pure read of an unwritten cell skips schema DDL. The marker and the
-        // first write commit together; deleteAll clears both SQL and the marker.
         if (storage.kv.get(WRITTEN) !== true) return Response.json({ rows: [] })
         const input = parsed.data
         if (input.schema.version > this.appliedVersion) {
@@ -138,8 +134,7 @@ export class ArtifactDatabase extends DurableObject<Env> {
         this.applySchema(input.schema)
         const counts = input.statements.map(({ sql, params }) => {
           const cursor = storage.sql.exec(sql, ...(params ?? []))
-          // Drain RETURNING without retaining the result rows.
-          for (const _ of cursor) { /* discard */ }
+          Array.from(cursor)
           return cursor.rowsWritten
         })
         if (storage.kv.get(WRITTEN) !== true) storage.kv.put(WRITTEN, true)

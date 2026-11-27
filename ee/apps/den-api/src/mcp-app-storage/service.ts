@@ -26,7 +26,6 @@ const DEFAULT_READ_ROWS = 50
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/u
 const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/u
 
-/** A refusal the person using the artifact can act on. `message` is shown to them as written. */
 export class McpAppStorageError extends Error {
   constructor(readonly code: string, message: string) {
     super(message)
@@ -36,7 +35,6 @@ export class McpAppStorageError extends Error {
 
 export type McpAppStorageActor = { memberId: string; name: string }
 
-/** Den's own record that an artifact has a database, and how large it was after its last write. */
 export type McpAppStorageRegistry = {
   read(ref: StorageDatabaseRef): Promise<{ sizeBytes: number } | null>
   record(ref: StorageDatabaseRef, usage: { backend: McpAppStorageBackendKind; rowCount: number; sizeBytes: number }): Promise<void>
@@ -44,9 +42,7 @@ export type McpAppStorageRegistry = {
 
 export type McpAppStorageAccess = {
   ref: StorageDatabaseRef
-  /** What the artifact's current revision saves. Rows are checked against it on every read and write. */
   storage: McpAppStorage
-  /** The member Den verified for this request. Row rules use this, never anything the artifact sends. */
   actor: McpAppStorageActor
   backend: McpAppStorageBackend
   limits: { maxRows: number; maxBytes: number }
@@ -75,7 +71,6 @@ function label(field: McpAppStorageField): string {
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
-/** A value as it is saved, checked against its field. Throws the message the person sees. */
 function checkedValue(field: McpAppStorageField, value: FieldValue): FieldValue {
   if (value === null) return null
   if (field.type === "text") {
@@ -118,7 +113,6 @@ function storedData(text: StorageValue | undefined): Record<string, unknown> {
   }
 }
 
-/** The row as the artifact sees it: only the fields it declares today, in their declared types. */
 function publicRow(collection: McpAppStorageCollection, row: StoredRow, actor: McpAppStorageActor): McpAppStorageRow {
   const data = storedData(row.data)
   const values: Record<string, FieldValue> = {}
@@ -138,12 +132,6 @@ function publicRow(collection: McpAppStorageCollection, row: StoredRow, actor: M
   }
 }
 
-/**
- * Who may see a row. A personal collection shows each person only their own
- * rows; a shared one shows the rows nobody owns. A row saved while its
- * collection was personal therefore stays private if the collection is later
- * made shared.
- */
 function visibility(collection: McpAppStorageCollection, actor: McpAppStorageActor): { sql: string; params: StorageValue[] } {
   return collection.scope === "personal"
     ? { sql: "collection = ? AND owner = ?", params: [collection.name, actor.memberId] }
@@ -246,7 +234,6 @@ async function visibleRow(access: McpAppStorageAccess, collection: McpAppStorage
   return row
 }
 
-/** The rule on who may change or remove a row, as SQL, so it holds even if the row changes between the read and the write. */
 function editRule(collection: McpAppStorageCollection, actor: McpAppStorageActor, row: StoredRow): { sql: string; params: StorageValue[] } {
   if (collection.scope === "personal" || collection.edit !== "creator") return { sql: "", params: [] }
   if (row.created_by !== actor.memberId) {
@@ -298,7 +285,6 @@ export async function writeMcpAppStorage(access: McpAppStorageAccess, rawInput: 
       if (input.id) throw new McpAppStorageError("invalid_input", "OpenWork sets the id of a new entry. Leave id out.")
       requireComplete(collection, values)
       const data = encoded(values)
-      // The registry row comes first, so a database never exists that deleting the artifact or organization would miss.
       if (!known) await registry.record(access.ref, { backend: access.backend.kind, rowCount: 0, sizeBytes: 0 })
       const id = randomUUID()
       const owner = collection.scope === "personal" ? actor.memberId : null
