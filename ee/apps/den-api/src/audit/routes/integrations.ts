@@ -1,3 +1,4 @@
+import { MICROSOFT_GRAPH_RESOURCE_PREFIX, microsoftGraphResources } from "../../routes/org/microsoft-graph-resources.js"
 import type { AuditRouteAttribution, AuditRouteClass, AuditRouteDeclaration, AuditRouteMethod } from "./types.js"
 
 type Resource = AuditRouteDeclaration["resource"]
@@ -108,6 +109,11 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   access("GET", `${GW}/chat-spaces/:spaceId/messages`, "capability.google_chat.message.list", GWK, res("google_chat_space", "spaceId"), CAP_CONTENT),
   external("POST", `${GW}/chat-spaces/:spaceId/messages`, "capability.google_chat.message.send", GWK, res("google_chat_space", "spaceId"), GOOGLE, `${CAP} Posts a Google Chat message.`),
 
+  ...microsoftGraphResources.map(({ route, audit }) => {
+    const path = `${MICROSOFT_GRAPH_RESOURCE_PREFIX}${route}`
+    const resource = res(audit.resource, audit.idParam)
+    return audit.carriesContent ? access("GET", path, audit.action, MSK, resource, CAP_CONTENT) : read(path, audit.action, MSK, resource, CAP)
+  }),
   access("GET", `${MS}/mail-messages`, "capability.outlook_mail.message.search", MSK, res("outlook_message"), CAP_CONTENT),
   access("GET", `${MS}/mail-message/:messageId`, "capability.outlook_mail.message.read", MSK, res("outlook_message", "messageId"), CAP_CONTENT),
   external("PATCH", `${MS}/mail-message/:messageId`, "capability.outlook_mail.message.update", MSK, res("outlook_message", "messageId"), GRAPH, CAP),

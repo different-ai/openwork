@@ -77,6 +77,18 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
     ],
   },
   {
+    name: "People",
+    permissions: [
+      {
+        key: "directoryRead",
+        label: "Look up people in your organization",
+        scope: "User.ReadBasic.All",
+        detail: "Finds colleagues by name and returns their name and email address.",
+        requiresFeature: "microsoft365ReadResources",
+      },
+    ],
+  },
+  {
     name: "Teams",
     permissions: [
       { key: "teamsChatRead", label: "Read Teams chats", scope: "Chat.Read" },
@@ -92,6 +104,13 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
         scope: "OnlineMeetings.Read + OnlineMeetingTranscript.Read.All",
         detail: "Reads the transcript of a Teams meeting on the member's calendar. Also needs calendar read. Needs admin consent.",
         requiresFeature: "teamsMeetingTranscripts",
+      },
+      {
+        key: "teamsChannelList",
+        label: "List teams and channels",
+        scope: "Team.ReadBasic.All + Channel.ReadBasic.All",
+        detail: "Lists the teams the member belongs to and their channel names. It does not read channel messages.",
+        requiresFeature: "microsoft365ReadResources",
       },
     ],
   },

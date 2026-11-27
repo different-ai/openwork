@@ -31,6 +31,9 @@ import {
   driveItemSchema,
   graphError,
   graphErrorStatus,
+  pageTokenSchema,
+  pagingDescription,
+  pagingResponseFields,
   graphItemIdSchema,
   needsConnectionSchema,
   upstreamErrorSchema,
@@ -303,16 +306,17 @@ export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRoute
   app.get("/v1/capabilities/microsoft-365/drive-children", describeRoute({
     operationId: "listMicrosoft365DriveChildren", tags: ["Capability Sources"],
     summary: "List a OneDrive or SharePoint folder",
-    description: "Lists the items in a folder, or the top of a drive when folderId is omitted: the member's own OneDrive by default, or a SharePoint library or other drive with driveId. Read-only.",
-    responses: { 200: jsonResponse("Folder items.", z.object({ ok: z.literal(true), files: z.array(driveItemSchema), nextPageToken: z.string().nullable() }).meta({ ref: "Microsoft365DriveChildrenResponse" })), ...errors },
+    description: `Lists the items in a folder, or the top of a drive when folderId is omitted: the member's own OneDrive by default, or a SharePoint library or other drive with driveId. Read-only. ${pagingDescription}`,
+    responses: { 200: jsonResponse("Folder items.", z.object({ ok: z.literal(true), files: z.array(driveItemSchema), ...pagingResponseFields }).meta({ ref: "Microsoft365DriveChildrenResponse" })), ...errors },
   }), memberRoute, queryValidator(z.object({
     driveId: driveIdSchema.optional(),
     folderId: graphItemIdSchema.optional().describe("Folder id; omit for the top of the drive."),
     maxResults: z.coerce.number().int().min(1).max(100).default(25),
-    pageToken: z.string().min(1).max(2048).optional().describe("nextPageToken from the previous page of the same folder."),
+    pageToken: pageTokenSchema,
   })), (c) => withGraph(c, FILE_READ, "OneDrive read", undefined, async (graph) => {
     const query = c.req.valid("query")
-    return c.json({ ok: true, ...await graph.listDriveChildren(query) })
+    const { items: files, ...paging } = await graph.listDriveChildren(query)
+    return c.json({ ok: true, files, ...paging })
   }))
 
   app.get("/v1/capabilities/microsoft-365/drive-item-by-link", describeRoute({
@@ -327,14 +331,16 @@ export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRoute
   app.get("/v1/capabilities/microsoft-365/sites", describeRoute({
     operationId: "searchMicrosoft365Sites", tags: ["Capability Sources"],
     summary: "Search SharePoint sites",
-    description: "Finds SharePoint sites the member can open by name. List a site's document libraries next, then browse or search their files. Read-only; needs the SharePoint sites permission.",
-    responses: { 200: jsonResponse("Sites.", z.object({ ok: z.literal(true), sites: z.array(siteSchema) }).meta({ ref: "Microsoft365SitesResponse" })), ...errors },
+    description: `Finds SharePoint sites the member can open by name. List a site's document libraries next, then browse or search their files. Read-only; needs the SharePoint sites permission. ${pagingDescription}`,
+    responses: { 200: jsonResponse("Sites.", z.object({ ok: z.literal(true), sites: z.array(siteSchema), ...pagingResponseFields }).meta({ ref: "Microsoft365SitesResponse" })), ...errors },
   }), memberRoute, queryValidator(z.object({
     query: z.string().trim().min(1).max(200).describe("Words in the site name; * lists sites the member can open."),
     maxResults: z.coerce.number().int().min(1).max(50).default(20),
-  })), (c) => withGraph(c, SITES_READ, "SharePoint site access", undefined, async (graph) => (
-    c.json({ ok: true, sites: await graph.searchSites(c.req.valid("query")) })
-  )))
+    pageToken: pageTokenSchema,
+  })), (c) => withGraph(c, SITES_READ, "SharePoint site access", undefined, async (graph) => {
+    const { items: sites, ...paging } = await graph.searchSites(c.req.valid("query"))
+    return c.json({ ok: true, sites, ...paging })
+  }))
 
   app.get("/v1/capabilities/microsoft-365/sites/:siteId/drives", describeRoute({
     operationId: "listMicrosoft365SiteDrives", tags: ["Capability Sources"],

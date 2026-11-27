@@ -9,7 +9,7 @@ import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { jsonResponse } from "../openapi.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type CatalogApp, type McpToolOperation } from "./catalog.js"
-import { filterPersonalAgents, filterTeamsMeetingTranscripts, limitedAgentRunMayCall } from "./catalog-availability.js"
+import { filterMicrosoftGraphResources, filterPersonalAgents, filterTeamsMeetingTranscripts, limitedAgentRunMayCall } from "./catalog-availability.js"
 import { isLimitedAgentRun } from "./workbot-turn-limits.js"
 import { cachedOrganizationFeatureContext, cachedOrganizationFeatureEnabled } from "../features.js"
 import { invokeMcpOperation } from "./invoke.js"
@@ -90,11 +90,9 @@ export function registerMcpRoutes<T extends { Variables: RequestIdVariables & Re
 
     const catalog = await getCatalog(app as unknown as Hono, c.env)
     const limitedAgentRun = isLimitedAgentRun(principal.scopes)
+    const { features } = await cachedOrganizationFeatureContext(principal.organizationId, principal.userId)
     const offered = filterPersonalAgents(
-      filterTeamsMeetingTranscripts(
-        catalog,
-        (await cachedOrganizationFeatureContext(principal.organizationId, principal.userId)).features.teamsMeetingTranscripts,
-      ),
+      filterMicrosoftGraphResources(filterTeamsMeetingTranscripts(catalog, features.teamsMeetingTranscripts), features),
       await cachedOrganizationFeatureEnabled(principal.organizationId, "personalAgents", { userId: principal.userId }),
     ).filter((operation) => !limitedAgentRun || limitedAgentRunMayCall(operation))
     const server = new McpServer({

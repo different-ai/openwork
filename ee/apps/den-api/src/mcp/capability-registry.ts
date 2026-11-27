@@ -12,7 +12,7 @@ import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction,
 import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
-import { catalogOperationAvailableToCapabilities, filterGmailThreadRead, filterPersonalAgents, filterTeamsMeetingTranscripts } from "./catalog-availability.js"
+import { catalogOperationAvailableToCapabilities, filterGmailThreadRead, filterMicrosoftGraphResources, filterPersonalAgents, filterTeamsMeetingTranscripts } from "./catalog-availability.js"
 import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentMayUseBuiltInConnectors, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
 import { isLimitedAgentRun, LIMITED_AGENT_RUN_MESSAGE, personalAgentRunId } from "./workbot-turn-limits.js"
 import type { McpToolOperation } from "./catalog.js"
@@ -165,7 +165,7 @@ export type CapabilityRegistryContextInput = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "personalAgents" | "artifactStorage" | "teamsMeetingTranscripts">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "microsoft365ReadResources" | "personalAgents" | "artifactStorage" | "teamsMeetingTranscripts">>
   organizationToolPermissions?: boolean
   audit?: McpAuditPrincipal | null
   usageSource: CapabilityUsageSource
@@ -189,9 +189,12 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     app: input.app,
     env: input.env,
     catalog: filterPersonalAgents(
-      filterTeamsMeetingTranscripts(
-        filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
-        input.organizationFeatures.teamsMeetingTranscripts,
+      filterMicrosoftGraphResources(
+        filterTeamsMeetingTranscripts(
+          filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
+          input.organizationFeatures.teamsMeetingTranscripts,
+        ),
+        input.organizationFeatures,
       ),
       input.organizationFeatures.personalAgents,
     ),

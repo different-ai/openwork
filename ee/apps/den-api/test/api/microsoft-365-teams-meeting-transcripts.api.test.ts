@@ -170,10 +170,21 @@ test("flag off blocks the route and both MCP surfaces without affecting calendar
   assert.deepEqual(list(field(calendar.body, "events")).map(({ id }) => id), [occurrenceId])
   const chats = await api("GET", `${base}/teams-chats`)
   assert.equal(chats.status, 200, summary(chats))
-  assert.deepEqual(chats.body, { ok: true, chats: [] })
+  assert.deepEqual(chats.body, { ok: true, chats: [], nextPageToken: null, hasMore: false })
   assert.deepEqual(calls.map(({ path }) => path), ["/me/calendarView", "/me/chats"])
   const enabled = await den.setFeature(orgId, "teamsMeetingTranscripts", true)
   assert.equal(enabled.status, 200, summary(enabled))
+})
+
+test("turning transcripts on leaves the other Microsoft 365 read resources off", async () => {
+  for (const path of ["/profile", "/mail-folders", "/teams"]) {
+    const resource = await api("GET", `${base}${path}`)
+    assert.equal(resource.status, 404, summary(resource))
+    assert.deepEqual(resource.body, { error: "feature_disabled", feature: "microsoft365ReadResources" })
+  }
+  const token = await den.mintMcpToken(owner, orgId)
+  const found = await den.callMcpTool(token, "search_capabilities", { query: "Microsoft 365 profile mail folders teams", type: "api", limit: 20 })
+  assert.equal(list(field(found.structured ?? found.body, "matches")).some((match) => /getMicrosoft365Profile|listMicrosoft365MailFolders|listMicrosoft365JoinedTeams/.test(String(match.name))), false)
 })
 
 test("unsigned callers and callers missing either permission or any required scope never reach Graph", async () => {

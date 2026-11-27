@@ -19,9 +19,10 @@ test("every Microsoft 365 permission is offered once and the transcript permissi
 test("the transcript permission shows only with its feature on, or when it is already selected so it can be cleared", () => {
   const off = keys(visibleNativePermissionGroups(MICROSOFT_365_PERMISSION_GROUPS, () => false, ["mailRead"]));
   assert.equal(off.includes("teamsTranscriptRead"), false);
-  assert.deepEqual(off, keys(MICROSOFT_365_PERMISSION_GROUPS).filter((key) => key !== "teamsTranscriptRead"));
+  const otherFeature = ["directoryRead", "teamsChannelList"];
+  assert.deepEqual(off, keys(MICROSOFT_365_PERMISSION_GROUPS).filter((key) => key !== "teamsTranscriptRead" && !otherFeature.includes(key)));
   const on = keys(visibleNativePermissionGroups(MICROSOFT_365_PERMISSION_GROUPS, (key) => key === "teamsMeetingTranscripts", []));
-  assert.deepEqual(on, keys(MICROSOFT_365_PERMISSION_GROUPS));
+  assert.deepEqual(on, keys(MICROSOFT_365_PERMISSION_GROUPS).filter((key) => !otherFeature.includes(key)));
   const saved = keys(visibleNativePermissionGroups(MICROSOFT_365_PERMISSION_GROUPS, () => false, ["teamsTranscriptRead"]));
   assert.equal(saved.includes("teamsTranscriptRead"), true);
 });
