@@ -10,7 +10,12 @@ An intake form, tracker, approval queue, or checklist can keep its own rows in
 OpenWork. Close it, reopen it, or publish a new revision: the saved rows are
 still there. No connection is needed for data that belongs to the artifact.
 
-<!-- screenshot: added by the lead from the real product -->
+![Two members' equipment requests in one saved list](shared-rows.png)
+
+With the feature off, or with no storage backend, the same artifact reports
+that its data is kept but unavailable:
+
+![The artifact with saved data turned off](unavailable.png)
 
 ## Opt in
 
@@ -90,6 +95,29 @@ back on restores access to the same rows.
 4. Turn the flag off and reopen the artifact. Check that saved data is blocked
    and write controls are absent. Turn it back on and confirm the rows return.
 
+## The celld backend
+
+`ee/apps/artifact-storage-cell` is the Worker a celld fleet runs: one cell
+(Durable Object) per artifact, named `<organizationId>/<appId>`, behind a
+bearer token. Den sends it SQL it wrote itself, after it has checked who is
+asking, so the fleet never sees a member. Its README covers the HTTP contract
+and deployment. A fleet runs one application, so this needs its own fleet or
+bucket prefix beside the headless runner's.
+
+Run the contract and the row rules against a real celld node with
+`CELLD_BIN=/path/to/celld pnpm --filter @openwork-ee/artifact-storage-cell test:celld`.
+
 ## Not yet proven
 
-<!-- TODO: Lead to record real-product and production-backend verification. -->
+- celld is verified on one `celld dev` node (v0.6.3, macOS arm64) with its
+  local object store: the backend contract, every row rule and cap, export,
+  delete, and rows surviving a node restart. An S3-compatible bucket, a fleet
+  of two or more nodes, failover, backup and restore, production latency and
+  exports near the size cap have not been run.
+- No celld fleet for artifact storage is deployed, so the feature cannot be
+  turned on in production until one is and Den has its URL and token.
+- The size cap is checked against the size recorded after the previous write,
+  so concurrent writers can pass it by at most one row each.
+- On the page a browser opens for an artifact, only `storage_write` checks for
+  a click. Other changing tools there are not click-gated; that predates this
+  feature.

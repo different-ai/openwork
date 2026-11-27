@@ -865,7 +865,7 @@ export default function App({ app, input, result, hostContext }) {
   }
 
   if (unavailable || load.error === "storage_unavailable" || write.error === "storage_unavailable") {
-    return <main className="app" style={theme}><p className="notice storage-blocked"><span className="storage-lock" aria-hidden="true" /><span>Saved data is unavailable. An OpenWork admin can turn it back on.</span></p></main>;
+    return <main className="app" style={theme}><p className="notice storage-blocked" role="status"><span className="storage-lock" aria-hidden="true" /><span>Saved data is unavailable. An OpenWork admin can turn it back on.</span></p></main>;
   }
   if (!load.available) {
     return <main className="app" style={theme}><ToolNotice call={load} /></main>;
