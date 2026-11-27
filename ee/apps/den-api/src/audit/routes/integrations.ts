@@ -119,6 +119,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   external("POST", `${MS}/mail-drafts`, "capability.outlook_mail.draft.create", MSK, res("outlook_message"), GRAPH, CAP),
   external("POST", `${MS}/mail-drafts/:messageId/send`, "capability.outlook_mail.draft.send", MSK, res("outlook_message", "messageId"), GRAPH, `${CAP} Sends email.`),
   access("GET", `${MS}/calendar-events`, "capability.outlook_calendar.event.list", MSK, res("outlook_calendar_event"), CAP_CONTENT),
+  access("GET", `${MS}/calendar-events/:eventId/transcript`, "capability.teams.meeting_transcript.read", MSK, res("outlook_calendar_event", "eventId"), `${CAP_CONTENT} Transcript text is never audit evidence.`),
   external("POST", `${MS}/calendar-events`, "capability.outlook_calendar.event.create", MSK, res("outlook_calendar_event"), GRAPH, `${CAP} May send invitations to attendees.`),
   external("PATCH", `${MS}/calendar-events/:eventId`, "capability.outlook_calendar.event.update", MSK, res("outlook_calendar_event", "eventId"), GRAPH, `${CAP} May notify attendees; response echoes event.`),
   external("DELETE", `${MS}/calendar-events/:eventId`, "capability.outlook_calendar.event.delete", MSK, res("outlook_calendar_event", "eventId"), GRAPH, CAP),
@@ -143,9 +144,6 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   access("GET", `${MS}/teams-chats`, "capability.teams.chat.list", MSK, res("teams_chat"), `${CAP} Response lists chat names and participants.`),
   access("GET", `${MS}/teams-chats/:chatId/messages`, "capability.teams.chat_message.list", MSK, res("teams_chat", "chatId"), CAP_CONTENT),
   external("POST", `${MS}/teams-chats/:chatId/messages`, "capability.teams.chat_message.send", MSK, res("teams_chat", "chatId"), GRAPH, `${CAP} Posts a Teams message.`),
-  access("GET", `${MS}/teams-meetings`, "capability.teams.meeting.find", MSK, res("teams_meeting"), `${CAP} Response carries the meeting subject, times and organizer. The join link in the query is matched by Microsoft Graph and is not audit evidence.`),
-  access("GET", `${MS}/teams-meetings/:meetingId/transcripts`, "capability.teams.meeting_transcript.list", MSK, res("teams_meeting", "meetingId"), `${CAP} Response lists transcript ids and times, no transcript text.`),
-  access("GET", `${MS}/teams-meetings/:meetingId/transcripts/:transcriptId`, "capability.teams.meeting_transcript.read", MSK, res("teams_meeting_transcript", "transcriptId"), `${CAP_CONTENT} Transcript text is never audit evidence.`),
 
   read("/v1/apps", "app.list", APP, res("artifact_view")),
   access("GET", "/v1/apps/:appId", "app.open", "app.access", res("artifact_view", "appId"), "Live apps execute their workflow (tool calls, run receipt write); response carries workflow result data and compiled HTML."),

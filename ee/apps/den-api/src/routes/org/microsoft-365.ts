@@ -6,10 +6,12 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
+import { requireFeature } from "../../features.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
-import { DEFAULT_GRAPH_BASE_URL, MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES, MicrosoftGraphClient, type Microsoft365CalendarEvent } from "../../capability-sources/microsoft-graph.js"
+import { InvalidEventTranscriptError, readMicrosoftEventTranscript } from "../../capability-sources/microsoft-event-transcript.js"
+import { isGraphTranscriptAccessDisabled, microsoftGraphErrorCodes, MicrosoftGraphTranscriptListIncompleteError, TRANSCRIPT_PAGE_MAX_CHARACTERS, DEFAULT_GRAPH_BASE_URL, MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES, MicrosoftGraphClient, type Microsoft365CalendarEvent } from "../../capability-sources/microsoft-graph.js"
 import { getOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
 import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, resolveDefaultNativeProviderCredentialId, type NativeProviderPolicyError } from "../../capability-sources/native-provider-connections.js"
 import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy } from "../../capability-sources/provider-registry.js"
@@ -19,7 +21,6 @@ import type { OrgRouteVariables } from "./shared.js"
 import { driveIdSchema, driveItemNameSchema, driveItemSchema, graphError, graphErrorStatus, graphItemIdSchema, needsConnectionSchema, upstreamErrorSchema, type Microsoft365Access, type Microsoft365Identity } from "./microsoft-365-shared.js"
 import { registerMicrosoftDriveFileRoutes, type MicrosoftDriveFileRouteOptions } from "./microsoft-drive-files.js"
 import { registerMicrosoftDocumentRoutes } from "./microsoft-documents.js"
-import { registerMicrosoftTeamsMeetingRoutes } from "./microsoft-teams-meetings.js"
 
 const FILE_WRITE_FEATURES: readonly string[] = ["filesWrite", "filesFull"]
 
@@ -233,6 +234,55 @@ function calendarEventResult(input: { isOnlineMeeting?: boolean }, event: Micros
 }
 
 const calendarEventParamSchema = z.object({ eventId: graphItemIdSchema })
+const TRANSCRIPTS_OFF_MESSAGE = "A Microsoft Teams administrator has turned off Microsoft Graph access to meeting transcripts for this organization. Trying again will not help until they turn it back on in the Teams admin center."
+
+const GRAPH_STATUS_HINTS: Record<number, string> = {
+  403: " The member may not be on the meeting invitation, or an Entra administrator has not granted consent for meeting transcripts.",
+  404: " Microsoft has no such meeting or transcript for this member; it may have expired or not come from a calendar event.",
+  429: " Microsoft is limiting requests; wait before trying again.",
+}
+
+function transcriptGraphError(error: unknown): z.infer<typeof upstreamErrorSchema> {
+  if (isGraphTranscriptAccessDisabled(error)) return { error: "microsoft_graph_error", message: TRANSCRIPTS_OFF_MESSAGE, retryable: false }
+  if (error instanceof MicrosoftGraphTranscriptListIncompleteError) return { error: "microsoft_graph_error", message: error.message, retryable: false }
+  const codes = microsoftGraphErrorCodes(error)
+  if (!codes) return { error: "microsoft_graph_error", message: "Microsoft Graph request failed." }
+  const reason = [codes.code, codes.innerCode].filter(Boolean).join(", ")
+  return {
+    error: "microsoft_graph_error",
+    message: `Microsoft Graph refused the Teams meeting request: ${codes.status}${reason ? ` ${reason}` : ""}.${GRAPH_STATUS_HINTS[codes.status] ?? ""}`,
+  }
+}
+
+const calendarEventTranscriptQuerySchema = z.object({
+  transcriptId: graphItemIdSchema.optional().describe("Choose a transcriptId from this event's candidates or keep it when paging a chosen transcript."),
+  pageToken: z.string().regex(/^\d{1,8}$/).optional().describe("nextPageToken from the previous page of the same transcript."),
+  maxCharacters: z.coerce.number().int().min(1_000).max(TRANSCRIPT_PAGE_MAX_CHARACTERS).default(15_000).describe("Most characters to return; a page ends on a whole cue when it can."),
+})
+
+const transcriptEventSchema = z.object({ id: z.string(), subject: z.string(), start: z.iso.datetime(), end: z.iso.datetime() })
+  .meta({ ref: "Microsoft365TranscriptCalendarEvent" })
+const transcriptCandidateFields = { id: z.string(), createdDateTime: z.string(), endDateTime: z.string() }
+const transcriptCandidateSchema = z.object(transcriptCandidateFields).meta({ ref: "Microsoft365CalendarEventTranscriptCandidate" })
+const transcriptPageSchema = z.object({
+  ...transcriptCandidateFields,
+  format: z.enum(["vtt", "text"]),
+  speakerAttribution: z.boolean(),
+  content: z.string(),
+  totalCharacters: z.number().int(),
+  nextPageToken: z.string().nullable().describe("Pass as pageToken for the next page; null on the last page."),
+  contentUnavailableReason: z.literal("transcript_too_large").nullable(),
+}).meta({ ref: "Microsoft365CalendarEventTranscriptPage" })
+const transcriptResultSchema = z.object({ ok: z.literal(true), event: transcriptEventSchema })
+const transcriptMessageSchema = transcriptResultSchema.extend({ message: z.string() })
+const calendarEventTranscriptResponseSchema = z.discriminatedUnion("status", [
+  transcriptResultSchema.extend({ status: z.literal("transcript"), transcript: transcriptPageSchema }).meta({ ref: "Microsoft365CalendarEventTranscriptFound" }),
+  transcriptMessageSchema.extend({ status: z.literal("choose_transcript"), candidates: z.array(transcriptCandidateSchema) }).meta({ ref: "Microsoft365CalendarEventTranscriptChoice" }),
+  transcriptMessageSchema.extend({ status: z.literal("no_transcript"), reason: z.enum(["meeting_not_found", "no_transcript_for_event"]) }).meta({ ref: "Microsoft365CalendarEventTranscriptUnavailable" }),
+  transcriptMessageSchema.extend({ status: z.literal("not_teams_meeting"), retryable: z.literal(false) }).meta({ ref: "Microsoft365CalendarEventTranscriptNotTeamsMeeting" }),
+  transcriptMessageSchema.extend({ status: z.literal("recurring_series"), retryable: z.literal(false) }).meta({ ref: "Microsoft365CalendarEventTranscriptRecurringSeries" }),
+]).meta({ ref: "Microsoft365CalendarEventTranscriptResponse" })
+
 const calendarEventUpdateBodySchema = z.object({
   confirmNotifications: z.literal(true).describe("The user explicitly authorized this update and potential attendee email notifications from Microsoft Graph."),
   subject: z.string().trim().min(1).max(255).optional(),
@@ -550,8 +600,6 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       return { ok: true, accessToken: token.accessToken, graphBaseUrl: token.graphBaseUrl, otherDrives: { read: !ownDriveOnly(token, false) } }
     },
   })
-
-  registerMicrosoftTeamsMeetingRoutes(app, { access, memberRoute: orgMemberRouteMiddleware })
 
   app.post(
     "/v1/capabilities/microsoft-365/mail-drafts/:messageId/send",
@@ -910,6 +958,47 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         return c.json({ ok: true, events })
       } catch (error) {
         return c.json(graphError(error), 502)
+      }
+    },
+  )
+
+  app.get(
+    "/v1/capabilities/microsoft-365/calendar-events/:eventId/transcript",
+    describeRoute({
+      operationId: "readMicrosoft365CalendarEventTranscript",
+      tags: ["Capability Sources"],
+      summary: "Read the Teams meeting transcript for a Microsoft 365 calendar event",
+      description: "Pass the event id from the calendar events list; if several transcripts match, ask which one and pass its transcriptId. Page with nextPageToken until it is null. Quote speakers and times as written; cue times are relative to the start of the transcript.",
+      responses: {
+        200: jsonResponse("The transcript page or an explanation of why one was not returned.", calendarEventTranscriptResponseSchema),
+        400: jsonResponse("An input is invalid or the transcriptId does not belong to this event.", z.union([
+          invalidRequestSchema,
+          z.object({ error: z.literal("invalid_request"), message: z.string() }).meta({ ref: "Microsoft365InvalidEventTranscriptError" }),
+        ])),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The connection is blocked by organization policy.", z.object({ error: z.literal("policy_blocked"), message: z.string() })),
+        404: jsonResponse("Teams meeting transcripts are turned off for this organization.", z.object({ error: z.literal("feature_disabled"), feature: z.literal("teamsMeetingTranscripts") })),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph could not supply a transcript. retryable: false means a tenant policy blocks access or the transcript list is incomplete.", upstreamErrorSchema),
+      },
+    }),
+    orgMemberRouteMiddleware,
+    requireFeature("teamsMeetingTranscripts"),
+    paramValidator(calendarEventParamSchema),
+    queryValidator(calendarEventTranscriptQuerySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const identity = { organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id }
+      const calendar = await access({ ...identity, features: ["calendarRead"], label: "Outlook calendar read" })
+      if (!calendar.ok) return c.json(calendar.body, calendar.status)
+      const transcripts = await access({ ...identity, features: ["teamsTranscriptRead"], label: "Teams meeting transcript read" })
+      if (!transcripts.ok) return c.json(transcripts.body, transcripts.status)
+      try {
+        const graph = transcripts.graph({ signal: c.req.raw.signal })
+        return c.json(await readMicrosoftEventTranscript(graph, { ...c.req.valid("param"), ...c.req.valid("query") }))
+      } catch (error) {
+        if (error instanceof InvalidEventTranscriptError) return c.json({ error: "invalid_request", message: error.message }, 400)
+        return c.json(transcriptGraphError(error), 502)
       }
     },
   )

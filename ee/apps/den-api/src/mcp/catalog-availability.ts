@@ -11,10 +11,10 @@ export function filterGmailThreadRead<T extends { path: string }>(catalog: reado
   return enabled ? catalog : catalog.filter((operation) => operation.path !== GMAIL_THREAD_READ_PATH)
 }
 
-const TEAMS_MEETING_PATHS = ["/v1/capabilities/microsoft-365/teams-meetings"]
+const TEAMS_EVENT_TRANSCRIPT_PATH = "/v1/capabilities/microsoft-365/calendar-events/{eventId}/transcript"
 
 export function filterTeamsMeetingTranscripts<T extends { path: string }>(catalog: readonly T[], enabled?: boolean): readonly T[] {
-  return enabled ? catalog : catalog.filter(({ path }) => !underPath(path, TEAMS_MEETING_PATHS))
+  return enabled ? catalog : catalog.filter(({ path }) => path !== TEAMS_EVENT_TRANSCRIPT_PATH)
 }
 
 const PERSONAL_AGENT_PATHS = ["/v1/personal-agents", "/v1/org/personal-agents", "/v1/org/personal-agent-policy", "/v1/org/personal-agent-events"]

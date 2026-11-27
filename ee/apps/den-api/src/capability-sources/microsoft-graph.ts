@@ -173,6 +173,28 @@ export type Microsoft365TeamsTranscript = {
   endDateTime: string
 }
 
+export type Microsoft365TranscriptEvent = {
+  id: string
+  subject: string
+  start: string
+  end: string
+  type: string
+  isOnlineMeeting: boolean | undefined
+  onlineMeetingProvider: string
+  joinUrl: string | null
+}
+
+const TRANSCRIPT_EVENT_SELECT = "id,subject,start,end,type,seriesMasterId,isOnlineMeeting,onlineMeetingProvider,onlineMeeting,onlineMeetingUrl"
+const TRANSCRIPT_LIST_MAX_PAGES = 10
+export const TRANSCRIPT_PAGE_MAX_CHARACTERS = 18_000
+
+export class MicrosoftGraphTranscriptListIncompleteError extends Error {
+  constructor() {
+    super("The meeting has more transcripts than could be listed, so the right transcript could not be determined.")
+    this.name = "MicrosoftGraphTranscriptListIncompleteError"
+  }
+}
+
 export type Microsoft365TeamsTranscriptContent = {
   format: "vtt" | "text"
   speakerAttribution: boolean
@@ -833,6 +855,33 @@ export class MicrosoftGraphClient {
     return extractMicrosoftCalendarEvents(await this.requestJson("Microsoft 365 calendar list", url))
   }
 
+  async getCalendarEventForTranscript(eventId: string): Promise<Microsoft365TranscriptEvent> {
+    const url = this.url(`me/events/${encodeURIComponent(eventId)}`)
+    url.searchParams.set("$select", TRANSCRIPT_EVENT_SELECT)
+    const operation = "Microsoft 365 transcript calendar event read"
+    const json = await this.requestJson(operation, url, { redirect: "error", headers: { prefer: 'outlook.timezone="UTC"' } })
+    const event = isRecord(json) ? json : {}
+    const utc = (key: string) => {
+      const { dateTime } = readEventTime(event, key)
+      const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(dateTime) ? dateTime : `${dateTime}Z`
+      const instant = Date.parse(zoned)
+      if (!Number.isFinite(instant)) throw new MicrosoftGraphRequestError(operation, 502, "Microsoft Graph returned an invalid calendar event time.")
+      return new Date(instant).toISOString()
+    }
+    const id = readString(event, "id")
+    if (!id) throw new MicrosoftGraphRequestError(operation, 502, "Microsoft Graph did not return a calendar event id.")
+    return {
+      id,
+      subject: readString(event, "subject"),
+      start: utc("start"),
+      end: utc("end"),
+      type: readString(event, "type"),
+      isOnlineMeeting: typeof event.isOnlineMeeting === "boolean" ? event.isOnlineMeeting : undefined,
+      onlineMeetingProvider: readString(event, "onlineMeetingProvider"),
+      joinUrl: readOnlineMeetingUrl(event),
+    }
+  }
+
   async sendMailDraft(messageId: string): Promise<{ draftId: string; status: "accepted" }> {
     await this.requestMutation("Microsoft 365 mail draft send", `me/messages/${encodeURIComponent(messageId)}/send`, "POST", 202)
     return { draftId: messageId, status: "accepted" }
@@ -1172,19 +1221,28 @@ export class MicrosoftGraphClient {
   async findTeamsMeetingByJoinUrl(joinUrl: string): Promise<Microsoft365TeamsMeeting | null> {
     const url = this.url("me/onlineMeetings")
     url.search = `$filter=${encodeURIComponent(`JoinWebUrl eq '${escapeODataString(joinUrl)}'`)}`
-    return extractMicrosoftTeamsMeetings(await this.requestJson("Microsoft 365 Teams meeting lookup", url))[0] ?? null
+    return extractMicrosoftTeamsMeetings(await this.requestJson("Microsoft 365 Teams meeting lookup", url, { redirect: "error" }))[0] ?? null
   }
 
-  async listTeamsMeetingTranscripts(input: { meetingId: string; maxResults: number; pageToken?: string }): Promise<{ transcripts: Microsoft365TeamsTranscript[]; nextPageToken: string | null; hasMore: boolean }> {
-    const url = this.url(`me/onlineMeetings/${encodeURIComponent(input.meetingId)}/transcripts`)
-    url.searchParams.set("$top", String(input.maxResults))
-    if (input.pageToken) url.searchParams.set("$skiptoken", input.pageToken)
-    const json = await this.requestJson("Microsoft 365 Teams transcript list", url)
-    return {
-      transcripts: extractMicrosoftTeamsTranscripts(json),
-      nextPageToken: nextSkipToken(json),
-      hasMore: isRecord(json) && Boolean(readString(json, "@odata.nextLink")),
+  async listTeamsMeetingTranscripts(meetingId: string): Promise<Microsoft365TeamsTranscript[]> {
+    const first = this.url(`me/onlineMeetings/${encodeURIComponent(meetingId)}/transcripts`)
+    first.searchParams.set("$top", "50")
+    const operation = "Microsoft 365 Teams transcript list"
+    const transcripts = new Map<string, Microsoft365TeamsTranscript>()
+    let url = first
+    for (let page = 1; page <= TRANSCRIPT_LIST_MAX_PAGES; page++) {
+      const json = await this.requestJson(operation, url, { redirect: "error" })
+      if (!isRecord(json) || !Array.isArray(json.value)) throw new MicrosoftGraphRequestError(operation, 502, "Microsoft Graph returned an invalid transcript list.")
+      for (const transcript of extractMicrosoftTeamsTranscripts(json)) transcripts.set(transcript.id, transcript)
+      const link = json["@odata.nextLink"]
+      if (link === undefined || link === null) return [...transcripts.values()]
+      const next = typeof link === "string" ? URL.parse(link) : null
+      if (!next || next.origin !== first.origin || next.pathname !== first.pathname || next.username || next.password || next.hash || page === TRANSCRIPT_LIST_MAX_PAGES) {
+        throw new MicrosoftGraphTranscriptListIncompleteError()
+      }
+      url = next
     }
+    throw new MicrosoftGraphTranscriptListIncompleteError()
   }
 
   async getTeamsMeetingTranscriptContent(input: { meetingId: string; transcriptId: string; offset: number; maxCharacters: number }): Promise<Microsoft365TeamsTranscriptContent> {
@@ -1193,19 +1251,19 @@ export class MicrosoftGraphClient {
     let speakerAttribution = true
     let response: Response
     try {
-      response = await this.request(operation, url, { headers: { accept: TRANSCRIPT_VTT } })
+      response = await this.request(operation, url, { redirect: "error", headers: { accept: TRANSCRIPT_VTT } })
     } catch (error) {
       if (!graphForbids(error, "SpeakerAttributionNotAllowed")) throw error
       speakerAttribution = false
-      response = await this.request(operation, url, { headers: { accept: TRANSCRIPT_UNATTRIBUTED_TEXT } })
+      response = await this.request(operation, url, { redirect: "error", headers: { accept: TRANSCRIPT_UNATTRIBUTED_TEXT } })
     }
-    const format = speakerAttribution ? "vtt" as const : "text" as const
+    const format = speakerAttribution ? "vtt" : "text"
     const downloaded = await readBytesWithByteLimit(response, this.maxDownloadBytes)
     if (downloaded.limitExceeded) {
       return { format, speakerAttribution, content: "", offset: input.offset, totalCharacters: 0, nextOffset: null, contentUnavailableReason: "transcript_too_large" }
     }
     const text = new TextDecoder().decode(downloaded.bytes).replace(/\r\n?/g, "\n")
-    const page = sliceTranscript(text, input.offset, Math.min(input.maxCharacters, this.maxContentCharacters))
+    const page = sliceTranscript(text, input.offset, Math.min(input.maxCharacters, this.maxContentCharacters, TRANSCRIPT_PAGE_MAX_CHARACTERS))
     return { format, speakerAttribution, ...page, offset: input.offset, totalCharacters: text.length, contentUnavailableReason: null }
   }
 }

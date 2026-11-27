@@ -1,192 +1,252 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import {
-  isGraphTranscriptAccessDisabled,
-  isTeamsJoinUrl,
-  MicrosoftGraphClient,
-  MicrosoftGraphRequestError,
-  microsoftGraphErrorCodes,
-  sliceTranscript,
-} from "../src/capability-sources/microsoft-graph.js"
+import { InvalidEventTranscriptError, readMicrosoftEventTranscript, selectEventTranscripts, TRANSCRIPT_EVENT_TOLERANCE_MS } from "../src/capability-sources/microsoft-event-transcript.js"
+import { isGraphTranscriptAccessDisabled, MicrosoftGraphClient, MicrosoftGraphRequestError, MicrosoftGraphTranscriptListIncompleteError, microsoftGraphErrorCodes, sliceTranscript } from "../src/capability-sources/microsoft-graph.js"
 
-const BASE_URL = "https://graph.example.test/v1.0"
-const TOKEN = "graph-access-token-fixture"
-const JOIN_URL = "https://teams.microsoft.com/l/meetup-join/19%3ameeting_Zml4dHVyZQ%40thread.v2/0?context=%7b%22Tid%22%3a%22tenant%22%7d&it's=1"
-const VTT = "WEBVTT\r\n\r\n00:00:04.000 --> 00:00:08.000\r\n<v Alex Example>We agreed to start with a pilot.</v>\r\n\r\n00:00:09.000 --> 00:00:12.000\r\n<v Morgan Example>I will prepare the list\r\nby Friday.</v>\r\n"
+const BASE = "https://graph.example.com/v1.0"
+const JOIN = "https://teams.microsoft.com/l/meetup-join/fixture-paper-astronomy?paper=it's%20blue"
+const EVENT_ID = "event-paper-astronomy"
+const MEETING_ID = "meeting-paper-astronomy"
+const LIST_PATH = `/me/onlineMeetings/${MEETING_ID}/transcripts`
+const EVENT = {
+  id: EVENT_ID, subject: "Paper planetarium rehearsal", type: "occurrence", seriesMasterId: "series-paper-astronomy",
+  start: { dateTime: "2041-07-10T12:00:00.0000000", timeZone: "UTC" },
+  end: { dateTime: "2041-07-10T15:00:00+02:00", timeZone: "UTC" },
+  isOnlineMeeting: true, onlineMeetingProvider: "teamsForBusiness", onlineMeeting: { joinUrl: JOIN },
+}
+const eventWindow = { start: "2041-07-10T12:00:00.000Z", end: "2041-07-10T13:00:00.000Z" }
+const metadata = { id: EVENT_ID, subject: EVENT.subject, ...eventWindow }
+const VTT = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Jordan Sample>The cardboard moon needs a handle.</v>\n\n00:00:04.000 --> 00:00:06.000\n<v Riley Placeholder>I'll fold a spare constellation.</v>\n"
+const PLAIN = "00:00:01.000 --> 00:00:03.000\nThe cardboard moon needs a handle.\n"
+const TOKEN = "synthetic-paper-access"
 
-type Seen = { url: URL; accept: string; authorization: string; method: string }
+function item(id: string, createdDateTime: string, endDateTime = "") {
+  return { id, meetingId: MEETING_ID, createdDateTime, endDateTime }
+}
+const early = item("paper-early", "2041-07-03T12:00:00Z")
+const target = item("paper-current", "2041-07-10T12:00:00Z", "2041-07-10T12:05:00Z")
+const second = item("paper-second", "2041-07-10T12:15:00Z")
+const late = item("paper-late", "2041-07-17T12:00:00Z")
+const request = { eventId: EVENT_ID, maxCharacters: 15_000 }
 
-function client(respond: (seen: Seen, count: number) => Response, options: { maxDownloadBytes?: number } = {}) {
+type Seen = { url: URL; path: string; headers: Headers }
+type Responses = { event?: object; meetings?: object[]; listing?: (call: Seen, page: number) => object; content?: (call: Seen) => Response; maxDownloadBytes?: number }
+
+function fixture(options: Responses = {}) {
   const calls: Seen[] = []
+  let page = 0
   const graph = new MicrosoftGraphClient({
-    accessToken: TOKEN,
-    baseUrl: BASE_URL,
-    ...options,
+    accessToken: TOKEN, baseUrl: BASE, maxDownloadBytes: options.maxDownloadBytes,
     fetch: async (input, init) => {
+      const url = new URL(String(input))
       const headers = new Headers(init?.headers)
-      const seen = {
-        url: new URL(input instanceof Request ? input.url : String(input)),
-        accept: headers.get("accept") ?? "",
-        authorization: headers.get("authorization") ?? "",
-        method: init?.method ?? "GET",
-      }
-      calls.push(seen)
-      return respond(seen, calls.length)
+      assert.equal(url.origin, new URL(BASE).origin)
+      assert.equal(init?.redirect, "error")
+      assert.equal(headers.get("authorization"), `Bearer ${TOKEN}`)
+      const path = url.pathname.replace(/^\/v1\.0/, "")
+      const call = { url, path, headers }
+      calls.push(call)
+      if (path === `/me/events/${EVENT_ID}`) return Response.json(options.event ?? EVENT)
+      if (path === "/me/onlineMeetings") return Response.json({ value: options.meetings ?? [{ id: MEETING_ID }] })
+      if (path === LIST_PATH) return Response.json(options.listing?.(call, ++page) ?? { value: [early, target, late] })
+      if (path.startsWith(`${LIST_PATH}/`) && path.endsWith("/content")) return options.content?.(call) ?? new Response(VTT.replaceAll("\n", "\r\n"))
+      assert.fail(`Unexpected Graph path: ${path}`)
     },
   })
-  return { graph, calls }
+  return { graph, calls, contentCalls: () => calls.filter(({ path }) => path.endsWith("/content")) }
 }
 
-function graphFailure(status: number, innerCode: string) {
-  return Response.json({ error: { code: "Forbidden", message: "Blocked.", innerError: { code: innerCode } } }, { status })
+function graphFailure(status: number, code: string) {
+  return Response.json({ error: { code: "Forbidden", message: "Synthetic upstream failure.", innerError: { code } } }, { status })
 }
 
-test("only https Teams join links are accepted", () => {
-  for (const link of [
-    JOIN_URL,
-    "https://teams.microsoft.com/meet/123456789?p=abc",
-    "https://teams.cloud.microsoft/l/meetup-join/19%3ameeting_x%40thread.v2/0",
-    "https://gov.teams.microsoft.us/l/meetup-join/19%3ameeting_x%40thread.v2/0",
-  ]) assert.equal(isTeamsJoinUrl(link), true, link)
-  for (const link of [
-    "http://teams.microsoft.com/l/meetup-join/x",
-    "https://teams.microsoft.com.example.test/l/meetup-join/x",
-    "https://example.test/?next=https://teams.microsoft.com/l/meetup-join/x",
-    "https://user:secret@teams.microsoft.com/l/meetup-join/x",
-    "https://teams.microsoft.com:8443/l/meetup-join/x",
-    "https://teams.microsoft.com/l/meetup-join/x y",
-    "https://169.254.169.254/latest/meta-data",
-    "file:///etc/hosts",
-    "teams.microsoft.com/l/meetup-join/x",
-    "",
-  ]) assert.equal(isTeamsJoinUrl(link), false, link)
-})
-
-test("a meeting lookup sends the join link once, as an escaped filter value on the member's own meetings", async () => {
-  const { graph, calls } = client(() => Response.json({ value: [{
-    id: "meeting-1", subject: "Planning sync", startDateTime: "2026-11-25T15:00:00Z", endDateTime: "2026-11-25T15:45:00Z", joinWebUrl: JOIN_URL,
-    participants: { organizer: { upn: "organizer@example.test", identity: { user: { displayName: "Alex Example" } } } },
-  }] }))
-  assert.deepEqual(await graph.findTeamsMeetingByJoinUrl(JOIN_URL), {
-    id: "meeting-1", subject: "Planning sync", startDateTime: "2026-11-25T15:00:00Z", endDateTime: "2026-11-25T15:45:00Z", joinWebUrl: JOIN_URL,
-    organizer: { name: "Alex Example", address: "organizer@example.test" },
+test("event loading requests the transcript fields and UTC, normalizing bare times and explicit offsets", async () => {
+  const { graph, calls } = fixture()
+  assert.deepEqual(await graph.getCalendarEventForTranscript(EVENT_ID), {
+    ...metadata, type: "occurrence", isOnlineMeeting: true, onlineMeetingProvider: "teamsForBusiness", joinUrl: JOIN,
   })
-  assert.equal(calls.length, 1)
-  const [call] = calls
-  assert.ok(call)
-  assert.equal(call.method, "GET")
-  assert.equal(call.authorization, `Bearer ${TOKEN}`)
-  assert.equal(`${call.url.origin}${call.url.pathname}`, `${BASE_URL}/me/onlineMeetings`)
-  assert.deepEqual([...call.url.searchParams.keys()], ["$filter"])
-  assert.equal(call.url.searchParams.get("$filter"), `JoinWebUrl eq '${JOIN_URL.replace("'", "''")}'`)
-  assert.equal(call.url.search.includes("+"), false)
-  assert.equal(call.url.search.includes("19%253ameeting"), true)
+  assert.equal(calls[0]?.headers.get("prefer"), 'outlook.timezone="UTC"')
+  assert.equal(calls[0]?.url.searchParams.get("$select"), "id,subject,start,end,type,seriesMasterId,isOnlineMeeting,onlineMeetingProvider,onlineMeeting,onlineMeetingUrl")
+  const broken = fixture({ event: { ...EVENT, end: { dateTime: "unparseable", timeZone: "UTC" } } })
+  await assert.rejects(readMicrosoftEventTranscript(broken.graph, request), MicrosoftGraphRequestError)
+  assert.equal(broken.calls.length, 1)
 })
 
-test("a meeting lookup with no match returns null and ignores entries without an id", async () => {
-  for (const body of [{ value: [] }, { value: [{ subject: "No id" }, "text", null] }, {}, []]) {
-    const { graph } = client(() => Response.json(body))
-    assert.equal(await graph.findTeamsMeetingByJoinUrl(JOIN_URL), null)
+test("meeting lookup passes the escaped link as one OData filter on the member's meetings", async () => {
+  const { graph, calls } = fixture()
+  assert.equal((await graph.findTeamsMeetingByJoinUrl(JOIN))?.id, MEETING_ID)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.path, "/me/onlineMeetings")
+  const params = calls[0]?.url.searchParams
+  assert.ok(params)
+  assert.deepEqual([...params.entries()], [["$filter", `JoinWebUrl eq '${JOIN.replaceAll("'", "''")}'`]])
+})
+
+test("listing keeps the full same-origin, same-path next link and reads until the last page", async () => {
+  const next = `${BASE}${LIST_PATH}?$top=50&$skiptoken=paper%2Btoken&extra=kept`
+  const { graph, calls } = fixture({ listing: (_call, page) => page === 1 ? { value: [early], "@odata.nextLink": next } : { value: [target, late] } })
+  assert.deepEqual(await graph.listTeamsMeetingTranscripts(MEETING_ID), [early, target, late])
+  assert.equal(calls[0]?.url.searchParams.get("$top"), "50")
+  assert.equal(calls[1]?.url.href, next)
+})
+
+for (const { name, makeLink, pages } of [
+  { name: "foreign origin", makeLink: () => `https://other.example.com/v1.0${LIST_PATH}?$skiptoken=paper`, pages: 1 },
+  { name: "different path", makeLink: () => `${BASE}/me/messages?$skiptoken=paper`, pages: 1 },
+  { name: "invalid link", makeLink: () => "not an absolute URL", pages: 1 },
+  { name: "page cap", makeLink: (page: number) => `${BASE}${LIST_PATH}?$skiptoken=${page}`, pages: 10 },
+]) {
+  test(`an incomplete list (${name}) does not read any transcript content`, async () => {
+    const { graph, calls, contentCalls } = fixture({ listing: (_call, page) => ({ value: [target], "@odata.nextLink": makeLink(page) }) })
+    await assert.rejects(readMicrosoftEventTranscript(graph, request), MicrosoftGraphTranscriptListIncompleteError)
+    assert.equal(calls.filter(({ path }) => path === LIST_PATH).length, pages)
+    assert.equal(contentCalls().length, 0)
+  })
+}
+
+test("the tenth page is accepted if it completes the transcript list", async () => {
+  const { graph, calls } = fixture({ listing: (_call, page) => page < 10 ? { value: [], "@odata.nextLink": `${BASE}${LIST_PATH}?$skiptoken=${page}` } : { value: [target] } })
+  assert.deepEqual(await graph.listTeamsMeetingTranscripts(MEETING_ID), [target])
+  assert.equal(calls.length, 10)
+})
+
+test("selection uses inclusive interval overlap, thirty minutes of tolerance, and chronological order", () => {
+  assert.equal(TRANSCRIPT_EVENT_TOLERANCE_MS, 1_800_000)
+  const crossing = item("paper-crossing", "2041-07-10T11:00:00Z", "2041-07-10T11:30:00Z")
+  const before29 = item("paper-before-29", "2041-07-10T11:31:00Z")
+  const before31 = item("paper-before-31", "2041-07-10T11:29:00Z")
+  const after29 = item("paper-after-29", "2041-07-10T13:29:00Z")
+  const after30 = item("paper-after-30", "2041-07-10T13:30:00Z")
+  const after31 = item("paper-after-31", "2041-07-10T13:31:00Z")
+  assert.deepEqual(selectEventTranscripts(eventWindow, [after31, target, after30, after29, before31, before29, crossing]), [crossing, before29, target, after29, after30])
+  assert.deepEqual(selectEventTranscripts(eventWindow, [second, target]), [target, second])
+})
+
+test("selection uses the creation instant for bad ends and never matches a bad creation time", () => {
+  for (const end of ["", "not a date", "2041-07-10T10:00:00Z", "2041-07-11T12:00:01Z"]) {
+    const inside = item("paper-inside", "2041-07-10T12:00:00Z", end)
+    const outside = item("paper-outside", "2041-07-10T11:20:00Z", end)
+    assert.deepEqual(selectEventTranscripts(eventWindow, [outside, inside]), [inside])
+  }
+  const bad = item("paper-bad-date", "not a date", target.endDateTime)
+  const exactly24h = item("paper-day-window", "2041-07-09T12:00:00Z", "2041-07-10T12:00:00Z")
+  const over24h = item("paper-overlong-window", "2041-07-09T12:00:00Z", "2041-07-10T12:00:01Z")
+  assert.deepEqual(selectEventTranscripts(eventWindow, [bad, over24h, exactly24h]), [exactly24h])
+})
+
+for (const { name, event, status } of [
+  { name: "series master", event: { ...EVENT, type: "seriesMaster" }, status: "recurring_series" },
+  { name: "offline event", event: { ...EVENT, isOnlineMeeting: false }, status: "not_teams_meeting" },
+  { name: "no join link", event: { ...EVENT, onlineMeeting: null }, status: "not_teams_meeting" },
+  { name: "non-Teams provider", event: { ...EVENT, onlineMeetingProvider: "skypeForBusiness" }, status: "not_teams_meeting" },
+  { name: "non-Teams link", event: { ...EVENT, onlineMeeting: { joinUrl: "https://example.com/fixture-paper-astronomy" } }, status: "not_teams_meeting" },
+]) {
+  test(`the orchestrator stops at the calendar: ${name}`, async () => {
+    const { graph, calls } = fixture({ event })
+    const result = await readMicrosoftEventTranscript(graph, request)
+    assert.ok(result.status === "recurring_series" || result.status === "not_teams_meeting")
+    assert.equal(result.status, status)
+    assert.deepEqual(result.event, metadata)
+    assert.equal(result.retryable, false)
+    assert.ok(result.message)
+    assert.equal(calls.length, 1)
+  })
+}
+
+test("a missing Graph meeting returns a distinct reason; the legacy event join link can be used", async () => {
+  const { graph, calls } = fixture({ event: { ...EVENT, onlineMeetingProvider: undefined, onlineMeeting: null, onlineMeetingUrl: JOIN }, meetings: [] })
+  const result = await readMicrosoftEventTranscript(graph, request)
+  assert.ok(result.status === "no_transcript")
+  assert.equal(result.reason, "meeting_not_found")
+  assert.match(result.message, /does not show whether the meeting was recorded/)
+  assert.equal(calls.length, 2)
+})
+
+test("transcripts from other occurrences are neither read nor selectable", async () => {
+  const { graph, contentCalls } = fixture({ listing: () => ({ value: [early, late] }) })
+  const result = await readMicrosoftEventTranscript(graph, request)
+  assert.ok(result.status === "no_transcript")
+  assert.equal(result.reason, "no_transcript_for_event")
+  assert.match(result.message, /does not show whether the meeting was recorded/)
+  await assert.rejects(readMicrosoftEventTranscript(graph, { ...request, transcriptId: early.id }), InvalidEventTranscriptError)
+  assert.equal(contentCalls().length, 0)
+})
+
+test("the only matching transcript is read with normalized WebVTT and its metadata", async () => {
+  const { graph, contentCalls } = fixture()
+  assert.deepEqual(await readMicrosoftEventTranscript(graph, request), {
+    ok: true, status: "transcript", event: metadata, transcript: {
+      id: target.id, createdDateTime: target.createdDateTime, endDateTime: target.endDateTime,
+      format: "vtt", speakerAttribution: true, content: VTT, totalCharacters: VTT.length, nextPageToken: null, contentUnavailableReason: null,
+    },
+  })
+  assert.deepEqual(contentCalls().map(({ path }) => path), [`${LIST_PATH}/${target.id}/content`])
+})
+
+test("two matches require a choice; a chosen match can be read, but an id outside the window is rejected", async () => {
+  const { graph, contentCalls } = fixture({ listing: () => ({ value: [second, early, target, late] }) })
+  const choice = await readMicrosoftEventTranscript(graph, request)
+  assert.ok(choice.status === "choose_transcript")
+  assert.deepEqual(choice.candidates, [target, second].map(({ id, createdDateTime, endDateTime }) => ({ id, createdDateTime, endDateTime })))
+  assert.match(choice.message, /transcriptId/)
+  await assert.rejects(readMicrosoftEventTranscript(graph, { ...request, transcriptId: early.id }), InvalidEventTranscriptError)
+  assert.equal(contentCalls().length, 0)
+  const result = await readMicrosoftEventTranscript(graph, { ...request, transcriptId: second.id, pageToken: "8" })
+  assert.ok(result.status === "transcript")
+  assert.equal(result.transcript.id, second.id)
+  assert.equal(result.transcript.content, VTT.slice(8))
+  assert.deepEqual(contentCalls().map(({ path }) => path), [`${LIST_PATH}/${second.id}/content`])
+})
+
+test("speaker attribution falls back only for HTTP 403 with the expected Graph code", async () => {
+  const permitted = fixture({ content: ({ headers }) => headers.get("accept") === "text/vtt" ? graphFailure(403, "SpeakerAttributionNotAllowed") : new Response(PLAIN) })
+  const result = await readMicrosoftEventTranscript(permitted.graph, request)
+  assert.ok(result.status === "transcript")
+  assert.deepEqual([result.transcript.format, result.transcript.speakerAttribution, result.transcript.content], ["text", false, PLAIN])
+  assert.deepEqual(permitted.contentCalls().map(({ headers }) => headers.get("accept")), ["text/vtt", "application/vnd.microsoft.graph.transcript+text"])
+  for (const status of [400, 500]) {
+    const other = fixture({ content: () => graphFailure(status, "SpeakerAttributionNotAllowed") })
+    await assert.rejects(readMicrosoftEventTranscript(other.graph, request), MicrosoftGraphRequestError)
+    assert.equal(other.contentCalls().length, 1)
   }
 })
 
-test("a transcript list encodes the meeting id, pages by Microsoft's token and reports when more remain", async () => {
-  const { graph, calls } = client((_seen, count) => Response.json(count === 1
-    ? {
-        value: [{ id: "t-1", meetingId: "m/1", createdDateTime: "2026-11-18T15:00:10Z", endDateTime: "2026-11-18T15:40:00Z", transcriptContentUrl: "https://graph.example.test/elsewhere" }, { meetingId: "no id" }],
-        "@odata.nextLink": `${BASE_URL}/me/onlineMeetings/m%2F1/transcripts?$top=1&$skiptoken=page-two`,
-      }
-    : { value: [{ id: "t-2", meetingId: "m/1", createdDateTime: "2026-11-25T15:00:05Z", endDateTime: "2026-11-25T15:44:00Z" }], "@odata.nextLink": `${BASE_URL}/me/onlineMeetings/m%2F1/transcripts?$skip=2` }))
-  const first = await graph.listTeamsMeetingTranscripts({ meetingId: "m/1", maxResults: 1 })
-  assert.deepEqual(first, {
-    transcripts: [{ id: "t-1", meetingId: "m/1", createdDateTime: "2026-11-18T15:00:10Z", endDateTime: "2026-11-18T15:40:00Z" }],
-    nextPageToken: "page-two", hasMore: true,
+test("tenant policy blocks are typed and are never retried without speakers", async () => {
+  const { graph, contentCalls } = fixture({ content: () => graphFailure(403, "GraphAccessToTranscriptsDisabled") })
+  await assert.rejects(readMicrosoftEventTranscript(graph, request), (error: unknown) => {
+    assert.equal(isGraphTranscriptAccessDisabled(error), true)
+    assert.deepEqual(microsoftGraphErrorCodes(error), { status: 403, code: "Forbidden", innerCode: "GraphAccessToTranscriptsDisabled" })
+    return true
   })
-  const second = await graph.listTeamsMeetingTranscripts({ meetingId: "m/1", maxResults: 1, pageToken: "page-two" })
-  assert.deepEqual(second.transcripts.map((transcript) => transcript.id), ["t-2"])
-  assert.deepEqual([second.nextPageToken, second.hasMore], [null, true])
-  assert.equal(calls[0]?.url.pathname, "/v1.0/me/onlineMeetings/m%2F1/transcripts")
-  assert.equal(calls[0]?.url.searchParams.get("$top"), "1")
-  assert.equal(calls[0]?.url.searchParams.has("$skiptoken"), false)
-  assert.equal(calls[1]?.url.searchParams.get("$skiptoken"), "page-two")
-  assert.equal(calls.every((call) => call.url.origin === "https://graph.example.test"), true)
+  assert.equal(contentCalls().length, 1)
 })
 
-test("a transcript is read as WebVTT with speakers and cue times kept", async () => {
-  const { graph, calls } = client(() => new Response(VTT, { headers: { "content-type": "text/vtt" } }))
-  const transcript = await graph.getTeamsMeetingTranscriptContent({ meetingId: "m 1", transcriptId: "t#1", offset: 0, maxCharacters: 50_000 })
-  const text = VTT.replace(/\r\n/g, "\n")
-  assert.deepEqual(transcript, { format: "vtt", speakerAttribution: true, content: text, offset: 0, totalCharacters: text.length, nextOffset: null, contentUnavailableReason: null })
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0]?.url.pathname, "/v1.0/me/onlineMeetings/m%201/transcripts/t%231/content")
-  assert.equal(calls[0]?.url.search, "")
-  assert.equal(calls[0]?.accept, "text/vtt")
+test("a transcript exceeding the byte cap returns no partial text", async () => {
+  const { graph } = fixture({ maxDownloadBytes: 1_024, content: () => new Response(VTT.repeat(50)) })
+  const result = await readMicrosoftEventTranscript(graph, request)
+  assert.ok(result.status === "transcript")
+  assert.deepEqual([result.transcript.content, result.transcript.totalCharacters, result.transcript.nextPageToken, result.transcript.contentUnavailableReason], ["", 0, null, "transcript_too_large"])
 })
 
-test("long transcripts come back in pages that end on a whole cue and add up to the original", async () => {
-  const text = VTT.replace(/\r\n/g, "\n")
+test("paging preserves whole cues and surrogate pairs and enforces the character cap", async () => {
   const pages: string[] = []
   let offset: number | null = 0
   while (offset !== null) {
-    const page: { content: string; nextOffset: number | null } = sliceTranscript(text, offset, 70)
-    assert.ok(page.content.length > 0 && page.content.length <= 70)
+    const page: ReturnType<typeof sliceTranscript> = sliceTranscript(VTT, offset, 90)
+    assert.ok(page.content.length > 0 && page.content.length <= 90)
     pages.push(page.content)
     offset = page.nextOffset
   }
-  assert.equal(pages.join(""), text)
-  assert.ok(pages.length > 2)
-  assert.equal(pages[0], "WEBVTT\n\n")
-  assert.deepEqual(sliceTranscript(text, text.length + 5, 70), { content: "", nextOffset: null })
-  assert.deepEqual(sliceTranscript("x".repeat(150), 0, 70), { content: "x".repeat(70), nextOffset: 70 })
-  const emoji = `${"x".repeat(69)}\u{1F600}${"y".repeat(20)}`
-  const beforeEmoji = sliceTranscript(emoji, 0, 70)
-  assert.deepEqual(beforeEmoji, { content: "x".repeat(69), nextOffset: 69 })
-  assert.equal(sliceTranscript(emoji, 69, 70).content, `\u{1F600}${"y".repeat(20)}`)
-
-  const { graph } = client(() => new Response(VTT))
-  const second = await graph.getTeamsMeetingTranscriptContent({ meetingId: "m", transcriptId: "t", offset: 8, maxCharacters: 90 })
-  assert.equal(second.content.startsWith("00:00:04.000 --> 00:00:08.000\n<v Alex Example>"), true)
-  assert.equal(second.content.endsWith("</v>\n\n"), true)
-  assert.equal(second.nextOffset, 8 + second.content.length)
-  assert.equal(second.totalCharacters, text.length)
-})
-
-test("when speaker names are not allowed, the transcript is requested again without them", async () => {
-  const plain = "00:00:04.000 --> 00:00:08.000\nWe agreed to start with a pilot.\n"
-  const { graph, calls } = client((seen) => seen.accept === "text/vtt"
-    ? graphFailure(403, "SpeakerAttributionNotAllowed")
-    : new Response(plain, { headers: { "content-type": "application/vnd.microsoft.graph.transcript+text" } }))
-  const transcript = await graph.getTeamsMeetingTranscriptContent({ meetingId: "m", transcriptId: "t", offset: 0, maxCharacters: 50_000 })
-  assert.deepEqual([transcript.format, transcript.speakerAttribution, transcript.content], ["text", false, plain])
-  assert.deepEqual(calls.map((call) => call.accept), ["text/vtt", "application/vnd.microsoft.graph.transcript+text"])
-  assert.equal(calls[0]?.url.href, calls[1]?.url.href)
-
-  const other = client(() => graphFailure(500, "SpeakerAttributionNotAllowed"))
-  const failure = await other.graph.getTeamsMeetingTranscriptContent({ meetingId: "m", transcriptId: "t", offset: 0, maxCharacters: 50_000 }).catch((error: unknown) => error)
-  assert.ok(failure instanceof MicrosoftGraphRequestError)
-  assert.equal(other.calls.length, 1)
-})
-
-test("a tenant that turned off transcript access is reported once, with Microsoft's code and no second request", async () => {
-  const { graph, calls } = client(() => graphFailure(403, "GraphAccessToTranscriptsDisabled"))
-  const failure = await graph.getTeamsMeetingTranscriptContent({ meetingId: "m", transcriptId: "t", offset: 0, maxCharacters: 50_000 }).catch((error: unknown) => error)
-  assert.ok(failure instanceof MicrosoftGraphRequestError)
-  assert.equal(failure.status, 403)
-  assert.deepEqual(microsoftGraphErrorCodes(failure), { status: 403, code: "Forbidden", innerCode: "GraphAccessToTranscriptsDisabled" })
-  assert.equal(isGraphTranscriptAccessDisabled(failure), true)
-  assert.equal(failure.message.includes(TOKEN), false)
-  assert.equal(calls.length, 1)
-  assert.equal(isGraphTranscriptAccessDisabled(new MicrosoftGraphRequestError("op", 500, JSON.stringify({ error: { innerError: { code: "GraphAccessToTranscriptsDisabled" } } }))), false)
-  assert.deepEqual(microsoftGraphErrorCodes(new MicrosoftGraphRequestError("op", 403, "not json")), { status: 403, code: "", innerCode: "" })
-  assert.deepEqual(
-    microsoftGraphErrorCodes(new MicrosoftGraphRequestError("op", 400, JSON.stringify({ error: { code: "Invalid filter: JoinWebUrl eq 'https://teams.microsoft.com/x'", innerError: { code: "BadRequest" } } }))),
-    { status: 400, code: "", innerCode: "BadRequest" },
-  )
-  assert.equal(microsoftGraphErrorCodes(new Error("other")), null)
-})
-
-test("a transcript larger than the download limit returns no partial text", async () => {
-  const { graph } = client(() => new Response("WEBVTT\n\n" + "x".repeat(4_096)), { maxDownloadBytes: 1_024 })
-  const transcript = await graph.getTeamsMeetingTranscriptContent({ meetingId: "m", transcriptId: "t", offset: 0, maxCharacters: 50_000 })
-  assert.deepEqual(transcript, { format: "vtt", speakerAttribution: true, content: "", offset: 0, totalCharacters: 0, nextOffset: null, contentUnavailableReason: "transcript_too_large" })
+  assert.deepEqual(pages, ["WEBVTT\n\n", ...VTT.slice(8).split(/(?<=\n\n)/)])
+  assert.equal(pages.join(""), VTT)
+  const prefix = "x".repeat(69)
+  const suffix = "🪐" + "y".repeat(20)
+  assert.deepEqual(sliceTranscript(prefix + suffix, 0, 70), { content: prefix, nextOffset: 69 })
+  assert.deepEqual(sliceTranscript(prefix + suffix, 69, 70), { content: suffix, nextOffset: null })
+  assert.deepEqual(sliceTranscript(VTT, VTT.length + 10, 70), { content: "", nextOffset: null })
+  const { graph } = fixture({ content: () => new Response("x".repeat(20_000)) })
+  const result = await readMicrosoftEventTranscript(graph, { ...request, maxCharacters: 20_000 })
+  assert.ok(result.status === "transcript")
+  assert.equal(result.transcript.content.length, 18_000)
+  assert.equal(result.transcript.nextPageToken, "18000")
 })

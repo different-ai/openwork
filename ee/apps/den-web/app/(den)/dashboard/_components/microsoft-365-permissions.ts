@@ -90,7 +90,7 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
         key: "teamsTranscriptRead",
         label: "Read Teams meeting transcripts",
         scope: "OnlineMeetings.Read + OnlineMeetingTranscript.Read.All",
-        detail: "Finds a meeting the member organized or was invited to from its join link and reads its transcript. Needs admin consent.",
+        detail: "Reads the transcript of a Teams meeting on the member's calendar. Also needs calendar read. Needs admin consent.",
         requiresFeature: "teamsMeetingTranscripts",
       },
     ],
