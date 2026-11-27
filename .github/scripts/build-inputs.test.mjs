@@ -9,7 +9,7 @@ import { APP_SMOKE, buildFingerprint, buildInputPatterns, changedFiles, isBuildA
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const images = ["den-api", "den-web", "inference", "client-web", "headless-runner", "workbot"];
-const targets = [...images, "native-den-api", "native-inference", "native-workbot", "desktop", "desktop-smoke", "core", "runtime", "sdk", "den-contract", "den-api-tests", "api-docs", "i18n", "review", "helm", "swift"];
+const targets = [...images, "native-den-api", "native-inference", "native-workbot", "artifact-storage-cell", "desktop", "desktop-smoke", "core", "runtime", "sdk", "den-contract", "den-api-tests", "api-docs", "i18n", "review", "helm", "swift"];
 
 for (const target of targets) {
   test(`landing content is not a ${target} input`, () => {
@@ -94,6 +94,27 @@ test("review CSS and runner cross-workspace assets remain watched", () => {
   for (const file of ["packages/workbook/src/index.ts", "packages/sandbox-freestyle/src/index.ts", "ee/apps/den-worker-runtime/scripts/cloud-desktop.sh"]) {
     assert.equal(isBuildAffected("headless-runner", [file]), true, file);
   }
+});
+
+test("the artifact storage Worker deploys on its own and is in nothing an installation runs", () => {
+  const worker = [
+    "ee/apps/artifact-storage-cell/src/index.ts", "ee/apps/artifact-storage-cell/wrangler.jsonc",
+    "ee/apps/artifact-storage-cell/scripts/celld-deploy.sh", "ee/apps/artifact-storage-cell/package.json",
+  ];
+  for (const file of worker) {
+    assert.equal(isBuildAffected("artifact-storage-cell", [file]), true, file);
+    // Images, native services, the desktop app and the chart are what installations get.
+    for (const target of [...images, "native-den-api", "native-inference", "native-workbot", "desktop", "desktop-smoke", "runtime", "helm"]) {
+      assert.equal(isBuildAffected(target, [file]), false, `${target}: ${file}`);
+    }
+  }
+  assert.equal(isBuildAffected("artifact-storage-cell", [".github/workflows/celld-artifact-storage-deploy.yml"]), true);
+  // Den calls the Worker over HTTP and shares no source with it: a Den change is not a Worker deploy.
+  for (const file of ["ee/apps/den-api/src/mcp-app-storage/celld.ts", "ee/apps/den-api/src/routes/org/mcp-apps.ts", "packages/types/src/den/workers.ts", ".github/workflows/celld-runner-deploy.yml"]) {
+    assert.equal(isBuildAffected("artifact-storage-cell", [file]), false, file);
+  }
+  // The Den image is built from selective copies; the Worker's package is not one of them.
+  assert.ok(buildInputPatterns("den-api").every((pattern) => !pattern.startsWith("ee/apps/artifact-storage-cell")));
 });
 
 test("Swift changes and scanning configuration still select real Swift work", () => {

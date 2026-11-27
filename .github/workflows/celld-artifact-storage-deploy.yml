@@ -1,0 +1,299 @@
+name: Deploy artifact storage to celld
+
+# Artifact storage's Worker (ee/apps/artifact-storage-cell) runs on OpenWork Cloud's own celld fleet (Render service
+# artifact-cells, bucket prefix openwork-celld/artifact-storage). celld nodes don't build from the repo: a new Worker
+# exists only after `celld deploy` writes it to the bucket. This workflow does that on every dev push that changes the
+# Worker or what it is bundled from, so it never falls behind the Den API that calls it.
+#
+# Each run bundles the Worker and compares its version, a hash of the bundle, with the one the fleet runs. Only when
+# they differ does it go on: it deploys the bundle to a throwaway bucket prefix, serves it from a local node, checks
+# the HTTP contract and that rows survive a restart, then deploys to the fleet, waits until every node has adopted the
+# new version and tells Slack. See "Deploy to a fleet" in ee/apps/artifact-storage-cell/README.md.
+#
+# Nothing here is part of what an installation runs: the Den image neither contains nor needs the Worker, and a Den
+# with no storage settings keeps artifact storage off.
+
+on:
+  push:
+    branches:
+      - dev
+    # Classify the Worker's dependency closure before requesting the production environment. Keeping a second
+    # package list here misses transitive inputs.
+  workflow_dispatch:
+    inputs:
+      allow_token_change:
+        description: "Deploy even though Den's copy of the storage token differs from the fleet's (rotating the token: Den is refused until its copy is updated)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Only selected deploys acquire the fleet lock. Unrelated pushes must not
+# replace a pending deployment before its inputs can be classified.
+jobs:
+  changes:
+    name: Detect artifact storage build inputs
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      affected: ${{ steps.classify.outputs.affected }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Classify artifact storage build inputs
+        id: classify
+        env:
+          BUILD_BASE: ${{ github.event.before }}
+          BUILD_HEAD: ${{ github.sha }}
+        # Unknown ranges and manual deploys keep the full bundle/deploy path.
+        run: node .github/scripts/build-inputs.mjs --target artifact-storage-cell --base "${BUILD_BASE:-0000000000000000000000000000000000000000}" --head "$BUILD_HEAD"
+
+  deploy:
+    name: Deploy artifact storage to celld
+    needs: changes
+    if: github.repository == 'different-ai/openwork' && needs.changes.outputs.affected == 'true'
+    concurrency:
+      group: celld-artifact-storage-deploy
+      cancel-in-progress: false
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    environment: celld-production
+    timeout-minutes: 20
+
+    # Secrets are given only to the steps that use them, never to the checkout, setup or install steps: this
+    # repository's logs are public, and those steps run code this workflow does not control.
+    env:
+      # The celld release the Worker is bundled with. Keep it the one celld-runner-deploy.yml pins: the fleet health
+      # check expects every fleet's nodes on that release.
+      CELLD_VERSION: v0.6.3
+      AWS_REGION: auto
+      S3_ENDPOINT: https://5abbcca46f2a1399566cab3a8f8bd2c6.r2.cloudflarestorage.com
+      FLEET_BUCKET: s3://openwork-celld/artifact-storage
+      PREFLIGHT_BUCKET: s3://openwork-celld/ci/artifact-storage-${{ github.run_id }}-${{ github.run_attempt }}
+      RENDER_OWNER_ID: tea-cspud29u0jms7384itk0
+      # The fleet (artifact-cells), which also keeps the storage token, and the Den API that sends it.
+      RENDER_SERVICE_ID: srv-dc4v2umi0phs73botcsg
+      DEN_RENDER_SERVICE_ID: srv-da5gkhmk1f9s738jikcg
+
+    steps:
+      - name: Verify secrets are configured
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY RENDER_API_KEY; do
+            [ -z "${!name}" ] && missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing celld-production secrets:$missing (CELLD_R2_ACCESS_KEY_ID, CELLD_R2_SECRET_ACCESS_KEY, RENDER_API_KEY)."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Read the live fleet version
+        id: live
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          live="$(aws s3 cp "$FLEET_BUCKET/deploy/openwork-artifact-storage/current.json" - --endpoint-url "$S3_ENDPOINT" --region auto 2>/dev/null | jq -r '.version // empty' || true)"
+          echo "version=$live" >> "$GITHUB_OUTPUT"
+          echo "The fleet runs ${live:-nothing yet}"
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Install and typecheck the Worker
+        run: |
+          pnpm install --filter "@openwork-ee/artifact-storage-cell..." --frozen-lockfile
+          pnpm --filter @openwork-ee/artifact-storage-cell typecheck
+
+      - name: Install celld
+        run: |
+          set -euo pipefail
+          curl -fsSL https://celld.dev/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/celld" --version
+
+      # The token is part of the deployment and Den sends the same one. It is kept in one place, the fleet's Render
+      # service, and read from there rather than copied into this repository's secrets. A deploy that would leave Den
+      # with a different token stops here, unless the run was started to rotate it.
+      - name: Read the storage token
+        id: token
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          ALLOW_TOKEN_CHANGE: ${{ inputs.allow_token_change }}
+        run: |
+          set -euo pipefail
+          umask 077
+          read_variable() {
+            local status
+            status="$(curl -sS -o "$RUNNER_TEMP/variable.json" -w '%{http_code}' -H "Authorization: Bearer $RENDER_API_KEY" "https://api.render.com/v1/services/$1/env-vars/$2")"
+            if [ "$status" = 200 ]; then jq -j '.value // ""' "$RUNNER_TEMP/variable.json" > "$3"; else : > "$3"; fi
+            rm -f "$RUNNER_TEMP/variable.json"
+            if [ "$status" != 200 ] && [ "$status" != 404 ]; then
+              echo "::error::Render answered $status for $2."
+              return 1
+            fi
+          }
+          read_variable "$RENDER_SERVICE_ID" ARTIFACT_STORAGE_TOKEN "$RUNNER_TEMP/storage-token"
+          read_variable "$DEN_RENDER_SERVICE_ID" DEN_ARTIFACT_STORAGE_CELLD_TOKEN "$RUNNER_TEMP/den-storage-token"
+          token="$(cat "$RUNNER_TEMP/storage-token")"
+          den="$(cat "$RUNNER_TEMP/den-storage-token")"
+          rm -f "$RUNNER_TEMP/den-storage-token"
+          # Mask before anything else can print: shorter values are not tokens, and masking them would blank
+          # ordinary words in later log lines.
+          if [ "${#token}" -ge 24 ]; then echo "::add-mask::$token"; fi
+          if [ "${#den}" -ge 24 ]; then echo "::add-mask::$den"; fi
+          if [ "${#token}" -lt 24 ]; then
+            echo "::error::The artifact-cells service has no ARTIFACT_STORAGE_TOKEN of 24 or more characters."
+            exit 1
+          fi
+          if [ -z "$den" ]; then
+            echo "::notice::The Den API has no DEN_ARTIFACT_STORAGE_CELLD_TOKEN, so it is not using this fleet."
+          elif [ "$den" != "$token" ] && [ "$ALLOW_TOKEN_CHANGE" = "true" ]; then
+            echo "::warning title=Storage token differs::Den's DEN_ARTIFACT_STORAGE_CELLD_TOKEN is not the fleet's token. Den is refused from the moment the nodes adopt this deployment until its copy is updated."
+          elif [ "$den" != "$token" ]; then
+            echo "::error title=Storage token differs::Den's DEN_ARTIFACT_STORAGE_CELLD_TOKEN is not the fleet's ARTIFACT_STORAGE_TOKEN, so deploying would lock Den out of saved data. To rotate the token, run this workflow by hand with allow_token_change, then update Den's copy."
+            exit 1
+          else
+            echo "Den and the fleet hold the same storage token."
+          fi
+
+      # celld's version is a hash of the bundle, token included, and the deploy script bundles from a fixed place in
+      # the package, so the same source and token give the same version on any machine. Nothing is written here.
+      - name: Bundle the Worker
+        id: bundle
+        env:
+          LIVE_VERSION: ${{ steps.live.outputs.version }}
+        run: |
+          set -euo pipefail
+          version="$(CELLD_BUCKET="$FLEET_BUCKET" ARTIFACT_STORAGE_TOKEN_FILE="$RUNNER_TEMP/storage-token" \
+            bash ee/apps/artifact-storage-cell/scripts/celld-deploy.sh --dry-run | sed -n 's/^version //p')"
+          if ! [[ "$version" =~ ^[0-9a-f]{8,64}$ ]]; then echo "::error::celld reported no version for the bundle"; exit 1; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "unchanged=$([ "$version" = "$LIVE_VERSION" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "This commit bundles to $version; the fleet runs ${LIVE_VERSION:-nothing yet}"
+
+      # A random token, not the fleet's: the node and the checks here never see it.
+      - name: Preflight on a throwaway prefix
+        id: preflight
+        if: steps.bundle.outputs.unchanged != 'true'
+        timeout-minutes: 8
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
+        run: CELLD_BUCKET="$PREFLIGHT_BUCKET" bash ee/apps/artifact-storage-cell/scripts/celld-preflight.sh
+
+      - name: Deploy to the fleet
+        id: fleet
+        if: steps.bundle.outputs.unchanged != 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
+          LIVE_VERSION: ${{ steps.live.outputs.version }}
+        run: |
+          set -euo pipefail
+          version="$(CELLD_BUCKET="$FLEET_BUCKET" ARTIFACT_STORAGE_TOKEN_FILE="$RUNNER_TEMP/storage-token" \
+            bash ee/apps/artifact-storage-cell/scripts/celld-deploy.sh | sed -n 's/^version //p')"
+          if ! [[ "$version" =~ ^[0-9a-f]{8,64}$ ]]; then echo "::error::celld deploy reported no version"; exit 1; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Deployed $version (was ${LIVE_VERSION:-none})"
+
+      # Nodes poll the pointer every 30 seconds. Every running instance must report adopting this version.
+      - name: Wait for every node to adopt it
+        id: adopt
+        if: steps.bundle.outputs.unchanged != 'true'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          VERSION: ${{ steps.fleet.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! node ee/apps/artifact-storage-cell/scripts/celld-wait-adopted.mjs "$VERSION"; then
+            echo "::error::Not every node adopted $VERSION within 5 minutes; check the artifact-cells logs."
+            exit 1
+          fi
+
+      - name: Clean up
+        if: always()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
+        run: |
+          rm -f "$RUNNER_TEMP/storage-token" "$RUNNER_TEMP/den-storage-token" "$RUNNER_TEMP/variable.json"
+          aws s3 rm --recursive "$PREFLIGHT_BUCKET/" --endpoint-url "$S3_ENDPOINT" --region auto --only-show-errors || true
+
+      # Posts only when CELLD_DEPLOY_SLACK_WEBHOOK_URL (a Slack incoming webhook) is set on the celld-production
+      # environment. A failed post is a warning: the deploy has already happened or failed by now.
+      - name: Tell Slack
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.CELLD_DEPLOY_SLACK_WEBHOOK_URL }}
+          JOB_STATUS: ${{ job.status }}
+          TOKEN_OUTCOME: ${{ steps.token.outcome }}
+          PREFLIGHT_OUTCOME: ${{ steps.preflight.outcome }}
+          FLEET_OUTCOME: ${{ steps.fleet.outcome }}
+          UNCHANGED: ${{ steps.bundle.outputs.unchanged }}
+          VERSION: ${{ steps.fleet.outputs.version || steps.bundle.outputs.version }}
+          PREVIOUS: ${{ steps.live.outputs.version }}
+          ADOPTED: ${{ steps.adopt.outputs.adopted }}
+          INSTANCES: ${{ steps.adopt.outputs.instances }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "CELLD_DEPLOY_SLACK_WEBHOOK_URL is not set; no Slack message."
+            exit 0
+          fi
+          previous="${PREVIOUS:-unknown}"
+          ended="$([ "$JOB_STATUS" = "cancelled" ] && echo "was cancelled" || echo "failed")"
+          if [ "$JOB_STATUS" = "success" ] && [ "$UNCHANGED" = "true" ]; then
+            outcome="unchanged"
+            summary=":white_circle: Artifact storage unchanged: the fleet already runs \`$VERSION\`."
+          elif [ "$JOB_STATUS" = "success" ]; then
+            outcome="deployed"
+            summary=":large_green_circle: Artifact storage deployed: \`$VERSION\` (was \`$previous\`), adopted on ${ADOPTED:-?} of ${INSTANCES:-?} nodes."
+          elif [ "$FLEET_OUTCOME" = "success" ]; then
+            outcome="failed"
+            summary=":red_circle: Artifact storage \`$VERSION\` is in the fleet bucket but only ${ADOPTED:-?} of ${INSTANCES:-?} nodes adopted it (was \`$previous\`)."
+          elif [ "$TOKEN_OUTCOME" = "failure" ]; then
+            outcome="failed"
+            summary=":red_circle: Artifact storage deploy stopped: the storage token could not be read, or Den's copy differs from the fleet's. The fleet stays on \`$previous\`."
+          elif [ "$PREFLIGHT_OUTCOME" = "failure" ]; then
+            outcome="failed"
+            summary=":red_circle: Artifact storage deploy stopped: the new Worker failed its preflight. The fleet stays on \`$previous\`."
+          else
+            outcome="failed"
+            summary=":red_circle: Artifact storage deploy $ended before the fleet changed. The fleet stays on \`$previous\`."
+          fi
+          text="$summary"$'\n'"Commit <$COMMIT_URL|${GITHUB_SHA:0:12}> · <$RUN_URL|run $GITHUB_RUN_ID>"
+          if ! jq -n --arg text "$text" '{text: $text, unfurl_links: false}' \
+            | curl -sS --fail --max-time 20 -X POST -H 'Content-Type: application/json' --data-binary @- "$SLACK_WEBHOOK_URL" > /dev/null; then
+            echo "::warning::Could not post the $outcome deploy message to Slack."
+          else
+            echo "Posted the $outcome deploy message to Slack."
+          fi

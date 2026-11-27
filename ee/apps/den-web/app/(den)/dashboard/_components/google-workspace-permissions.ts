@@ -1,5 +1,20 @@
-export type NativePermission = { key: string; label: string; scope?: string; detail?: string };
+import type { FeatureKey } from "@openwork/features";
+
+export type NativePermission = { key: string; label: string; scope?: string; detail?: string; requiresFeature?: FeatureKey };
 export type NativePermissionGroup = { name: string; permissions: readonly NativePermission[] };
+
+export function visibleNativePermissionGroups(
+  groups: readonly NativePermissionGroup[],
+  featureOn: (key: FeatureKey) => boolean,
+  selected: readonly string[],
+): NativePermissionGroup[] {
+  return groups
+    .map((group) => ({
+      ...group,
+      permissions: group.permissions.filter((permission) => !permission.requiresFeature || featureOn(permission.requiresFeature) || selected.includes(permission.key)),
+    }))
+    .filter((group) => group.permissions.length > 0);
+}
 
 export const GOOGLE_WORKSPACE_DEFAULT_FEATURES: readonly string[] = ["calendarRead", "gmailDraft", "driveFile"];
 

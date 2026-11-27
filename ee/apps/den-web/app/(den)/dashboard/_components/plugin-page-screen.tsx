@@ -13,9 +13,11 @@ import {
   getOrgAccessFlags,
   getPluginDetailsRoute,
   getPluginsRoute,
+  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-summary";
+import { ArtifactStorageRow } from "./artifact-storage-row";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
@@ -40,13 +42,16 @@ export function pluginChatDeepLink(plugin: Pick<DenPlugin, "name">): string {
 export function WhatsInside({
   plugin,
   appMcpServersEnabled = false,
+  artifactStorageScope,
 }: {
   plugin: DenPlugin;
   appMcpServersEnabled?: boolean;
+  artifactStorageScope?: string;
 }) {
   const rows = [
     ...plugin.authoredApps.map((app) => ({
       key: `app:${app.id}`,
+      appId: app.id,
       logo: <LetterTile name={app.name} />,
       title: app.name,
       description: "",
@@ -81,6 +86,9 @@ export function WhatsInside({
       <ItemPanel>
         {rows.length === 0 ? <p className="py-3 text-[13px] text-[var(--dls-text-secondary)]">Nothing inside yet.</p> : null}
         {rows.map((row) => {
+          if (artifactStorageScope && "appId" in row && typeof row.appId === "string") {
+            return <ArtifactStorageRow key={row.key} scope={artifactStorageScope} appId={row.appId} title={row.title} logo={row.logo} href={"href" in row && typeof row.href === "string" ? row.href : undefined} />;
+          }
           const skill = plugin.skills.find((entry) => row.key === `skill:${entry.id}`);
           return skill ? <SkillPreview key={row.key} skill={skill} /> : (
             <ItemRow compact key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
@@ -254,6 +262,8 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
       <WhatsInside
         plugin={data}
         appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true}
+        artifactStorageScope={orgContext && memberAccess?.isAdmin && orgFeatureEnabled(orgContext, "artifactStorage")
+          ? `${orgContext.organization.id}:${orgContext.currentMember.id}` : undefined}
       />
       <AppMcpServers plugin={data} />
 

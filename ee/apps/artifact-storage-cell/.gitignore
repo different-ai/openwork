@@ -1,0 +1,5 @@
+.dev.vars
+.env
+.env.local
+.celld/
+.deploy.*/

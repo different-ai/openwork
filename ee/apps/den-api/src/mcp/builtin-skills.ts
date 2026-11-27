@@ -1,6 +1,6 @@
 import { env } from "../env.js"
 import { SLACK_ASSISTANT_INSTRUCTIONS } from "../slack-assistant/protocol.js"
-import { buildAnAppSkillSource, BUILTIN_BUILD_AN_APP_CAPABILITY } from "./build-an-app-skill.js"
+import { buildAnAppSkillSource, BUILTIN_BUILD_AN_APP_CAPABILITY, type BuildAnAppSkillOptions } from "./build-an-app-skill.js"
 import type { CodemodeLanguage } from "./codemode-script-object.js"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
@@ -8,7 +8,7 @@ import { newWorkflowLanguage } from "./workflow-service.js"
 
 export type BuiltinSkillDefinition = {
   descriptor: RemoteSkillDescriptor
-  source: string | ((language: CodemodeLanguage) => string)
+  source: string | ((language: CodemodeLanguage, options?: BuildAnAppSkillOptions) => string)
   searchExtraTokens: string
   available?: () => boolean
 }
@@ -407,7 +407,7 @@ export function searchBuiltinSkillCapabilities(query: string, limit = 5): Builti
     .slice(0, Math.max(1, Math.min(20, Math.trunc(limit) || 5)))
 }
 
-export async function executeBuiltinSkillCapability(name: string, organizationId: string): Promise<BuiltinSkillExecutePayload | null> {
+export async function executeBuiltinSkillCapability(name: string, organizationId: string, options?: BuildAnAppSkillOptions): Promise<BuiltinSkillExecutePayload | null> {
   const skill = findBuiltinSkill(name)
   if (!skill) return null
   return {
@@ -415,6 +415,6 @@ export async function executeBuiltinSkillCapability(name: string, organizationId
     name: skill.descriptor.title,
     description: skill.descriptor.description,
     provenance: "Built into OpenWork Cloud.",
-    content: typeof skill.source === "string" ? skill.source : skill.source(await newWorkflowLanguage()),
+    content: typeof skill.source === "string" ? skill.source : skill.source(await newWorkflowLanguage(), options),
   }
 }

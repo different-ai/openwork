@@ -11,7 +11,7 @@ import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction,
 import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
-import { catalogOperationAvailableToCapabilities, filterGmailThreadRead, filterPersonalAgents } from "./catalog-availability.js"
+import { catalogOperationAvailableToCapabilities, filterGmailThreadRead, filterMicrosoftGraphResources, filterPersonalAgents, filterTeamsMeetingTranscripts } from "./catalog-availability.js"
 import { OPENWORK_CONNECTION_ID } from "../personal-agents/builtin-connection.js"
 import { personalAgentConnectionToolFilter, personalAgentConnectorAccess } from "../personal-agents/connector-access.js"
 import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
@@ -146,6 +146,7 @@ export type CapabilityRegistryContext = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   managedDeploymentsEnabled: boolean
+  artifactStorageEnabled?: boolean
   toolPermissionsEnabled?: boolean
   limitedAgentRun: boolean
   agentExecution: boolean
@@ -168,7 +169,7 @@ export type CapabilityRegistryContextInput = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "personalAgents">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "microsoft365ReadResources" | "personalAgents" | "artifactStorage" | "teamsMeetingTranscripts">>
   organizationToolPermissions?: boolean
   audit?: McpAuditPrincipal | null
   usageSource: CapabilityUsageSource
@@ -204,7 +205,13 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     app: input.app,
     env: input.env,
     catalog: filterPersonalAgents(
-      filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
+      filterMicrosoftGraphResources(
+        filterTeamsMeetingTranscripts(
+          filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
+          input.organizationFeatures.teamsMeetingTranscripts,
+        ),
+        input.organizationFeatures,
+      ),
       input.organizationFeatures.personalAgents,
     ),
     principal: input.principal,
@@ -213,6 +220,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
+    artifactStorageEnabled: input.organizationFeatures.artifactStorage === true,
     toolPermissionsEnabled: input.organizationToolPermissions,
     limitedAgentRun: isLimitedAgentRun(input.principal.scopes),
     agentExecution,
@@ -762,11 +770,11 @@ const builtinSkillSource: CapabilitySource = {
     description: skill.description,
     readOnly: true,
     authority: "den",
-    run: async () => (await executeBuiltinSkillCapability(skill.capability, ctx.organizationId))?.content ?? "",
+    run: async () => (await executeBuiltinSkillCapability(skill.capability, ctx.organizationId, { storage: ctx.artifactStorageEnabled === true }))?.content ?? "",
   }))),
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "builtinSkill")) return unknownCapabilityResult(input.name)
-    const result = await executeBuiltinSkillCapability(parsed.name, ctx.organizationId)
+    const result = await executeBuiltinSkillCapability(parsed.name, ctx.organizationId, { storage: ctx.artifactStorageEnabled === true })
     return result
       ? { content: textContent(JSON.stringify(result, null, 2)) }
       : unknownCapabilityResult(input.name)

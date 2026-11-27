@@ -6,18 +6,22 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
+import { requireFeature } from "../../features.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
-import { DEFAULT_GRAPH_BASE_URL, MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES, MicrosoftGraphClient, type Microsoft365CalendarEvent } from "../../capability-sources/microsoft-graph.js"
+import { InvalidEventTranscriptError, readMicrosoftEventTranscript } from "../../capability-sources/microsoft-event-transcript.js"
+import { isGraphTranscriptAccessDisabled, microsoftGraphErrorCodes, MicrosoftGraphTranscriptListIncompleteError, TRANSCRIPT_PAGE_MAX_CHARACTERS, DEFAULT_GRAPH_BASE_URL, MICROSOFT_MAIL_ATTACHMENT_MAX_BYTES, MicrosoftGraphClient, MicrosoftGraphPageTokenError, type Microsoft365CalendarEvent } from "../../capability-sources/microsoft-graph.js"
+import { microsoftGraphPageTokens } from "../../capability-sources/microsoft-graph-page-token.js"
 import { getOrgOAuthClient } from "../../capability-sources/oauth-credentials.js"
 import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, resolveDefaultNativeProviderCredentialId, type NativeProviderPolicyError } from "../../capability-sources/native-provider-connections.js"
 import { clientSelectedFeatures, getNativeOAuthProvider, providerScopesSatisfy } from "../../capability-sources/provider-registry.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { INTERNAL_CAPABILITY_CONNECTOR_HEADER, readInternalCapabilityConnectorId } from "../../session.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { driveIdSchema, driveItemNameSchema, driveItemSchema, graphError, graphErrorStatus, graphItemIdSchema, needsConnectionSchema, upstreamErrorSchema, type Microsoft365Access, type Microsoft365Identity } from "./microsoft-365-shared.js"
+import { driveIdSchema, driveItemNameSchema, driveItemSchema, graphError, graphErrorStatus, graphItemIdSchema, needsConnectionSchema, pageTokenSchema, pagingDescription, pagingResponseFields, upstreamErrorSchema, type Microsoft365Access, type Microsoft365Identity } from "./microsoft-365-shared.js"
 import { registerMicrosoftDriveFileRoutes, type MicrosoftDriveFileRouteOptions } from "./microsoft-drive-files.js"
+import { registerMicrosoftGraphResourceRoutes } from "./microsoft-graph-resource-routes.js"
 import { registerMicrosoftDocumentRoutes } from "./microsoft-documents.js"
 
 const FILE_WRITE_FEATURES: readonly string[] = ["filesWrite", "filesFull"]
@@ -53,6 +57,7 @@ const mailMessageSchema = mailMessageSummarySchema.extend({
 }).meta({ ref: "Microsoft365MailMessage" })
 
 const mailMessagesQuerySchema = z.object({
+  pageToken: pageTokenSchema,
   search: z.string().trim().min(1).max(1_000).optional().describe("Optional Outlook message search text."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum messages to return, capped at 25."),
 })
@@ -62,6 +67,7 @@ const mailMessageParamSchema = z.object({
 })
 
 const mailMessagesResponseSchema = z.object({
+  ...pagingResponseFields,
   ok: z.literal(true),
   messages: z.array(mailMessageSummarySchema),
 }).meta({ ref: "Microsoft365MailMessagesResponse" })
@@ -163,6 +169,7 @@ const mailMessageMoveBodySchema = z.object({
 }).meta({ ref: "Microsoft365MailMessageMoveBody" })
 
 const calendarEventsQuerySchema = z.object({
+  pageToken: pageTokenSchema,
   timeMin: z.string().datetime().describe("Inclusive lower bound for event start time."),
   timeMax: z.string().datetime().describe("Exclusive upper bound for event start time."),
   maxResults: z.coerce.number().int().min(1).max(100).default(25).describe("Maximum events to return, capped at 100."),
@@ -185,6 +192,7 @@ const calendarEventSchema = z.object({
 }).meta({ ref: "Microsoft365CalendarEvent" })
 
 const calendarEventsResponseSchema = z.object({
+  ...pagingResponseFields,
   ok: z.literal(true),
   events: z.array(calendarEventSchema),
 }).meta({ ref: "Microsoft365CalendarEventsResponse" })
@@ -232,6 +240,55 @@ function calendarEventResult(input: { isOnlineMeeting?: boolean }, event: Micros
 }
 
 const calendarEventParamSchema = z.object({ eventId: graphItemIdSchema })
+const TRANSCRIPTS_OFF_MESSAGE = "A Microsoft Teams administrator has turned off Microsoft Graph access to meeting transcripts for this organization. Trying again will not help until they turn it back on in the Teams admin center."
+
+const GRAPH_STATUS_HINTS: Record<number, string> = {
+  403: " The member may not be on the meeting invitation, or an Entra administrator has not granted consent for meeting transcripts.",
+  404: " Microsoft has no such meeting or transcript for this member; it may have expired or not come from a calendar event.",
+  429: " Microsoft is limiting requests; wait before trying again.",
+}
+
+function transcriptGraphError(error: unknown): z.infer<typeof upstreamErrorSchema> {
+  if (isGraphTranscriptAccessDisabled(error)) return { error: "microsoft_graph_error", message: TRANSCRIPTS_OFF_MESSAGE, retryable: false }
+  if (error instanceof MicrosoftGraphTranscriptListIncompleteError) return { error: "microsoft_graph_error", message: error.message, retryable: false }
+  const codes = microsoftGraphErrorCodes(error)
+  if (!codes) return { error: "microsoft_graph_error", message: "Microsoft Graph request failed." }
+  const reason = [codes.code, codes.innerCode].filter(Boolean).join(", ")
+  return {
+    error: "microsoft_graph_error",
+    message: `Microsoft Graph refused the Teams meeting request: ${codes.status}${reason ? ` ${reason}` : ""}.${GRAPH_STATUS_HINTS[codes.status] ?? ""}`,
+  }
+}
+
+const calendarEventTranscriptQuerySchema = z.object({
+  transcriptId: graphItemIdSchema.optional().describe("Choose a transcriptId from this event's candidates or keep it when paging a chosen transcript."),
+  pageToken: z.string().regex(/^\d{1,8}$/).optional().describe("nextPageToken from the previous page of the same transcript."),
+  maxCharacters: z.coerce.number().int().min(1_000).max(TRANSCRIPT_PAGE_MAX_CHARACTERS).default(15_000).describe("Most characters to return; a page ends on a whole cue when it can."),
+})
+
+const transcriptEventSchema = z.object({ id: z.string(), subject: z.string(), start: z.iso.datetime(), end: z.iso.datetime() })
+  .meta({ ref: "Microsoft365TranscriptCalendarEvent" })
+const transcriptCandidateFields = { id: z.string(), createdDateTime: z.string(), endDateTime: z.string() }
+const transcriptCandidateSchema = z.object(transcriptCandidateFields).meta({ ref: "Microsoft365CalendarEventTranscriptCandidate" })
+const transcriptPageSchema = z.object({
+  ...transcriptCandidateFields,
+  format: z.enum(["vtt", "text"]),
+  speakerAttribution: z.boolean(),
+  content: z.string(),
+  totalCharacters: z.number().int(),
+  nextPageToken: z.string().nullable().describe("Pass as pageToken for the next page; null on the last page."),
+  contentUnavailableReason: z.literal("transcript_too_large").nullable(),
+}).meta({ ref: "Microsoft365CalendarEventTranscriptPage" })
+const transcriptResultSchema = z.object({ ok: z.literal(true), event: transcriptEventSchema })
+const transcriptMessageSchema = transcriptResultSchema.extend({ message: z.string() })
+const calendarEventTranscriptResponseSchema = z.discriminatedUnion("status", [
+  transcriptResultSchema.extend({ status: z.literal("transcript"), transcript: transcriptPageSchema }).meta({ ref: "Microsoft365CalendarEventTranscriptFound" }),
+  transcriptMessageSchema.extend({ status: z.literal("choose_transcript"), candidates: z.array(transcriptCandidateSchema) }).meta({ ref: "Microsoft365CalendarEventTranscriptChoice" }),
+  transcriptMessageSchema.extend({ status: z.literal("no_transcript"), reason: z.enum(["meeting_not_found", "no_transcript_for_event"]) }).meta({ ref: "Microsoft365CalendarEventTranscriptUnavailable" }),
+  transcriptMessageSchema.extend({ status: z.literal("not_teams_meeting"), retryable: z.literal(false) }).meta({ ref: "Microsoft365CalendarEventTranscriptNotTeamsMeeting" }),
+  transcriptMessageSchema.extend({ status: z.literal("recurring_series"), retryable: z.literal(false) }).meta({ ref: "Microsoft365CalendarEventTranscriptRecurringSeries" }),
+]).meta({ ref: "Microsoft365CalendarEventTranscriptResponse" })
+
 const calendarEventUpdateBodySchema = z.object({
   confirmNotifications: z.literal(true).describe("The user explicitly authorized this update and potential attendee email notifications from Microsoft Graph."),
   subject: z.string().trim().min(1).max(255).optional(),
@@ -273,7 +330,7 @@ const calendarDeleteResponseSchema = z.object({
 const driveFilesQuerySchema = z.object({
   query: z.string().trim().min(1).max(500).describe("Text to search in file names and content."),
   maxResults: z.coerce.number().int().min(1).max(25).default(10).describe("Maximum files to return, capped at 25."),
-  pageToken: z.string().regex(/^\d{1,6}$/).optional().describe("nextPageToken from the previous page of the same search."),
+  pageToken: pageTokenSchema,
 })
 
 const driveFileParamSchema = z.object({
@@ -286,7 +343,7 @@ const driveFilesResponseSchema = z.object({
   ok: z.literal(true),
   files: z.array(driveItemSchema),
   scope: z.enum(["all", "myDrive"]).describe("all: every OneDrive and SharePoint file the member can open; myDrive: only their own OneDrive, because the connection lacks the all-files permission."),
-  nextPageToken: z.string().nullable(),
+  ...pagingResponseFields,
 }).meta({ ref: "Microsoft365DriveFilesResponse" })
 
 const driveFileResponseSchema = z.object({
@@ -326,6 +383,7 @@ const driveFolderBodySchema = z.object({
 }).strict().meta({ ref: "Microsoft365DriveFolderBody" })
 
 const teamsChatsQuerySchema = z.object({
+  pageToken: pageTokenSchema,
   maxResults: z.coerce.number().int().min(1).max(50).default(20),
 })
 
@@ -334,6 +392,7 @@ const teamsChatParamSchema = z.object({
 })
 
 const teamsMessagesQuerySchema = z.object({
+  pageToken: pageTokenSchema,
   maxResults: z.coerce.number().int().min(1).max(50).default(20),
 })
 
@@ -359,11 +418,13 @@ const teamsMessageSchema = z.object({
 }).meta({ ref: "Microsoft365TeamsMessage" })
 
 const teamsChatsResponseSchema = z.object({
+  ...pagingResponseFields,
   ok: z.literal(true),
   chats: z.array(teamsChatSchema),
 }).meta({ ref: "Microsoft365TeamsChatsResponse" })
 
 const teamsMessagesResponseSchema = z.object({
+  ...pagingResponseFields,
   ok: z.literal(true),
   messages: z.array(teamsMessageSchema),
 }).meta({ ref: "Microsoft365TeamsMessagesResponse" })
@@ -500,6 +561,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       signal,
       timeoutMs,
       ownDriveOnly,
+      pageTokens: microsoftGraphPageTokens,
     })
   }
 
@@ -511,8 +573,8 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     const token = await resolveAccessToken(identity)
     if (token.kind === "microsoft_graph_error") return { ok: false, status: 502, body: { error: token.kind, message: token.message } }
     if (token.kind === "needs_connection" || token.kind === "policy_blocked") return { ok: false, status: token.kind === "policy_blocked" ? 403 : 409, body: { error: token.kind, message: token.message } }
-    if (!featureEnabled(token, features)) return { ok: false, status: 409, body: { error: "needs_connection", message: disabledFeatureMessage(label) } }
-    if (!featureGranted(token, features)) return { ok: false, status: 409, body: { error: "needs_connection", message: missingPermissionMessage(label) } }
+    if (features.length > 0 && !featureEnabled(token, features)) return { ok: false, status: 409, body: { error: "needs_connection", message: disabledFeatureMessage(label) } }
+    if (features.length > 0 && !featureGranted(token, features)) return { ok: false, status: 409, body: { error: "needs_connection", message: missingPermissionMessage(label) } }
     const write = features.every((feature) => FILE_WRITE_FEATURES.includes(feature))
     return { ok: true, graphBaseUrl: token.graphBaseUrl, graph: (client = {}) => graphClient(token, client.signal, client.timeoutMs, ownDriveOnly(token, write)) }
   }
@@ -523,6 +585,8 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     if (!granted.ok) return Response.json(granted.body, { status: granted.status })
     return granted.graph({ signal })
   }
+
+  registerMicrosoftGraphResourceRoutes(app, { access, memberRoute: orgMemberRouteMiddleware })
 
   registerMicrosoftDriveFileRoutes(app, {
     access,
@@ -796,9 +860,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List or search Outlook mail as the calling member",
-      description: "Reads recent Outlook messages from the calling member's connected Microsoft 365 account. This capability is delegated and read-only.",
+      description: `Reads recent Outlook messages from the calling member's connected Microsoft 365 account. This capability is delegated and read-only. ${pagingDescription}`,
       responses: {
         200: jsonResponse("Outlook messages returned.", mailMessagesResponseSchema),
+        400: jsonResponse("The query or page token is invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
@@ -823,13 +888,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
 
       try {
         const query = c.req.valid("query")
-        const messages = await graphClient(token).listMailMessages({
-          search: query.search,
-          maxResults: query.maxResults,
-        })
-        return c.json({ ok: true, messages })
+        const { items: messages, ...paging } = await graphClient(token).listMailMessages(query)
+        return c.json({ ok: true, messages, ...paging })
       } catch (error) {
-        return c.json(graphError(error), 502)
+        return c.json(graphError(error), error instanceof MicrosoftGraphPageTokenError ? 400 : 502)
       }
     },
   )
@@ -875,9 +937,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List Microsoft 365 calendar events as the calling member",
-      description: "Lists the calling member's Outlook calendar events in a requested time range. This capability is delegated and read-only.",
+      description: `Lists the calling member's Outlook calendar events in a requested time range. This capability is delegated and read-only. ${pagingDescription}`,
       responses: {
         200: jsonResponse("Outlook calendar events returned.", calendarEventsResponseSchema),
+        400: jsonResponse("The query or page token is invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
@@ -899,14 +962,56 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
 
       try {
         const query = c.req.valid("query")
-        const events = await graphClient(token).listCalendarEvents({
+        const { items: events, ...paging } = await graphClient(token).listCalendarEvents({
           start: query.timeMin,
           end: query.timeMax,
           maxResults: query.maxResults,
+          pageToken: query.pageToken,
         })
-        return c.json({ ok: true, events })
+        return c.json({ ok: true, events, ...paging })
       } catch (error) {
-        return c.json(graphError(error), 502)
+        return c.json(graphError(error), error instanceof MicrosoftGraphPageTokenError ? 400 : 502)
+      }
+    },
+  )
+
+  app.get(
+    "/v1/capabilities/microsoft-365/calendar-events/:eventId/transcript",
+    describeRoute({
+      operationId: "readMicrosoft365CalendarEventTranscript",
+      tags: ["Capability Sources"],
+      summary: "Read the Teams meeting transcript for a Microsoft 365 calendar event",
+      description: "Pass the event id from the calendar events list; if several transcripts match, ask which one and pass its transcriptId. Page with nextPageToken until it is null. Quote speakers and times as written; cue times are relative to the start of the transcript.",
+      responses: {
+        200: jsonResponse("The transcript page or an explanation of why one was not returned.", calendarEventTranscriptResponseSchema),
+        400: jsonResponse("An input is invalid or the transcriptId does not belong to this event.", z.union([
+          invalidRequestSchema,
+          z.object({ error: z.literal("invalid_request"), message: z.string() }).meta({ ref: "Microsoft365InvalidEventTranscriptError" }),
+        ])),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The connection is blocked by organization policy.", z.object({ error: z.literal("policy_blocked"), message: z.string() })),
+        404: jsonResponse("Teams meeting transcripts are turned off for this organization.", z.object({ error: z.literal("feature_disabled"), feature: z.literal("teamsMeetingTranscripts") })),
+        409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Microsoft Graph could not supply a transcript. retryable: false means a tenant policy blocks access or the transcript list is incomplete.", upstreamErrorSchema),
+      },
+    }),
+    orgMemberRouteMiddleware,
+    requireFeature("teamsMeetingTranscripts"),
+    paramValidator(calendarEventParamSchema),
+    queryValidator(calendarEventTranscriptQuerySchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const identity = { organizationId: payload.organization.id, orgMembershipId: payload.currentMember.id }
+      const calendar = await access({ ...identity, features: ["calendarRead"], label: "Outlook calendar read" })
+      if (!calendar.ok) return c.json(calendar.body, calendar.status)
+      const transcripts = await access({ ...identity, features: ["teamsTranscriptRead"], label: "Teams meeting transcript read" })
+      if (!transcripts.ok) return c.json(transcripts.body, transcripts.status)
+      try {
+        const graph = transcripts.graph({ signal: c.req.raw.signal })
+        return c.json(await readMicrosoftEventTranscript(graph, { ...c.req.valid("param"), ...c.req.valid("query") }))
+      } catch (error) {
+        if (error instanceof InvalidEventTranscriptError) return c.json({ error: "invalid_request", message: error.message }, 400)
+        return c.json(transcriptGraphError(error), 502)
       }
     },
   )
@@ -916,9 +1021,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Search OneDrive and SharePoint files as the calling member",
-      description: "Searches file names and content across every OneDrive and SharePoint library the member can open (including files shared with them and Teams files) when the connection has the all-files permission; otherwise only the member's own OneDrive, as scope reports. Results carry driveId and id for reading, pulling or saving. Read-only.",
+      description: `Searches file names and content across every OneDrive and SharePoint library the member can open (including files shared with them and Teams files) when the connection has the all-files permission; otherwise only the member's own OneDrive, as scope reports. Results carry driveId and id for reading, pulling or saving. Read-only. ${pagingDescription}`,
       responses: {
         200: jsonResponse("Files returned.", driveFilesResponseSchema),
+        400: jsonResponse("The query or page token is invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
@@ -942,15 +1048,15 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         const query = c.req.valid("query")
         const client = graphClient(token, undefined, undefined, ownDriveOnly(token, false))
         if (featureGranted(token, ["filesReadAll", "filesFull"])) {
+          if (query.pageToken && !/^\d{1,6}$/.test(query.pageToken)) throw new MicrosoftGraphPageTokenError()
           const from = query.pageToken ? Number(query.pageToken) : 0
           const page = await client.searchFiles({ query: query.query, maxResults: query.maxResults, from })
-          return c.json({ ok: true, files: page.files, scope: "all" as const, nextPageToken: page.nextFrom === null ? null : String(page.nextFrom) })
+          return c.json({ ok: true, files: page.files, scope: "all", nextPageToken: page.nextFrom === null ? null : String(page.nextFrom), hasMore: page.hasMore })
         }
-        if (query.pageToken) return c.json({ error: "invalid_request", message: "Searching only your own OneDrive returns one page." }, 400)
-        const files = await client.searchDriveItems({ query: query.query, maxResults: query.maxResults })
-        return c.json({ ok: true, files, scope: "myDrive" as const, nextPageToken: null })
+        const { items: files, ...paging } = await client.searchDriveItems(query)
+        return c.json({ ok: true, files, scope: "myDrive", ...paging })
       } catch (error) {
-        return c.json(graphError(error), 502)
+        return c.json(graphError(error), error instanceof MicrosoftGraphPageTokenError ? 400 : 502)
       }
     },
   )
@@ -1107,9 +1213,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List Microsoft Teams chats as the calling member",
-      description: "Lists the calling member's Microsoft Teams chats using delegated Chat.Read permission.",
+      description: `Lists the calling member's Microsoft Teams chats using delegated Chat.Read permission. ${pagingDescription}`,
       responses: {
         200: jsonResponse("Teams chats returned.", teamsChatsResponseSchema),
+        400: jsonResponse("The query or page token is invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
@@ -1130,10 +1237,11 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       }
 
       try {
-        const chats = await graphClient(token).listTeamsChats(c.req.valid("query").maxResults)
-        return c.json({ ok: true, chats })
+        const { maxResults, pageToken } = c.req.valid("query")
+        const { items: chats, ...paging } = await graphClient(token).listTeamsChats(maxResults, pageToken)
+        return c.json({ ok: true, chats, ...paging })
       } catch (error) {
-        return c.json(graphError(error), 502)
+        return c.json(graphError(error), error instanceof MicrosoftGraphPageTokenError ? 400 : 502)
       }
     },
   )
@@ -1143,9 +1251,10 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List messages in a Microsoft Teams chat as the calling member",
-      description: "Reads recent messages from one Teams chat using delegated Chat.Read permission.",
+      description: `Reads recent messages from one Teams chat using delegated Chat.Read permission. ${pagingDescription}`,
       responses: {
         200: jsonResponse("Teams chat messages returned.", teamsMessagesResponseSchema),
+        400: jsonResponse("The query or page token is invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         409: jsonResponse("The calling member has not connected their Microsoft account or is missing permission.", needsConnectionSchema),
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
@@ -1167,13 +1276,11 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       }
 
       try {
-        const messages = await graphClient(token).listTeamsMessages(
-          c.req.valid("param").chatId,
-          c.req.valid("query").maxResults,
-        )
-        return c.json({ ok: true, messages })
+        const { maxResults, pageToken } = c.req.valid("query")
+        const { items: messages, ...paging } = await graphClient(token).listTeamsMessages(c.req.valid("param").chatId, maxResults, pageToken)
+        return c.json({ ok: true, messages, ...paging })
       } catch (error) {
-        return c.json(graphError(error), 502)
+        return c.json(graphError(error), error instanceof MicrosoftGraphPageTokenError ? 400 : 502)
       }
     },
   )

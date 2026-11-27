@@ -29,7 +29,6 @@ import {
   SettingsSidebar,
   getSettingsTabIcon,
   getSettingsTabLabel,
-  isSettingsTabActive,
   isSettingsTabBeta,
   useSettingsNavGroups,
 } from "./settings-page";
@@ -213,7 +212,7 @@ function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "
                 <DropdownMenuItem
                   key={tab}
                   onClick={() => props.onSelectTab(tab)}
-                  className={isSettingsTabActive(props.activeTab, tab) ? "bg-foreground/10 text-accent-foreground" : undefined}
+                  className={props.activeTab === tab ? "bg-foreground/10 text-accent-foreground" : undefined}
                 >
                   <Icon />
                   <span>{getSettingsTabLabel(tab)}</span>

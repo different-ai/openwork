@@ -1,3 +1,6 @@
+import type { FeatureMap } from "@openwork/features"
+import { MICROSOFT_GRAPH_RESOURCE_PREFIX, microsoftGraphResources } from "../routes/org/microsoft-graph-resources.js"
+
 export type CatalogAvailabilityContext = {
   generatedArtifactViewsEnabled: boolean
   managedDeploymentsEnabled: boolean
@@ -9,6 +12,23 @@ const GMAIL_THREAD_READ_PATH = "/v1/capabilities/google-workspace/gmail-thread/{
 
 export function filterGmailThreadRead<T extends { path: string }>(catalog: readonly T[], enabled?: boolean): readonly T[] {
   return enabled ? catalog : catalog.filter((operation) => operation.path !== GMAIL_THREAD_READ_PATH)
+}
+
+const TEAMS_EVENT_TRANSCRIPT_PATH = "/v1/capabilities/microsoft-365/calendar-events/{eventId}/transcript"
+
+export function filterTeamsMeetingTranscripts<T extends { path: string }>(catalog: readonly T[], enabled?: boolean): readonly T[] {
+  return enabled ? catalog : catalog.filter(({ path }) => path !== TEAMS_EVENT_TRANSCRIPT_PATH)
+}
+
+const microsoftGraphResourceFlags = new Map(microsoftGraphResources.map(({ route, flag }) => [
+  `${MICROSOFT_GRAPH_RESOURCE_PREFIX}${route.replace(/:(\w+)/g, "{$1}")}`, flag,
+]))
+
+export function filterMicrosoftGraphResources<T extends { path: string }>(catalog: readonly T[], features: Partial<FeatureMap>): readonly T[] {
+  return catalog.filter(({ path }) => {
+    const flag = microsoftGraphResourceFlags.get(path)
+    return !flag || features[flag] === true
+  })
 }
 
 const PERSONAL_AGENT_PATHS = ["/v1/personal-agents", "/v1/org/personal-agents", "/v1/org/personal-agent-policy", "/v1/org/personal-agent-events"]
