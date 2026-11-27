@@ -103,9 +103,12 @@ workbot:
   secret:
     existingSecret: workbot-runtime
   ingress:
+    # Set false if you terminate HTTPS at an external reverse proxy (route to the Workbot Service on port 3020).
     enabled: true
     className: REPLACE_WITH_YOUR_INGRESS_CLASS
     tlsSecretName: workbot-tls
+    # Add your Ingress controller's unbuffered streaming and idle-timeout annotations here.
+    annotations: {}
 ```
 
 Run the same render and upgrade commands. Check `kubectl --namespace "$NAMESPACE" get deployments,pods,ingress` for a ready `-workbot` Deployment and the Ingress for your Workbot hostname. In **Services**, check that Workbot is **Ready**. A ready pod alone does not prove Den API can reach the Workbot HTTPS endpoint.
