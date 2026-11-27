@@ -12,8 +12,21 @@ export const CLOUD_CODING_MAX_FILE_BYTES = 1_000_000
 export const CLOUD_CODING_MAX_TOTAL_BYTES = 8_000_000
 export const CLOUD_CODING_SUMMARY_FILES_MAX = 200
 export const CLOUD_CODING_APPROVAL_TTL_MS = 24 * 60 * 60_000
-export const CLOUD_CODING_TASK_TOKEN_TTL_MS = 12 * 60 * 60_000
-export const CLOUD_CODING_SETUP_CODE_TTL_MS = 60 * 60_000
+export const CLOUD_CODING_TASK_TOKEN_TTL_MS = 60 * 60_000
+export const CLOUD_CODING_SETUP_CODE_TTL_MS = 10 * 60_000
+
+export const CLOUD_CODING_SURFACES = ["workbot", "slack", "web"] as const
+export type CloudCodingSurface = (typeof CLOUD_CODING_SURFACES)[number]
+
+export const CLOUD_CODING_WORKER_ID_HEADER = "x-openwork-cloud-worker-id"
+export const CLOUD_CODING_WORKER_PROOF_HEADER = "x-openwork-cloud-worker-proof"
+export const CLOUD_CODING_WORKER_PROOF_VERSION = "v1"
+
+export function cloudCodingWorkerProofMessage(workerId: string, bearerSha256Hex: string): string {
+  return `openwork-cloud-worker-proof:${CLOUD_CODING_WORKER_PROOF_VERSION}:${workerId}:${bearerSha256Hex}`
+}
+
+export const CLOUD_CODING_SLACK_ACTION_PREFIX = "cloud_coding_approval:"
 
 export const cloudCodingAccessSchema = z.object({
   orgWide: z.boolean(),

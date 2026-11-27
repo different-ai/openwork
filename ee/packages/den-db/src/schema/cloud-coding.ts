@@ -99,6 +99,9 @@ export const CloudCodingGithubLinkTable = mysqlTable(
   ],
 )
 
+export const cloudCodingSurfaceValues = ["workbot", "slack", "web"] as const
+export type CloudCodingSurface = (typeof cloudCodingSurfaceValues)[number]
+
 export const cloudCodingTaskStatusValues = ["created", "running", "awaiting_approval", "pushed", "pull_request_opened", "failed", "cancelled"] as const
 export type CloudCodingTaskStatus = (typeof cloudCodingTaskStatusValues)[number]
 
@@ -126,6 +129,10 @@ export const CloudCodingTaskTable = mysqlTable(
     tokenExpiresAt: timestamp("token_expires_at", { fsp: 3 }),
     remoteSessionId: varchar("remote_session_id", { length: 128 }),
     workerId: varchar("worker_id", { length: 64 }),
+    surface: mysqlEnum("surface", cloudCodingSurfaceValues).notNull().default("web"),
+    conversationId: varchar("conversation_id", { length: 240 }),
+    runTokenId: varchar("run_token_id", { length: 64 }),
+    runnerMessageId: varchar("runner_message_id", { length: 160 }),
     failureCode: varchar("failure_code", { length: 64 }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -212,4 +219,29 @@ export const CloudCodingPullRequestTable = mysqlTable(
     uniqueIndex("cloud_coding_pull_request_approval").on(table.approvalId),
     index("cloud_coding_pull_request_org_opened").on(table.organizationId, table.openedAt),
   ],
+)
+
+export const CloudCodingSlackNoticeTable = mysqlTable(
+  "cloud_coding_slack_notice",
+  {
+    approvalId: denTypeIdColumn("cloudCodingPushApproval", "approval_id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    orgMembershipId: denTypeIdColumn("member", "org_membership_id").notNull(),
+    connectionId: denTypeIdColumn("externalMcpConnection", "connection_id").notNull(),
+    eventId: varchar("event_id", { length: 64 }).notNull(),
+    teamId: varchar("team_id", { length: 64 }).notNull(),
+    channelId: varchar("channel_id", { length: 64 }).notNull(),
+    threadTs: varchar("thread_ts", { length: 64 }).notNull(),
+    requesterSlackUserId: varchar("requester_slack_user_id", { length: 64 }).notNull(),
+    messageTs: varchar("message_ts", { length: 64 }),
+    shownStatus: mysqlEnum("shown_status", cloudCodingPushApprovalStatusValues),
+    continuedAt: timestamp("continued_at", { fsp: 3 }),
+    attempts: int("attempts").notNull().default(0),
+    availableAt: timestamp("available_at", { fsp: 3 }).notNull().defaultNow(),
+    leaseUntil: timestamp("lease_until", { fsp: 3 }),
+    leaseOwner: varchar("lease_owner", { length: 64 }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [index("cloud_coding_slack_notice_queue").on(table.availableAt)],
 )

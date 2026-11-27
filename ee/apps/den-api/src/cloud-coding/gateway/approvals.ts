@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, inArray, lte } from "@openwork-ee/den-db/drizzle"
-import { CloudCodingPullRequestTable as PullRequests, CloudCodingPushApprovalTable as Approvals } from "@openwork-ee/den-db/schema"
+import { CloudCodingPullRequestTable as PullRequests, CloudCodingPushApprovalTable as Approvals, CloudCodingTaskTable as Tasks } from "@openwork-ee/den-db/schema"
 import type { AuditTx } from "@openwork-ee/den-db/audit-log"
 import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { CLOUD_CODING_SUMMARY_FILES_MAX, cloudCodingPushApprovalSchema, type CloudCodingPushDecisionInput } from "@openwork/types/den/cloud-coding"
@@ -68,6 +68,10 @@ export async function decideCloudCodingApproval(scope: CloudCodingApprovalScope,
     const status = decision === "allow_once" ? "approved" : "denied"
     const updated = await tx.update(Approvals).set({ status, decidedAt }).where(and(condition, eq(Approvals.status, "pending"), gt(Approvals.expiresAt, decidedAt)))
     if (!didUpdate(updated)) return "not_pending"
+    if (status === "denied") {
+      await tx.update(Tasks).set({ status: "cancelled", failureCode: "push_denied" })
+        .where(and(eq(Tasks.id, row.taskId), inArray(Tasks.status, ["created", "running", "awaiting_approval"])))
+    }
     const result = { ...row, status, decidedAt } as const
     await audit(tx, result)
     return result

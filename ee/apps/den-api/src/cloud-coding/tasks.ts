@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
 import { and, eq, gt, inArray } from "@openwork-ee/den-db/drizzle"
-import { CloudCodingRepositoryTable, CloudCodingTaskTable, type CloudCodingTaskStatus } from "@openwork-ee/den-db/schema"
+import { CloudCodingRepositoryTable, CloudCodingTaskTable, type CloudCodingSurface, type CloudCodingTaskStatus } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { CLOUD_CODING_SETUP_CODE_TTL_MS, CLOUD_CODING_TASK_TOKEN_TTL_MS } from "@openwork/types/den/cloud-coding"
 import { db } from "../db.js"
@@ -14,6 +14,14 @@ export const CLOUD_CODING_TASK_TOKEN_PREFIX = "occ_task_"
 const OPEN_TASK_STATUSES: readonly CloudCodingTaskStatus[] = ["created", "running", "awaiting_approval", "pushed"]
 
 type TaskScope = { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }
+
+export type CloudCodingTaskOrigin = {
+  surface: CloudCodingSurface
+  conversationId: string | null
+  runTokenId: string | null
+  runnerMessageId: string | null
+  workerId: string | null
+}
 
 function hashSecret(secret: string): string {
   return createHash("sha256").update(secret).digest("hex")
@@ -36,6 +44,7 @@ export async function createCloudCodingTask(input: TaskScope & {
   repository: Pick<CloudCodingRepositoryRow, "id" | "githubRepositoryId" | "fullName">
   baseBranch: string
   title: string
+  origin: CloudCodingTaskOrigin
   now?: number
 }): Promise<{ task: CloudCodingTaskRow; setupCode: string }> {
   const id = createDenTypeId("cloudCodingTask")
@@ -49,6 +58,7 @@ export async function createCloudCodingTask(input: TaskScope & {
     repositoryFullName: input.repository.fullName,
     baseBranch: input.baseBranch,
     title: input.title.slice(0, 255),
+    ...input.origin,
     setupCodeHash: code.setupCodeHash,
     setupCodeExpiresAt: code.setupCodeExpiresAt,
   })
@@ -66,18 +76,24 @@ export async function findCloudCodingTask(input: TaskScope & { taskId: string })
   return task ?? null
 }
 
-export async function renewCloudCodingSetupCode(input: TaskScope & { taskId: string; now?: number }): Promise<string | null> {
+export async function renewCloudCodingSetupCode(input: TaskScope & { taskId: string; origin: CloudCodingTaskOrigin; now?: number }): Promise<string | null> {
   const code = newSetupCode(input.now ?? Date.now())
   return db.transaction(async (tx) => {
-    const [task] = await tx.select({ id: CloudCodingTaskTable.id, tokenHash: CloudCodingTaskTable.tokenHash, status: CloudCodingTaskTable.status })
+    const [task] = await tx.select({ id: CloudCodingTaskTable.id, status: CloudCodingTaskTable.status, surface: CloudCodingTaskTable.surface, conversationId: CloudCodingTaskTable.conversationId })
       .from(CloudCodingTaskTable).where(and(
         eq(CloudCodingTaskTable.id, normalizeDenTypeId("cloudCodingTask", input.taskId)),
         eq(CloudCodingTaskTable.organizationId, input.organizationId),
         eq(CloudCodingTaskTable.orgMembershipId, input.memberId),
       )).limit(1).for("update")
-    if (!task || task.tokenHash !== null || task.status !== "created") return null
-    await tx.update(CloudCodingTaskTable).set({ setupCodeHash: code.setupCodeHash, setupCodeExpiresAt: code.setupCodeExpiresAt })
-      .where(eq(CloudCodingTaskTable.id, task.id))
+    if (!task || !OPEN_TASK_STATUSES.includes(task.status)) return null
+    if (task.surface !== input.origin.surface || task.conversationId !== input.origin.conversationId) return null
+    await tx.update(CloudCodingTaskTable).set({
+      setupCodeHash: code.setupCodeHash,
+      setupCodeExpiresAt: code.setupCodeExpiresAt,
+      runTokenId: input.origin.runTokenId,
+      runnerMessageId: input.origin.runnerMessageId,
+      workerId: input.origin.workerId,
+    }).where(eq(CloudCodingTaskTable.id, task.id))
     return code.setupCode
   })
 }
@@ -92,11 +108,17 @@ export async function redeemCloudCodingSetupCode(input: { code: string; now?: nu
       eq(CloudCodingTaskTable.setupCodeHash, hashSecret(input.code)),
       gt(CloudCodingTaskTable.setupCodeExpiresAt, new Date(now)),
     )).limit(1).for("update")
-    if (!task || task.tokenHash !== null || task.status !== "created") return null
-    const changes = { setupCodeHash: null, setupCodeExpiresAt: null, tokenHash: hashSecret(token), tokenExpiresAt, status: "running" } as const
+    if (!task || !OPEN_TASK_STATUSES.includes(task.status)) return null
+    const status = task.status === "created" ? "running" : task.status
+    const changes = { setupCodeHash: null, setupCodeExpiresAt: null, tokenHash: hashSecret(token), tokenExpiresAt, status }
     await tx.update(CloudCodingTaskTable).set(changes).where(eq(CloudCodingTaskTable.id, task.id))
     return { task: { ...task, ...changes }, token, tokenExpiresAt }
   })
+}
+
+export async function releaseCloudCodingTaskCredential(taskId: DenTypeId<"cloudCodingTask">, database: Pick<typeof db, "update"> = db): Promise<void> {
+  await database.update(CloudCodingTaskTable).set({ tokenHash: null, tokenExpiresAt: null, setupCodeHash: null, setupCodeExpiresAt: null })
+    .where(eq(CloudCodingTaskTable.id, taskId))
 }
 
 export async function findCloudCodingTaskByToken(input: { token: string; now?: number }): Promise<CloudCodingTaskRow | null> {
