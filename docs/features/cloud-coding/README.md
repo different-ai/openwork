@@ -175,6 +175,24 @@ At push time Den repeats 1–4 from the files sent again, compares with the
 approved `head_sha`, then creates blobs, the tree and the commit on GitHub with
 the person's token and compares GitHub's commit SHA before creating the branch.
 
+## The helper on the cloud computer
+
+The cloud session's first instruction downloads one small Node program from
+Den (`GET /v1/cloud-coding/gateway/helper.mjs`, so it always matches the
+gateway) and runs it. It needs only Node and git.
+
+| Command | What it does |
+| --- | --- |
+| `setup --api <den api> --code <setup code>` | Trades the one-time code for the task token (kept in `~/.openwork/cloud-coding/<task>.json`, mode 600), clones the repository with the read token passed to git for that one process only, and prints the folder plus the install and test commands it found. |
+| `detect` | Works out install and test commands from the repository itself: package manager and scripts, Makefile, Python, Go, Rust and Ruby conventions, and CI workflow steps. Nobody fills in a setup page. |
+| `request-push --branch … --title … --tests passed\|failed\|not_run` | Commits locally, sends the changed files to Den and waits for the person. Exit 3 means still waiting, 4 denied, 5 expired or replaced. |
+| `wait` | Keeps waiting, then pushes the same changed files and opens the pull request. Prints the link. |
+| `status` | The task, the approval and the pull request link. |
+
+The helper builds the change from git (`baseSha` to the local commit), so the
+files sent for approval and for the push are byte-identical even if the working
+tree changes in between.
+
 ## Chat
 
 - The agent uses three OpenWork Connect capabilities: `cloud-coding:start`,
@@ -185,8 +203,13 @@ the person's token and compares GitHub's commit SHA before creating the branch.
   is the usual member connection question; after GitHub's "Authorize OpenWork"
   the same call continues.
 - The approval panel is fed by `GET /v1/cloud-coding/approvals` and sits above
-  the composer in the desktop app and OpenWork Web. Slack and other surfaces
-  get the same decision as a link to the approval page in Den web.
+  the composer in the desktop app and OpenWork Web. After **Allow once** it
+  stays in place until the pull request link arrives.
+- Slack, Workbot and people's own agents use the same three capabilities. They
+  have no cards, so results carry plain links: `setupUrl` (Cloud coding in
+  Den), `linkUrl` (the personal link page) and, from `cloud-coding:status`,
+  `approvalUrl` (the approval page in Den web, with the same Deny and Allow
+  once).
 
 ## Setup
 
