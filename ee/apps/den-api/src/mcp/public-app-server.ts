@@ -45,6 +45,7 @@ export function registerPublicMcpAppRoutes<T extends { Variables: RequestIdVaria
       onError: () => jsonRpcError(null, "The request is too large.", "request_too_large", 413),
     }),
     async (c) => {
+      c.header("Cache-Control", "no-store")
       const request = c.req.raw
       if (wantsAppSite(request)) {
         const page = await appSiteResponse({ appIdOrName: c.req.param("appIdOrName"), publicOnly: true })
