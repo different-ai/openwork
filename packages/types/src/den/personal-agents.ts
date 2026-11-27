@@ -466,6 +466,8 @@ export const personalAgentConnectionToolsSchema = z.object({
   name: z.string().max(160),
   available: z.boolean().describe("Whether the caller is connected to it. Tools are listed only then."),
   blocked: z.boolean().describe("The agent's policy blocks the whole connection."),
+  onlyChosenTools: z.boolean().default(false)
+    .describe("The connection is off apart from the tools picked for the agent: those are the tools whose chosen value is allow or ask."),
   lockedByOrganization: z.boolean(),
   sharedLogin: personalAgentPersonSchema.nullable().default(null)
     .describe("Set when someone lent their own account on this connection to the agent: everyone's runs of the agent act through that person's account here."),

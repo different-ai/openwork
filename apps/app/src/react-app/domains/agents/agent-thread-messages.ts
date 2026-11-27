@@ -56,3 +56,33 @@ export function agentThreadMessages(turns: readonly PersonalAgentChatTurn[], pen
   }
   return messages;
 }
+
+export type AgentThreadItem<Run> =
+  | { kind: "chat"; key: string; messages: UIMessage[] }
+  | { kind: "run"; key: string; run: Run };
+
+export function agentThreadTimeline<Run extends { id: string; createdAt: number }>(
+  turns: readonly PersonalAgentChatTurn[],
+  runs: readonly Run[],
+  pending: PendingMessage | null,
+): AgentThreadItem<Run>[] {
+  const entries = [
+    ...turns.map((turn) => ({ at: Date.parse(turn.createdAt), turn, run: null })),
+    ...runs.map((run) => ({ at: run.createdAt, turn: null, run })),
+  ].sort((a, b) => a.at - b.at);
+  const items: AgentThreadItem<Run>[] = [];
+  let group: PersonalAgentChatTurn[] = [];
+  const flush = (withPending: boolean) => {
+    if (!group.length && !(withPending && pending)) return;
+    const key = `chat:${group[0]?.id ?? `pending:${pending?.clientMessageId}`}`;
+    items.push({ kind: "chat", key, messages: agentThreadMessages(group, withPending ? pending : null) });
+    group = [];
+  };
+  for (const entry of entries) {
+    if (entry.turn) { group.push(entry.turn); continue; }
+    flush(false);
+    if (entry.run) items.push({ kind: "run", key: `run:${entry.run.id}`, run: entry.run });
+  }
+  flush(true);
+  return items;
+}

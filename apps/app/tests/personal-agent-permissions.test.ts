@@ -40,6 +40,25 @@ describe("personal agent permissions", () => {
     expect(off.tools).toEqual(before.tools);
   });
 
+  test("picking a tool on a connection that is off gives the agent only that tool", () => {
+    const before = { connections: { slack: "block" as const }, tools: { slack: { search: "allow" as const, remove: "block" as const }, linear: { list: "allow" as const } } };
+    const one = nextAgentToolPolicy(before, { connectionId: "slack", toolName: "post", access: "ask", connectionOff: true });
+    expect(one).toEqual({ connections: { slack: "ask" }, tools: { slack: { remove: "block", post: "ask" }, linear: { list: "allow" } } });
+    const two = nextAgentToolPolicy(one, { connectionId: "slack", toolName: "search", access: "allow", connectionOff: true });
+    expect(two.tools.slack).toEqual({ remove: "block", post: "ask", search: "allow" });
+    const none = nextAgentToolPolicy(nextAgentToolPolicy(two, { connectionId: "slack", toolName: "post", access: "block", connectionOff: true }),
+      { connectionId: "slack", toolName: "search", access: "block", connectionOff: true });
+    expect(none.connections.slack).toBe("block");
+    expect(nextAgentToolPolicy(before, { connectionId: "slack", toolName: "post", access: "block", connectionOff: true }).connections.slack).toBe("block");
+    expect(nextAgentConnectionPolicy(two, { connectionId: "slack", enabled: true }).connections.slack).toBe("allow");
+  });
+
+  test("a connection that is off apart from picked tools says how many", () => {
+    const tools = [{ ...tool("search", "allow"), chosen: "allow" as const }, { ...tool("post", "ask"), chosen: "ask" as const }, { ...tool("remove", "block"), chosen: "block" as const }, tool("list", "block")];
+    expect(toolAccessSummary({ available: true, blocked: true, onlyChosenTools: true, lockedByOrganization: false, tools })).toBe("Off, apart from 2 tools you picked");
+    expect(toolAccessSummary({ available: true, blocked: true, onlyChosenTools: true, lockedByOrganization: false, tools: tools.slice(0, 1) })).toBe("Off, apart from 1 tool you picked");
+  });
+
   test("summarizes effective access only for enabled, available connections", () => {
     const tools = [tool("search", "allow"), tool("list", "allow"), tool("get", "allow"), tool("post", "ask"), tool("reply", "ask"), tool("delete", "block")];
     expect(toolAccessSummary({ available: true, blocked: false, lockedByOrganization: false, tools })).toBe("3 allowed · 2 ask · 1 blocked");

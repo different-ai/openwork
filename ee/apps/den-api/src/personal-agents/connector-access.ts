@@ -12,6 +12,9 @@ export function normalizedPersonalAgentConnectorName(name: string) {
   return name.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase()
 }
 
+export const OPENWORK_CONNECTION_ID = "openwork"
+export const OPENWORK_CONNECTION_NAME = "OpenWork"
+
 type ConnectorDefaults = { defaultConnectorsOff?: boolean; legacyConnectorAccess: boolean; neverConnectionIds: readonly string[] }
 
 type ConnectorState = "on" | "off" | "blocked"
@@ -20,8 +23,13 @@ export function personalAgentConnectorState(agent: ConnectorDefaults, policy: Pi
   const rule = policy.connections[connectionId]
   if (agent.neverConnectionIds.includes(connectionId) || (agent.legacyConnectorAccess && rule === "block")) return "blocked"
   if (rule === "allow") return "on"
-  if (rule === "block") return "off"
+  if (rule === "block" || rule === "ask") return "off"
   return agent.legacyConnectorAccess && !agent.defaultConnectorsOff ? "on" : "off"
+}
+
+export function personalAgentChosenTools(policy: PersonalAgentToolPolicy, connectionId: string): Set<string> {
+  if (policy.connections[connectionId] !== "ask" || !Object.hasOwn(policy.tools, connectionId)) return new Set()
+  return new Set(Object.entries(policy.tools[connectionId]).filter(([, access]) => access !== "block").map(([name]) => name))
 }
 
 export async function personalAgentConnectorAccess(input: { scopes?: ReadonlySet<string>; organizationId: string; memberId: string }) {
@@ -49,10 +57,24 @@ export async function personalAgentConnectorAccess(input: { scopes?: ReadonlySet
     state, canRequest,
     toolBlocked: (connectionId: string, toolName: string) => Object.hasOwn(agent.tools[connectionId] ?? {}, toolName) && agent.tools[connectionId][toolName] === "block"
       || tenant.some((entry) => Object.hasOwn(entry.tools[connectionId] ?? {}, toolName) && entry.tools[connectionId][toolName] === "block"),
-    tools: async (connectionId: string) => canRequest && state(connectionId) === "off"
-      ? approvedAgentConnectorTools({ organizationId, memberId, connectionId, context: agentApprovalContext(context, execution) })
-      : new Set<string>(),
+    tools: async (connectionId: string) => {
+      if (state(connectionId) !== "off") return new Set<string>()
+      const chosen = personalAgentChosenTools(agent, connectionId)
+      if (!canRequest) return chosen
+      const approved = await approvedAgentConnectorTools({ organizationId, memberId, connectionId, context: agentApprovalContext(context, execution) })
+      return new Set([...chosen, ...approved])
+    },
   }
+}
+
+export type PersonalAgentConnectorAccess = NonNullable<Awaited<ReturnType<typeof personalAgentConnectorAccess>>>
+
+export async function personalAgentConnectionToolFilter(access: PersonalAgentConnectorAccess, connectionId: string): Promise<((toolName: string) => boolean) | null> {
+  const state = access.state(connectionId)
+  if (state === "blocked") return null
+  const approved = state === "off" ? await access.tools(connectionId) : null
+  if (approved && approved.size === 0) return null
+  return (toolName) => !access.toolBlocked(connectionId, toolName) && (!approved || approved.has(toolName))
 }
 
 export async function listRequestablePersonalAgentConnections(input: { scopes: ReadonlySet<string>; organizationId: string; memberId: string }) {

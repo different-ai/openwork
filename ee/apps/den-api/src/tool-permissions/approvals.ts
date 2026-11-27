@@ -5,7 +5,7 @@ import type { ToolApproval, ToolApprovalDecision } from "@openwork/types/den/too
 import { db } from "../db.js"
 import { cachedOrganizationFeatureEnabled, organizationFeatureEnabled } from "../features.js"
 import { loadApplicableToolPermissionRules, type ToolPermissionRuleScope } from "./evaluate.js"
-import { setSubjectToolRule, type ToolPermissionTransaction } from "./rules.js"
+import { limitAgentConnectionToChosenTools, setSubjectToolRule, type ToolPermissionTransaction } from "./rules.js"
 
 export type ToolApprovalRow = typeof ToolApprovalTable.$inferSelect
 export type ToolApprovalContext =
@@ -171,7 +171,7 @@ export async function decideToolApproval(input: {
   agent?: {
     id: string
     onAlwaysAllow?: (tx: ToolPermissionTransaction) => Promise<void>
-    connectorState?: (tx: ToolPermissionTransaction, row: ToolApprovalRow, agent: ConnectorApprovalAgent) => Promise<"on" | "off" | "blocked" | "disabled">
+    connectorState?: (tx: ToolPermissionTransaction, row: ToolApprovalRow, agent: ConnectorApprovalAgent) => Promise<"on" | "off" | "limited" | "blocked" | "disabled">
   }
 }): Promise<DecidedToolApproval | null> {
   if (!isDenTypeId("toolApproval", input.approvalId)) return null
@@ -197,13 +197,15 @@ export async function decideToolApproval(input: {
     if (!owner && !requester && !manager) throw new Error("tool_approval_forbidden")
     if (row.status !== "pending") throw new Error("tool_approval_decided")
     if (row.connector_access) {
-      if (!agent || !input.agent?.connectorState || input.decision === "always_allow") throw new Error("tool_approval_forbidden")
+      if (!agent || !input.agent?.connectorState) throw new Error("tool_approval_forbidden")
       if (row.owner_requested_at && (!owner || input.decision === "allow_once")) throw new Error("tool_approval_forbidden")
-      if (input.decision !== "deny") {
-        const state = await input.agent.connectorState(tx, row, agent)
-        if (state === "blocked" || state === "disabled") throw new Error("personal_agent_connector_unavailable")
+      const state = input.decision === "deny" ? null : await input.agent.connectorState(tx, row, agent)
+      if (state === "blocked" || state === "disabled") throw new Error("personal_agent_connector_unavailable")
+      if ((input.decision === "allow_once" || input.decision === "always_allow") && row.tool_name === CONNECTOR_ONLY_TOOL_NAME) throw new Error("tool_approval_forbidden")
+      if (input.decision === "always_allow") {
+        if (!owner) throw new Error("tool_approval_forbidden")
+        if (state === "off") await limitAgentConnectionToChosenTools(tx, { organizationId, kind: "agent", id: agent.id }, row.connection_id, memberId)
       }
-      if (input.decision === "allow_once" && row.tool_name === CONNECTOR_ONLY_TOOL_NAME) throw new Error("tool_approval_forbidden")
       if (input.decision === "turn_on") {
         if (!owner) {
           if (!manager) throw new Error("tool_approval_forbidden")

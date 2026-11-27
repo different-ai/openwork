@@ -17,6 +17,7 @@ import {
 import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { db } from "../db.js"
 import { invalidateOrganizationWrittenToolRules, readSubjectToolPolicies, replaceSubjectToolPolicy, writeOrganizationWrittenToolRules } from "../tool-permissions/rules.js"
+import { isBuiltInAgentConnection } from "./builtin-connection.js"
 import { personalAgentOrganizationRules } from "./org-rules.js"
 import { agentToolLimitScopes } from "../mcp/workbot-turn-limits.js"
 import { peopleMemberCondition } from "../setup-agent-members.js"
@@ -244,8 +245,9 @@ async function organizationToolPolicy(organizationId: string, policy: PersonalAg
     throw new PersonalAgentAdminInputError("A whole connection can only be blocked. Choose individual tools to allow them or ask first.")
   }
   const canonicalIds = new Map<string, string>()
-  const invalidConnection = () => new PersonalAgentAdminInputError("Choose a connection added to this organization. Built-in connections cannot be blocked here.")
+  const invalidConnection = () => new PersonalAgentAdminInputError("Choose OpenWork, a built-in app, or a connection added to this organization.")
   for (const connectionId of new Set([...Object.keys(policy.connections), ...Object.keys(policy.tools)])) {
+    if (isBuiltInAgentConnection(connectionId)) continue
     if (!isDenTypeId("externalMcpConnection", connectionId)) throw invalidConnection()
     const connection = await getExternalMcpConnection({
       organizationId: normalizeDenTypeId("organization", organizationId),

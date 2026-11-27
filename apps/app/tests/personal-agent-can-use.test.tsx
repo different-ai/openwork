@@ -49,13 +49,17 @@ test("names apps that are usable, including those that ask first, and keeps the 
   expect(summary).toBe("Slack, Linear +1");
 });
 
+test("names an app that is off apart from the tools its owner picked", () => {
+  expect(agentCanUseSummary({ connections: [connection("Turned off", { blocked: true }), connection("Notion", { blocked: true, onlyChosenTools: true })] })).toBe("Notion");
+});
+
 test("does not confuse an empty catalog with loading or an unavailable catalog", () => {
   expect(agentCanUseSummary({ connections: unavailable })).toBe("No apps yet. It’ll ask when it needs one.");
   expect(agentCanUseSummary(undefined)).toBeNull();
   expect(agentCanUseSummary(undefined, true)).toBe("Couldn’t check apps");
 });
 
-test.each([false, true])("both summaries open What it can use (compact: %s)", async (compact) => {
+test.each([false, true])("only the panel says what the agent can use, and it opens What it can use (compact: %s)", async (compact) => {
   const timestamp = "2026-11-26T12:00:00.000Z";
   const agent = personalAgentDetailSchema.parse({
     agent: { id: "agent", organizationId: "org", ownerMemberId: "member", name: "Inbox helper", state: "active", currentRevisionId: "revision", createdAt: timestamp, updatedAt: timestamp, archivedAt: null },
@@ -96,17 +100,13 @@ test.each([false, true])("both summaries open What it can use (compact: %s)", as
     return found;
   };
   const click = async (selector: string) => { await act(async () => element(selector).click()); };
-  const headerSummary = '[data-agent-can-use="header"]';
   const panelSummary = '[data-agent-can-use="panel"]';
-  expect(element(headerSummary).textContent).toBe("No apps yet. It’ll ask when it needs one.");
-  expect(element(headerSummary).getAttribute("aria-label")).toBe("What it can use");
+  expect(container.querySelector("[data-agent-can-use]")).toBeNull();
   expect(container.querySelector("[data-agent-panel]")).toBeNull();
-  await click(headerSummary);
-  expect(element("[data-agent-settings] h3").textContent).toBe("What it can use");
+  await click('[data-agent-header="agent"]');
   expect(element("[data-agent-panel]").getAttribute("role")).toBe(compact ? "dialog" : null);
-  expect(document.body.querySelector(panelSummary) ?? container.querySelector(panelSummary)).toBeNull();
-  await click("[data-agent-settings-back]");
   expect(element(panelSummary).textContent).toContain("It’ll ask when it needs one.");
+  expect(element(panelSummary).getAttribute("aria-label")).toBe("What it can use");
   await click("[data-agent-run-now]");
   await act(async () => { await Bun.sleep(20); });
   expect(runCalls).toEqual([{ organizationId: "org", agentId: "agent", routineId: "routine" }]);

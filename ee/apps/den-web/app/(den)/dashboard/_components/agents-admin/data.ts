@@ -70,7 +70,15 @@ export function useEditAdminAgent(orgId: string, id: string) {
 }
 
 type ToolRuleEdit = { action: "tools"; connectionId: string; toolNames: readonly string[]; rule: PersonalAgentAccess | null };
-export type PolicyEdit = { action: "settings"; settings: Omit<SetPersonalAgentOrgPolicy, "toolPolicy"> } | ToolRuleEdit;
+type ConnectionEdit = { action: "connection"; connectionId: string; blocked: boolean };
+export type PolicyEdit = { action: "settings"; settings: Omit<SetPersonalAgentOrgPolicy, "toolPolicy"> } | ToolRuleEdit | ConnectionEdit;
+
+export function editBlockedConnection(policy: PersonalAgentToolPolicy, edit: ConnectionEdit): PersonalAgentToolPolicy {
+  const connections = new Map(Object.entries(policy.connections));
+  if (edit.blocked) connections.set(edit.connectionId, "block");
+  else connections.delete(edit.connectionId);
+  return { ...policy, connections: Object.fromEntries(connections) };
+}
 
 function editToolRules(policy: PersonalAgentToolPolicy, edit: ToolRuleEdit): PersonalAgentToolPolicy {
   const tools = new Map(Object.entries(policy.tools));
@@ -88,8 +96,9 @@ export function useEditAgentPolicy(orgId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (edit: PolicyEdit) => {
+      const current = async () => (await requestAgentData(orgId, policyPath, personalAgentOrgPolicySchema)).toolPolicy;
       const body = setPersonalAgentOrgPolicySchema.parse(edit.action === "settings" ? edit.settings
-        : { toolPolicy: editToolRules((await requestAgentData(orgId, policyPath, personalAgentOrgPolicySchema)).toolPolicy, edit) });
+        : { toolPolicy: edit.action === "connection" ? editBlockedConnection(await current(), edit) : editToolRules(await current(), edit) });
       return requestAgentData(orgId, policyPath, personalAgentOrgPolicySchema, { method: "PUT", body });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: agentKeys(orgId) }),

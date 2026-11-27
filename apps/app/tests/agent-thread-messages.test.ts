@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { PersonalAgentChatTurn } from "@openwork/types/den/personal-agents";
 
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../src/app/types";
-import { agentThreadMessages } from "../src/react-app/domains/agents/agent-thread-messages";
+import { agentThreadMessages, agentThreadTimeline } from "../src/react-app/domains/agents/agent-thread-messages";
 
 const turn: PersonalAgentChatTurn = {
   id: "turn-1",
@@ -69,4 +69,13 @@ test("legacy answers stay visible and turn failures do not reveal raw provider e
   expect(reply.metadata).toEqual({ opencode: { created: Date.parse(turn.createdAt), completed: Date.parse(finishedAt) } });
   expect(error.id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX)).toBe(true);
   expect(JSON.stringify(error)).not.toContain("private provider text");
+});
+
+test("routine runs sit between chat turns by time, and a new message goes last", () => {
+  const at = (iso: string) => ({ ...turn, id: iso, clientMessageId: iso, status: "succeeded" as const, reply: "ok", createdAt: iso });
+  const runs = [{ id: "run-early", createdAt: Date.parse("2026-11-26T09:00:00.000Z") }, { id: "run-late", createdAt: Date.parse("2026-11-26T20:00:00.000Z") }];
+  const items = agentThreadTimeline([at("2026-11-26T10:00:00.000Z"), at("2026-11-26T11:00:00.000Z"), at("2026-11-26T19:00:00.000Z")], runs,
+    { clientMessageId: "new", message: "Hi", createdAt: Date.parse("2026-11-26T21:00:00.000Z") });
+  expect(items.map((item) => item.kind === "run" ? item.run.id : item.messages.filter((m) => m.role === "user").length))
+    .toEqual(["run-early", 3, "run-late", 1]);
 });

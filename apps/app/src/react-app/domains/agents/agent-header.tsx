@@ -6,7 +6,6 @@ import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { SessionHeaderTitleProps } from "@/react-app/kernel/session-extensions";
 
-import { AgentCanUse } from "./agent-can-use";
 import { agentChatFor, agentChatKey, useAgentChatStore } from "./agent-chat-store";
 import { AgentFace } from "./agent-face";
 import { useAgentsRuntime } from "./agents-runtime";
@@ -61,9 +60,6 @@ export function AgentHeaderTitle({ sessionId, layout, children }: SessionHeaderT
           {chat.agentId && <AgentCloudLocation />}
         </nav>
       ) : title}
-      {chat.agentId && <AgentCanUse runtime={runtime} agentId={chat.agentId} placement="header"
-        panelId={agent && panelOpen ? AGENT_PANEL_ID : undefined}
-        onOpen={() => useAgentChatStore.getState().setPanel(panelKey, "settings")} />}
     </div>
   );
 }

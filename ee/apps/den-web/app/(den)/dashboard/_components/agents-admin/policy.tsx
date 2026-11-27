@@ -63,7 +63,12 @@ export function OrgAgentPolicy({ orgId, policy, connectorsHref }: { orgId: strin
   const connections = useMcpConnections("manageable", { enabled: !connectorsHref });
   const edit = useEditAgentPolicy(orgId);
   const toolRules = Object.entries(policy.toolPolicy.tools).filter(([, tools]) => Object.keys(tools).length > 0);
+  const builtIn = useMcpConnections("manageable");
   const candidates = connections.data?.filter(({ id, nativeProviderKey }) => !isNativeProviderConnectionId(id, nativeProviderKey)) ?? [];
+  const builtInConnections = [
+    { id: "openwork", name: "OpenWork", hint: "Agents, routines, Automations and the rest of your organization's OpenWork data." },
+    ...(builtIn.data?.filter(({ id, nativeProviderKey }) => isNativeProviderConnectionId(id, nativeProviderKey)).map(({ id, name }) => ({ id, name, hint: "" })) ?? []),
+  ];
   const saveSettings = (settings: Extract<PolicyEdit, { action: "settings" }>["settings"]) => edit.mutate({ action: "settings", settings });
   const saveDialog = (change: PolicyEdit) => edit.mutate(change, { onSuccess: () => setDialog(null) });
   const open = (kind: "rules" | "tools") => { edit.reset(); setDialog(kind); };
@@ -104,6 +109,20 @@ export function OrgAgentPolicy({ orgId, policy, connectorsHref }: { orgId: strin
           <BudgetSelect label="Most an agent may spend in a month" value={policy.monthlyBudgetMicros} limits={orgBudgets}
             disabled={edit.isPending} onChange={(monthlyBudgetMicros) => saveSettings({ monthlyBudgetMicros })} />
         </Setting>
+      </div>
+    </section>
+    <section aria-labelledby="agents-built-in-title" className="space-y-3">
+      <div>
+        <h2 id="agents-built-in-title" className="text-base font-semibold">Built-in tools agents may use</h2>
+        <p className={muted}>Each starts off for a new agent until its owner turns it on. Turn one off here and no agent can use it or ask for it.</p>
+      </div>
+      <div className={divided}>
+        {builtInConnections.map(({ id, name, hint }) => <Setting key={id} label={name} hint={hint || undefined}>
+          <div data-agents-built-in={id}>
+            <DenSwitch aria-label={`Agents may use ${name}`} checked={policy.toolPolicy.connections[id] !== "block"} disabled={edit.isPending}
+              onChange={(allowed) => edit.mutate({ action: "connection", connectionId: id, blocked: !allowed })} />
+          </div>
+        </Setting>)}
       </div>
     </section>
     {connectorsHref ? <p className={muted}>Tool rules and written rules now apply to everything, not only agents. Set them under <a className="underline underline-offset-2" href={connectorsHref}>Connectors</a>.</p> : <section aria-labelledby="agents-tool-rules-title" className="space-y-3">

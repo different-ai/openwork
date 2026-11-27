@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LockKeyhole } from "lucide-react";
 import type { PersonalAgentStandingChat, SendPersonalAgentChatMessage } from "@openwork/types/den/personal-agents";
@@ -11,10 +11,11 @@ import { useLocal } from "@/react-app/kernel/local-provider";
 
 import { AgentChatDock } from "./agent-chat-dock";
 import { agentChatFor, agentChatKey, useAgentChatStore } from "./agent-chat-store";
-import { agentThreadMessages } from "./agent-thread-messages";
+import { AGENT_ROW_INSET, AgentRunEntry } from "./agent-run-result";
+import { agentThreadTimeline } from "./agent-thread-messages";
 import { AgentTranscriptFooter } from "./agent-transcript-footer";
 import { useAgentsRuntime, type AgentsRuntime } from "./agents-runtime";
-import { agentsQueryRoot, useAgentDetail } from "./use-agents";
+import { agentsQueryRoot, isActiveRun, useAgentDetail, useAgentRunsQuery } from "./use-agents";
 
 type ThreadSend = { input: SendPersonalAgentChatMessage; createdAt: number };
 
@@ -40,19 +41,20 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
   const paused = Boolean(agent?.agent.pausedAt);
   const sendInProgress = useRef(false);
   const [text, setText] = useState("");
+  const [queued, setQueued] = useState<ThreadSend | null>(null);
+  const held = useRef<ThreadSend | null>(null);
+  const hold = (message: ThreadSend | null) => {
+    held.current = message;
+    setQueued(message);
+  };
   const queryKey = [...agentsQueryRoot(runtime), "standing-thread", agentId];
-  const thread = useQuery({
-    queryKey,
-    queryFn: ({ signal }) => runtime.client.getPersonalAgentThread(runtime.organizationId, agentId, signal),
-    retry: false,
-    refetchInterval: (query) => query.state.data?.turns.some((turn) => turn.status === "running") ? 1_500 : 15_000,
-  });
   const send = useMutation({
     mutationFn: ({ input }: ThreadSend) => runtime.client.sendPersonalAgentThreadMessage(runtime.organizationId, agentId, input),
     retry: false,
     onMutate: () => queryClient.cancelQueries({ queryKey }),
+    onError: (_error, { input }) => setText((current) => current.trim() ? current : input.message),
     onSuccess: ({ turn }) => {
-      setText("");
+      setText((current) => current.trim() === turn.message ? "" : current);
       queryClient.setQueryData<PersonalAgentStandingChat>(queryKey, (data) => {
         if (data?.turns.some((entry) => entry.clientMessageId === turn.clientMessageId)) return data;
         return { turns: [...(data?.turns ?? []), turn] };
@@ -63,17 +65,57 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
       void queryClient.invalidateQueries({ queryKey: agentsQueryRoot(runtime) });
     },
   });
+  const thread = useQuery({
+    queryKey,
+    queryFn: async ({ signal }) => {
+      const data = await runtime.client.getPersonalAgentThread(runtime.organizationId, agentId, signal);
+      const waiting = held.current;
+      if (waiting && !paused && !sendInProgress.current && !data.turns.some((turn) => turn.status === "running")) {
+        sendInProgress.current = true;
+        hold(null);
+        setTimeout(() => send.mutate(waiting), 0);
+      }
+      return data;
+    },
+    retry: false,
+    refetchInterval: (query) => query.state.data?.turns.some((turn) => turn.status === "running") ? 1_500 : 15_000,
+  });
   const running = thread.data?.turns.some((turn) => turn.status === "running") ?? false;
   const submitted = send.variables?.input;
   const confirmed = submitted && thread.data?.turns.some((turn) => turn.clientMessageId === submitted.clientMessageId);
-  const pending = send.isPending && !confirmed ? send.variables : undefined;
+  const pending = send.isPending && !confirmed ? send.variables : queued ?? undefined;
   const uncertain = send.isError && !confirmed;
-  const messages = useMemo(() => agentThreadMessages(thread.data?.turns ?? [], pending ? { ...pending.input, createdAt: pending.createdAt } : null), [thread.data?.turns, pending]);
+  const runsActive = agent?.routines.some((routine) => isActiveRun(routine.latestRun)) ?? false;
+  const runs = useAgentRunsQuery(runtime, agent ? agentId : null, runsActive);
+  const recentRuns = useMemo(() => [...runs.data ?? []].sort((a, b) => a.createdAt - b.createdAt).slice(-5), [runs.data]);
+  const timeline = useMemo(() => agentThreadTimeline(thread.data?.turns ?? [], recentRuns,
+    pending ? { ...pending.input, createdAt: pending.createdAt } : null), [thread.data?.turns, recentRuns, pending]);
+  const lastChat = timeline.findLast((item) => item.kind === "chat");
+  const pinned = useRef(true);
+  const keepAtBottom = useCallback((inner: HTMLDivElement | null) => {
+    const el = inner?.parentElement;
+    if (!inner || !el) return;
+    const stick = () => { if (pinned.current) el.scrollTop = el.scrollHeight; };
+    stick();
+    const observer = new ResizeObserver(stick);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, []);
   const draft = confirmed && send.isError && text.trim() === submitted?.message ? "" : text;
-  const disabled = thread.isPending || thread.isError || running || paused;
+  const disabled = thread.isPending || thread.isError || paused;
+  const busy = running || send.isPending;
   function submit() {
     const message = draft.trim();
-    if (disabled || send.isPending || sendInProgress.current || !message || message.length > 16_000) return;
+    if (disabled || !message) return;
+    pinned.current = true;
+    if (busy || queued) {
+      const joined = queued ? `${queued.input.message}\n\n${message}` : message;
+      if (joined.length > 16_000) return;
+      hold({ input: { message: joined, clientMessageId: queued?.input.clientMessageId ?? crypto.randomUUID() }, createdAt: queued?.createdAt ?? Date.now() });
+      setText("");
+      return;
+    }
+    if (sendInProgress.current || message.length > 16_000) return;
     sendInProgress.current = true;
     send.mutate({
       input: { message, clientMessageId: uncertain && submitted?.message === message ? submitted.clientMessageId : crypto.randomUUID() },
@@ -82,26 +124,34 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
   }
 
   return <div data-agent-thread className="flex h-full min-h-0 flex-col">
-    <div role="log" aria-label={t("agents.chat_transcript")} className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto px-3 sm:px-5">
-      <div className="w-full shrink-0 py-4">
-        {thread.isPending ? <div role="status" aria-label={t("agents.chat_loading")} className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-2 md:px-10">
+    <div role="log" aria-label={t("agents.chat_transcript")} className="min-h-0 flex-1 overflow-y-auto px-3 sm:px-5"
+      onScroll={(event) => {
+        const el = event.currentTarget;
+        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+      }}>
+      <div ref={keepAtBottom} className="flex w-full flex-col gap-5 py-4">
+        {thread.isPending ? <div role="status" aria-label={t("agents.chat_loading")} className={`${AGENT_ROW_INSET} flex flex-col gap-4`}>
           <Skeleton className="h-9 w-40 self-end rounded-2xl" />
           <Skeleton className="h-4 w-56 max-w-full" />
-        </div> : !thread.isError && messages.length === 0 ?
-          <p className="mx-auto w-full max-w-3xl px-2 text-sm text-dls-secondary md:px-10">{t("agents.chat_empty", { name: displayName })}</p> : null}
-        <RemoteTranscriptView threadKey={threadKey} messages={messages} running={running || Boolean(pending)}
-          showThinking={local.prefs.showThinking} developerMode={false} />
+        </div> : !thread.isError && timeline.length === 0 ?
+          <p className={`${AGENT_ROW_INSET} text-sm text-dls-secondary`}>{t("agents.chat_empty", { name: displayName })}</p> : null}
+        {timeline.map((item) => item.kind === "chat"
+          ? <RemoteTranscriptView key={item.key} threadKey={`${threadKey}:${item.key}`} messages={item.messages}
+            running={item === lastChat && (running || Boolean(pending))} showThinking={local.prefs.showThinking} developerMode={false} />
+          : agent && <AgentRunEntry key={item.key} runtime={runtime} agentId={agentId} role={agent.role} run={item.run}
+            routineName={agent.routines.find((routine) => routine.id === item.run.automationId)?.name ?? displayName} />)}
         <AgentTranscriptFooter sessionId={sessionId} scoped />
       </div>
     </div>
     <AgentChatDock sessionId={sessionId} name={displayName} draft={draft} onDraftChange={setText}
-      onSend={submit} disabled={disabled} sending={send.isPending}
+      onSend={submit} disabled={disabled} sending={false}
       notice={<>
         {thread.isError && <div role="alert" className="mb-2 flex items-center justify-between gap-3 px-2 text-sm text-dls-secondary">
           {t("agents.chat_load_failed")}
           <Button variant="ghost" size="sm" type="button" onClick={() => void thread.refetch()}>{t("common.retry")}</Button>
         </div>}
         {uncertain && <p role="alert" className="mb-2 px-2 text-sm text-dls-secondary">{t("agents.chat_send_failed")}</p>}
+        {queued && <p role="status" data-agent-queued className="mb-2 px-2 text-sm text-dls-secondary">{t("agents.chat_queued", { name: displayName })}</p>}
         {paused && <p role="status" className="mb-2 px-2 text-sm text-dls-secondary">{t("agents.panel_admin_paused")}</p>}
       </>}
     />

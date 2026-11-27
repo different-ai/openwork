@@ -1,7 +1,6 @@
 import type { CapabilityUsageSource } from "@openwork-ee/den-db/schema"
 import { recordConnectorCall, toolCallFailed } from "../capability-usage.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import type { Hono } from "hono"
 import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, type NativeProviderConnectionEntry } from "../capability-sources/native-provider-connections.js"
 import { AGENT_SOURCE_BLOCKED_MESSAGE, agentMayUseNative, agentReadAllowlist } from "./agent-read-sources.js"
 import type { McpPrincipal } from "./auth.js"
@@ -13,6 +12,7 @@ import {
   hasJsonRequestBody,
   pathParameterNamesFromTemplate,
   type McpToolOperation,
+  type InternalApp,
 } from "./catalog.js"
 import { buildExternalConnectionStatus, type ExternalCapabilityMatch, type McpMemberIdentity } from "./external-capabilities.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
@@ -129,6 +129,7 @@ export async function searchNativeCapabilities(input: {
   limit: number
   namespaceContext?: CodemodeConnectionNamespaceContext
   scopes?: ReadonlySet<string>
+  agentToolFilter?: (connectionId: string) => Promise<((toolName: string) => boolean) | null>
 }): Promise<NativeCapabilityMatch[]> {
   const agent = input.scopes ? agentReadAllowlist(input.scopes) : null
   if (!input.member) return []
@@ -145,8 +146,10 @@ export async function searchNativeCapabilities(input: {
   const queryTokens = tokenize(input.query)
   const matches: NativeCapabilityMatch[] = []
   for (const connection of connections) {
+    const visible = input.agentToolFilter ? await input.agentToolFilter(connection.id) : null
+    if (input.agentToolFilter && (!visible || !connection.connectedForMe)) continue
     const operations = nativeOperations(catalog, connection.nativeProviderKey)
-      .filter((operation) => !agent || agentMayUseNative(agent, connection.id, operation))
+      .filter((operation) => (!agent || agentMayUseNative(agent, connection.id, operation)) && (!visible || visible(operation.name)))
     if (agent && (!operations.length || !connection.connectedForMe)) continue
     if (!connection.connectedForMe) {
       const score = Math.max(0, ...operations.map((operation) => operationScore(connection, operation, queryTokens)))
@@ -194,7 +197,7 @@ type NativeCapabilityToolResult = {
 }
 
 export async function executeNativeCapability(input: {
-  app: Hono
+  app: InternalApp
   env: unknown
   name: string
   organizationId: DenTypeId<"organization">
@@ -242,6 +245,7 @@ export async function executeNativeCapability(input: {
     operation: resolved.operation,
     principal: input.principal,
     nativeConnectionId: resolved.connection.id,
+    nativeConnectionName: resolved.connection.name,
     includePayload: input.includePayload,
     toolInput: {
       path: normalizeToolRecord(input.path),
