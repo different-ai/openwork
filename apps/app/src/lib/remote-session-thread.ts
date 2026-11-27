@@ -377,7 +377,7 @@ function transcriptPart(value: unknown, fallbackId: string): RemoteTranscriptPar
   return value.type === "tool" ? toolPart(value, fallbackId) : null
 }
 
-function transcriptMessage(value: unknown): RemoteTranscriptMessage | null {
+export function parseRemoteTranscriptMessage(value: unknown): RemoteTranscriptMessage | null {
   if (!isRecord(value)) return null
   const id = text(value.id)
   const role = value.role === "user" || value.role === "assistant" ? value.role : null
@@ -426,7 +426,7 @@ export function parseRemoteRead(payload: unknown): RemoteReadOutcome {
   if (requestId) return { kind: "pending", requestId }
   const record = parseRecord(payload)
   const messages = Array.isArray(record?.messages)
-    ? record.messages.flatMap((message) => transcriptMessage(message) ?? [])
+    ? record.messages.flatMap((message) => parseRemoteTranscriptMessage(message) ?? [])
     : []
   const messageCount = typeof record?.messageCount === "number" && Number.isFinite(record.messageCount)
     ? record.messageCount

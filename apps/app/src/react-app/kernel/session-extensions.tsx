@@ -20,7 +20,6 @@ export type SessionExtensions = {
   HeaderTitle: ComponentType<{ sessionId: string | null; children: ReactNode }>;
   Greeting: ComponentType<SessionGreetingProps>;
   ProposalCard: ComponentType<SessionProposalCardProps>;
-  TranscriptFrame: ComponentType<{ sessionId: string; children: ReactNode }>;
   TranscriptFooter: ComponentType<{ sessionId: string }>;
   renderStandingChat?: (sessionId: string) => ReactNode;
   renderChatApprovalDock?: (completedAt: number) => ReactNode;
@@ -47,7 +46,6 @@ const NO_SESSION_EXTENSIONS: SessionExtensions = {
   HeaderTitle: Passthrough,
   Greeting: Nothing,
   ProposalCard: Nothing,
-  TranscriptFrame: Passthrough,
   TranscriptFooter: Nothing,
   Panel: Nothing,
   proposalCards: false,

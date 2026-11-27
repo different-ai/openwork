@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState
 import { flushSync } from "react-dom";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, FileText, RefreshCw, Terminal, Zap } from "lucide-react";
+import { ComposerFrame } from "./composer-frame";
 import { ComposerSendButton } from "./composer-send-button";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
@@ -1491,12 +1492,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       }}
     >
       <div className={props.flush ? "" : "max-w-[800px] mx-auto"}>
-        <div
-          ref={panelRef}
-          className="@container/composer relative overflow-visible rounded-[18px] border border-dls-border bg-dls-surface transition-all"
-        >
-          {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
-
+        <ComposerFrame panelRef={panelRef} topAccessory={props.topAccessory}>
           {renderMentionMenu()}
           {renderSlashMenu()}
           {renderSessionMenu()}
@@ -1747,7 +1743,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               </div>
             </div>
           </div>
-        </div>
+        </ComposerFrame>
 
       </div>
     </div>

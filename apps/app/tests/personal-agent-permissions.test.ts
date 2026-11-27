@@ -52,7 +52,8 @@ describe("personal agent permissions", () => {
   test("names the decider and describes each tool request outcome", () => {
     const request = { toolTitle: "Post a message", toolName: "post_message", decidedBy: dana };
     expect(agentOwnerFirstName(dana)).toBe("Dana");
-    expect(requestToolTitle({ ...request, toolTitle: null })).toBe("post_message");
+    expect(requestToolTitle({ ...request, toolTitle: null })).toBe("Post message");
+    expect(requestToolTitle({ toolTitle: "slack.post_message", toolName: "slack.post_message" })).toBe("Post message");
     expect(toolRequestReceipt({ ...request, status: "denied" }, "Bug watcher")).toBe("Dana Reyes said no, so Bug watcher didn't use Post a message");
     expect(toolRequestReceipt({ ...request, status: "denied" }, "Bug watcher", true)).toBe("You said no, so Bug watcher didn't use Post a message");
     expect(toolRequestReceipt({ ...request, status: "denied", decidedBy: null }, "Bug watcher")).toBe("You said no, so Bug watcher didn't use Post a message");

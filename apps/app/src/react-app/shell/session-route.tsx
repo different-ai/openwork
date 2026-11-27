@@ -116,6 +116,7 @@ import {
 import { ActivityPage } from "@/react-app/domains/activity/activity-page";
 import type { ActivityResource } from "@/react-app/kernel/activity-types";
 import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
+import { TextComposer } from "@/react-app/domains/session/surface/composer/text-composer";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations";
 import { useQueryCacheState } from "@/react-app/infra/query-cache-state";
@@ -2814,7 +2815,7 @@ export function SessionRoute() {
       },
     };
   }, [agentsDen.client, agentsDen.ready, handleCreateTaskInWorkspaceWithOpenMode, navigateToWorkspaceSession, opencodeClient, personalAgentsEnabled, personalAgentsScope, renameSessionTitle, selectedSessionId, selectedWorkspaceId]);
-  const agentExtensions = usePersonalAgentSessionExtensions(agentsRuntime, standingChatFeature);
+  const agentExtensions = usePersonalAgentSessionExtensions(agentsRuntime, standingChatFeature, TextComposer);
   const standingChatSlot = selectedSessionId ? agentExtensions.renderStandingChat?.(selectedSessionId) : null;
   const approvalsScope = useMemo(() => toolPermissionsEnabled && agentsDen.ready && agentsDen.client && personalAgentsScope
     ? { ...personalAgentsScope, client: agentsDen.client } : null, [agentsDen.client, agentsDen.ready, personalAgentsScope, toolPermissionsEnabled]);
@@ -4076,6 +4077,7 @@ export function SessionRoute() {
       ) : automationsRouteActive ? (
         <AutomationsPage
           providerCatalog={automationCatalog}
+          executionTranscriptEnabled={personalAgentsEnabled}
           agentNames={agentNames}
           approvals={approvalsScope ? {
             pending: automationApprovals.pending,

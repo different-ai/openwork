@@ -27,8 +27,14 @@ const runner = await startFakeHttpServer((request, raw, response) => {
     return
   }
   if (owners.has(session)) assert.equal(url.searchParams.get("expectedOwner"), owners.get(session))
-  const turn = sent.find((entry) => entry.session === session && entry.id === url.searchParams.get("messageId"))
-  response.end(JSON.stringify({ turns: turn ? [{ messageId: turn.id, status: turn.status, error: null }] : [], messages: [], finalAssistantText: "Private reply" }))
+  const messageId = url.searchParams.get("messageId")
+  const matches = sent.filter((entry) => entry.session === session && (!messageId || entry.id === messageId))
+  const messages = matches.filter((entry) => entry.status === "completed").flatMap((entry) => [
+    { role: "assistant", messageId: entry.id, text: "", toolCalls: [{ id: "tracker-call", name: "read_ticket", input: { secret: "fixture secret" } }] },
+    { role: "tool", messageId: entry.id, callId: "tracker-call", name: "read_ticket", isError: false, output: "fixture output" },
+    { role: "assistant", messageId: entry.id, text: "Private reply", toolCalls: [] },
+  ])
+  response.end(JSON.stringify({ turns: matches.map((turn) => ({ messageId: turn.id, status: turn.status, error: null })), messages, finalAssistantText: "Private reply" }))
 })
 const connector = await startFakeMcpServer({ tools: [{ name: "read_ticket", description: "Read a tracker ticket", annotations: { readOnlyHint: true }, text: "Tracker result" }] })
 const den = await bootDen({ env: { ...gatewayFixtureEnv, DEN_DEPLOYMENT: "cloud", DEN_HEADLESS_RUNNER_URL: runner.url, DEN_HEADLESS_RUNNER_TOKEN: "fixture-runner-token-at-least-thirty-two-characters" } })
@@ -91,6 +97,11 @@ test("standing chat keeps a private serialized thread and dispatches approved co
   const history = personalAgentStandingChatSchema.parse((await asOwner("GET", chat)).body).turns
   assert.equal(history[0]?.reply, "Private reply")
   assert.equal(history[0]?.status, "succeeded")
+  assert.deepEqual(history[0]?.parts, [
+    { type: "tool", id: "tracker-call", name: "read_ticket", status: "completed", input: null, output: null, error: null, truncated: false },
+    { type: "text", text: "Private reply" },
+  ])
+  assert.deepEqual(personalAgentStandingChatSchema.parse((await asTeammate("GET", chat)).body).turns, [])
   assert.equal((await call(firstRun.token, "execute_capability", args)).status, 403)
 
   const continued = await asOwner("POST", chat, { clientMessageId: "second", message: "I approved it; continue." })

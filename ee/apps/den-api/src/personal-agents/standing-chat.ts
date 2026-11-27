@@ -11,6 +11,7 @@ import { personalAgentChatTurnScope } from "../mcp/workbot-turn-limits.js"
 import { organizationCloudModelSelection } from "../workbot/model.js"
 import type { PersonalAgentAccess, PersonalAgentCaller } from "./access.js"
 import { PERSONAL_AGENT_CHAT_TIMEOUT_MS, personalAgentChatDispatchContext } from "./permissions-dispatch.js"
+import { standingChatParts } from "./standing-chat-parts.js"
 
 const conversations = PersonalAgentConversationTable
 const turns = PersonalAgentChatTurnTable
@@ -82,7 +83,13 @@ export async function listStandingChat(actor: Actor, agent: PersonalAgentAccess)
   const rows = await db.$primary.select({ turn: turns }).from(conversations)
     .innerJoin(turns, eq(turns.conversation_id, conversations.id))
     .where(conversationScope(actor, agent)).orderBy(desc(turns.created_at), desc(turns.id)).limit(HISTORY_LIMIT)
-  return { turns: rows.reverse().map(({ turn }) => view(turn)) }
+  const latest = rows[0]?.turn
+  if (!latest) return { turns: [] }
+  const snapshot = await runner(actor)?.readSession(sessionId(latest.conversation_id), {
+    turns: HISTORY_LIMIT, limit: 500, outputs: "none", expectedOwner: runnerOwner(actor),
+  }).catch(() => null)
+  const parts = snapshot?.ok ? standingChatParts(new Set(rows.map(({ turn }) => turn.id)), snapshot.value.messages) : null
+  return { turns: rows.reverse().map(({ turn }) => ({ ...view(turn), parts: parts?.get(turn.id) })) }
 }
 
 export async function sendStandingChat(actor: Actor, agent: PersonalAgentAccess, input: SendPersonalAgentChatMessage) {
