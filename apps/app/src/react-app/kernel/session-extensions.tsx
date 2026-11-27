@@ -15,9 +15,15 @@ export type SessionGreetingProps = {
   setPrompt: (text: string) => void;
 };
 
+export type SessionHeaderTitleProps = {
+  sessionId: string | null;
+  layout?: "compact";
+  children: ReactNode;
+};
+
 export type SessionExtensions = {
   SidebarSection: ComponentType;
-  HeaderTitle: ComponentType<{ sessionId: string | null; children: ReactNode }>;
+  HeaderTitle: ComponentType<SessionHeaderTitleProps>;
   Greeting: ComponentType<SessionGreetingProps>;
   ProposalCard: ComponentType<SessionProposalCardProps>;
   TranscriptFooter: ComponentType<{ sessionId: string }>;

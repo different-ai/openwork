@@ -2754,6 +2754,7 @@ export default {
   "agents.run_steps_one": "{count} step",
   "agents.run_steps_other": "{count} steps",
   "agents.panel_open": "Open {name}",
+  "agents.runs_in_cloud": "Runs in OpenWork Cloud",
   "agents.can_use_label": "Can use:",
   "agents.can_use_empty": "No apps yet. It’ll ask when it needs one.",
   "agents.can_use_unverified": "Couldn’t check apps",
