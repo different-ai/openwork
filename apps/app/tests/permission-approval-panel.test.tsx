@@ -41,6 +41,26 @@ describe("truthful upload approval choices", () => {
   });
 });
 
+describe("computer-routed approvals", () => {
+  test.each([
+    ["shell", "uname -s", "Approve shell?", "Run a shell command on Studio Mac?"],
+    ["read", "/shared/brief.md", "Read files?", "Read files on Studio Mac?"],
+    ["edit", "/shared/draft.md", "Modify files?", "Modify files on Studio Mac?"],
+  ])("only the %s title changes when a computer is named", (action, scope, localTitle, remoteTitle) => {
+    const request: PendingPermission = { id: "per_one", sessionID: "ses_one", permission: action,
+      patterns: [scope], always: ["*"], metadata: { action }, receivedAt: 1, protocol: "v2" };
+    const render = (metadata: PendingPermission["metadata"]) => renderToStaticMarkup(
+      <PermissionApprovalPanel permission={{ ...request, metadata }} respondPermission={() => {}} safeStringify={() => "details"} />,
+    );
+    const local = render(request.metadata);
+    expect(local).toContain(`>${localTitle}</div>`);
+    expect(local).toContain(`title="${scope}"`);
+    expect(local).toContain("Allow for session");
+    for (const computer of ["", "  ", 42]) expect(render({ action, computer })).toBe(local);
+    expect(render({ action, computer: "Studio Mac" })).toBe(local.replace(`>${localTitle}</div>`, `>${remoteTitle}</div>`));
+  });
+});
+
 describe("one approval card for every file sent to a connected account", () => {
   const kinds = ["drive_upload_file", "drive_push_file", "gmail_create_draft_with_attachments", "outlook_create_draft_with_attachments"];
   const send = (kind: string, remember: string[]): PendingPermission => ({ id: "per_one", sessionID: "ses_one", permission: kind,
