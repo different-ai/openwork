@@ -9,6 +9,8 @@ import {
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
 import { readOpenWorkConnectSkillContent, readOpenWorkConnectSkillContents, readOpenWorkConnectSkillIndex, readOpenWorkConnectSkillSource, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { cloudSkillFoldersRoot } from "../cloud-skill-folders-root.js";
+import { managedDesktopPolicy } from "../managed-desktop-policy.js";
+import { MCP_SERVER_SKILL_ID_PREFIX, readMcpServerSkillCatalog, readMcpServerSkillContent } from "../mcp-server-skill-catalog.js";
 import { ensureCloudSkillFolder } from "../cloud-skill-folders.js";
 import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } from "../connect-automation-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
@@ -337,6 +339,21 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     }).catch(() => null);
     if (!path) return jsonResponse({ ok: false, reason: "unavailable" }, 404);
     return jsonResponse({ ok: true, path });
+  });
+
+  const hostExecutionAllowed = () => managedDesktopPolicy(config).assertHostExecution().then(() => true, () => false);
+
+  addRoute(routes, "GET", "/experimental/mcp-skills", "client", async (_ctx) => {
+    return jsonResponse({ ok: true, ...(await readMcpServerSkillCatalog(config, { hostAllowed: hostExecutionAllowed })) });
+  });
+
+  addRoute(routes, "POST", "/experimental/mcp-skills/read", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.id !== "string" || !body.id.startsWith(MCP_SERVER_SKILL_ID_PREFIX) || body.id.length > 256) {
+      return jsonResponse({ ok: false, reason: "invalid_id" }, 400);
+    }
+    const content = await readMcpServerSkillContent(config, body.id, { hostAllowed: hostExecutionAllowed });
+    return jsonResponse(content === null ? { ok: false, reason: "unavailable" } : { ok: true, content });
   });
 
   addRoute(routes, "GET", "/experimental/connect/automations", "client", async (_ctx) => {

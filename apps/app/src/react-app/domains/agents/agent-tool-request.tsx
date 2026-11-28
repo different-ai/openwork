@@ -18,11 +18,12 @@ export function canDecideAgentToolRequest(request: PersonalAgentRequest): boolea
     && request.canDecide.some((choice) => choice !== "approve");
 }
 
-export function AgentToolDecision({ runtime, agent, request, onAllowed }: {
+export function AgentToolDecision({ runtime, agent, request, onAllowed, onChooseTools }: {
   runtime: AgentsRuntime;
   agent: PersonalAgentDetail;
   request: PersonalAgentRequest;
   onAllowed?: () => void;
+  onChooseTools?: () => void;
 }) {
   const decision = useDecideAgentToolRequest(runtime, agent.agent.id, request.id, (updated, choice) => {
     if (updated.runId && (choice === "turn_on" ? updated.status === "always_allowed" && updated.requestedByCaller : shouldRerunAfterToolDecision(updated, choice))) onAllowed?.();
@@ -38,12 +39,14 @@ export function AgentToolDecision({ runtime, agent, request, onAllowed }: {
       title={connectorAccess
         ? (request.toolName ? t("agents.connector_ask_tool_title", { agent: name, tool, connection }) : t("agents.connector_ask_title", { agent: name, connection }))
         : t("agents.permission_ask_title", { agent: name, tool, connection })}
-      line={connectorAccess ? t("agents.connector_ask_line") : t("agents.permission_ask_accounts")}
+      line={connectorAccess ? t(request.toolName ? "agents.connector_ask_tool_line" : "agents.connector_ask_line", { connection }) : t("agents.permission_ask_accounts")}
       decisions={request.canDecide.filter((choice) => choice !== "approve" && choice !== "turn_on")}
       turnOn={connectorAccess && request.canDecide.includes("turn_on") ? {
         label: t(agent.role === "manager" ? "agents.connector_ask_request_on" : "agents.connector_ask_turn_on", { connection }),
         run: () => decision.mutate("turn_on"),
       } : undefined}
+      chooseTools={connectorAccess && !request.toolName && agent.role === "owner" && onChooseTools
+        ? { label: t("agents.connector_ask_choose_tools"), run: onChooseTools } : undefined}
       busy={decision.isPending} onDecide={(choice) => decision.mutate(choice)}>
       {decision.isError && <p role="alert" className="mt-2 text-xs text-dls-secondary">{t("agents.connector_ask_decision_failed")}</p>}
       {!connectorAccess && agent.role === "owner" && !request.canDecide.includes("always_allow") && (
@@ -53,7 +56,7 @@ export function AgentToolDecision({ runtime, agent, request, onAllowed }: {
   );
 }
 
-export function AgentToolReceipt({ agent, request }: { agent: PersonalAgentDetail; request: PersonalAgentRequest }) {
+export function AgentToolReceipt({ agent, request, answered = false }: { agent: PersonalAgentDetail; request: PersonalAgentRequest; answered?: boolean }) {
   const connection = requestConnectionName(request);
   if (request.status === "awaiting_owner") {
     return <p data-agent-ask={request.id} role="status" className="text-xs leading-relaxed text-dls-secondary">{t("agents.connector_ask_waiting", { connection })}</p>;
@@ -65,12 +68,12 @@ export function AgentToolReceipt({ agent, request }: { agent: PersonalAgentDetai
   const name = agent.agent.name;
   const connectorAccess = request.connectorAccess === true;
   const deniedByYou = agent.role === "owner" && request.decidedBy?.memberId === agent.agent.ownerMemberId;
-  const receipt = connectorAccess && request.status === "always_allowed"
+  const receipt = connectorAccess && request.status === "always_allowed" && (!request.toolName || (request.connectionId !== null && agent.revision.toolPolicy.connections[request.connectionId] === "allow"))
     ? t("agents.connector_ask_enabled", { connection, agent: name })
     : toolRequestReceipt(request.toolName || !connectorAccess ? request : { ...request, toolTitle: connection }, name, deniedByYou);
   if (!receipt) return null;
   const Shield = request.status === "denied" ? ShieldX : ShieldCheck;
-  const next = agent.role === "collaborator" ? null : request.runId ? toolRequestRerunLine(request)
+  const next = agent.role === "collaborator" || answered ? null : request.runId ? toolRequestRerunLine(request)
     : request.requestedByCaller && (request.status === "allowed_once" || request.status === "always_allowed")
       ? t("agents.chat_permission_next") : null;
   return (

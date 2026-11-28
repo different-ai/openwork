@@ -5,13 +5,15 @@ import { PRIVATE_VALUE_FILLS_ROUTE, privateValueFillReportResponseSchema, type P
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
+import { getRunnerCredential, setRunnerCredential } from "./computers/runner-credential.js";
+import { createComputersDen } from "./computers/den.js";
 import { externalFetch } from "./server-fetch.js";
 import { createPersonalAgentsFeatureLookup } from "./personal-agents-feature.js";
 import { ApiError } from "./errors.js";
 import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
-import { AGENT_PRIVATE_VALUES_CAPABILITY_HEADER, AGENT_PRIVATE_VALUE_PERMISSION_ACTIONS, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, resolveSandboxRequirement, type AgentPermissionAction, type AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
+import { AGENT_MCP_SKILLS_CAPABILITY_HEADER, AGENT_PRIVATE_VALUES_CAPABILITY_HEADER, AGENT_PRIVATE_VALUE_PERMISSION_ACTIONS, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, resolveSandboxRequirement, type AgentPermissionAction, type AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
 import { readSandboxSettings, readAppliedSandboxSettings, readSandboxRequirement, sandboxSettingsRevision, writeSandboxRequirement, type SandboxSettings } from "./sandbox-settings-store.js";
 import { readActivatedEnterpriseDenOrigin } from "./enterprise-den-origin.js";
 import { sandboxHostRequest, sandboxPromptHasHostFiles } from "./sandbox-host-guards.js";
@@ -88,6 +90,8 @@ export function managedDesktopPolicy(config: ServerConfig, options?: { sandboxFr
 class ManagedDesktopPolicy {
   readonly evaluationToken = randomBytes(32).toString("base64url");
   private session: CloudProviderDenSession | null = null;
+  readonly computersDen = createComputersDen(() => this.session, { runnerCredential: () => getRunnerCredential(this.config) });
+  hasDenSession() { return this.session !== null; }
   private generation = 0;
   private readonly lookupPersonalAgentsFeature = createPersonalAgentsFeatureLookup(externalFetch);
   private installed: { generation: number; policy: DesktopConfig | null } | undefined;
@@ -106,6 +110,7 @@ class ManagedDesktopPolicy {
   }
   async setSession(session: CloudProviderDenSession): Promise<void> {
     const current = this.session;
+    if (current && (current.orgId !== session.orgId || current.baseUrl !== session.baseUrl)) setRunnerCredential(this.config, null);
     if (!current || sessionKey(current) !== sessionKey(session)) {
       this.generation++;
       const generation = this.generation;
@@ -129,6 +134,7 @@ class ManagedDesktopPolicy {
   }
   async clearSession(): Promise<void> {
     this.session = null;
+    setRunnerCredential(this.config, null);
     this.resetSandboxAuthority();
     this.generation++;
     this.installed = undefined;
@@ -164,7 +170,7 @@ class ManagedDesktopPolicy {
         onSend?.();
         const response = await externalFetch(`${session.baseUrl}${path}`, {
           headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId,
-            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", "X-OpenWork-Sandbox-Only": "1", [AGENT_SANDBOX_MODES_CAPABILITY_HEADER]: "1", [AGENT_PRIVATE_VALUES_CAPABILITY_HEADER]: "1" } : {}),
+            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", "X-OpenWork-Sandbox-Only": "1", [AGENT_SANDBOX_MODES_CAPABILITY_HEADER]: "1", [AGENT_PRIVATE_VALUES_CAPABILITY_HEADER]: "1", [AGENT_MCP_SKILLS_CAPABILITY_HEADER]: "1" } : {}),
           },
           redirect: "error",
           signal: AbortSignal.timeout(Math.min(DEN_READ_ATTEMPT_TIMEOUT_MS, remainingMs)),
@@ -454,6 +460,9 @@ class ManagedDesktopPolicy {
       ...this.sandboxAuthority(), scope: "unverified",
       enabled: this.sandboxVerification === "verified" && !this.sandboxRulesRestrictive,
     }, verification);
+  }
+  cachedLocalSandboxAllowed(): boolean {
+    return this.sandboxOrgVerified && !this.sandboxRulesRestrictive;
   }
   private freshSandboxAccess(revision: number): SandboxAccess | undefined {
     const fresh = this.sandboxFresh;

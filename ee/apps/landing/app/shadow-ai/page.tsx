@@ -71,7 +71,7 @@ export default async function ShadowAiPage() {
 
       <GovernanceSection id="tools" label="Different tools, shared capabilities" title="Governance shouldn’t mean one agent for everyone.">
         <p>Support multiple AI coding tools and agents so teams keep the tools they like. OpenWork and <Link href="/guides/openwork-and-opencode">OpenCode with the OpenWork plugin</Link> can use company AI gateway models.</p>
-        <p>Claude Code, Codex, and Cursor can use the <Link href="/connect">MCP gateway</Link> for shared skills and connections. AI gateway model integration for those clients is in progress. Adding MCP alone does not route their model traffic.</p>
+        <p>Claude Code, Codex, and Cursor can use the <Link href="/connect">MCP gateway</Link> for shared skills and connections, and company AI gateway models with an <Link href="/docs/ai-gateway/third-party-tools">AI Gateway API key</Link>. Adding MCP alone does not route their model traffic.</p>
         <Link href="/guides/claude-code-codex-cursor" className="governance-link inline-block">Explore AI coding tools and agents</Link>
       </GovernanceSection>
 

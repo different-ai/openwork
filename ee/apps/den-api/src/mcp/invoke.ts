@@ -1,9 +1,7 @@
-import type { Hono } from "hono"
-import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentMayUseBuiltInConnectors, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
-import { personalAgentRunId } from "./workbot-turn-limits.js"
+import { personalAgentOperationRefusal } from "../personal-agents/builtin-connection.js"
 import { createInternalCapabilityConnectorHeader, createInternalMcpPrincipalHeader, INTERNAL_CAPABILITY_CONNECTOR_HEADER } from "../session.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
-import type { McpToolOperation } from "./catalog.js"
+import type { InternalApp, McpToolOperation } from "./catalog.js"
 import { requiredScopeForMethod } from "./policy.js"
 import { buildRestToolContent } from "./tool-content.js"
 
@@ -112,23 +110,24 @@ export type McpOperationResult = {
 }
 
 export async function invokeMcpOperation(input: {
-  app: Hono
+  app: InternalApp
   env: unknown
   operation: McpToolOperation
   principal: McpPrincipal
   nativeConnectionId?: string
+  nativeConnectionName?: string
   toolInput: ToolInput
   includePayload?: boolean
 }): Promise<McpOperationResult> {
-  if (personalAgentRunId(input.principal.scopes) !== undefined) {
-    const refusal = await personalAgentRunDispatchRefusal(input.principal.scopes, input.principal.organizationId)
-      ?? (input.nativeConnectionId && !await personalAgentMayUseBuiltInConnectors(input.principal.scopes, input.principal.organizationId)
-        ? personalAgentPolicyRefusal("Built-in connectors are not available to this agent.") : null)
-      ?? (input.operation.method === "GET" ? null : personalAgentPolicyRefusal(input.nativeConnectionId
-        ? "Built-in connectors cannot ask first yet, so an agent can only read them."
-        : PERSONAL_AGENT_UNAPPROVABLE_WRITE))
-    if (refusal) return { isError: true, content: [{ type: "text", text: JSON.stringify(refusal) }], payload: refusal }
-  }
+  const refusal = await personalAgentOperationRefusal({
+    scopes: input.principal.scopes,
+    organizationId: input.principal.organizationId,
+    userId: input.principal.userId,
+    operation: input.operation,
+    toolInput: { path: input.toolInput.path, body: normalizeToolBody(input.toolInput.body) },
+    ...(input.nativeConnectionId ? { connection: { id: input.nativeConnectionId, name: input.nativeConnectionName ?? input.nativeConnectionId } } : {}),
+  })
+  if (refusal) return { isError: true, content: [{ type: "text", text: JSON.stringify(refusal) }], payload: refusal }
   const requiredScope = requiredScopeForMethod(input.operation.method)
   if (!input.principal.scopes.has(requiredScope)) {
     return {

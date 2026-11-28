@@ -27,7 +27,7 @@ const home = `# OpenWork
 - **SCIM / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
 - **Compare with Claude Cowork** — [Claude Cowork alternative](https://openworklabs.com/alternatives/claude-cowork)
-- **Guides** — [OpenCode](https://openworklabs.com/guides/openwork-and-opencode), [Claude Code, Codex, Cursor](https://openworklabs.com/guides/claude-code-codex-cursor), [Ollama](https://openworklabs.com/guides/ollama), [AI cost control](https://openworklabs.com/guides/control-ai-costs)
+- **Guides** — [OpenCode](https://openworklabs.com/guides/openwork-and-opencode), [Claude Code, Codex, Cursor](https://openworklabs.com/guides/claude-code-codex-cursor), [Ollama](https://openworklabs.com/guides/ollama), [AI cost control](https://openworklabs.com/guides/control-ai-costs), [Reduce LLM costs](https://openworklabs.com/guides/reduce-llm-costs), [Claude Cowork pricing](https://openworklabs.com/guides/claude-cowork-pricing), [Self-hosted AI agent](https://openworklabs.com/guides/self-hosted-ai-agent)
 - **Migrate from Claude Cowork** — [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork); agents follow [migrate.md](https://openworklabs.com/migrate.md)
 
 ## How it compares
@@ -106,7 +106,7 @@ const enterprise = `# OpenWork Enterprise — AI governance, gateway and SSO
 
 OpenWork helps manage shadow AI by giving employees a sanctioned path. It governs traffic configured to use its gateway; it does not automatically detect or block tools and personal accounts outside that path. Pair it with an AI usage policy and endpoint or network controls where needed.
 
-OpenWork and OpenCode with the opencode-openwork plugin can use company AI gateway models. Claude Code, Codex, and Cursor can use shared skills and connections through the MCP gateway; AI gateway model integration for those clients is in progress. Adding MCP alone does not route model traffic.
+OpenWork and OpenCode with the opencode-openwork plugin can use company AI gateway models. Claude Code, Codex, and Cursor can use shared skills and connections through the MCP gateway, and company models with an AI Gateway API key. Adding MCP alone does not route model traffic.
 
 In local desktop mode, files and workspace processing stay on the employee's PC. SSO configuration and model traffic leave the device; prompts, responses, and file context can include company data. Analytics, diagnostics, updates, optional cloud workers, and connected services have separate data flows.
 

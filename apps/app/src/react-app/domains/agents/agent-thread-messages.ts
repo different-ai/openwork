@@ -56,3 +56,37 @@ export function agentThreadMessages(turns: readonly PersonalAgentChatTurn[], pen
   }
   return messages;
 }
+
+export type AgentThreadItem<Run, Request = never> =
+  | { kind: "chat"; key: string; messages: UIMessage[] }
+  | { kind: "run"; key: string; run: Run }
+  | { kind: "request"; key: string; request: Request };
+
+export function agentThreadTimeline<Run extends { id: string; createdAt: number }, Request extends { id: string; createdAt: string; decidedAt: string | null } = never>(
+  turns: readonly PersonalAgentChatTurn[],
+  runs: readonly Run[],
+  pending: PendingMessage | null,
+  requests: readonly Request[] = [],
+): AgentThreadItem<Run, Request>[] {
+  const entries = [
+    ...turns.map((turn) => ({ at: Date.parse(turn.createdAt), turn, run: null, request: null })),
+    ...runs.map((run) => ({ at: run.createdAt, turn: null, run, request: null })),
+    ...requests.map((request) => ({ at: Date.parse(request.decidedAt ?? request.createdAt), turn: null, run: null, request })),
+  ].sort((a, b) => a.at - b.at);
+  const items: AgentThreadItem<Run, Request>[] = [];
+  let group: PersonalAgentChatTurn[] = [];
+  const flush = (withPending: boolean) => {
+    if (!group.length && !(withPending && pending)) return;
+    const key = `chat:${group[0]?.id ?? `pending:${pending?.clientMessageId}`}`;
+    items.push({ kind: "chat", key, messages: agentThreadMessages(group, withPending ? pending : null) });
+    group = [];
+  };
+  for (const entry of entries) {
+    if (entry.turn) { group.push(entry.turn); continue; }
+    flush(false);
+    if (entry.run) items.push({ kind: "run", key: `run:${entry.run.id}`, run: entry.run });
+    if (entry.request) items.push({ kind: "request", key: `request:${entry.request.id}`, request: entry.request });
+  }
+  flush(true);
+  return items;
+}

@@ -30,6 +30,14 @@
       "development": "./src/schema/auth.ts",
       "default": "./dist/schema/auth.js"
     },
+    "./schema/computers": {
+      "types": {
+        "openwork-build": "./dist/types/src/schema/computers.d.ts",
+        "default": "./src/schema/computers.ts"
+      },
+      "development": "./src/schema/computers.ts",
+      "default": "./dist/schema/computers.js"
+    },
     "./schema/desktop-policies": {
       "types": {
         "openwork-build": "./dist/types/src/schema/desktop-policies.d.ts",

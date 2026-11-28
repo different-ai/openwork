@@ -130,6 +130,19 @@ function permissionCopy(permission: string): Pick<PermissionPresentation, "title
   };
 }
 
+function permissionTitle(permission: PendingPermission, title: string): string {
+  const name = permission.metadata?.computer;
+  const computer = typeof name === "string" ? name.trim() : "";
+  if (!computer) return title;
+  switch (permission.permission) {
+    case "bash":
+    case "shell": return t("session.permission_title_shell_on_computer", { computer });
+    case "edit": return t("session.permission_title_edit_on_computer", { computer });
+    case "read": return t("session.permission_title_read_on_computer", { computer });
+    default: return t("session.permission_title_on_computer", { title: title.replace(/\s*[?？]$/, ""), computer });
+  }
+}
+
 function fileChangeLine(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
@@ -262,7 +275,7 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
               <Icon size={16} strokeWidth={1.9} />
             </div>
             <div className="min-w-0">
-              <div className="text-[13px] font-medium leading-5 text-dls-text">{presentation?.title ?? remote?.remotePermission.title}</div>
+              <div className="text-[13px] font-medium leading-5 text-dls-text">{permission && presentation ? permissionTitle(permission, presentation.title) : remote?.remotePermission.title}</div>
               <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{presentation?.message ?? remote?.remotePermission.detail}</div>
               {local?.sourceTitle ? (
                 <div

@@ -9,7 +9,7 @@ import { useAgentToolsQuery } from "./use-agent-permissions";
 export function agentCanUseSummary(catalog: PersonalAgentToolCatalog | undefined, failed = false): string | null {
   if (!catalog) return failed ? t("agents.can_use_unverified") : null;
   const names = catalog.connections.flatMap((connection) =>
-    connection.available && !connection.blocked && !connection.lockedByOrganization
+    connection.available && (!connection.blocked || connection.onlyChosenTools) && !connection.lockedByOrganization
       && connection.tools.some((tool) => !tool.lockedByOrganization && tool.access !== "block")
       ? [connection.name] : [],
   );
@@ -18,12 +18,10 @@ export function agentCanUseSummary(catalog: PersonalAgentToolCatalog | undefined
   return names.length > 2 ? t("agents.can_use_more", { apps, count: names.length - 2 }) : apps;
 }
 
-export function AgentCanUse({ runtime, agentId, onOpen, panelId, placement }: {
+export function AgentCanUse({ runtime, agentId, onOpen }: {
   runtime: AgentsRuntime;
   agentId: string;
   onOpen: () => void;
-  panelId?: string;
-  placement: "header" | "panel";
 }) {
   const catalog = useAgentToolsQuery(runtime, agentId);
   const summary = agentCanUseSummary(catalog.data, catalog.isError);
@@ -36,14 +34,11 @@ export function AgentCanUse({ runtime, agentId, onOpen, panelId, placement }: {
       type="button"
       variant="ghost"
       size="xs"
-      data-agent-can-use={placement}
-      aria-controls={panelId}
+      data-agent-can-use="panel"
       aria-label={accessibleLabel}
       aria-description={empty ? summary : undefined}
       title={empty ? summary : accessibleLabel}
-      className={placement === "header"
-        ? "titlebar-no-drag h-9 w-56 min-w-0 shrink justify-start gap-1 px-1.5 text-dls-secondary hover:bg-dls-hover"
-        : "h-9 w-full min-w-0 justify-start gap-1 px-1.5 text-dls-secondary hover:bg-dls-hover"}
+      className="h-9 w-full min-w-0 justify-start gap-1 px-1.5 text-dls-secondary hover:bg-dls-hover"
       onClick={onOpen}
     >
       {!empty && <span className="shrink-0 font-medium">{label}</span>}

@@ -310,7 +310,7 @@ export function renderOpencodeV2Config(input: {
     }] : []),
     ...(input.contextTools?.sandbox && input.sandboxPluginDirectory ? [{
       package: pathToFileURL(input.sandboxPluginDirectory).href,
-      options: input.contextTools.sandbox,
+      options: { ...input.contextTools.sandbox, computers: true },
     }] : []),
     ...(input.privateValuesPluginDirectory ? [{
       package: pathToFileURL(input.privateValuesPluginDirectory).href,

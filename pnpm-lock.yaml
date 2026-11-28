@@ -177,6 +177,9 @@ importers:
       '@openwork/browser-tabs':
         specifier: workspace:*
         version: link:../../packages/browser-tabs
+      '@openwork/computers':
+        specifier: workspace:*
+        version: link:../../packages/computers
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../packages/install-config
@@ -480,6 +483,9 @@ importers:
       '@openwork/computer-use':
         specifier: workspace:*
         version: link:../../packages/computer-use
+      '@openwork/computers':
+        specifier: workspace:*
+        version: link:../../packages/computers
       '@openwork/free-auto':
         specifier: workspace:*
         version: link:../../packages/free-auto
@@ -489,6 +495,12 @@ importers:
       '@openwork/sandbox':
         specifier: workspace:*
         version: link:../../packages/sandbox
+      '@openwork/sandbox-daytona':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-daytona
+      '@openwork/sandbox-freestyle':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-freestyle
       '@openwork/sandbox-microsandbox':
         specifier: workspace:*
         version: link:../../packages/sandbox-microsandbox
@@ -680,6 +692,9 @@ importers:
       '@openwork/codemode':
         specifier: workspace:*
         version: link:../../../packages/codemode
+      '@openwork/computers':
+        specifier: workspace:*
+        version: link:../../../packages/computers
       '@openwork/connect-link':
         specifier: workspace:*
         version: link:../../../packages/connect-link
@@ -1715,6 +1730,12 @@ importers:
       zod:
         specifier: ^4.6.6
         version: 4.6.6
+
+  packages/computers:
+    dependencies:
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../types
 
   packages/connect-link:
     dependencies:

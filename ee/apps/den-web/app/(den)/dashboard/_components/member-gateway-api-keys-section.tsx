@@ -161,7 +161,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
-function CreateGatewayApiKeyDialog({ open, baseUrl, onClose }: { open: boolean; baseUrl: string; onClose: () => void }) {
+export function CreateGatewayApiKeyDialog({ open, baseUrl, onClose }: { open: boolean; baseUrl: string; onClose: () => void }) {
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>
@@ -294,7 +294,7 @@ function GatewayToolFlow({ title, subtitle, keyBlock, apiKey, baseUrl, onClose }
   );
 }
 
-function SetUpGatewayApiKeyDialog({ apiKey, baseUrl, onClose }: { apiKey: GatewayApiKey | null; baseUrl: string; onClose: () => void }) {
+export function SetUpGatewayApiKeyDialog({ apiKey, baseUrl, onClose }: { apiKey: GatewayApiKey | null; baseUrl: string; onClose: () => void }) {
   return (
     <Dialog.Root open={apiKey !== null} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>

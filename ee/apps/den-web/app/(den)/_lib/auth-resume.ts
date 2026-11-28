@@ -1,6 +1,6 @@
 import { getMcpOAuthSocialCallbackUrl } from "./mcp-oauth-route";
 
-export const IN_PLACE_AUTH_PATHS: readonly string[] = ["/connect/mcp", "/device", "/claim", "/join-sandbox"];
+export const IN_PLACE_AUTH_PATHS: readonly string[] = ["/connect/mcp", "/device", "/claim", "/join-sandbox", "/artifact"];
 
 function normalizePathname(pathname: string) {
   return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;

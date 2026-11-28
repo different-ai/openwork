@@ -69,10 +69,3 @@ export async function personalAgentRunDispatchRefusal(scopes: ReadonlySet<string
   return context.paused ? personalAgentPolicyRefusal("An admin paused this agent.") : null
 }
 
-export async function personalAgentMayUseBuiltInConnectors(scopes: ReadonlySet<string>, organizationId: string) {
-  const execution = personalAgentExecution(scopes)
-  if (!execution) return true
-  if (execution.kind === "chat") return false
-  const context = await personalAgentDispatchContext(execution.id, organizationId)
-  return Boolean(context && !context.paused && context.legacyConnectorAccess)
-}

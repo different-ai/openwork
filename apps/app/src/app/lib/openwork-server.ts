@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { claudeCodeSignInSchema, parseClaudeAgentIntegrationList } from "./claude-agent";
 import type { McpStatusMap } from "../types";
+import { computerSharingStateSchema, type ComputerSharingSettings } from "@openwork/types/computer-sharing";
 import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
 import type { GatewayDesktopOauthStartRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
@@ -1468,7 +1469,7 @@ function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: RequestInit, 
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal; desktopTransport?: "main" } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal; desktopTransport?: "main"; errorFieldIsMessage?: boolean; redirect?: "error" } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
   const fetchImpl = options.desktopTransport === "main" && isDesktopRuntime() ? desktopFetchViaMain : resolveFetch(url);
@@ -1476,6 +1477,7 @@ async function requestJson<T>(
     const response = await fetchImpl(url, {
       method: options.method ?? "GET",
       signal,
+      ...(options.redirect ? { redirect: options.redirect } : {}),
       headers: buildHeaders(options.token, options.hostToken),
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
@@ -1491,7 +1493,8 @@ async function requestJson<T>(
 
   if (!response.ok) {
     const code = typeof json?.code === "string" ? json.code : "request_failed";
-    const message = typeof json?.message === "string" ? json.message : response.statusText;
+    const message = typeof json?.message === "string" ? json.message
+      : options.errorFieldIsMessage && response.status === 400 && typeof json?.error === "string" ? json.error : response.statusText;
     if (code === "insufficient_storage" && typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent(openworkDiskFullEvent));
     }
@@ -1693,6 +1696,15 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     },
     deleteDenSession: async () => {
       await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "DELETE", timeoutMs: timeouts.config });
+    },
+    getComputerSharingAvailability: async (signal?: AbortSignal) => computerSharingStateSchema.pick({ availability: true }).parse(await requestJson<unknown>(baseUrl, "/computers/sharing/availability", { hostToken, signal, redirect: "error", timeoutMs: timeouts.config })),
+    getComputerSharing: async (signal?: AbortSignal) => computerSharingStateSchema.parse(await requestJson<unknown>(baseUrl, "/computers/sharing", { token, hostToken, signal, redirect: "error", timeoutMs: timeouts.config })),
+    putComputerSharing: async (body: ComputerSharingSettings) => computerSharingStateSchema.parse(await requestJson<unknown>(baseUrl, "/computers/sharing", { token, hostToken, method: "PUT", body, redirect: "error", errorFieldIsMessage: true, timeoutMs: timeouts.config })),
+    putComputerRunner: async (body: { baseUrl: string; token: string }) => {
+      await requestJson<unknown>(baseUrl, "/computers/runner", { hostToken, method: "PUT", body, redirect: "error", timeoutMs: timeouts.config });
+    },
+    deleteComputerRunner: async () => {
+      await requestJson<unknown>(baseUrl, "/computers/runner", { hostToken, method: "DELETE", redirect: "error", timeoutMs: timeouts.config });
     },
     startGatewayProviderOAuth: (providerId: string, orgId: string, credentialSetId?: string, signal?: AbortSignal) =>
       requestJson<GatewayDesktopOauthStartResponse>(baseUrl, `/cloud-provider-sync/providers/${encodeURIComponent(providerId)}/oauth/start`, {

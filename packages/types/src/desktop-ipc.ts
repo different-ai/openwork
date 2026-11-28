@@ -445,6 +445,7 @@ export type ComputerDevicesSnapshot = {
 /** How this desktop names itself to the organization's devices list. */
 export type DesktopDeviceIdentity = {
   installId: string | null;
+  machineKey: string | null;
   label: string;
   platform: string;
   appVersion: string;

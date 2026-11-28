@@ -33,7 +33,7 @@ export const shadowAiFaq = [
   {
     question: "Can we use AWS Bedrock and keep our existing AI coding tools?",
     answer:
-      "OpenWork supports centrally provisioned providers such as AWS Bedrock. OpenWork and OpenCode with the opencode-openwork plugin can use your organization's AI gateway models. Claude Code, Codex, and Cursor can use shared skills and connections through the MCP gateway; AI gateway model integration for those clients is in progress. Adding MCP alone does not route a client's model traffic through the AI gateway."
+      "OpenWork supports centrally provisioned providers such as AWS Bedrock. OpenWork and OpenCode with the opencode-openwork plugin can use your organization's AI gateway models. Claude Code, Codex, and Cursor can use shared skills and connections through the MCP gateway, and the same models with an AI Gateway API key. Adding MCP alone does not route a client's model traffic through the AI gateway."
   },
   {
     question: "Does company data leave the user's PC?",
@@ -65,7 +65,7 @@ Unsanctioned AI tools can expose confidential data, conflict with contractual or
 - Company SSO and permissions govern access to the approved model path.
 - IT chooses providers, including AWS Bedrock, rather than distributing personal API keys.
 - Usage visibility helps teams review model use and spend on the gateway.
-- OpenWork and OpenCode with the opencode-openwork plugin can use company AI gateway models. Claude Code, Codex, and Cursor use the MCP gateway for shared skills and connections; AI gateway model integration for those clients is in progress.
+- OpenWork and OpenCode with the opencode-openwork plugin can use company AI gateway models. Claude Code, Codex, and Cursor use the MCP gateway for shared skills and connections, and an AI Gateway API key for company models.
 - The [MCP gateway](https://openworklabs.com/connect) shares skills and connections. Adding MCP alone does not route model traffic.
 
 ## Local work, controlled model traffic

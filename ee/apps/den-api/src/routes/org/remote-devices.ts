@@ -74,7 +74,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       c.header("Cache-Control", "no-store")
       const actor = actorOf(c)
       if (!actor) return c.json({ error: "organization_not_found" }, 404)
-      return c.json({ devices: await listMemberRemoteDevices(actor, { canManageShared: await canManageShared(c) }) })
+      return c.json({ devices: await listMemberRemoteDevices(actor, { canManageShared: await canManageShared(c), computersEnabled: c.get("organizationContext")?.features.computers }) })
     },
   )
 
@@ -135,7 +135,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
         return c.json({ error: "rate_limited" as const }, 429)
       }
       try {
-        const device = await reportDesktopDevice(actor, c.req.valid("json"), { canManageShared: await canManageShared(c), session: signInSessionOf(c) })
+        const device = await reportDesktopDevice(actor, c.req.valid("json"), { canManageShared: await canManageShared(c), session: signInSessionOf(c), computersEnabled: c.get("organizationContext")?.features.computers })
         return c.json({ device, reportAfterSeconds: REMOTE_DEVICE_REPORT_INTERVAL_SECONDS })
       } catch (error) {
         if (error instanceof ComputerDisconnectedError) return c.json(computerDisconnectedBody, 403)
@@ -159,7 +159,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       c.header("Cache-Control", "no-store")
       const actor = actorOf(c)
       if (!actor) return c.json({ error: "organization_not_found" }, 404)
-      const detail = await readMemberRemoteDevice(actor, c.req.valid("param").deviceId, { canManageShared: await canManageShared(c) })
+      const detail = await readMemberRemoteDevice(actor, c.req.valid("param").deviceId, { canManageShared: await canManageShared(c), computersEnabled: c.get("organizationContext")?.features.computers })
       if (!detail) return c.json({ error: "remote_device_not_found" }, 404)
       return c.json(detail)
     },
@@ -169,14 +169,15 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
     "/v1/remote-devices/:deviceId",
     describeRoute({
       tags: ["Devices"],
-      summary: "Rename a computer I registered",
-      description: "Renames a virtual computer that was registered by hand. Desktops name themselves and Workbot's computers are named after their chat, so both answer 403. Requires active organization membership; device ownership and management permissions still apply.",
+      summary: "Rename one of my computers",
+      description: "Renames a virtual computer that was registered by hand. With Computers on, owners can also rename their own desktop, but cannot reuse another of their own computers' names. Workbot's computers name themselves. Requires active organization membership; device ownership and management permissions still apply.",
       responses: {
         200: jsonResponse("The renamed computer.", remoteDeviceResponseSchema),
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
         401: unauthorized,
         403: jsonResponse("This computer names itself, or it is shared and the caller cannot manage shared computers.", forbiddenSchema),
         404: deviceNotFound,
+        409: jsonResponse("The caller already has a computer with this name.", z.object({ error: z.literal("name_taken"), message: z.string() })),
       },
     }),
     orgMemberRoute(),
@@ -186,7 +187,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       const actor = actorOf(c)
       if (!actor) return c.json({ error: "organization_not_found" }, 404)
       try {
-        return c.json({ device: await renameRemoteDevice(actor, c.req.valid("param").deviceId, c.req.valid("json").label, { canManageShared: await canManageShared(c) }) })
+        return c.json({ device: await renameRemoteDevice(actor, c.req.valid("param").deviceId, c.req.valid("json").label, { canManageShared: await canManageShared(c), uniqueName: c.get("organizationContext")?.features.computers }) })
       } catch (error) {
         const failed = remoteDeviceFailure(error)
         return c.json(failed.body, failed.status)

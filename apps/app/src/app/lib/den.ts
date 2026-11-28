@@ -102,6 +102,7 @@ import {
   type RemoteDeviceDisconnectResponse,
   type RemoteDeviceRegisterRequest,
 } from "@openwork/types/den/remote-devices";
+import { computerListResponseSchema, listedComputerSchema, type ComputerAccessSetting, type ListedComputer } from "@openwork/types/den/computers";
 
 export type { SharedDesktopConfig };
 export { normalizeDesktopConfig };
@@ -3107,6 +3108,19 @@ export function createDenClient(options: {
       })).devices;
     },
 
+    async listComputers(orgId: string): Promise<ListedComputer[]> {
+      return computerListResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/computers", {
+        method: "GET", token, organizationId: orgId,
+      })).computers;
+    },
+
+    async setComputerAccess(orgId: string, computerId: string, input: ComputerAccessSetting): Promise<ListedComputer> {
+      const payload = await requestJson<{ computer: unknown }>(baseUrls, `/v1/computers/${encodeURIComponent(computerId)}/access`, {
+        method: "PUT", token, organizationId: orgId, body: input,
+      });
+      return listedComputerSchema.parse(payload?.computer);
+    },
+
     async getRemoteDevice(orgId: string, deviceId: string): Promise<RemoteDeviceDetailResponse> {
       return remoteDeviceDetailResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
         method: "GET", token, organizationId: orgId,
@@ -4200,6 +4214,20 @@ export function createDenClient(options: {
         { method: "GET", token, organizationId: orgId, cache: "no-store" },
       );
       return parseBuiltMcpAppPublicSharing(payload);
+    },
+
+    async getBuiltMcpAppShareLink(orgId: string, appId: string): Promise<{ url: string }> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-apps/${encodeURIComponent(appId)}/share-link`,
+        { method: "GET", token, organizationId: orgId, cache: "no-store" },
+      );
+      if (!isRecord(payload) || typeof payload.url !== "string" || !URL.canParse(payload.url)) {
+        throw new Error("Invalid artifact share link response.");
+      }
+      const { protocol } = new URL(payload.url);
+      if (protocol !== "https:" && protocol !== "http:") throw new Error("Invalid artifact share link response.");
+      return { url: payload.url };
     },
 
     async setBuiltMcpAppPublicSharing(

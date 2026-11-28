@@ -1,0 +1,49 @@
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { ComputerAccessTable, ComputerGrantTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { refusal } from "@openwork/computers"
+import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, computerWholeVmScopeSchema, isExecutableVmProvider, type Computer, type ComputerGrant, type ComputerPolicy } from "@openwork/types/den/computers"
+import { readOrganizationComputerRules } from "@openwork/types/den/computer-inventory"
+import { db } from "../db.js"
+
+export function incomingComputerWorkRefusal(target: Computer, capabilities: readonly string[] | null | undefined) {
+  if (target.kind === "member_machine") {
+    return capabilities?.includes(COMPUTER_SHELL_RUNNER_CAPABILITY) ? null : refusal("sandbox_unavailable", target)
+  }
+  if (target.kind === "registered_vm" && isExecutableVmProvider(target.provider)) return null
+  return refusal("not_available_yet", target)
+}
+
+export async function loadComputerPolicy(
+  organizationId: DenTypeId<"organization">,
+  targetId: DenTypeId<"remoteDevice">,
+  tx?: Parameters<Parameters<typeof db.transaction>[0]>[0],
+): Promise<ComputerPolicy> {
+  const database = tx ?? db.$primary
+  const access = database.select({ choice: ComputerAccessTable.ownerChoice }).from(ComputerAccessTable).where(and(
+    eq(ComputerAccessTable.organizationId, organizationId), eq(ComputerAccessTable.deviceId, targetId),
+  )).limit(1)
+  const organization = database.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1)
+  const [metadata] = await (tx ? organization.for("share") : organization)
+  const [owner] = await (tx ? access.for("share") : access)
+  const grantsQuery = database.select().from(ComputerGrantTable).where(and(
+    eq(ComputerGrantTable.organizationId, organizationId), eq(ComputerGrantTable.targetDeviceId, targetId), isNull(ComputerGrantTable.revokedAt),
+  ))
+  const grants = await (tx ? grantsQuery.for("share") : grantsQuery)
+  const { rules } = readOrganizationComputerRules(metadata?.metadata)
+  return {
+    organization: { allowed: metadata != null && rules.runCode, requireSandboxOnPersonal: true },
+    owner: { choice: owner?.choice ?? null },
+    grants: grants.flatMap<ComputerGrant>(({ sourceKey, folders, writableFolders }) => {
+      if (sourceKey === COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY) {
+        const scope = computerWholeVmScopeSchema.safeParse({ surface: "whole_vm", folders })
+        return scope.success ? [{ source: { kind: "owner" }, targetId, scope: scope.data }] : []
+      }
+      return [{
+        source: sourceKey === "workbot" || sourceKey === "owner" ? { kind: sourceKey } : { kind: "computer", id: sourceKey },
+        targetId,
+        scope: { surface: "sandbox", folders, writableFolders: writableFolders ?? [] },
+      }]
+    }),
+  }
+}

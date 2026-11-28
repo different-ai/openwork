@@ -702,7 +702,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
     if (personalRun !== undefined && memberIdentity && organizationFeatures.personalAgents) {
       registerAgentMemoryTools(server, { organizationId, runId: personalRun, memberId: memberIdentity.orgMembershipId })
-      registerAgentConnectorRequestTool(server, { organizationId, execution: { kind: "run", id: personalRun }, member: memberIdentity, scopes: principal.scopes, redirectUriBase })
+      registerAgentConnectorRequestTool(server, { execution: { kind: "run", id: personalRun }, member: memberIdentity, capabilityContext })
     }
     if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true })) {
       registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })

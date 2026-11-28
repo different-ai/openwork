@@ -78,7 +78,7 @@ export type RowToggle = {
   onToggle: () => void;
 };
 
-export function ListRow({ icon, lead, name, href, scroll, stretch = true, linkLabel, badge, secondLine, lanes, below, action, toggle, testId, rowTestId, rowData, children }: {
+export function ListRow({ icon, lead, name, href, scroll, stretch = true, linkLabel, badge, secondLine, wrapSecondLine = false, lanes, below, action, toggle, testId, rowTestId, rowData, children }: {
   icon?: LucideIcon;
   lead?: ReactNode;
   name: ReactNode;
@@ -88,6 +88,7 @@ export function ListRow({ icon, lead, name, href, scroll, stretch = true, linkLa
   linkLabel?: string;
   badge?: ReactNode;
   secondLine?: ReactNode;
+  wrapSecondLine?: boolean;
   lanes?: ReactNode;
   below?: ReactNode;
   action?: ReactNode;
@@ -122,7 +123,7 @@ export function ListRow({ icon, lead, name, href, scroll, stretch = true, linkLa
                 : <span data-testid={testId} title={title} className={nameClass}>{name}</span>}
             {badge}
           </div>
-          {secondLine ? <p className={ROW_SECOND_LINE_CLASS}>{secondLine}</p> : null}
+          {secondLine ? <p className={wrapSecondLine ? `wrap-break-word text-xs leading-4 ${secondaryText}` : ROW_SECOND_LINE_CLASS}>{secondLine}</p> : null}
         </div>
       </div>
       {lanes}
@@ -152,9 +153,10 @@ export function StatusLane({ lane = LANE.status, label, tone, detail, disconnect
   </RowLane>;
 }
 
-export function OwnerLane({ device, lane = LANE.owner }: {
+export function OwnerLane({ device, lane = LANE.owner, sharedLabel }: {
   device: ComputerOwner;
   lane?: string;
+  sharedLabel?: string;
 }) {
   const label = ownerLabel(device);
   const member = !device.shared && !isFormerOwner(device);
@@ -163,7 +165,7 @@ export function OwnerLane({ device, lane = LANE.owner }: {
     <span aria-hidden="true" className={`flex size-5 shrink-0 items-center justify-center rounded-full bg-[var(--dls-hover)] text-[11px] font-semibold uppercase ${member ? "text-[color:var(--dls-text-primary)]" : secondaryText}`}>
       {member ? label.slice(0, 1) : <Mark size={12} strokeWidth={1.5} />}
     </span>
-    <span className={`min-w-0 truncate ${member ? "" : secondaryText}`}>{label}</span>
+    <span className={`min-w-0 truncate ${member ? "" : secondaryText}`}>{device.shared ? sharedLabel ?? label : label}</span>
   </RowLane>;
 }
 

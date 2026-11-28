@@ -1,7 +1,7 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { type ElementType, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
@@ -17,7 +17,9 @@ import {
   canRefreshInvitationRole,
   assignableOrgRole,
   getOrgAccessFlags,
+  getMembersRolesRoute,
   getMembersRoute,
+  getMembersTeamsRoute,
   getEveryoneRoute,
   getNewRoleRoute,
   getTeamRoute,
@@ -29,7 +31,6 @@ import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgLimitDialog } from "../../_components/org-limit-dialog";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { UnderlineTabs } from "../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -37,6 +38,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenSwitch } from "../../_components/ui/switch";
+import { membersSectionRedirect } from "../_lib/members-section";
 import { installPageUrl } from "../../_lib/install-download";
 import { ListRow, RowLane, RowLaneLabel, RowList, RowListHeader, RowListSkeleton } from "../_features/computers/computer-rows";
 import { PersonLead } from "../_features/computers/computer-parts";
@@ -56,7 +58,9 @@ import { useGiveRole } from "./use-give-role";
 import { useDenToast } from "./den-toast";
 import { InviteModelAccessPreview } from "./invite-model-access-preview";
 
-type MembersTab = "members" | "teams" | "roles";
+export type MembersSection = "members" | "teams" | "roles";
+
+const SECTION_TITLES: Record<MembersSection, string> = { members: "Members", teams: "Teams", roles: "Roles" };
 
 async function copyTextWhenReady(text: Promise<string>) {
   try {
@@ -96,7 +100,7 @@ function ActionButton({
   );
 }
 
-export function ManageMembersScreen() {
+export function ManageMembersScreen({ section }: { section: MembersSection }) {
   const {
     activeOrg,
     orgSlug,
@@ -116,7 +120,6 @@ export function ManageMembersScreen() {
     updateTeam,
     deleteTeam,
   } = useOrgDashboard();
-  const [activeTab, setActiveTab] = useState<MembersTab>("members");
   const [memberFilter, setMemberFilter] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
 
@@ -158,18 +161,17 @@ export function ManageMembersScreen() {
   const canStartSeatCheckout = access.canStartSeatCheckout;
 
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const legacyTab = searchParams.get("tab");
+  const editTeamRequested = searchParams.get("editTeam");
+  const movedTo = membersSectionRedirect({ section, tab: legacyTab, editTeam: editTeamRequested, search: searchParams.toString() }, {
+    teams: getMembersTeamsRoute(orgSlug),
+    roles: getMembersRolesRoute(orgSlug),
+  });
   useEffect(() => {
-    const tab = searchParams.get("tab");
-    if (tab === "roles" || tab === "teams") setActiveTab(tab);
-  }, [searchParams]);
-  function chooseTab(tab: MembersTab) {
-    setActiveTab(tab);
-    const url = new URL(window.location.href);
-    if (tab === "members") url.searchParams.delete("tab");
-    else url.searchParams.set("tab", tab);
-    window.history.replaceState(null, "", url);
-  }
-  const shownTab: MembersTab = activeTab;
+    if (movedTo) router.replace(movedTo);
+  }, [movedTo, router]);
+  const shownTab: MembersSection = section;
 
   const toast = useDenToast();
   const organizationRoles = useOrganizationRoles(orgContext?.organization.id ?? null, access.canViewPermissions);
@@ -197,10 +199,6 @@ export function ManageMembersScreen() {
   const agentPermissionsColumn = Boolean(orgContext && access.canViewAgentPermissions);
   const agentPolicies = useAgentPermissions(orgContext?.organization.id ?? "", agentPermissionsColumn && Boolean(orgContext?.organization.id));
   const teamListColumns = teamsListColumns({ agentPermissions: agentPermissionsColumn });
-  const tabCounts: Record<Exclude<MembersTab, "roles">, number> = {
-    members: orgContext?.members.length ?? 0,
-    teams: orgContext?.teams.length ?? 0,
-  };
 
   const teamMemberNames = useMemo(() => {
     const membersById = new Map(
@@ -305,12 +303,10 @@ export function ManageMembersScreen() {
     }
   }, [access.canManageRoles]);
 
-  const editTeamRequested = searchParams.get("editTeam");
   useEffect(() => {
-    if (!orgContext || !editTeamRequested) return;
+    if (!orgContext || !editTeamRequested || section !== "teams") return;
     const team = orgContext.teams.find((entry) => entry.id === editTeamRequested);
     if (team) {
-      setActiveTab("teams");
       if (!team.managedByScim && access.canManageTeams && (!team.grantsOrganizationAdmin || access.canManageAdminTeams)) {
         setShowTeamForm(false);
         setEditingTeamId(team.id);
@@ -320,9 +316,8 @@ export function ManageMembersScreen() {
     }
     const url = new URL(window.location.href);
     url.searchParams.delete("editTeam");
-    if (team) url.searchParams.set("tab", "teams");
     window.history.replaceState(null, "", url);
-  }, [orgContext, editTeamRequested, access.canManageTeams, access.canManageAdminTeams]);
+  }, [orgContext, editTeamRequested, section, access.canManageTeams, access.canManageAdminTeams]);
 
   if (orgBusy && !orgContext) {
     return (
@@ -582,7 +577,7 @@ export function ManageMembersScreen() {
   return (
     <DashboardPageTemplate
       icon={Users}
-      title="Members"
+      title={SECTION_TITLES[section]}
       description={null}
       action={headerAction}
     >
@@ -624,17 +619,6 @@ export function ManageMembersScreen() {
       {pageError ? (
         <DenNotice message={pageError} className="mb-6" />
       ) : null}
-
-      <UnderlineTabs
-        className="mb-6"
-        activeTab={shownTab}
-        onChange={chooseTab}
-        tabs={[
-          { value: "members", label: "Members", icon: User, count: tabCounts.members },
-          { value: "teams", label: "Teams", icon: Users, count: tabCounts.teams },
-          ...([{ value: "roles" as const, label: "Roles", icon: ShieldCheck }]),
-        ]}
-      />
 
       {shownTab === "roles" ? (
         <RolesTab headerOwnsAction />
@@ -897,7 +881,7 @@ export function ManageMembersScreen() {
         </div>
       ) : null}
 
-      {activeTab === "teams" ? (
+      {shownTab === "teams" ? (
         <div>
           <MemberListToolbar collection="teams" value={teamFilter} onChange={setTeamFilter} />
 

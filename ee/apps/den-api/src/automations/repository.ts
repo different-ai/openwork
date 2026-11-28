@@ -54,6 +54,7 @@ import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
 import { automationAffectedRows, automationUpdateChangedRows } from "./update-result.js"
 import { cloudArtifactStateUpdate } from "./cloud-artifact-state.js"
+import { requireCloudAgentRuntime } from "./runtime-limit.js"
 
 type AutomationRow = typeof AutomationTable.$inferSelect
 type AgentRow = typeof PersonalAgentTable.$inferSelect
@@ -471,13 +472,17 @@ export class DenAutomationRepository implements AutomationRepository {
         ? input.changes.workspaceId
         : executionTarget === current.execution_target ? current.workspace_id ?? null : null
       const newRevisionId = createDenTypeId("automationRevision")
+      const maximumRuntimeMs = input.changes.maximumRuntimeMs ?? current.maximum_runtime_ms
+      if (input.changes.maximumRuntimeMs !== undefined || maximumRuntimeMs > AUTOMATION_DEFAULT_MAXIMUM_RUNTIME_MS) {
+        requireCloudAgentRuntime(executionTarget, action)
+      }
       const digest = automationRevisionDigest({
         instructions,
         schedule,
         model,
         action,
         executionTarget,
-        maximumRuntimeMs: current.maximum_runtime_ms,
+        maximumRuntimeMs,
         ...(workspaceId ? { workspaceId } : {}),
         ...(current.agent_revision_id ? { agentRevisionId: current.agent_revision_id } : {}),
       })
@@ -503,7 +508,7 @@ export class DenAutomationRepository implements AutomationRepository {
         execution_target: executionTarget,
         workspace_id: workspaceId,
         agent_revision_id: current.agent_revision_id,
-        maximum_runtime_ms: current.maximum_runtime_ms,
+        maximum_runtime_ms: maximumRuntimeMs,
         digest,
         created_at: new Date(input.now),
       })

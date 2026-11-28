@@ -3,6 +3,7 @@ import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { createPersonalAgentChangeRequestSchema, decidePersonalAgentRequestSchema, personalAgentRequestListSchema, personalAgentRequestSchema, personalAgentToolCatalogSchema, setPersonalAgentSharedLoginSchema } from "@openwork/types/den/personal-agents"
 import { jsonValidator, orgMemberRoute, paramValidator, type OrganizationContextVariables } from "../../middleware/index.js"
+import { getCatalog } from "../../mcp/index.js"
 import { jsonResponse, notFoundSchema } from "../../openapi.js"
 import { personalAgentAccess, personalAgentOwnerScope } from "../../personal-agents/access.js"
 import { PERSONAL_AGENT_MEMORY_ERRORS } from "../../personal-agents/memory.js"
@@ -110,7 +111,7 @@ export function registerPersonalAgentPermissionsRoutes<T extends { Variables: Ro
     if (!access) return c.json(notFound, 404)
     const current = await personalAgentRepository.get({ ...personalAgentOwnerScope(access), agentId: access.agentId })
     if (!current) return c.json(notFound, 404)
-    return c.json(await personalAgentToolCatalog(member, current.revision.toolPolicy, access))
+    return c.json(await personalAgentToolCatalog(member, current.revision.toolPolicy, access, await getCatalog(app, c.env ?? undefined)))
   })
 
   app.put("/v1/personal-agents/:id/shared-logins/:connectionId", describe({
@@ -126,7 +127,7 @@ export function registerPersonalAgentPermissionsRoutes<T extends { Variables: Ro
     if (!current) return c.json(notFound, 404)
     try {
       await setPersonalAgentSharedLogin(member, access, connectionId, c.req.valid("json").shared)
-      return c.json(await personalAgentToolCatalog(member, current.revision.toolPolicy, access))
+      return c.json(await personalAgentToolCatalog(member, current.revision.toolPolicy, access, await getCatalog(app, c.env ?? undefined)))
     } catch (error) {
       const refused = failure(error)
       if (!refused) throw error

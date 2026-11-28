@@ -26,6 +26,7 @@ COPY packages/browser-tabs/ packages/browser-tabs/
 COPY packages/calendar/ packages/calendar/
 COPY packages/codemode/ packages/codemode/
 COPY packages/computer-use/ packages/computer-use/
+COPY packages/computers/ packages/computers/
 COPY packages/documents/ packages/documents/
 COPY packages/mcp-enterprise-client/ packages/mcp-enterprise-client/
 COPY packages/free-auto/ packages/free-auto/
@@ -34,6 +35,8 @@ COPY packages/managed-deployments/ packages/managed-deployments/
 COPY packages/paths/ packages/paths/
 COPY packages/product-analytics/ packages/product-analytics/
 COPY packages/sandbox/ packages/sandbox/
+COPY packages/sandbox-daytona/ packages/sandbox-daytona/
+COPY packages/sandbox-freestyle/ packages/sandbox-freestyle/
 COPY packages/sandbox-microsandbox/ packages/sandbox-microsandbox/
 COPY packages/types/ packages/types/
 COPY packages/ui/ packages/ui/

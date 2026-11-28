@@ -23,13 +23,18 @@ async function mount({ marked, active, toolName = "storage_write" }: { marked: b
   const ready = Promise.withResolvers<void>()
   const replies = new Map<number, unknown>()
   const contentWindow = { postMessage: (message: { id: number }) => replies.set(message.id, JSON.parse(JSON.stringify(message))) }
+  const preview = { hidden: false }
   const frame = { contentWindow, hidden: true, set srcdoc(_html: string) { ready.resolve() } }
   let onMessage: ((event: { source: unknown; data: unknown }) => void) | undefined
   let calls = 0
   const rpcResult = (result: unknown) => Response.json({ result })
   runInNewContext(script ?? "", {
-    document: { documentElement: { dataset: { mode: "member" } }, getElementById: (id: string) => id === "app" ? frame : {} },
-    location: { pathname: "/artifact" },
+    document: {
+      documentElement: { dataset: { mode: "member" } },
+      getElementById: (id: string) => ({ app: frame, preview, status: {} })[id === "app" || id === "preview" ? id : "status"],
+    },
+    location: { pathname: "/artifact", search: "" },
+    URLSearchParams,
     navigator: { userActivation: { isActive: active } },
     matchMedia: () => ({ matches: false, addEventListener() {} }),
     addEventListener: (type: string, listener: typeof onMessage) => { if (type === "message") onMessage = listener },
@@ -48,6 +53,7 @@ async function mount({ marked, active, toolName = "storage_write" }: { marked: b
   })
   await ready.promise
   assert.equal(frame.hidden, false)
+  assert.equal(preview.hidden, true)
   return {
     call(id: number) {
       assert.ok(onMessage)

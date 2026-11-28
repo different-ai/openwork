@@ -8,7 +8,8 @@ import { z } from "zod"
 import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { changeMcpAppPublicSharing, listAccessibleMcpApps, McpAppError } from "../../mcp-apps.js"
+import { requireFeature } from "../../features.js"
+import { changeMcpAppPublicSharing, listAccessibleMcpApps, McpAppError, mcpAppShareLink } from "../../mcp-apps.js"
 import { jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { MemberTeamSummary } from "../../orgs.js"
@@ -37,8 +38,9 @@ const builtMcpAppListResponseSchema = z.object({
   apps: z.array(builtMcpAppSchema),
 }).meta({ ref: "BuiltMcpAppListResponse" })
 
+const appParams = z.object({ appId: mcpAppIdSchema })
+const shareLinkResponse = z.object({ url: z.url() }).meta({ ref: "McpAppShareLinkResponse" })
 const publicSharingPath = "/v1/mcp-apps/:appId/public-sharing"
-const publicSharingParams = z.object({ appId: mcpAppIdSchema })
 const publicSharingChange = z.object({
   public: z.boolean(),
   expectedRevisionId: mcpAppRevisionIdSchema,
@@ -97,10 +99,46 @@ async function publicSharing<T extends { Variables: OrgRouteVariables }>(
 }
 
 export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.get(
+    "/v1/mcp-apps/:appId/share-link",
+    describeRoute({
+      operationId: "getBuiltMcpAppShareLink",
+      tags: ["Artifacts"],
+      ...{ "x-mcp": false },
+      summary: "Get an artifact's signed-in share link",
+      description: "Requires access to open the artifact. The link does not grant access.",
+      responses: {
+        200: jsonResponse("Signed-in share link.", shareLinkResponse),
+        400: jsonResponse("Invalid artifact.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller must be an organization member.", forbiddenSchema),
+        404: jsonResponse("The artifact or feature is unavailable.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    resolveMemberTeamsMiddleware,
+    requireFeature("artifactShareLinks"),
+    paramValidator(appParams),
+    async (c) => {
+      c.header("Cache-Control", "no-store")
+      const { organization, currentMember } = c.get("organizationContext")
+      const memberTeams: MemberTeamSummary[] = c.get("memberTeams") ?? []
+      try {
+        return c.json(await mcpAppShareLink({
+          organizationId: organization.id,
+          member: { orgMembershipId: currentMember.id, teamIds: memberTeams.map((team) => team.id) },
+          appId: c.req.valid("param").appId,
+        }))
+      } catch (error) {
+        if (error instanceof McpAppError) return c.json({ error: error.code, message: error.message }, error.status)
+        throw error
+      }
+    },
+  )
   app.get(publicSharingPath, describePublicSharing(false), orgMemberRoute(), resolveMemberTeamsMiddleware,
-    paramValidator(publicSharingParams), (c) => publicSharing(c, c.req.valid("param").appId))
+    paramValidator(appParams), (c) => publicSharing(c, c.req.valid("param").appId))
   app.put(publicSharingPath, describePublicSharing(true), orgMemberRoute(), resolveMemberTeamsMiddleware,
-    paramValidator(publicSharingParams), jsonValidator(publicSharingChange),
+    paramValidator(appParams), jsonValidator(publicSharingChange),
     (c) => publicSharing(c, c.req.valid("param").appId, c.req.valid("json")))
   app.get(
     "/v1/mcp-apps",

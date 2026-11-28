@@ -360,6 +360,7 @@ const ROW_COPY: Record<string, string> = {
   webSearch: "Look things up with a web search",
   localSkills: "Skills installed on the member's computer",
   localMcpServers: "MCP servers the member added themselves",
+  mcpServerSkills: "Skills those MCP servers offer the agent",
 };
 
 const PATTERN_NOUN: Record<string, string> = { website: "site" };

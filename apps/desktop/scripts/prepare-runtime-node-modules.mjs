@@ -1,5 +1,5 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire, isBuiltin } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -22,7 +22,9 @@ export const requiredRoots = [{
   // does not preserve it in the packaged server's resolution tree.
   name: "@openwork/sandbox-microsandbox",
   fromPackageJson: resolve(desktopRoot, "../server/package.json"),
-}];
+}, ...["@openwork/computers", "@openwork/sandbox-daytona", "@openwork/sandbox-freestyle"].map(name => ({
+  name, fromPackageJson: resolve(desktopRoot, "../server/package.json"),
+}))];
 
 export function microsandboxPlatformPackage(platform = process.platform, arch = process.arch) {
   const triples = {
@@ -38,21 +40,34 @@ export function microsandboxPlatformPackage(platform = process.platform, arch = 
 
 function packageRoot(name, fromPackageJson, resolveTarget = name) {
   const requireFromPackage = createRequire(pathToFileURL(fromPackageJson));
+  // Find a manifest through Node's normal search directories, for a package
+  // whose name Node cannot resolve to a file inside it.
+  const installedPackage = () => {
+    for (const searchDirectory of requireFromPackage.resolve.paths(`${name}/`) ?? []) {
+      const linkedPackageRoot = resolve(searchDirectory, name);
+      try {
+        const linkedPackageJson = JSON.parse(readFileSync(join(linkedPackageRoot, "package.json"), "utf8"));
+        if (linkedPackageJson.name === name) return { root: realpathSync(linkedPackageRoot), packageJson: linkedPackageJson };
+      } catch {
+        // Not installed in this directory; keep searching.
+      }
+    }
+    return null;
+  };
+  // npm packages such as "buffer" share a name with a Node built-in, and
+  // resolve() answers with the built-in, which has no files to copy.
+  if (isBuiltin(resolveTarget)) {
+    const installed = installedPackage();
+    if (installed) return installed;
+    throw new Error(`Could not find the installed package ${name}, which shares its name with a Node built-in.`);
+  }
   let current;
   try {
     current = dirname(requireFromPackage.resolve(resolveTarget));
   } catch (error) {
-    // A dependency may export only subpaths. Find its manifest through Node's
-    // normal search directories without requiring a nonexistent root export.
-    for (const searchDirectory of requireFromPackage.resolve.paths(name) ?? []) {
-      const linkedPackageRoot = resolve(searchDirectory, name);
-      try {
-        const linkedPackageJson = JSON.parse(readFileSync(join(linkedPackageRoot, "package.json"), "utf8"));
-        if (linkedPackageJson.name === name) return { root: linkedPackageRoot, packageJson: linkedPackageJson };
-      } catch {
-        // Preserve the original module-resolution error if no package matches.
-      }
-    }
+    // A dependency may export only subpaths, with no root export to resolve.
+    const installed = installedPackage();
+    if (installed) return installed;
     throw error;
   }
   while (current !== dirname(current)) {
@@ -123,7 +138,7 @@ export function stageRuntimeNodeModules(outdir, { roots = requiredRoots, platfor
         if (source === resolvedPackage.root) return true;
         const parts = relative(resolvedPackage.root, source).split(sep);
         if (parts.includes("node_modules")) return false;
-        if (name === "@openwork/sandbox-microsandbox" || name === "@openwork/sandbox") return ["dist", "package.json"].includes(parts[0]);
+        if (["@openwork/sandbox-microsandbox", "@openwork/sandbox", "@openwork/sandbox-daytona", "@openwork/sandbox-freestyle", "@openwork/computers"].includes(name)) return ["dist", "package.json"].includes(parts[0]);
         // The core's published entrypoints are dist (Node) and src (Bun/dev).
         // Do not ship checkout-only tests, tooling or incidental local links.
         if (name === "@openwork/remote-sessions") return ["dist", "src", "package.json"].includes(parts[0]);

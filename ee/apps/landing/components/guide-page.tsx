@@ -103,6 +103,22 @@ function SectionBody({ section }: { section: GuideSection }) {
           ))}
         </ul>
       ) : null}
+
+      {section.sources ? (
+        <p className="flex max-w-[720px] flex-wrap gap-x-3 gap-y-1 text-[13px] leading-[20px] text-[var(--lp-muted)]">
+          <span>Sources:</span>
+          {section.sources.map((source) => (
+            <a
+              key={source.href}
+              href={source.href}
+              className="underline decoration-[var(--lp-border)] underline-offset-4 hover:decoration-[var(--lp-ink)]"
+              {...(source.href.startsWith("http") ? { target: "_blank", rel: "noreferrer" } : {})}
+            >
+              {source.label}
+            </a>
+          ))}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -201,7 +217,7 @@ export function GuidesIndexPage({ stars }: { stars: string }) {
           Guides
         </h1>
         <p className="mt-6 max-w-[620px] text-[18px] leading-[29px] text-[var(--lp-body)]">
-          Short answers about how OpenWork works with the tools your teams already use, and how admins keep AI under control.
+          Short answers about how OpenWork works with the tools your teams already use, how to run it yourself, and how to keep AI costs under control.
         </p>
       </header>
       <ul className="grid gap-3 pb-12 sm:grid-cols-2">

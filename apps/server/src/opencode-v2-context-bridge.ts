@@ -18,9 +18,10 @@ import type { FileSendApprovals, FileSendPolicy } from "./file-send-approval.js"
 import { createSandboxToolsBridge } from "./sandbox-tools-bridge.js";
 import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { createMcpEventWatches, listMcpEventServers, listMcpServerEvents, McpEventError, MCP_EVENT_WATCH_TTL_MS } from "./mcp-server-events.js";
 
 const requestSchema = z.object({
-  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_skill_folder", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ASK_FORM, ...DRIVE_FILE_ACTIONS]),
+  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_skill_folder", "openwork_mcp_skills", "openwork_mcp_skill_read", "openwork_mcp_events", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ASK_FORM, ...DRIVE_FILE_ACTIONS]),
   input: z.unknown(),
   sessionId: z.string().max(256).optional(),
   caller: z.object({
@@ -149,6 +150,16 @@ export function isSessionGroupWritePath(path: string): boolean {
   if (rawQuery !== undefined && [...url.searchParams.keys()].some(key => key !== "destinationGroupId")) return false;
   return sessionGroupRoute.test(rawPath);
 }
+const mcpEventsSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("available") }).strict(),
+  z.object({ action: z.literal("list"), server: z.string().min(1).max(255).optional() }).strict(),
+  z.object({
+    action: z.literal("watch"), server: z.string().min(1).max(255), name: z.string().min(1).max(256),
+    arguments: z.record(z.string(), z.unknown()), instruction: z.string().min(1).max(4_000),
+  }).strict(),
+  z.object({ action: z.literal("watches") }).strict(),
+  z.object({ action: z.literal("stop"), id: z.string().regex(/^[a-f0-9]{24}$/) }).strict(),
+]);
 const driveUploadSchema = z.object({ path: z.string().min(1), folderId: z.string().optional(), connectionId: z.string().optional() }).strict();
 const gmailDraftSchema = z.object({
   to: z.string().min(1), cc: z.string().optional(), bcc: z.string().optional(), subject: z.string().min(1), body: z.string().min(1),
@@ -181,6 +192,21 @@ export async function createV2ContextBridge(
   const token = randomBytes(32).toString("base64url");
   const plugin = await OpenWorkExtensionsPreview();
   const questions = new AbortController();
+  const hostAllowed = () => sandboxConfig ? managedDesktopPolicy(sandboxConfig).assertHostExecution().then(() => true, () => false) : Promise.resolve(false);
+  const eventWatches = sandboxConfig ? createMcpEventWatches({
+    config: sandboxConfig,
+    options: { hostAllowed },
+    deliver: async (target, message) => {
+      const current = engine?.();
+      if (!current) throw new Error("The engine is not running.");
+      const response = await loopbackFetch(new URL(`/api/session/${encodeURIComponent(target.sessionId)}/prompt?location[directory]=${encodeURIComponent(target.directory)}`, current.url), {
+        method: "POST", signal: AbortSignal.timeout(30_000),
+        headers: { authorization: `Basic ${Buffer.from(`${current.username}:${current.password}`).toString("base64")}`, "content-type": "application/json" },
+        body: JSON.stringify({ text: message.text, delivery: "steer", metadata: { [SESSION_PROMPT_SENDER_KEY]: message.sentBy } }),
+      });
+      if (!response.ok) throw new Error("The chat did not accept the event.");
+    },
+  }) : undefined;
   let openQuestions = 0;
   const rememberedDriveUploads = new Set<string>();
   const driveApprovalRevisions = new Map<string, number>();
@@ -234,6 +260,34 @@ export async function createV2ContextBridge(
       if (call.name === "openwork_skill_folder") {
         const input = z.object({ url: z.string().startsWith("skill://").endsWith("/SKILL.md").max(2_048) }).strict().parse(call.input);
         return Response.json(await read("/experimental/connect/skills/folder", { method: "POST", body: JSON.stringify(input) }));
+      }
+      if (call.name === "openwork_mcp_skills") {
+        return Response.json(await read("/experimental/mcp-skills"));
+      }
+      if (call.name === "openwork_mcp_skill_read") {
+        const input = z.object({ id: z.string().min(1).max(256) }).strict().parse(call.input);
+        return Response.json(await read("/experimental/mcp-skills/read", { method: "POST", body: JSON.stringify(input) }));
+      }
+      if (call.name === "openwork_mcp_events") {
+        const args = mcpEventsSchema.parse(call.input);
+        if (!eventWatches || !sandboxConfig) return Response.json({ ok: false, message: "MCP events are not available in this OpenWork engine." });
+        try {
+          if (args.action === "available") return Response.json({ ok: true, servers: await listMcpEventServers(sandboxConfig, { hostAllowed }) });
+          if (args.action === "list") {
+            return Response.json(args.server
+              ? { ok: true, server: args.server, events: await listMcpServerEvents(sandboxConfig, args.server, { hostAllowed }) }
+              : { ok: true, servers: await listMcpEventServers(sandboxConfig, { hostAllowed }), next: "Choose a server to see its events." });
+          }
+          if (!call.sessionId) throw new McpEventError("OpenWork cannot tell which chat this is, so nothing changed.");
+          if (args.action === "watches") return Response.json({ ok: true, watches: eventWatches.list({ sessionId: call.sessionId }) });
+          if (args.action === "stop") return Response.json({ ok: await eventWatches.stop({ sessionId: call.sessionId }, args.id) });
+          if (!call.caller) throw new McpEventError("OpenWork cannot deliver events to this chat, so nothing is being watched.");
+          const watch = await eventWatches.watch({ sessionId: call.sessionId, directory: call.caller.directory }, args);
+          return Response.json({ ok: true, watch, message: `Watching for up to ${MCP_EVENT_WATCH_TTL_MS / 60_000} minutes. Each event arrives as a message in this chat.` });
+        } catch (error) {
+          if (error instanceof McpEventError) return Response.json({ ok: false, message: error.message });
+          throw error;
+        }
       }
       if (call.name === ASK_WITHOUT_WAITING || call.name === ASK_FORM) {
         const form = call.name === ASK_FORM ? askFormArgs.parse(call.input) : undefined;
@@ -415,7 +469,7 @@ export async function createV2ContextBridge(
         const context: unknown = JSON.parse(await plugin.tool.openwork_context.execute());
         const filtered = bridgeAffordances(context);
         return JSON.stringify(isRecord(filtered) ? { ...filtered, instructions: {
-          context: "Use openwork_query for discovered read-only affordances and openwork_execute for session.archive (including unarchive), session.pin (pin/unpin), session.rename, session.set_model, session.group commands, session.create, session.send, session.question.answer or the proposal commands automation.propose and agent.propose. In a new agent chat, propose before checking any tools or connections and list only connections explicitly asked for or clearly needed. Follow the discovered arguments and safety requirements; working sessions cannot be archived or rebound. An automation proposal only shows a review card; it does not create, activate, or run anything. When Code Mode exposes these tools, discover their exact paths with search and compose them there, preserving exceptions and verifying the resulting groups. For other conversations, use session.search then session.read. Session reads include current activity and background-agent counts."
+          context: "Use openwork_query for discovered read-only affordances and openwork_execute for session.archive (including unarchive), session.pin (pin/unpin), session.rename, session.set_model, session.group commands, session.create, session.send, session.question.answer or the proposal commands automation.propose and agent.propose. In a new agent chat, propose before checking any tools or connections, except to read an existing Automation the person wants the agent to take over, and list only connections explicitly asked for or clearly needed. Follow the discovered arguments and safety requirements; working sessions cannot be archived or rebound. An automation proposal only shows a review card; it does not create, activate, or run anything. When Code Mode exposes these tools, discover their exact paths with search and compose them there, preserving exceptions and verifying the resulting groups. For other conversations, use session.search then session.read. Session reads include current activity and background-agent counts."
         } } : filtered);
       });
       return new Response(result, { headers: { "Content-Type": "application/json" } });
@@ -429,5 +483,5 @@ export async function createV2ContextBridge(
   }) : undefined;
   return { url: `http://127.0.0.1:${server.port}/read`, token, browser: { url: browser.url, token: browser.token },
     ...(sandbox ? { sandbox: { url: sandbox.url, token: sandbox.token } } : {}),
-    close: async () => { questions.abort(); await sandbox?.close(); await browser.close(); await server.stop(); await plugin.dispose(); } };
+    close: async () => { questions.abort(); eventWatches?.close(); await sandbox?.close(); await browser.close(); await server.stop(); await plugin.dispose(); } };
 }

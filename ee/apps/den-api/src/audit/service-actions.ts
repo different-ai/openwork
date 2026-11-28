@@ -1,3 +1,4 @@
+import { COMPUTER_TOOL_NAMES, type ComputerToolName } from "@openwork/types/den/computers"
 import type { AuditOrigin } from "@openwork-ee/den-db/audit-log"
 import { AUDIT_ROUTE_EVENT_SUFFIXES, type AuditRouteClass } from "./routes/types.js"
 
@@ -17,6 +18,15 @@ export type AuditServiceActionDeclaration = Readonly<{
 }>
 
 const MCP_PRINCIPAL = "Tenant is the MCP token's organization claim; actor is the token user and its active member, credential the grant/client id."
+
+function computerToolAuditAction(tool: ComputerToolName): AuditServiceActionDeclaration & { action: `computers.${ComputerToolName}` } {
+  return {
+    action: `computers.${tool}`, kind: "computer.execution", class: "tenant_job", resource: { type: "remote_device", idFrom: "computerId argument" }, origin: "mcp",
+    tools: [`execute_capability computers:${tool}`], callSites: ["src/mcp/computer-capabilities.ts:computerSource.execute → runComputerTool"],
+    jobOutcome: "Runner callbacks POST /v1/computer-commands/:id/{claim,complete} (declared routes).",
+    notes: `Queues work in the sandbox of a computer that allows work from Workbot. Never snapshots command text, shared paths or output. ${MCP_PRINCIPAL}`,
+  }
+}
 
 export const auditServiceActionDeclarations = [
   {
@@ -93,6 +103,7 @@ export const auditServiceActionDeclarations = [
     external: "connected services (Workflow capability tool calls; live mode read-only)",
     notes: `Saved Workflow run and its workflow_run receipt; REST equivalent workflow.run. Route and Automation callers of executeMarketplaceCapability pass no audit hook (recorded by their route or not operation-audited). ${MCP_PRINCIPAL}`,
   },
+  ...COMPUTER_TOOL_NAMES.map(computerToolAuditAction),
   {
     action: "remote_session.create", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: null }, origin: "mcp",
     tools: ["execute_capability remote-session:create"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],

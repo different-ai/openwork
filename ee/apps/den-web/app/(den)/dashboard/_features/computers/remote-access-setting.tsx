@@ -62,7 +62,8 @@ function parseAccess(value: string): RemoteSessionAccessMode | null {
   return REMOTE_ACCESS_OPTIONS.find((option) => option.value === value)?.value ?? null;
 }
 
-function Section({ busy, children }: { busy?: boolean; children: ReactNode }) {
+function Section({ busy, hideSectionHeading, children }: { busy?: boolean; hideSectionHeading?: boolean; children: ReactNode }) {
+  if (hideSectionHeading) return <div className={`border-b ${hairline}`} aria-busy={busy || undefined} data-testid="session-access-setting">{children}</div>;
   return <div className="mb-8" aria-busy={busy || undefined}>
     <ItemSection variant="rule" title="Remote access" testId="session-access-setting">
       <div className={`border-b ${hairline}`}>{children}</div>
@@ -70,7 +71,7 @@ function Section({ busy, children }: { busy?: boolean; children: ReactNode }) {
   </div>;
 }
 
-export function RemoteAccessSettingView({ access, allowsAll = true, optIn = false, canEdit, saving, saved, undoable = true, error, onChange, onUndo }: {
+export function RemoteAccessSettingView({ access, allowsAll = true, optIn = false, canEdit, saving, saved, undoable = true, error, onChange, onUndo, hideSectionHeading }: {
   access: RemoteSessionAccessMode;
   allowsAll?: boolean;
   optIn?: boolean;
@@ -81,9 +82,10 @@ export function RemoteAccessSettingView({ access, allowsAll = true, optIn = fals
   error: string | null;
   onChange: (access: RemoteSessionAccessMode) => void;
   onUndo: () => void;
+  hideSectionHeading?: boolean;
 }) {
   const choices = remoteAccessChoices(access, allowsAll);
-  return <Section>
+  return <Section hideSectionHeading={hideSectionHeading}>
     <SettingRow flush label={REMOTE_ACCESS_SETTING_LABEL} labelId={LABEL_ID} stateLine={<span data-testid="session-access-meaning">{remoteAccessMeaning(access, optIn)}</span>}>
       <div className="w-[26rem] max-w-full">
         <DenSelect size="sm" aria-labelledby={LABEL_ID} data-testid="session-access-select" value={access} disabled={!canEdit || saving}
@@ -100,7 +102,7 @@ export function RemoteAccessSettingView({ access, allowsAll = true, optIn = fals
   </Section>;
 }
 
-export function RemoteAccessSetting({ orgId }: { orgId: string }) {
+export function RemoteAccessSetting({ orgId, hideSectionHeading }: { orgId: string; hideSectionHeading?: boolean }) {
   const query = useRemoteAccessSettings(orgId, true);
   const save = useSaveRemoteAccessSettings(orgId);
   const [saved, setSaved] = useState<{ access: RemoteSessionAccessMode; previous: RemoteSessionAccessMode } | null>(null);
@@ -119,7 +121,7 @@ export function RemoteAccessSetting({ orgId }: { orgId: string }) {
   }
 
   if (!query.data && remoteAccessSettingUnavailable(query.error)) return null;
-  if (!query.data || !current) return <Section busy={query.isPending}>
+  if (!query.data || !current) return <Section busy={query.isPending} hideSectionHeading={hideSectionHeading}>
     <SettingRow flush label={REMOTE_ACCESS_SETTING_LABEL} labelId={LABEL_ID}>
       {query.error ? <div role="alert" className="flex flex-wrap items-center justify-end gap-3 text-[13px]"><p>{query.error.message}</p><DenButton variant="secondary" size="sm" loading={query.isFetching} onClick={() => void query.refetch()}>Try again</DenButton></div>
         : <DenSkeleton className="h-8 w-[26rem] max-w-full rounded-lg" />}
@@ -128,6 +130,7 @@ export function RemoteAccessSetting({ orgId }: { orgId: string }) {
 
   const undoable = saved ? remoteAccessUndoable(saved.previous, query.data.allowsAll) : true;
   return <RemoteAccessSettingView
+    hideSectionHeading={hideSectionHeading}
     access={save.isPending && save.variables ? save.variables : current}
     allowsAll={query.data.allowsAll}
     optIn={query.data.optIn}

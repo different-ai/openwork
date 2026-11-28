@@ -3,7 +3,6 @@ import { Tool, toolError } from "@openwork/codemode"
 import type { CapabilityUsageSource } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { Effect } from "effect"
-import type { Hono } from "hono"
 import { z } from "zod"
 import type { ExternalMcpConnectionRow } from "../capability-sources/external-mcp-connections.js"
 import type { NativeProviderConnectionEntry } from "../capability-sources/native-provider-connections.js"
@@ -13,7 +12,7 @@ import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.j
 import { NATIVE_OAUTH_PROVIDERS } from "../capability-sources/provider-registry.js"
 import { personalAgentCredentialMember } from "../personal-agents/shared-logins.js"
 import type { McpPrincipal } from "./auth.js"
-import type { McpToolOperation } from "./catalog.js"
+import type { InternalApp, McpToolOperation } from "./catalog.js"
 import {
   codemodeScriptPath,
   resolveCodemodeConnectionNamespaceContext,
@@ -150,7 +149,7 @@ export function isCredentialBoundNativeOperation(operation: Pick<McpToolOperatio
 }
 
 export function buildDenCatalogToolTree(input: {
-  app: Hono
+  app: InternalApp
   env: unknown
   catalog: readonly McpToolOperation[]
   principal: McpPrincipal
@@ -206,7 +205,7 @@ export function buildNativeProviderManifest(input: {
 }
 
 export async function buildNativeProviderToolTree(input: {
-  app: Hono
+  app: InternalApp
   env: unknown
   catalog: readonly McpToolOperation[]
   principal: McpPrincipal

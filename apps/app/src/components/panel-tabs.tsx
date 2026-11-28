@@ -47,6 +47,7 @@ function PanelTab({ active, className, ...props }: PanelTabProps) {
       type="button"
       variant="ghost"
       size="sm"
+      data-panel-tab-active={active ? "true" : undefined}
       className={cn(
         "w-full min-w-0 justify-start gap-2 px-2 pr-8 text-left text-sm font-normal text-muted-foreground hover:bg-muted hover:text-foreground",
         active && "bg-muted/80 text-foreground",

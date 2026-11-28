@@ -7,6 +7,7 @@ import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 import {
   getAllowedDesktopVersionsFromMetadata,
   getOrgAccessFlags,
+  orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
@@ -15,6 +16,7 @@ import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { DenNotice } from "../../_components/ui/notice";
+import { ComputerRulesSection } from "../_features/computers/computer-rules-section";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 import { OrgWebOriginsSection } from "./org-web-origins-section";
@@ -667,6 +669,8 @@ export function OrgSettingsScreen() {
           </DenStickyActionBar>
         ) : null}
       </form>
+
+      {orgFeatureEnabled(orgContext, "computers") ? <ComputerRulesSection key={organizationId} orgId={organizationId} canEdit={canManageSettings} /> : null}
 
       {access.canViewModelsSettings ? (
         <div className="mt-6">

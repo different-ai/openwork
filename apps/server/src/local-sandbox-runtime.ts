@@ -1,13 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { sandboxName, sandboxErrorCode, shellQuote, type SandboxCreateProgress, type SandboxHandle, type SandboxProvider } from "@openwork/sandbox";
 import type { MicrosandboxMount } from "@openwork/sandbox-microsandbox";
 import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
-import { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
+import { runtimeDbPath } from "./runtime-db.js";
 import { isEngineGlobalRuntimeConfigId, onRuntimeOpencodeConfigWrite, readGlobalRuntimeOpencodeConfig, runtimeExternalDirectory } from "./runtime-opencode-config-store.js";
-import { resolveSandboxMounts, SandboxFolderError, sandboxMountFingerprint, sandboxMountFingerprintForWrite, sandboxMountGrants } from "./sandbox-mounts.js";
+import { protectedMountPaths, resolveSandboxMounts, SandboxFolderError, sandboxMountFingerprint, sandboxMountFingerprintForWrite, sandboxMountGrants } from "./sandbox-mounts.js";
 import { createSandboxToolHost, SANDBOX_TOOL_NAMES, sandboxToolSchemas, type SandboxToolCall } from "./sandbox-tool-host.js";
 import { readAppliedSandboxSettings, readSandboxSettings, type SandboxSettings } from "./sandbox-settings-store.js";
 import { loadSandboxImageSdk, packagedSandboxResources, prepareSandboxGuestImage, sandboxImagePin } from "./packaged-sandbox-assets.js";
@@ -82,12 +81,9 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
     }
     entries.delete(directory);
   }
-  function protectedMountPaths() {
-    return [runtimeStorageDir(config), process.env.MSB_HOME || join(homedir(), ".microsandbox"), join(homedir(), ".openwork", "msb")];
-  }
   async function mountsFor(directory: string) {
     const grants = await directories();
-    return resolveSandboxMounts(sandboxMountGrants(directory, grants, config.readOnly), protectedMountPaths(), grants);
+    return resolveSandboxMounts(sandboxMountGrants(directory, grants, config.readOnly), protectedMountPaths(config), grants);
   }
   function setMode(directory: string, mode: SandboxStatusResponse["mode"]) {
     const previous = statuses.get(directory);
@@ -357,7 +353,7 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
     if (writtenConfig !== config || !isEngineGlobalRuntimeConfigId(workspaceId)) return;
     for (const [directory, epoch] of mountEpochs) {
       let fingerprint: string | undefined;
-      try { fingerprint = sandboxMountFingerprintForWrite(directory, runtimeExternalDirectory(snapshot), config.readOnly, protectedMountPaths()); }
+      try { fingerprint = sandboxMountFingerprintForWrite(directory, runtimeExternalDirectory(snapshot), config.readOnly, protectedMountPaths(config)); }
       catch {}
       if (fingerprint !== undefined && fingerprint === epoch.fingerprint) continue;
       epoch.generation++;
@@ -453,7 +449,12 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
       });
       try { return await Promise.race([command, budget]); }
       catch (error) {
-        if (dispatched && sandboxErrorCode(error)) throw sandboxFailure(error, "start");
+        if (dispatched && sandboxErrorCode(error)) {
+          const outcome = call?.signal.aborted
+            ? "OpenWork stopped waiting for the sandbox, but the operation may have partly run or already finished."
+            : "OpenWork doesn't know how the sandbox operation ended. It may have finished.";
+          throw new Error(`${outcome} Check the file or folder in the sandbox before running it again.`, { cause: error });
+        }
         if (!dispatched && error instanceof Error && !/Nothing ran/.test(error.message)) throw new Error(`${error.message} Nothing ran.`, { cause: error });
         throw error;
       } finally { clearTimeout(timer); }

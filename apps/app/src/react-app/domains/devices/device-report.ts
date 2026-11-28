@@ -64,7 +64,9 @@ export function buildDeviceReport(
   identity: DesktopDeviceIdentity,
   snapshot: ComputerDevicesSnapshot | null,
   fallbackInstallId: string | null = null,
+  computersEnabled = false,
 ): RemoteDeviceDesktopReport | null {
+  const machineKey = computersEnabled && "machineKey" in identity ? identity.machineKey : null
   const base = {
     installId: identity.installId?.trim() || fallbackInstallId?.trim() || "",
     label: bounded(identity.label, 80) || "Computer",
@@ -72,6 +74,7 @@ export function buildDeviceReport(
     appVersion: bounded(identity.appVersion, 80) || "unknown",
     osVersion: bounded(identity.osVersion, 80) || null,
     arch: bounded(identity.arch, 32) || null,
+    ...(typeof machineKey === "string" ? { machineKey } : {}),
   }
   const full = remoteDeviceDesktopReportSchema.safeParse({ ...base, computerUse: reportedComputerUse(snapshot) })
   if (full.success) return full.data
@@ -107,6 +110,7 @@ export function deviceReportFailure(error: unknown): DeviceReportOutcome {
 }
 
 export type DeviceReporterOptions = {
+  computersEnabled?: boolean
   readIdentity: () => Promise<DesktopDeviceIdentity>
   readSnapshot: () => Promise<ComputerDevicesSnapshot>
   fallbackInstallId?: () => string | null
@@ -152,7 +156,7 @@ export function createDeviceReporter(options: DeviceReporterOptions) {
     let key: string | null = null
     try {
       const [identity, snapshot] = await Promise.all([options.readIdentity(), options.readSnapshot().catch(() => null)])
-      const built = stopped ? null : buildDeviceReport(identity, snapshot, options.fallbackInstallId?.() ?? null)
+      const built = stopped ? null : buildDeviceReport(identity, snapshot, options.fallbackInstallId?.() ?? null, options.computersEnabled)
       if (built) {
         key = deviceReportKey(built.computerUse)
         outcome = await options.send(built)

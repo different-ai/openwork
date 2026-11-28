@@ -1,9 +1,10 @@
-import { and, desc, eq, lt, or } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, lt, or } from "@openwork-ee/den-db/drizzle"
 import { RemoteDeviceEventTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   REMOTE_DEVICE_EVENT_LIMIT,
   REMOTE_DEVICE_EVENT_RETENTION_MS,
+  REMOTE_DEVICE_EVENT_TYPES,
   type RemoteDeviceEventActor,
   type RemoteDeviceEventLevel,
   type RemoteDeviceEventType,
@@ -12,6 +13,8 @@ import { db } from "./db.js"
 
 export type RemoteDeviceDatabase = typeof db | typeof db.$primary | Parameters<Parameters<typeof db["transaction"]>[0]>[0]
 export type RemoteDeviceEventData = Record<string, string | number | boolean | null>
+
+export const legacyRemoteDeviceEvent = inArray(RemoteDeviceEventTable.type, REMOTE_DEVICE_EVENT_TYPES)
 
 export async function recordRemoteDeviceEvent(database: RemoteDeviceDatabase, input: {
   organizationId: DenTypeId<"organization">

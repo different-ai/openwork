@@ -7,6 +7,7 @@ import { isWebDeployment } from "@/app/lib/openwork-deployment";
 import { hydrateOpenworkServerSettingsFromEnv } from "@/app/lib/openwork-server";
 import { isDesktopRuntime } from "@/app/utils";
 import { ConnectLinkProvider } from "@/react-app/domains/cloud/connect-link-provider";
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import { DenAuthProvider } from "@/react-app/domains/cloud/den-auth-provider";
 import { AutoRejectedTurnRecoveryBridge } from "@/react-app/domains/cloud/auto-access-ui";
 import { FreeAutoAnalyticsBridge } from "@/react-app/domains/cloud/free-auto-analytics-bridge";
@@ -55,6 +56,11 @@ type AppProvidersProps = {
   children: ReactNode;
 };
 
+function RunnerBridge() {
+  const computersEnabled = useOrgFeature("computers", { desktopOnly: true });
+  return <AutomationRunnerBridge computersEnabled={computersEnabled} />;
+}
+
 export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
   return (
     <>
@@ -64,7 +70,7 @@ export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
           <BrandThemeProvider>
             <RestrictionNoticeProvider>
               <LocalProvider>
-                <AutomationRunnerBridge />
+                <RunnerBridge />
                 <GlobalQueueDrainerBridge />
                 <AutoRejectedTurnRecoveryBridge />
                 <FreeAutoAnalyticsBridge />

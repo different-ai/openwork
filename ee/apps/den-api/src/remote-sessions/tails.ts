@@ -7,6 +7,7 @@ import {
   type RemoteSessionTranscriptMessage,
 } from "@openwork/types/automations"
 import Redis from "ioredis"
+import { pruneComputerCommands } from "../computers/store.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -424,18 +425,27 @@ export async function sweepExpiredRemoteSessionTails(now = Date.now()): Promise<
   return expired.length
 }
 
+async function sweepWithWarning(component: "remote_session_tail" | "computer_command", sweep: () => Promise<unknown>) {
+  try {
+    await sweep()
+  } catch (error) {
+    appLogger.warn(`${component}_sweep_failed`, {
+      component,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
 export function startRemoteSessionTailSweepLoop() {
   let running = false
   const run = async () => {
     if (running) return
     running = true
     try {
-      await sweepExpiredRemoteSessionTails()
-    } catch (error) {
-      appLogger.warn("remote_session_tail_sweep_failed", {
-        component: "remote_session_tail",
-        error: error instanceof Error ? error.message : String(error),
-      })
+      await Promise.all([
+        sweepWithWarning("remote_session_tail", sweepExpiredRemoteSessionTails),
+        sweepWithWarning("computer_command", pruneComputerCommands),
+      ])
     } finally {
       running = false
     }

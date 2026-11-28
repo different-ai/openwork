@@ -119,7 +119,7 @@ function providerCalls() {
   return tracker.wire.filter((entry) => entry.rpcMethod === "tools/call").length
 }
 
-test("new personal agents cannot use built-in connectors through native dispatch", async () => {
+test("a built-in connector is off for a new personal agent until a person allows it", async () => {
   const { Hono } = await import("hono")
   const { z } = await import("zod")
   const { invokeMcpOperation } = await import("../../src/mcp/invoke.js")
@@ -138,12 +138,12 @@ test("new personal agents cannot use built-in connectors through native dispatch
   let calls = 0
   app.all(path, (c) => { calls += 1; return c.json({ read: true }) })
   const principal = { organizationId: orgId, userId: dana.userId, scopes: new Set(["mcp:read", "mcp:write", personalAgentRunScope(claim.run.id)]), payload: {} }
-  const call = (method: string) => invokeMcpOperation({ app, env: {}, operation: { name: "calendar", method, path, operation: {}, inputSchema: z.object({}) }, principal, nativeConnectionId: "google-workspace", toolInput: {}, includePayload: true })
+  const call = (method: string) => invokeMcpOperation({ app, env: {}, operation: { name: "calendar", method, path, operation: {}, inputSchema: z.object({}) }, principal, nativeConnectionId: "google-workspace", nativeConnectionName: "Google Workspace", toolInput: {}, includePayload: true })
   const refused = await call("POST")
   assert.equal(refused.isError, true)
   assert.equal(field(refused.payload, "error"), "policy_blocked")
   assert.equal(field(refused.payload, "retryable"), false)
-  assert.equal(field(refused.payload, "message"), "Built-in connectors are not available to this agent.")
+  assert.equal(field(refused.payload, "message"), "Google Workspace is off for this agent. Ask for access to use it.")
   assert.equal((await call("GET")).isError, true)
   assert.equal(calls, 0)
   await db.update(AutomationRunTable).set({ status: "queued" }).where(eq(AutomationRunTable.id, normalizeDenTypeId("automationRun", claim.run.id)))
@@ -162,7 +162,7 @@ test("writes are listed but ask without a provider call and only one pending car
   const found = await den.callMcpTool(token, "search_capabilities", { query: "bug tracker create issue", limit: 20 })
   assert.ok(list(field(found.body, "matches")).some((row) => row.name === `mcp:${connectionId}:create_issue`), found.raw)
   const catalog = personalAgentToolCatalogSchema.parse((await asPriya("GET", `${path}/tools`)).body)
-  assert.deepEqual(catalog.connections[0].tools.find((tool) => tool.name === "create_issue"), { name: "create_issue", title: "create_issue", write: true, access: "ask", chosen: null, lockedByOrganization: false, organizationRule: null })
+  assert.deepEqual(catalog.connections.find((entry) => entry.connectionId === connectionId)?.tools.find((tool) => tool.name === "create_issue"), { name: "create_issue", title: "create_issue", write: true, access: "ask", chosen: null, lockedByOrganization: false, organizationRule: null })
   const calls = providerCalls()
   await Promise.all([asks(token), asks(token)])
   const proxy = await den.request(token, "POST", `/mcp/agent/connections/${connectionId}`, {

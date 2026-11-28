@@ -12,7 +12,7 @@ import { z } from "zod";
  * A permission is one family of agent actions (commands, file edits, folders
  * outside the workspace, computer use, files and the clipboard between apps,
  * app scripting, websites, web search,
- * local skills, local MCP servers) with
+ * local skills, local MCP servers, skills from MCP servers) with
  *
  *   - a decision: Allow, Ask first or Block (a picklist), or on/off for the
  *     families that cannot ask (a switch);
@@ -31,7 +31,7 @@ import { z } from "zod";
  *
  * To add a permission: add a definition below and enforce it wherever that
  * action can happen. Only engine actions belong in agent-permission-engine.ts;
- * browser_upload, file_send, host_execution, sandbox_opt_out and the four private_value
+ * browser_upload, file_send, host_execution, sandbox_opt_out, mcp_skill and the four private_value
  * actions are enforced by the OpenWork host and must never enter the engine grammar.
  *
  * host_execution is the sandbox-only switch: blocking it means the agent's
@@ -44,7 +44,7 @@ export const AGENT_PERMISSION_DECISIONS = ["allow", "ask", "deny"] as const;
 export type AgentPermissionDecision = (typeof AGENT_PERMISSION_DECISIONS)[number];
 
 /** OpenCode permission actions, plus local MCP, computer use (with its files and clipboard) and app scripting enforced by OpenWork. */
-export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload", "file_send", "host_execution", "sandbox_opt_out", "private_value_fill", "private_value_command", "private_value_paste", "private_value_terminal", "private_value_run"] as const;
+export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "mcp_skill", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload", "file_send", "host_execution", "sandbox_opt_out", "private_value_fill", "private_value_command", "private_value_paste", "private_value_terminal", "private_value_run"] as const;
 
 export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "computerFiles", "computerClipboard", "appScripting", "hostExecution", "sandboxOptOut"] as const;
 export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "computer_files", "computer_clipboard", "script", "host_execution", "sandbox_opt_out"] as const;
@@ -58,6 +58,11 @@ export const AGENT_SANDBOX_ONLY_CAPABILITY_HEADER = "X-OpenWork-Sandbox-Only";
  * offer the sandbox next to the usual tools whenever its rollout is on.
  */
 export const AGENT_SANDBOX_MODES_CAPABILITY_HEADER = "X-OpenWork-Sandbox-Modes";
+/**
+ * Desktops that read skills from MCP servers say so; Den keeps mcp_skill from
+ * the ones that do not. They load no such skills, so nothing is loosened.
+ */
+export const AGENT_MCP_SKILLS_CAPABILITY_HEADER = "X-OpenWork-Mcp-Skill-Permissions";
 /** Desktops that enforce the private-value permissions say so; Den keeps their rules from the ones that do not. */
 export const AGENT_PRIVATE_VALUES_CAPABILITY_HEADER = "X-OpenWork-Private-Value-Permissions";
 export const AGENT_PRIVATE_VALUE_PERMISSION_KEYS = ["privateValueFills", "privateValueCommands", "privateValuePaste", "privateValueTerminal", "privateValueRuns"] as const;
@@ -294,6 +299,16 @@ export const agentPermissionDefinitions = [
     label: "Use local MCP servers",
     description: "MCP servers added on the member's computer. The organization's connections in OpenWork Cloud are not affected.",
     action: "mcp",
+    control: "toggle",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "mcpServerSkills",
+    section: "extensions",
+    label: "Use skills from MCP servers",
+    description: "Skills that MCP servers added on the member's computer offer the agent. The organization's skills in OpenWork Cloud are not affected.",
+    action: "mcp_skill",
     control: "toggle",
     patterns: null,
     patternNoun: null,
@@ -624,6 +639,13 @@ export function withoutSandboxOptOutPermissions(settings: AgentPermissionSetting
   return visible;
 }
 
+/** Hide the MCP server skills setting from editors that do not know it. */
+export function withoutMcpSkillPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
+  const visible = { ...settings };
+  delete visible.mcpServerSkills;
+  return visible;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -716,6 +738,11 @@ export function withoutSandboxOptOutRules(rules: readonly AgentPermissionRule[])
   return rules.filter((rule) => rule.action !== "sandbox_opt_out");
 }
 
+/** mcp_skill rules must not reach clients that cannot read them. */
+export function withoutMcpSkillRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
+  return rules.filter((rule) => rule.action !== "mcp_skill");
+}
+
 /**
  * What the organization requires of the OpenWork Sandbox for this member.
  * Force (host_execution blocked) implies Use. A member's own setting can only
@@ -758,7 +785,7 @@ const SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS = ["shell", "edit", "external_director
  */
 export function agentPermissionRulesForClient(
   rules: readonly AgentPermissionRule[],
-  supports: { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes?: boolean; privateValues?: boolean },
+  supports: { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes?: boolean; privateValues?: boolean; mcpSkills?: boolean },
 ): AgentPermissionRule[] {
   let delivered: AgentPermissionRule[] = [...rules];
   if (!supports.privateValues) delivered = withoutPrivateValueRules(delivered);
@@ -766,6 +793,7 @@ export function agentPermissionRulesForClient(
     delivered.push({ action: "private_value_terminal", resource: "*", effect: "deny", source: AGENT_PERMISSION_EVERYONE });
   }
   if (!supports.sandboxModes) delivered = withoutSandboxOptOutRules(delivered);
+  if (!supports.mcpSkills) delivered = withoutMcpSkillRules(delivered);
   if (!supports.browserUploads) delivered = withoutBrowserUploadRules(delivered);
   if (!supports.fileSends) delivered = withoutFileSendRules(delivered);
   if (!supports.sandboxOnly) delivered = withoutHostExecutionRules(delivered);
@@ -975,6 +1003,7 @@ const BLOCKED_SUBJECT: Record<AgentPermissionAction, (resource: string) => strin
   websearch: () => "searching the web",
   skill: (resource) => resource === "*" ? "local skills" : `the local skill "${resource}"`,
   mcp: (resource) => resource === "*" ? "local MCP servers" : `the local MCP server "${resource}"`,
+  mcp_skill: () => "skills from MCP servers",
 };
 
 /** The sentence a member or an agent sees when a rule blocks something: what, which rule, and who set it. */
