@@ -35,6 +35,12 @@
   "planGatingEnabled": false,
   "generatedArtifactViewsEnabled": false,
   "appMcpServersEnabled": true,
+  "artifactStorage": {
+    "backend": null,
+    "unavailableReason": "DEN_ARTIFACT_STORAGE_BACKEND is not set.",
+    "maxBytes": 20971520,
+    "maxRows": 10000
+  },
   "scimMaintenanceIntervalMs": 300000,
   "lifecycleEmails": {
     "enabled": false,
@@ -113,13 +119,6 @@
   "corsOrigins": [
     "https://openwork.example.test"
   ],
-  "documentsOffice": {
-    "mode": null,
-    "workerPort": 9980,
-    "serverUrl": "<undefined>",
-    "hostOrigin": "<undefined>",
-    "callbackBaseUrl": "https://api.openwork.example.test"
-  },
   "apiPublicUrl": "https://api.openwork.example.test",
   "serviceVersion": "dev",
   "publicUrlTrustedOrigins": [
@@ -188,6 +187,10 @@
   "auditSelfHostedEnabled": false,
   "corsHandledByEdge": false,
   "openworkWebEnabled": false,
+  "workspaceCreateLimit": {
+    "limit": 3,
+    "contact": "mailto:team@openworklabs.com"
+  },
   "openaiSafety": {
     "webhookSecret": "<undefined>",
     "readKey": "<undefined>"

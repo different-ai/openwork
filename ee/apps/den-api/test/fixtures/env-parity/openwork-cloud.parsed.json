@@ -42,6 +42,12 @@
   "planGatingEnabled": true,
   "generatedArtifactViewsEnabled": true,
   "appMcpServersEnabled": true,
+  "artifactStorage": {
+    "backend": null,
+    "unavailableReason": "DEN_ARTIFACT_STORAGE_BACKEND is not set.",
+    "maxBytes": 20971520,
+    "maxRows": 10000
+  },
   "scimMaintenanceIntervalMs": 600000,
   "lifecycleEmails": {
     "enabled": true,
@@ -122,13 +128,6 @@
     "https://web.openworklabs.com",
     "https://chat.openworklabs.com"
   ],
-  "documentsOffice": {
-    "mode": null,
-    "workerPort": 9980,
-    "serverUrl": "<undefined>",
-    "hostOrigin": "<undefined>",
-    "callbackBaseUrl": "https://api.openworklabs.com"
-  },
   "apiPublicUrl": "https://api.openworklabs.com",
   "serviceVersion": "commit 0123456",
   "publicUrlTrustedOrigins": [
@@ -211,6 +210,10 @@
   "auditSelfHostedEnabled": false,
   "corsHandledByEdge": false,
   "openworkWebEnabled": true,
+  "workspaceCreateLimit": {
+    "limit": 3,
+    "contact": "mailto:team@openworklabs.com"
+  },
   "openaiSafety": {
     "webhookSecret": "placeholder-openai-safety-webhook-secret",
     "readKey": "<undefined>"
