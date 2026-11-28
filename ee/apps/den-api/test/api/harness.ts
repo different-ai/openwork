@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
+import { serve } from "@hono/node-server"
 import { createDenDb, ensureSchemaRepairs } from "@openwork-ee/den-db"
 import { inlineIndexes } from "./schema-statements.js"
 
@@ -423,7 +424,7 @@ export type McpToolResult = { status: number; isError: boolean; rpcError: Json; 
 
 export type Den = Awaited<ReturnType<typeof bootDen>>
 
-export async function bootDen(options: { env?: Record<string, string>; productionLike?: boolean } = {}) {
+export async function bootDen(options: { env?: Record<string, string>; productionLike?: boolean; http?: boolean } = {}) {
   const stamp = `${Date.now().toString(36)}${randomBytes(3).toString("hex")}`
   const platformAdminEmail = `platform-admin+${stamp}@example.test`
   const database = await createDatabase()
@@ -462,6 +463,12 @@ export async function bootDen(options: { env?: Record<string, string>; productio
   })
 
   const production = productionLike ? await productionLikeDatabase({ replica: !transactionsOnly }) : null
+  const listening = Promise.withResolvers<string>()
+  const server = options.http ? serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 }, (address) => {
+    listening.resolve(`http://127.0.0.1:${address.port}`)
+  }) : null
+  server?.once("error", listening.reject)
+  const requestOrigin = server ? await listening.promise : API_ORIGIN
 
   async function request(token: string | null, method: Method, pathname: string, options: RequestOptions = {}): Promise<Call> {
     const headers = new Headers({ origin: WEB_ORIGIN, ...options.headers })
@@ -472,7 +479,9 @@ export async function bootDen(options: { env?: Record<string, string>; productio
       body = JSON.stringify(options.body)
       if (!headers.has("content-type")) headers.set("content-type", "application/json")
     }
-    const response = await app.request(new URL(pathname, API_ORIGIN).toString(), { method, headers, body })
+    const url = new URL(pathname, requestOrigin)
+    const init = { method, headers, body }
+    const response = await (server ? fetch(url, init) : app.request(url.toString(), init))
     const raw = await response.text()
     return { status: response.status, body: parseJson(raw), text: raw, headers: response.headers }
   }
@@ -607,6 +616,9 @@ export async function bootDen(options: { env?: Record<string, string>; productio
     as,
     production,
     async close() {
+      if (server) await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve())
+      })
       const { client, readClient } = await import("../../src/db.js")
       if (readClient && "getConnection" in readClient) await readClient.end().catch(() => undefined)
       if ("getConnection" in client) await client.end().catch(() => undefined)

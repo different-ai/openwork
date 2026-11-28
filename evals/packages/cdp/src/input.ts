@@ -12,7 +12,7 @@ export type Target = string | {
   placeholder?: string;
   testId?: string;
   nth?: number;
-  mcpApp?: { resourceUri: string; index?: number };
+  mcpApp?: { resourceUri: string; index?: number } | { frameTitle: string; index?: number };
 };
 
 export interface Point {
@@ -258,16 +258,18 @@ async function nodeRect(client: CdpClient, nodeId: unknown): Promise<Located["re
 type FrameBoundary = { client: CdpClient; node: Record<string, unknown> };
 
 async function locateMcpApp(surface: Surface, target: Exclude<Target, string>): Promise<Located> {
-  if (!target.mcpApp || !["button", "heading", "textbox", "status"].includes(target.role ?? "")) {
+  const app = target.mcpApp;
+  if (!app || !["button", "heading", "textbox", "status"].includes(target.role ?? "")) {
     throw new Error("MCP App targets require an explicit button, heading, textbox or status role.");
   }
   await surface.client.send("DOM.enable");
   const document = await surface.client.send("DOM.getDocument", { depth: -1, pierce: true });
   if (!isRecord(document) || !isRecord(document.root) || document.root.nodeName !== "#document") throw new Error("MCP App DOM document was not readable.");
-  const roots = domNodes(document.root)
-    .filter(node => domAttribute(node, "data-mcp-app-resource") === target.mcpApp?.resourceUri);
-  const root = roots.at(target.mcpApp.index ?? 0);
-  if (!root) throw new TargetNotFoundError(`MCP App ${target.mcpApp.resourceUri} is not mounted.`);
+  const roots = domNodes(document.root).filter(node => "resourceUri" in app
+    ? domAttribute(node, "data-mcp-app-resource") === app.resourceUri
+    : node.nodeName === "IFRAME" && domAttribute(node, "title") === app.frameTitle);
+  const root = roots.at(app.index ?? 0);
+  if (!root) throw new TargetNotFoundError(`MCP App ${"resourceUri" in app ? app.resourceUri : app.frameTitle} is not mounted.`);
   const text = (node: Record<string, unknown>) => domNodes(node)
     .filter(child => child.nodeName === "#text").map(child => child.nodeValue).join("").trim();
   const matches = (matcher: TargetMatcher | undefined, value: string) => matcher === undefined
@@ -420,7 +422,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         ? 'h1, h2, h3, h4, h5, h6, [role="heading"]'
         : target.text && !target.role && !target.label && !target.placeholder && !target.testId
           ? 'body *'
-          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="progressbar"], [role="radio"], [role="dialog"], dialog, [data-testid]';
+          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="status"], [role="progressbar"], [role="radio"], [role="dialog"], dialog, [data-testid]';
     const candidates = [...document.querySelectorAll<HTMLElement>(selector)].filter((element: Element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
       if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;

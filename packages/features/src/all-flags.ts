@@ -2,6 +2,7 @@
 // On a merge conflict here, keep either side and run `pnpm features:sync`.
 export { default as activationLocalSetup } from "@openwork/features/flags/activation-local-setup"
 export { default as administratorRecovery } from "@openwork/features/flags/administrator-recovery"
+export { default as artifactShareLinks } from "@openwork/features/flags/artifact-share-links"
 export { default as artifactStorage } from "@openwork/features/flags/artifact-storage"
 export { default as automationArchiveRestore } from "@openwork/features/flags/automation-archive-restore"
 export { default as automationFailureNotifications } from "@openwork/features/flags/automation-failure-notifications"

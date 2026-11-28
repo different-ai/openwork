@@ -377,7 +377,7 @@ export function AuthPanel({
   }, [authMode, noNewAccounts, setAuthMode]);
 
   useEffect(() => {
-    if (!isSingleOrgSsoMode || pathname === "/" || pathname === "/join-org") {
+    if (!isSingleOrgSsoMode || pathname === "/" || pathname === "/join-org" || signsInInPlace(pathname)) {
       return;
     }
 

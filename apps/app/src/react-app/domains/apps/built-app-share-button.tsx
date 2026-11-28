@@ -10,6 +10,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BuiltAppPublicSharing } from "./built-app-public-sharing";
+import { BuiltAppShareLink } from "./built-app-share-link";
 import { useLibraryCloud } from "../settings/use-library-cloud";
 import { LibrarySharePage } from "../settings/pages/library-share-page";
 import { useAppsClient } from "./use-apps";
@@ -51,7 +52,8 @@ export function BuiltAppShareDialog({
               <TabsTrigger value="organization">Within your organization</TabsTrigger>
               <TabsTrigger value="public">Public link</TabsTrigger>
             </TabsList>
-            <TabsContent value="organization" keepMounted className="pt-2">
+            <TabsContent value="organization" keepMounted className="space-y-4 pt-2">
+              <BuiltAppShareLink client={context.client} orgId={context.orgId} appId={appId} scope={context.scope} />
               <AppSharing context={context} pluginId={pluginId} title={title} onClose={() => onOpenChange(false)} />
             </TabsContent>
             <TabsContent value="public" keepMounted className="pt-2">
