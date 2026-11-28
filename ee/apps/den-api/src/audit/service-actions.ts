@@ -96,7 +96,7 @@ export const auditServiceActionDeclarations = [
   {
     action: "cloud_coding.task.start", kind: "cloud_coding.execution", class: "tenant_job", resource: { type: "cloud_coding_task", idFrom: null }, origin: "mcp",
     tools: ["execute_capability cloud-coding:start"], callSites: ["src/cloud-coding/mcp/capabilities.ts:cloudCodingSource.execute"],
-    jobOutcome: "The session starts on the member's OpenWork Cloud computer. The cloud_coding.task.started change records its task, repository and base branch.",
+    jobOutcome: "The member's existing computer can set up the task. The cloud_coding.task.started change records its task, repository, base branch, surface and conversation.",
     notes: MCP_PRINCIPAL,
   },
   {

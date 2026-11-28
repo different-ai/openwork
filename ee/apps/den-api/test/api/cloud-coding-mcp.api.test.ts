@@ -16,15 +16,15 @@ const den = await bootDen({ env: { ...github.env, DEN_DEPLOYMENT: "cloud", DEN_A
 after(() => den.close())
 const { env } = await import("../../src/env.js")
 const { db } = await import("../../src/db.js")
-const { setCloudCodingSessionStarterForTests } = await import("../../src/cloud-coding/mcp/capabilities.js")
+const { mintHeadlessRunMcpToken } = await import("../../src/mcp/headless-run-token-mint.js")
 const { redeemCloudCodingSetupCode } = await import("../../src/cloud-coding/tasks.js")
 const maya = await den.createOrg(await den.signUp("Maya Chen"), "Acme Corp")
 const sam = await den.newMember(maya.owner, maya.orgId, "Sam Rivera")
 const leo = await den.createOrg(await den.signUp("Leo Martin"), "Acme Corp")
 const organizationId = normalizeDenTypeId("organization", maya.orgId)
-const mayaToken = await den.mintMcpToken(maya.owner, maya.orgId)
-const samToken = await den.mintMcpToken(sam, maya.orgId)
-const leoToken = await den.mintMcpToken(leo.owner, leo.orgId)
+const mayaToken = (await mintHeadlessRunMcpToken({ userId: maya.owner.userId, organizationId: maya.orgId })).token
+const samToken = (await mintHeadlessRunMcpToken({ userId: sam.userId, organizationId: maya.orgId })).token
+const leoToken = (await mintHeadlessRunMcpToken({ userId: leo.owner.userId, organizationId: leo.orgId })).token
 const manage = den.as(maya.owner, maya.orgId)
 const cloudPath = "/v1/cloud-coding"
 const settingsPath = `${cloudPath}/settings`
@@ -137,9 +137,8 @@ test("repository listing stays in the caller's organization", async () => {
 })
 
 test("start refuses a read-only token and repositories that are unknown, archived or removed", async () => {
-  const issued = await manage("POST", "/v1/mcp/token", { scopes: ["mcp:read"] })
-  assert.equal(issued.status, 200, summary(issued))
-  expectError(await start(startArgs, text(field(issued.body, "token"), "read-only token")), "insufficient_mcp_scope")
+  const issued = await mintHeadlessRunMcpToken({ userId: maya.owner.userId, organizationId, readOnly: true })
+  expectError(await start(startArgs, issued.token), "insufficient_mcp_scope")
   const unknown = await start({ ...startArgs, repository: "acme/docs" })
   expectError(unknown, "repository_not_available")
   assert.match(String(field(unknown.body, "message")), /acme\/billing-api, acme\/storefront.*admin chooses repositories on GitHub/)
@@ -156,27 +155,13 @@ test("start refuses a read-only token and repositories that are unknown, archive
   assert.equal((await taskRows()).length, 0)
 })
 
-const cloudInput = z.object({ target: z.literal("cloud"), title: z.string(), prompt: z.string() })
-const sessionReceipt = { sessionId: "ses_storefront", workspaceId: "workspace_storefront", workerId: "worker_storefront", started: true }
-const fakeResult = (structuredContent: Record<string, unknown>, isError = false) => ({ isError, structuredContent, content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }] })
 const taskIdFrom = (result: McpToolResult) => text(field(result.body, "taskId"), "started task ID")
-function codeFrom(prompt: string) {
-  return text(/--code "(occ_setup_[A-Za-z0-9_-]+)"/.exec(prompt)?.[1], "setup code in kickoff")
+function codeFrom(result: McpToolResult) {
+  const command = text(field(result.body, "setupCommand"), "setup command")
+  return text(/--code "(occ_setup_[A-Za-z0-9_-]+)"/.exec(command)?.[1], "setup code")
 }
 
-test("start kicks off one cloud session with a redeemable code; status shows approval and pull request", async (t) => {
-  t.after(() => setCloudCodingSessionStarterForTests(undefined))
-  const prompts: string[] = []
-  setCloudCodingSessionStarterForTests(async (input) => {
-    assert.equal(input.action, "create")
-    assert.equal(input.organizationId, organizationId)
-    assert.equal(input.userId, maya.owner.userId)
-    assert.equal(input.hasWriteScope, true)
-    const body = cloudInput.parse(input.body)
-    assert.equal(body.title, "Code change: acme/storefront")
-    prompts.push(body.prompt)
-    return fakeResult(sessionReceipt)
-  })
+test("start prepares the existing chat; status shows approval and pull request", async (t) => {
   const repo = github.state.repositories.get(11)
   assert.ok(repo)
   github.addRepository({ ...repo, default_branch: "release" })
@@ -184,31 +169,31 @@ test("start kicks off one cloud session with a redeemable code; status shows app
   const result = await start()
   assert.equal(result.isError, false, result.raw)
   const taskId = taskIdFrom(result)
-  assert.deepEqual(result.body, { ok: true, taskId, sessionId: sessionReceipt.sessionId, repository: "acme/storefront", baseBranch: "release", status: "running", note: field(result.body, "note") })
-  assert.equal(prompts.length, 1)
-  const prompt = prompts[0] ?? ""
-  assert.ok(prompt.includes(`${env.apiPublicUrl}/v1/cloud-coding/gateway/helper.mjs`))
-  assert.ok(prompt.includes(task))
-  const code = codeFrom(prompt)
+  assert.deepEqual(result.body, { ok: true, taskId, repository: "acme/storefront", baseBranch: "release", status: "ready",
+    workFolder: `/workspace/cloud-coding/${taskId}/storefront`, setupCommand: field(result.body, "setupCommand"),
+    instructions: field(result.body, "instructions"), expiresInMinutes: 60 })
+  const code = codeFrom(result)
   const redeemed = await redeemCloudCodingSetupCode({ code })
-  assert.equal(redeemed?.task.id, taskId)
-  assert.equal(result.raw.includes(code), false)
+  assert.ok(redeemed)
+  assert.equal(redeemed.task.id, taskId)
   const storage = await den.auditStorageText()
   assert.match(storage, /cloud_coding\.task\.started/)
   assert.equal(storage.includes(code), false)
   assert.equal(storage.includes(task), false)
+  assert.equal(storage.includes(redeemed.token), false)
   const [row] = await taskRows()
   assert.ok(row)
   assert.equal(row.id, taskId)
   assert.equal(row.orgMembershipId, maya.owner.memberId)
-  assert.equal(row.remoteSessionId, sessionReceipt.sessionId)
-  assert.equal(row.workerId, sessionReceipt.workerId)
+  assert.equal(row.remoteSessionId, null)
+  assert.equal(row.workerId, null)
+  assert.equal(row.surface, "workbot")
   assert.equal(row.title, task)
   const status = () => execute("status", { taskId })
   const before = await status()
   assert.equal(field(before.body, "approval"), null)
   assert.equal(field(before.body, "pullRequest"), null)
-  assert.equal(field(before.body, "sessionId"), sessionReceipt.sessionId)
+  assert.equal(field(before.body, "sessionId"), undefined)
   const id = createDenTypeId("cloudCodingPushApproval")
   const sha = "a".repeat(40)
   const tests = { status: "passed" as const, command: "pnpm test", summary: "Checkout tests passed." }
@@ -235,44 +220,23 @@ test("start kicks off one cloud session with a redeemable code; status shows app
   expectError(await execute("status", { taskId }, samToken), "task_not_found")
 })
 
-test("provisioning retry reuses the task and rotates the setup code; no other member can continue it", async (t) => {
-  t.after(() => setCloudCodingSessionStarterForTests(undefined))
-  const codes: string[] = []
-  const provisioning = { error: "cloud_runtime_provisioning", message: "Your cloud computer is getting ready.", retryable: true, retryAfterMs: 30_000 }
-  setCloudCodingSessionStarterForTests(async ({ body }) => {
-    codes.push(codeFrom(cloudInput.parse(body).prompt))
-    return codes.length === 1 ? fakeResult(provisioning, true) : fakeResult(sessionReceipt)
-  })
+test("resuming reuses the task and rotates setup codes; no other member can continue it", async () => {
   const count = (await taskRows()).length
-  const initial = await start({ ...startArgs, baseBranch: "main", title: "Fix checkout rounding" })
-  expectError(initial, provisioning.error, provisioning.message)
-  const taskId = taskIdFrom(initial)
-  assert.equal(field(initial.body, "retryable"), true)
-  assert.equal(field(initial.body, "retryAfterMs"), 30_000)
-  assert.match(String(field(initial.body, "note")), /this taskId in about 30 seconds/)
-  assert.equal((await taskRows()).find(row => row.id === taskId)?.status, "created")
-  expectError(await start({ ...startArgs, taskId }, samToken), "task_not_found")
-  const retried = await start({ ...startArgs, taskId })
-  assert.equal(retried.isError, false, retried.raw)
-  assert.equal(taskIdFrom(retried), taskId)
+  const first = await start({ ...startArgs, baseBranch: "main", title: "Fix checkout rounding" })
+  const taskId = taskIdFrom(first)
+  expectError(await start({ ...startArgs, taskId }, samToken), "task_closed")
+  const renewed = await start({ ...startArgs, taskId })
+  assert.equal(taskIdFrom(renewed), taskId)
   assert.equal((await taskRows()).length, count + 1)
-  const [first, second] = codes
-  assert.ok(first && second && first !== second)
-  assert.equal(await redeemCloudCodingSetupCode({ code: first }), null)
-  assert.equal(initial.raw.includes(first) || retried.raw.includes(second), false)
-  const repeated = await start({ ...startArgs, taskId })
-  assert.equal(field(repeated.body, "status"), "running")
-  assert.equal(codes.length, 2)
-  assert.equal((await redeemCloudCodingSetupCode({ code: second }))?.task.id, taskId)
+  assert.notEqual(codeFrom(first), codeFrom(renewed))
+  assert.equal(await redeemCloudCodingSetupCode({ code: codeFrom(first) }), null)
+  assert.equal((await redeemCloudCodingSetupCode({ code: codeFrom(renewed) }))?.task.id, taskId)
 })
 
-test("a non-provisioning runtime error marks the task failed without repeating runtime internals", async (t) => {
-  t.after(() => setCloudCodingSessionStarterForTests(undefined))
-  setCloudCodingSessionStarterForTests(async ({ body }) => fakeResult({ error: "remote_session_request_failed", retryable: true, message: cloudInput.parse(body).prompt }, true))
-  const result = await start()
-  expectError(result, "remote_session_request_failed", "OpenWork couldn't start the code change on your cloud computer.")
-  const row = (await taskRows()).find(item => item.id === taskIdFrom(result))
-  assert.equal(row?.status, "failed")
-  assert.equal(row?.failureCode, "remote_session_request_failed")
-  assert.equal(result.raw.includes("occ_setup_"), false)
+test("no shell creates nothing", async () => {
+  const count = (await taskRows()).length
+  const result = await start({ ...startArgs, noShell: true })
+  expectError(result, "no_shell", "This chat has no computer to work on, so cloud coding isn't available here.")
+  assert.equal(field(result.body, "retryable"), false)
+  assert.equal((await taskRows()).length, count)
 })

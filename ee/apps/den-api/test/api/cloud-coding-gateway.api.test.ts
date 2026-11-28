@@ -73,6 +73,7 @@ const storefront = repository
 
 const visibleBodies: unknown[] = []
 const taskTokens: string[] = []
+const setupCodes: string[] = []
 function save(result: Call, containsToken = false) {
   if (containsToken && result.status === 200) {
     const { token, ...visible } = z.object({ token: z.string() }).passthrough().parse(result.body)
@@ -82,7 +83,9 @@ function save(result: Call, containsToken = false) {
   return result
 }
 async function newTask(member = org.owner, orgId = organizationId, repo = storefront) {
-  const task = await createCloudCodingTask({ organizationId: orgId, memberId: normalizeDenTypeId("member", member.memberId), repository: repo, baseBranch: "main", title: "Update storefront" })
+  const task = await createCloudCodingTask({ organizationId: orgId, memberId: normalizeDenTypeId("member", member.memberId), repository: repo, baseBranch: "main", title: "Update storefront",
+    origin: { surface: "web", conversationId: null, runTokenId: null, runnerMessageId: null, workerId: null } })
+  setupCodes.push(task.setupCode)
   const setup = save(await den.request(null, "POST", `${gateway}/setup`, { body: { code: task.setupCode } }), true)
   const { token } = cloudCodingGatewaySetupSchema.parse(status(setup, 200))
   taskTokens.push(token)
@@ -226,7 +229,15 @@ for (const state of ["pending", "denied", "expired", "superseded"] as const) {
     if (state === "expired") await db.update(Approvals).set({ expiresAt: new Date(Date.now() - 5000) }).where(eq(Approvals.id, normalizeDenTypeId("cloudCodingPushApproval", approval.id)))
     if (state === "superseded") await requested(current, change(`openwork/replaces-${state}`))
     const before = refWrites()
-    refuses(await push(current, approval.id, changeSet), 409, state === "superseded" ? "approval_used" : `approval_${state}`)
+    if (state === "denied") {
+      refuses(await push(current, approval.id, changeSet), 401, "task_closed")
+      refuses(await ask(current, changeSet), 401, "task_closed")
+      refuses(await open(current, approval.id), 401, "task_closed")
+      assert.equal(envelope.parse(status(await current.call("GET", `/push-approvals/${approval.id}?waitMs=10`), 200)).approval.status, "denied")
+      status(await current.call("GET", "/task"), 200)
+    } else {
+      refuses(await push(current, approval.id, changeSet), 409, state === "superseded" ? "approval_used" : `approval_${state}`)
+    }
     assert.equal(refWrites(), before)
     if (state === "expired") {
       const [row] = await db.$primary.select().from(Approvals).where(eq(Approvals.id, normalizeDenTypeId("cloudCodingPushApproval", approval.id)))
@@ -388,5 +399,12 @@ test("audit rows, logs, and non-token response fields contain no credentials", a
   assert.ok(rows.some(row => row.action === "cloud_coding.push.refused" && row.envelope?.reasonCode === "commit_mismatch"))
   assert.ok(operations.some(row => row.kind === "cloud_coding.gateway" && row.initiating_actor.memberId === org.owner.memberId))
   const output = JSON.stringify({ rows, resources, operations, visibleBodies, captured })
-  for (const token of [...taskTokens, ...github.state.installationTokens.keys(), ...github.state.revoked, ...[...github.state.userTokens.values()].flatMap(row => [row.accessToken, row.refreshToken])]) assert.equal(output.includes(token), false, "A credential escaped its intended field")
+  for (const token of [...setupCodes, ...taskTokens, ...github.state.installationTokens.keys(), ...github.state.revoked, ...[...github.state.userTokens.values()].flatMap(row => [row.accessToken, row.refreshToken])]) assert.equal(output.includes(token), false, "A credential escaped its intended field")
+})
+
+test("release disposes the credential and may be repeated", async () => {
+  const current = await newTask()
+  status(await current.call("POST", "/release"), 204)
+  status(await current.call("POST", "/release"), 204)
+  refuses(await current.call("GET", "/task"), 401, "task_closed")
 })

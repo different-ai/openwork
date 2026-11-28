@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { setTimeout as sleep } from "node:timers/promises"
-import { and, desc, eq, gt, inArray } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, gt, inArray, or } from "@openwork-ee/den-db/drizzle"
 import { CloudCodingPullRequestTable as PullRequests, CloudCodingPushApprovalTable as Approvals, CloudCodingTaskTable as Tasks, MemberTable, AuthUserTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { CLOUD_CODING_APPROVAL_TTL_MS, CLOUD_CODING_SUMMARY_FILES_MAX, type CloudCodingChangeSet, type CloudCodingPushRequest } from "@openwork/types/den/cloud-coding"
@@ -12,6 +12,8 @@ import { cloudCodingAppConfig } from "../config.js"
 import { CloudCodingGithubError } from "../github-api.js"
 import { createRepositoryReadToken, readInstalledRepository } from "../installation.js"
 import { getMemberGithubAccessToken } from "../links.js"
+import { queueCloudCodingSlackNotice } from "../slack/notices.js"
+import { requireCloudCodingTurn } from "./turn.js"
 import { CLOUD_CODING_TASK_TOKEN_PREFIX, findCloudCodingTaskByToken, type CloudCodingTaskRow } from "../tasks.js"
 import { cloudCodingApprovalView, expireCloudCodingApprovals, getCloudCodingApproval, getCloudCodingPullRequest, type CloudCodingApprovalRow } from "./approvals.js"
 import { recordGatewayEvent } from "./audit.js"
@@ -26,11 +28,12 @@ const notLinked = () => new CloudCodingChangeRefusal("account_not_linked", "Link
 const used = () => new CloudCodingChangeRefusal("approval_used", "This approval has already been used or replaced. Ask for a new approval.")
 const mismatch = () => new CloudCodingChangeRefusal("commit_mismatch", "The code changed after the person approved. Ask for a new approval.")
 
-export async function findGatewayTask(token: string, allowFinishedTask = false) {
+export async function findGatewayTask(token: string, finishedTask?: "opened" | "read"): Promise<CloudCodingTaskRow> {
   const task = await findCloudCodingTaskByToken({ token })
   if (task) return task
-  if (allowFinishedTask && token.startsWith(CLOUD_CODING_TASK_TOKEN_PREFIX)) {
-    const [completed] = await db.$primary.select().from(Tasks).where(and(eq(Tasks.status, "pull_request_opened"),
+  if (finishedTask && token.startsWith(CLOUD_CODING_TASK_TOKEN_PREFIX)) {
+    const [completed] = await db.$primary.select().from(Tasks).where(and(or(eq(Tasks.status, "pull_request_opened"),
+      finishedTask === "read" ? and(eq(Tasks.status, "cancelled"), eq(Tasks.failureCode, "push_denied")) : undefined),
       gt(Tasks.tokenExpiresAt, new Date()), eq(Tasks.tokenHash, createHash("sha256").update(token).digest("hex")))).limit(1)
     if (completed) return completed
   }
@@ -46,6 +49,7 @@ export async function requireGatewayMember(task: CloudCodingTaskRow) {
 }
 
 export async function prepareGatewayTask(task: CloudCodingTaskRow, member: Awaited<ReturnType<typeof requireGatewayMember>>) {
+  await requireCloudCodingTurn(task)
   const scope = { organizationId: task.organizationId, memberId: task.orgMembershipId, taskId: task.id, githubRepositoryId: task.githubRepositoryId }
   const readiness = await getCloudCodingReadiness({ ...scope, userId: member.userId })
   switch (readiness.readiness) {
@@ -122,7 +126,7 @@ export async function requestGatewayPush(gateway: Gateway, input: CloudCodingPus
   const commit = await plan(git, change, planned, gateway.author, commitTime)
   const row = await db.transaction(async tx => {
     const [task] = await tx.select().from(Tasks).where(eq(Tasks.id, gateway.task.id)).limit(1).for("update")
-    if (!task || !["running", "awaiting_approval", "pushed"].includes(task.status) || !task.tokenExpiresAt || task.tokenExpiresAt <= new Date()) throw closed()
+    if (!task || !["running", "awaiting_approval", "pushed"].includes(task.status) || !task.tokenExpiresAt || task.tokenExpiresAt <= new Date() || task.tokenHash !== gateway.task.tokenHash) throw closed()
     await expireCloudCodingApprovals(gateway.scope, tx)
     const [pending] = await tx.select().from(Approvals).where(and(eq(Approvals.taskId, task.id), eq(Approvals.status, "pending")))
       .orderBy(desc(Approvals.createdAt), desc(Approvals.id)).limit(1).for("update")
@@ -137,6 +141,7 @@ export async function requestGatewayPush(gateway: Gateway, input: CloudCodingPus
     await tx.update(Tasks).set({ status: "awaiting_approval" }).where(eq(Tasks.id, task.id))
     const [inserted] = await tx.select().from(Approvals).where(eq(Approvals.id, id)).limit(1)
     if (!inserted) throw new Error("cloud_coding_approval_missing")
+    await queueCloudCodingSlackNotice(tx, { approval: inserted, task })
     await recordGatewayEvent(tx, capture, "cloud_coding.push.requested", inserted)
     return inserted
   })
@@ -149,6 +154,15 @@ async function approvalFor(gateway: Gateway, approvalId: string) {
   return row
 }
 
+async function findGatewayTaskForPolling(gateway: Gateway) {
+  const { task } = gateway
+  if (!task.tokenHash) return null
+  const [fresh] = await db.$primary.select().from(Tasks).where(and(eq(Tasks.id, task.id), eq(Tasks.tokenHash, task.tokenHash),
+    gt(Tasks.tokenExpiresAt, new Date()), or(inArray(Tasks.status, ["running", "awaiting_approval", "pushed", "pull_request_opened"]),
+      and(eq(Tasks.status, "cancelled"), eq(Tasks.failureCode, "push_denied"))))).limit(1)
+  return fresh ?? null
+}
+
 export async function pollGatewayPush(gateway: Gateway, approvalId: string, waitMs: number, signal: AbortSignal) {
   const end = Date.now() + Math.min(25_000, Math.max(0, waitMs))
   let row = await approvalFor(gateway, approvalId)
@@ -156,7 +170,11 @@ export async function pollGatewayPush(gateway: Gateway, approvalId: string, wait
     await sleep(Math.max(0, Math.min(1000, end - Date.now())), undefined, { signal })
     row = await approvalFor(gateway, approvalId)
   }
-  if (waitMs > 0) await refreshGatewayTask(gateway)
+  if (waitMs > 0) {
+    const task = await findGatewayTaskForPolling(gateway)
+    if (!task) throw closed()
+    await prepareGatewayTask(task, await requireGatewayMember(task))
+  }
   return { approval: await cloudCodingApprovalView(row) }
 }
 

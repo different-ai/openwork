@@ -84,7 +84,7 @@ export function getMcpJwtVerifyOptions(): McpJwtVerifyOptions {
   }
 }
 
-function readBearerToken(headers: Headers) {
+export function readBearerToken(headers: Headers) {
   const authorization = headers.get("authorization")?.trim() ?? ""
   const match = authorization.match(/^Bearer\s+(.+)$/i)
   return match?.[1]?.trim() || null

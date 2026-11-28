@@ -3,9 +3,11 @@ import { workflowArtifactAppServerCapabilities } from "./workflow-artifact-app.j
 import { SKILLS_EXTENSION_ID, skillIndexInstructions } from "./skills-extension.js"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 
-function agentMcpDetailedInstructions(appServers: boolean): string {
+const CLOUD_CODING_INSTRUCTIONS = "In this chat, code changes to a GitHub repository go through cloud coding: search capabilities for cloud coding and use cloud-coding:start to prepare this chat's own computer. Never push with git yourself; the person approves each push. Relay connection blockers exactly. Share the pull request link from the helper or cloud-coding:status."
+
+function agentMcpDetailedInstructions(appServers: boolean, cloudCoding = false): string {
   return [
-    "When someone asks to change, fix, or add code in a GitHub repository, search capabilities for cloud coding. When search returns cloud-coding:start, use it rather than editing the repository locally or using another GitHub tool to push. Relay connection blockers exactly, including who must connect GitHub. The person approves the push themselves; never approve on their behalf. Give them the pull request link from cloud-coding:status once it is available.",
+    ...(cloudCoding ? [CLOUD_CODING_INSTRUCTIONS] : []),
     "When asked what can be connected or to browse quick adds, call search_capabilities with type connectors and any descriptive query. This returns the legacy version 1 connectorCatalog envelope, including Google Workspace and Microsoft 365. Released clients may render their existing browse catalog; new clients intentionally ignore it. No new setup card is introduced. Setup options are not executable capabilities or proof of connection. Organization administrators manage setup in the organization Connections dashboard. Named-service searches include legacy setup suggestions only with explicit intent connect, type omitted, all, or mcp, and no matching mcp connection; modern clients ignore these catalogs. Never invent credentials or claim setup is finished. Existing connection actions take priority.",
     "This OpenWork Cloud MCP server uses standard MCP tools, resources, structured results, and list-changed notifications.",
     "For connection actions and saved Workflows, call search_capabilities with 2-4 keyword variants before concluding something is unavailable. Use execute_capability only with exact names returned by search_capabilities. A successful search_capabilities call proves this connection is authorized: Never tell the user to reconnect OpenWork Cloud because a downstream connector failed.",
@@ -44,7 +46,7 @@ export const AGENT_MCP_GUIDANCE_URI = "openwork://agent/guidance.md"
 
 export const AGENT_MCP_INSTRUCTIONS_MAX_CHARS = 4_096
 
-function agentMcpInstructions(appServers: boolean): string {
+function agentMcpInstructions(appServers: boolean, cloudCoding = false): string {
   return [
     `Read ${AGENT_MCP_GUIDANCE_URI} with resources/read before working; it contains the full connection, remote-session, import, and Workflow rules.`,
     "Search capabilities with 2-4 keyword variants; execute only exact returned names. Copy external argumentsSchema into body and schemaDigest into schemaDigest. Schema guidance is advisory; never repeat a successful provider call because of it.",
@@ -53,7 +55,7 @@ function agentMcpInstructions(appServers: boolean): string {
     appServers
       ? "For artifacts, read build-an-app with get_skill and use prepare_app/create_app/read_app/update_app. Open artifacts via their discovered capability."
       : "For Workflow result views use save_artifact_view and follow its prerequisites; never substitute local HTML.",
-    "For requests to change code in a GitHub repository, search for cloud coding and use cloud-coding:start when returned; the person must approve any push.",
+    ...(cloudCoding ? [CLOUD_CODING_INSTRUCTIONS] : []),
     "Honor requests to work remotely by delegating the whole request with remote-session:create/send, then reading its receipt; do not perform that work here. Only schedule an Automation when asked.",
   ].join("\n")
 }
@@ -73,6 +75,7 @@ export const PERSONAL_AGENT_INSTRUCTIONS = "When the person asks for an agent of
 
 export function createAgentMcpServer(options: {
   appServers?: boolean
+  cloudCoding?: boolean
   remoteSessionStatus?: boolean
   remoteSessionEvents?: boolean
   canSendSlackMessages?: boolean
@@ -83,7 +86,7 @@ export function createAgentMcpServer(options: {
   nativeEvents?: boolean
   skills?: readonly RemoteSkillDescriptor[]
 } = {}): McpServer {
-  const listed = [agentMcpInstructions(options.appServers !== false),
+  const listed = [agentMcpInstructions(options.appServers !== false, options.cloudCoding),
     ...(options.remoteSessionStatus ? [REMOTE_SESSION_STATUS_INSTRUCTIONS] : []),
     ...(options.remoteSessionStatus && options.remoteSessionEvents ? [REMOTE_SESSION_EVENT_INSTRUCTIONS] : []),
     ...(options.canSendSlackMessages ? [SLACK_SEND_AS_BOT_INSTRUCTIONS] : []),
@@ -118,7 +121,7 @@ export function createAgentMcpServer(options: {
     contents: [{
       uri: AGENT_MCP_GUIDANCE_URI,
       mimeType: "text/markdown",
-      text: [agentMcpDetailedInstructions(options.appServers !== false), options.harnessFeedbackInstructions].filter(Boolean).join("\n"),
+      text: [agentMcpDetailedInstructions(options.appServers !== false, options.cloudCoding), options.harnessFeedbackInstructions].filter(Boolean).join("\n"),
     }],
   }))
   return server

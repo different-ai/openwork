@@ -8,7 +8,8 @@ import { githubRefused } from "../../cloud-coding/gateway/github-git.js"
 import { CloudCodingChangeRefusal } from "../../cloud-coding/gateway/git-objects.js"
 import { findGatewayTask, gatewayTaskView, issueGatewayReadToken, openGatewayPullRequest, pollGatewayPush, prepareGatewayTask, pushGatewayCommit, requestGatewayPush, requireGatewayApproval, requireGatewayMember } from "../../cloud-coding/gateway/service.js"
 import { CloudCodingGithubError } from "../../cloud-coding/github-api.js"
-import { redeemCloudCodingSetupCode, type CloudCodingTaskRow } from "../../cloud-coding/tasks.js"
+import { redeemCloudCodingSetupCode, releaseCloudCodingTaskCredential, type CloudCodingTaskRow } from "../../cloud-coding/tasks.js"
+import { requireCloudCodingTurn } from "../../cloud-coding/gateway/turn.js"
 import { db } from "../../db.js"
 import { tokenRoute } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
@@ -91,7 +92,7 @@ async function readBody<T>(c: Context, schema: z.ZodType<T>, maxBytes = Math.cei
 
 type Prepared = Awaited<ReturnType<typeof prepareGatewayTask>>
 
-async function withTask(c: Context, run: (gateway: Prepared) => Promise<Response>, options: { setupTask?: CloudCodingTaskRow; push?: boolean; finishedTask?: boolean } = {}) {
+async function withTask(c: Context, run: (gateway: Prepared) => Promise<Response>, options: { setupTask?: CloudCodingTaskRow; push?: boolean; finishedTask?: "opened" | "read" } = {}) {
   let task: CloudCodingTaskRow | undefined
   let gateway: Prepared | undefined
   let approval: Awaited<ReturnType<typeof requireGatewayApproval>> | undefined
@@ -128,8 +129,29 @@ export function registerCloudCodingGatewayRoutes<T extends { Variables: object }
     return withTask(c, async gateway => c.json(cloudCodingGatewaySetupSchema.parse({ ...gatewayTaskView(gateway), token: redeemed.token,
       tokenExpiresAt: redeemed.tokenExpiresAt.toISOString() })), { setupTask: redeemed.task })
   })
+  app.post(`${root}/release`, describeRoute({ tags: ["Internal"], summary: "Release the Cloud coding credential", security: [{ bearerAuth: [] }], responses: {
+    204: { description: "The credential is no longer usable." }, 401: jsonResponse("The turn has ended.", errorSchema),
+  } }), tokenRoute, noStore, async c => {
+    const token = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1] ?? ""
+    const task = await findGatewayTask(token, "read").catch(error => {
+      refusal(error)
+      return null
+    })
+    if (!task) return c.body(null, 204)
+    try {
+      await requireCloudCodingTurn(task)
+      const member = await requireGatewayMember(task)
+      const audited = await attributeAuditRequest(c, { organizationId: task.organizationId,
+        actor: { type: "user", id: member.userId, memberId: task.orgMembershipId },
+        principalKey: auditUserPrincipalKey({ userId: member.userId, memberId: task.orgMembershipId }), origin: "cloud_ui" })
+      if (!audited.ok) return audited.response
+      addAuditRequestResource(c, { type: "cloud_coding_task", id: task.id })
+      await releaseCloudCodingTaskCredential(task)
+      return c.body(null, 204)
+    } catch (error) { return answerRefusal(c, error) }
+  })
   app.get(`${root}/task`, docs("Read the Cloud coding task", cloudCodingGatewayTaskSchema), tokenRoute, noStore,
-    c => withTask(c, async gateway => c.json(cloudCodingGatewayTaskSchema.parse(gatewayTaskView(gateway))), { finishedTask: true }))
+    c => withTask(c, async gateway => c.json(cloudCodingGatewayTaskSchema.parse(gatewayTaskView(gateway))), { finishedTask: "read" }))
   app.post(`${root}/read-token`, docs("Issue a repository read token", cloudCodingReadTokenSchema), tokenRoute, noStore,
     c => withTask(c, async gateway => c.json(cloudCodingReadTokenSchema.parse(await issueGatewayReadToken(gateway)))))
   app.post(`${root}/push-approvals`, docs("Ask for a push approval", approvalEnvelope, 201), tokenRoute, noStore,
@@ -138,7 +160,7 @@ export function registerCloudCodingGatewayRoutes<T extends { Variables: object }
     c => withTask(c, async gateway => {
       const waitMs = Number(c.req.query("waitMs") ?? 0)
       return c.json(approvalEnvelope.parse(await pollGatewayPush(gateway, c.req.param("approvalId"), Number.isNaN(waitMs) ? 0 : waitMs, c.req.raw.signal)))
-    }, { finishedTask: true }))
+    }, { finishedTask: "read" }))
   app.post(`${root}/push-approvals/:approvalId/push`, docs("Push the approved commit to a new branch", cloudCodingPushResultSchema), tokenRoute, noStore,
     c => withTask(c, async gateway => {
       const approval = await requireGatewayApproval(gateway, c.req.param("approvalId"))
@@ -149,5 +171,5 @@ export function registerCloudCodingGatewayRoutes<T extends { Variables: object }
     c => withTask(c, async gateway => {
       const { approvalId } = await readBody(c, cloudCodingOpenPullRequestInputSchema, 2048)
       return c.json(cloudCodingOpenedPullRequestSchema.parse(await openGatewayPullRequest(gateway, approvalId, auditChangeCapture(c))))
-    }, { finishedTask: true }))
+    }, { finishedTask: "opened" }))
 }

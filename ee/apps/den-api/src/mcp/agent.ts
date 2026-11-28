@@ -1,3 +1,4 @@
+import { resolveCloudCodingCaller } from "../cloud-coding/caller.js"
 import { registerNativeMcpEvents } from "../native-mcp-events/mcp.js"
 import { eventThreadForPrincipal } from "../mcp-events/context.js"
 import { registerMcpEventTools } from "../mcp-events/tools.js"
@@ -561,6 +562,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       memberId: memberIdentity?.orgMembershipId,
       credentialId: mcpPrincipalCredentialId(principal),
     })
+    const cloudCodingCaller = organizationFeatures.cloudCoding && memberIdentity ? await resolveCloudCodingCaller(principal, c.req.raw.headers) : null
     const capabilityContext = createCapabilityRegistryContext({
       app: app as unknown as Hono,
       env: c.env,
@@ -568,6 +570,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       principal,
       organizationId,
       member: memberIdentity,
+      cloudCodingCaller,
       redirectUriBase,
       generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
       organizationFeatures,
@@ -688,6 +691,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const server = createAgentMcpServer({
       harnessFeedbackInstructions: harnessFeedback ? HARNESS_FEEDBACK_INSTRUCTIONS : undefined,
       appServers: appServersEnabled,
+      cloudCoding: cloudCodingCaller !== null,
       remoteSessionStatus: Boolean(memberIdentity),
       remoteSessionEvents: organizationFeatures.mcpThreads,
       canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),

@@ -1,3 +1,4 @@
+import type { CloudCodingTaskOrigin } from "../cloud-coding/tasks.js"
 import { Tool, toolError } from "@openwork/codemode"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
@@ -145,6 +146,7 @@ export type CapabilityRegistryContext = {
   principal: McpPrincipal
   organizationId: DenTypeId<"organization">
   member: McpMemberIdentity | null
+  cloudCodingCaller?: CloudCodingTaskOrigin | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   managedDeploymentsEnabled: boolean
@@ -169,6 +171,7 @@ export type CapabilityRegistryContextInput = {
   principal: McpPrincipal
   organizationId: DenTypeId<"organization">
   member: McpMemberIdentity | null
+  cloudCodingCaller?: CloudCodingTaskOrigin | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "microsoft365ReadResources" | "personalAgents" | "artifactStorage" | "teamsMeetingTranscripts">>
@@ -219,6 +222,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     principal: input.principal,
     organizationId: input.organizationId,
     member: input.member,
+    cloudCodingCaller: input.cloudCodingCaller ?? null,
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,

@@ -51,6 +51,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/cloud-coding/approvals/:approvalId", "tenant_read", "cloud_coding.approval.read", "cloud_coding.management", "cloud_coding_approval", "approvalId"),
   member("POST", "/v1/cloud-coding/approvals/:approvalId/decision", "tenant_change", "cloud_coding.approval.decide", "cloud_coding.management", "cloud_coding_approval", "approvalId", { changeEvidence: cloudPushEvidence }),
   handler("POST", "/v1/cloud-coding/gateway/setup", "tenant_access", "cloud_coding.gateway.setup", "cloud_coding.gateway", "cloud_coding_task", null, cloudTaskProof),
+  handler("POST", "/v1/cloud-coding/gateway/release", "tenant_access", "cloud_coding.gateway.release", "cloud_coding.gateway", "cloud_coding_task", null, cloudTaskProof),
   handler("GET", "/v1/cloud-coding/gateway/task", "tenant_read", "cloud_coding.gateway.task", "cloud_coding.gateway", "cloud_coding_task", null, cloudTaskProof),
   handler("POST", "/v1/cloud-coding/gateway/read-token", "tenant_access", "cloud_coding.gateway.read_token", "cloud_coding.gateway", "cloud_coding_task", null, cloudTaskProof),
   handler("POST", "/v1/cloud-coding/gateway/push-approvals", "tenant_change", "cloud_coding.gateway.request_push", "cloud_coding.gateway", "cloud_coding_approval", null, cloudTaskProof, { changeEvidence: cloudPushEvidence }),

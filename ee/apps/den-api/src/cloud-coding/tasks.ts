@@ -93,6 +93,8 @@ export async function renewCloudCodingSetupCode(input: TaskScope & { taskId: str
       runTokenId: input.origin.runTokenId,
       runnerMessageId: input.origin.runnerMessageId,
       workerId: input.origin.workerId,
+      tokenHash: null,
+      tokenExpiresAt: null,
     }).where(eq(CloudCodingTaskTable.id, task.id))
     return code.setupCode
   })
@@ -116,9 +118,10 @@ export async function redeemCloudCodingSetupCode(input: { code: string; now?: nu
   })
 }
 
-export async function releaseCloudCodingTaskCredential(taskId: DenTypeId<"cloudCodingTask">, database: Pick<typeof db, "update"> = db): Promise<void> {
-  await database.update(CloudCodingTaskTable).set({ tokenHash: null, tokenExpiresAt: null, setupCodeHash: null, setupCodeExpiresAt: null })
-    .where(eq(CloudCodingTaskTable.id, taskId))
+export async function releaseCloudCodingTaskCredential(task: Pick<CloudCodingTaskRow, "id" | "tokenHash">): Promise<void> {
+  if (!task.tokenHash) return
+  await db.update(CloudCodingTaskTable).set({ tokenHash: null, tokenExpiresAt: null, setupCodeHash: null, setupCodeExpiresAt: null })
+    .where(and(eq(CloudCodingTaskTable.id, task.id), eq(CloudCodingTaskTable.tokenHash, task.tokenHash)))
 }
 
 export async function findCloudCodingTaskByToken(input: { token: string; now?: number }): Promise<CloudCodingTaskRow | null> {
@@ -129,13 +132,6 @@ export async function findCloudCodingTaskByToken(input: { token: string; now?: n
     inArray(CloudCodingTaskTable.status, [...OPEN_TASK_STATUSES]),
   )).limit(1)
   return task ?? null
-}
-
-export async function updateCloudCodingTask(
-  taskId: DenTypeId<"cloudCodingTask">,
-  changes: Partial<Pick<CloudCodingTaskRow, "status" | "remoteSessionId" | "workerId" | "failureCode">>,
-): Promise<void> {
-  await db.update(CloudCodingTaskTable).set(changes).where(eq(CloudCodingTaskTable.id, taskId))
 }
 
 export async function closeCloudCodingTasksForMember(
