@@ -52,14 +52,14 @@ test("a remote question uses the workspace question panel and submits to the rem
   const sent: RemoteSessionAnswerInput[] = []
   await render(<RemoteThreadAnswerCard pending={question} computer="Studio Mac" onAnswer={async (answer) => { sent.push(answer); return null }} />, async (container) => {
     expect(container.textContent).toContain("Question from Studio Mac")
-    expect(container.querySelector("[data-question-variant=thread]")?.textContent).toContain("Which branch should I release from?")
+    expect(container.querySelector("[data-question-text]")?.textContent).toContain("Which branch should I release from?")
+    expect(container.querySelector("[data-question-collapse-toggle]")).not.toBeNull()
     expect(container.querySelector("a")).toBeNull()
-    expect(button(container, "Submit").disabled).toBe(true)
     const main = button(container, "main")
     await act(async () => { main.click() })
-    expect(main.getAttribute("aria-checked")).toBe("true")
+    expect(main.getAttribute("aria-pressed")).toBe("true")
     expect(sent).toEqual([])
-    await act(async () => { button(container, "Submit").click() })
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)) })
     expect(sent).toEqual([{ kind: "question", requestId: "que_1", answers: [["main"]] }])
     expect(container.querySelector("[data-remote-answer]")).toBeNull()
   })
