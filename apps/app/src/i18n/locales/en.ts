@@ -2673,7 +2673,6 @@ export default {
   "agents.permissions_admin_ask": "Your admin requires this to ask first.",
   "agents.permissions_admin_allow": "Allowed by your admin.",
   "agents.permissions_shared_account": "Runs use {name}'s account for everyone",
-  "agents.permissions_own_accounts": "Each person's own account",
   "agents.permissions_share_login": "Let teammates act through my account",
   "agents.permissions_share_login_title": "Share your {connection} account with this agent?",
   "agents.permissions_share_login_body": "Everyone who runs {agent} will act as you in {connection}, including changes.",
