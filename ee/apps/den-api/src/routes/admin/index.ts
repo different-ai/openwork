@@ -62,6 +62,7 @@ import { registerAdminServiceReadinessRoutes } from "./services.js"
 import { registerAdminComputerFleetRoutes } from "./computer-fleet.js"
 import { registerAdminRunnerFleetRoutes } from "./runner-fleet.js"
 import { registerAdminOrganizationDetailRoutes } from "./organization-detail.js"
+import { registerAdminOrganizationTimelineRoutes } from "./organization-timeline.js"
 import { registerAdminSandboxOrganizationRoutes } from "./sandbox-organizations.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
@@ -1406,6 +1407,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   registerAdminFeatureUsageRoutes(app)
   registerAdminMcpRegistrationRoutes(app)
   registerAdminOrganizationDetailRoutes(app)
+  registerAdminOrganizationTimelineRoutes(app)
   registerAdminDashboardRoute(app)
   registerAdminControlCenterRoutes(app)
   registerAdminOpportunitiesRoute(app)
