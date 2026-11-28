@@ -51,6 +51,8 @@ One URL brings the user's organization skills, plugins, and connections into any
 - [How do you reduce LLM costs at your organization?](https://openworklabs.com/guides/reduce-llm-costs) — skills, cheaper subagents, model routing, and spend limits, with results from a 41-run benchmark
 - [How much does Claude Cowork cost?](https://openworklabs.com/guides/claude-cowork-pricing) — included in Claude's paid plans, not on Free; plan prices, usage limits, and team seat costs
 - [How do you run a self-hosted AI agent?](https://openworklabs.com/guides/self-hosted-ai-agent) — the desktop app, local or private models, and a Helm chart for AWS, Azure, and Google Cloud
+- [What is an open-source alternative to Claude Artifacts?](https://openworklabs.com/guides/claude-artifacts-alternative) — OpenWork artifacts: dashboards, trackers, forms, and calculators built in chat on any model, each one an MCP App
+- [What is a persistent AI agent?](https://openworklabs.com/guides/persistent-ai-agents) — Automations run prompts on a schedule on desktop or in the cloud; Agents with a brief, routines, and memory are in private alpha
 - Every guide is also served as Markdown with `Accept: text/markdown`.
 
 ### AI governance and shadow AI
