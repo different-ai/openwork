@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, lte, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, gt, inArray, isNull, lt, lte, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import { AutomationRunnerTable, ComputerAccessTable, ComputerCommandTable, ComputerGrantTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { computerActionForToolCall, decide, projectComputer } from "@openwork/computers"
@@ -158,13 +158,26 @@ export function pickupDeadline(command: ComputerCommand) {
   return Math.min(command.createdAt.getTime() + COMPUTER_COMMAND_PICKUP_MS, command.expiresAt.getTime())
 }
 
+export const COMPUTER_LISTENING_WINDOW_MS = 45_000
+const COMPUTER_LISTENING_TOUCH_MS = 20_000
+
+async function touchListeningComputer(organizationId: DenTypeId<"organization">, deviceId: DenTypeId<"remoteDevice">, now: number) {
+  const d = RemoteDeviceTable
+  await db.$primary.update(d).set({ lastSeenAt: new Date(now) }).where(and(
+    eq(d.organizationId, organizationId), eq(d.id, deviceId), isNull(d.removedAt),
+    or(isNull(d.lastSeenAt), lt(d.lastSeenAt, new Date(now - COMPUTER_LISTENING_TOUCH_MS))),
+  ))
+}
+
 export async function pendingComputerCommands(organizationId: DenTypeId<"organization">, deviceId: DenTypeId<"remoteDevice">, waitMs: number, signal: AbortSignal) {
   const c = ComputerCommandTable
   const target = and(eq(c.organizationId, organizationId), eq(c.targetDeviceId, deviceId))
-  const deadline = Date.now() + waitMs
+  const now = Date.now()
+  const deadline = now + waitMs
   const waiter = createSignalWaiter((wake) => onComputerCommandAvailable(deviceId, wake))
   try {
-    await pruneComputerCommands(target)
+    await touchListeningComputer(organizationId, deviceId, now)
+    await pruneComputerCommands(target, now)
     for (;;) {
       const now = Date.now()
       const rows = await db.$primary.select({ id: c.id, expiresAt: c.expiresAt }).from(c).where(and(

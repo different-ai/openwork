@@ -1,16 +1,13 @@
-import { computerActionForToolCall, createComputers, notPickedUpMessage, refusal } from "@openwork/computers"
+import { computerActionForToolCall, createComputers, notPickedUpMessage, offlineMessage, refusal } from "@openwork/computers"
 import { COMPUTER_REFUSAL_CODES, type Computer, type ComputerExecution, type ComputerRefusal, type ComputerSourceListResponse, type ComputerToolCall } from "@openwork/types/den/computers"
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { RemoteDeviceTable } from "@openwork-ee/den-db/schema"
 import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
-import { db } from "../db.js"
 import { withPrimaryReads } from "../read-routing.js"
 import { listMemberRemoteDeviceRows, readMemberRemoteDeviceRow, type RemoteDeviceActor } from "../remote-devices.js"
 import { createSignalWaiter, onComputerCommandUpdated } from "../remote-sessions/work-signal.js"
 import { listedComputer, projectMemberComputer } from "./member.js"
 import { incomingComputerWorkRefusal, loadComputerPolicy } from "./policy.js"
-import { enqueueComputerCommand, pickupDeadline, pruneCallerComputerCommands, readComputerCommand, type ComputerCommand } from "./store.js"
+import { COMPUTER_LISTENING_WINDOW_MS, enqueueComputerCommand, pickupDeadline, pruneCallerComputerCommands, readComputerCommand, type ComputerCommand } from "./store.js"
 
 const refusalCodeSchema = z.enum(COMPUTER_REFUSAL_CODES)
 
@@ -30,22 +27,11 @@ function refusedExecution({ layer, code, message, changeableBy }: ComputerRefusa
   return { state: "refused", layer, code, message, changeableBy }
 }
 
-async function isPrivateDesktop(caller: ComputerCaller, id: DenTypeId<"remoteDevice">) {
-  const d = RemoteDeviceTable
-  const [desktop] = await db.$primary.select({ id: d.id }).from(d).where(and(
-    eq(d.id, id), eq(d.organizationId, caller.organizationId), eq(d.kind, "desktop"), eq(d.provider, "openwork_desktop"), isNull(d.removedAt),
-  )).limit(1)
-  return desktop !== undefined
-}
-
 export async function runComputerTool(caller: ComputerCaller, computerId: string, call: ComputerToolCall, waitMs: number, signal?: AbortSignal): Promise<ComputerExecution | { error: string; message: string; retryable: false }> {
   const { source } = caller
   const desktop = source?.computer.kind === "member_machine"
   const target = isDenTypeId("remoteDevice", computerId) ? await withPrimaryReads(() => readMemberRemoteDeviceRow(caller, computerId)) : null
   if (!target) {
-    if (desktop && isDenTypeId("remoteDevice", computerId) && await isPrivateDesktop(caller, computerId)) {
-      return refusedExecution(refusal("not_owner", { label: "That computer" }))
-    }
     return { error: "unknown_computer", message: "That computer isn't available to your account.", retryable: false }
   }
   const computer = projectMemberComputer(target)
@@ -65,6 +51,12 @@ export async function runComputerTool(caller: ComputerCaller, computerId: string
     lastSeenAt: () => target.device.lastSeenAt,
     now: Date.now,
     async run({ scope }) {
+      const now = Date.now()
+      const seen = target.row.lastSeenAt
+      if (computer.kind === "member_machine" && (!seen || now - seen.getTime() > COMPUTER_LISTENING_WINDOW_MS)) {
+        const lastSeenAt = seen?.toISOString() ?? null
+        return { state: "offline", retryable: true, lastSeenAt, message: offlineMessage(computer.label, lastSeenAt, now) }
+      }
       const command = await enqueueComputerCommand({
         organizationId: caller.organizationId, createdByUserId: caller.userId,
         sourceDeviceId: source.id, targetDeviceId: target.row.id, call, scope,

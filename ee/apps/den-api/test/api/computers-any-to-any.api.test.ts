@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { AutomationRunnerTable, ComputerCommandTable, MemberTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
+import { AutomationRunnerTable, ComputerCommandTable, MemberTable, RemoteDeviceEventTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
 import { workbotSessionId } from "@openwork-ee/headless-protocol/workbot-routing"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { computerActionForToolCall } from "@openwork/computers"
@@ -142,11 +142,17 @@ test("Verified desktops list exact reach; a waiting target picks up read, shell 
   assert.doesNotMatch(await den.auditStorageText(), /private fixture content|fixture result|printf/)
 })
 
-test("Refusals distinguish owner, organization, choice, exact grant, folders and capability", async () => {
+test("A private target is indistinguishable from an unknown computer", async () => {
+  const before = await commandRows()
+  assert.deepEqual(await execute(other), await execute(other, createDenTypeId("remoteDevice")))
+  assert.deepEqual(await execute(other), { state: "unsupported", message: "That computer isn't available to your account." })
+  assert.deepEqual(await commandRows(), before)
+})
+
+test("Refusals distinguish organization, choice, exact grant, folders and capability", async () => {
   const before = await commandRows()
   await report("off", [])
   await rule(false)
-  await refuse("not_owner", other)
   await refuse("organization_off")
   assert.equal((await accessView()).organizationAllows, false)
   await rule(true)
@@ -183,6 +189,34 @@ test("Owner and admin revocations refuse both new and pending work until the own
   }
 })
 
+test("A desktop with an old poll or report answers offline promptly, and polling revives it without repeated touches or activity", async () => {
+  const before = await commandRows()
+  const lastPoll = new Date(Date.now() - 50_000)
+  const byId = eq(RemoteDeviceTable.id, studio.id)
+  const readSeen = async () => (await db.$primary.select({ lastSeenAt: RemoteDeviceTable.lastSeenAt }).from(RemoteDeviceTable).where(byId))[0]?.lastSeenAt
+  const events = () => db.$primary.select({ id: RemoteDeviceEventTable.id }).from(RemoteDeviceEventTable).where(eq(RemoteDeviceEventTable.deviceId, studio.id))
+  const activityBefore = await events()
+  await db.update(RemoteDeviceTable).set({ lastSeenAt: lastPoll }).where(byId)
+  await db.update(AutomationRunnerTable).set({ last_seen_at: new Date() }).where(eq(AutomationRunnerTable.id, studio.rowId))
+  const start = performance.now()
+  const stale = await execute(travel, studio.id, read, 15_000)
+  assert.ok(performance.now() - start < 750, "a stale target must not wait for pickup")
+  assert.equal(stale.state, "offline")
+  assert.equal(stale.lastSeenAt, lastPoll.toISOString())
+  assert.match(stale.message, /Studio Mac is offline, last seen .* Nothing ran there\./)
+  assert.deepEqual(await commandRows(), before)
+  ok(await studio.call("GET", `${pending}?waitMs=10`))
+  const refreshed = await readSeen()
+  assert.ok(refreshed && refreshed.getTime() > lastPoll.getTime())
+  await delay(15)
+  ok(await studio.call("GET", pending))
+  assert.deepEqual(await readSeen(), refreshed)
+  assert.deepEqual(await events(), activityBefore)
+  const id = await queued()
+  await claim(id)
+  await complete(id)
+})
+
 test("Offline and same-computer requests queue nothing; two-way commands are independent", async () => {
   const before = await commandRows()
   const setContact = async (time: Date) => {
@@ -199,6 +233,7 @@ test("Offline and same-computer requests queue nothing; two-way commands are ind
   assert.deepEqual(await execute(studio), { state: "unsupported", message: "Use this chat's own tools to work on this computer." })
   assert.deepEqual(await commandRows(), before)
   ok(await travel.call("PUT", access, { choice: "allow", grants: [{ ...travelGrant, source: { kind: "computer", id: studio.id } }] }))
+  ok(await travel.call("GET", pending))
   const [left, right] = await Promise.all([queued(), execute(studio, travel.id)])
   assert.equal(right.state, "running")
   const [onStudio, onTravel] = await Promise.all([claim(left), claim(right.id, travel)])

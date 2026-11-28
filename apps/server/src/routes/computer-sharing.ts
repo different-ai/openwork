@@ -12,6 +12,7 @@ async function body(request: Request): Promise<unknown> {
 const privateJson = (value: unknown) => Response.json(value, { headers: { "Cache-Control": "no-store" } });
 export function registerComputerSharingRoutes(routes: Route[], config: ServerConfig, sharing = computerSharing(config)) {
   addRoute(routes, "GET", "/computers/sharing", "host", async () => privateJson(await sharing.state()));
+  addRoute(routes, "GET", "/computers/sharing/availability", "host", async () => privateJson({ availability: await sharing.availability() }));
   addRoute(routes, "PUT", "/computers/sharing", "host", async ({ request }) => {
     try { return privateJson(await sharing.updateSettings(await body(request))); }
     catch (error) {

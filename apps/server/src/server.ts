@@ -1138,7 +1138,7 @@ export async function startServer(
           route.auth === "host-token"
             ? requireHostToken(request, config)
             : route.auth === "host"
-              ? await requireHost(request, config, tokens, url.pathname === "/computers/sharing" || url.pathname === "/computers/runner")
+              ? await requireHost(request, config, tokens)
               : route.auth === "client" || (route.auth === "policy" && !managedDesktopPolicy(config).authenticatesEvaluation(request))
                 ? await requireClient(request, config, tokens)
                 : undefined;
@@ -2417,7 +2417,7 @@ function requireHostToken(request: Request, config: ServerConfig): Actor {
   throw new ApiError(401, "unauthorized", "Invalid host token");
 }
 
-async function requireHost(request: Request, config: ServerConfig, tokens: TokenService, forbidNonOwner = false): Promise<Actor> {
+async function requireHost(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
   const hostToken = request.headers.get("x-openwork-host-token");
   if (hostToken && hostToken === config.hostToken) {
     return { type: "host", tokenHash: hashToken(hostToken), scope: "owner" };
@@ -2431,7 +2431,6 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
   }
   const scope = await tokens.scopeForToken(bearer);
   if (scope !== "owner") {
-    if (scope && forbidNonOwner) throw new ApiError(403, "forbidden", "Only the owner of this computer can change its sharing settings.");
     throw new ApiError(401, "unauthorized", "Invalid host token");
   }
   const clientId = request.headers.get("x-openwork-client-id") ?? undefined;

@@ -22,8 +22,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { t } from "@/i18n";
-import { ChevronRight, Cloud, Laptop, Lock, MoreHorizontal } from "lucide-react";
+import { ChevronRight, Cloud, Info, Laptop, Lock, MoreHorizontal } from "lucide-react";
 import { useCloudWorkspaceStatus } from "@/react-app/shell/cloud-workspace-overlay";
 import { useAutomationsDenContext, type AutomationsDenContext } from "../../automations/use-automations";
 import { useThisComputerDisconnected } from "../../devices/computer-connection-store";
@@ -188,10 +189,12 @@ function DeviceDialog({ action, context, computersEnabled, onClose }: { action: 
       {editAccess && access ? <div className="grid gap-4 border-t border-border pt-4">
         <div className="grid gap-2">
           <div className="flex items-center justify-between gap-3">
-            <Label id="device-run-work-label" htmlFor="device-run-work">{t("settings.devices.run_work")}</Label>
-            <Switch id="device-run-work" aria-labelledby="device-run-work-label" aria-describedby={locked ? "device-access-risk device-access-locked" : "device-access-risk"} checked={!locked && choice === "allow"} disabled={busy || locked} onCheckedChange={checked => { setChoiceDraft(checked ? "allow" : "off"); setAccessError(""); }} />
+            <div className="flex items-center gap-1">
+              <Label id="device-run-work-label" htmlFor="device-run-work">{t("settings.devices.run_work")}</Label>
+              <Tooltip><TooltipTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label={t("settings.devices.access_details")} />}><Info aria-hidden className="size-4 text-muted-foreground" strokeWidth={1.5} /></TooltipTrigger><TooltipContent className="max-w-xs">{t("settings.devices.access_risk")}</TooltipContent></Tooltip>
+            </div>
+            <Switch id="device-run-work" aria-labelledby="device-run-work-label" aria-describedby={locked ? "device-access-locked" : undefined} checked={!locked && choice === "allow"} disabled={busy || locked} onCheckedChange={checked => { setChoiceDraft(checked ? "allow" : "off"); setAccessError(""); }} />
           </div>
-          <p id="device-access-risk" className="text-sm text-muted-foreground">{t("settings.devices.access_risk")}</p>
           {locked ? <p id="device-access-locked" className="flex items-start gap-2 text-sm text-muted-foreground"><Lock aria-hidden className="size-4 shrink-0" strokeWidth={1.5} />{t("settings.devices.access_locked")}</p> : null}
         </div>
         <div className="grid gap-2"><Label htmlFor="device-folder">{t("settings.devices.folder")}</Label><Input id="device-folder" value={folder} onChange={event => setFolderDraft(event.target.value)} maxLength={1024} disabled={busy || locked || choice !== "allow"} autoComplete="off" /></div>

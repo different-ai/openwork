@@ -5,6 +5,8 @@ export const computerProviderProblem = (label: string, provider: string) => `${l
 export const computerBindingChanged = "This chat's computer changed while waiting for approval. Nothing ran.";
 export const computerApprovalUnavailable = "Nothing ran on the other computer. Update OpenWork to use chat approvals there.";
 
+export const computerSendOutcomeUnknown = (label: string) => `OpenWork lost contact while sending work to ${label}. It may still run there. Check that computer before running it again.`;
+
 export function computerOutcomeUnknown(label: string, stopped: boolean) {
   const outcome = stopped
     ? `OpenWork stopped waiting for ${label}, but the operation may have partly run or already finished.`

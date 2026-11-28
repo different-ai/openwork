@@ -8,7 +8,9 @@ import { readComputerSharingSettings, validateComputerSharingSettings } from "..
 import { getRunnerCredential } from "../src/computers/runner-credential.js";
 import { registerComputerSharingRoutes } from "../src/routes/computer-sharing.js";
 import type { Route } from "../src/routes/registry.js";
-import { SandboxPreparationError } from "../src/sandbox-preparation.js";
+import { managedDesktopPolicy } from "../src/managed-desktop-policy.js";
+import * as sandboxPreparation from "../src/sandbox-preparation.js";
+import { serve } from "../src/serve-node.js";
 import { startServer } from "../src/server.js";
 import { TokenService } from "../src/tokens.js";
 import { computersFixture } from "./fixtures/computers.js";
@@ -86,7 +88,7 @@ test("reports exact grants and exposes policy, Den access, capability-required, 
 test.each(["unsupported_platform", "virtualization_unavailable"])("exposes %s before advertising sandbox capability", async code => {
   const root = await mkdtemp(join(tmpdir(), "computer-sharing-platform-"));
   const service = createComputerSharing(computersFixture(root), { platform: async () => {
-    if (code === "unsupported_platform" || code === "virtualization_unavailable") throw new SandboxPreparationError({ code, message: "Fixture", action: null, retryable: false });
+    if (code === "unsupported_platform" || code === "virtualization_unavailable") throw new sandboxPreparation.SandboxPreparationError({ code, message: "Fixture", action: null, retryable: false });
   } });
   try { expect((await service.state()).availability).toMatchObject({ state: "unavailable", reason: code }); }
   finally { await service.close(); await rm(root, { recursive: true, force: true }); }
@@ -98,9 +100,21 @@ test("sharing and runner routes require owner or host auth; runner credential ne
   const tokens = new TokenService(config);
   const collaborator = await tokens.create("collaborator");
   const ownerToken = await tokens.create("owner");
+  const platform = vi.spyOn(sandboxPreparation, "checkSandboxPlatform").mockResolvedValue(undefined);
   const registered: Route[] = [];
   registerComputerSharingRoutes(registered, config);
-  expect(registered.map(route => route.auth)).toEqual(["host", "host", "host", "host"]);
+  expect(registered.map(route => route.auth)).toEqual(["host", "host", "host", "host", "host"]);
+  const denRequests: string[] = [];
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const { pathname } = new URL(request.url);
+    denRequests.push(`${request.method} ${pathname}`);
+    if (pathname === "/api/den/v1/me/desktop-config") return Response.json({ agentPermissions: { rules: [] } });
+    if (pathname === "/api/den/v1/computer-runners/access") return request.method === "PUT"
+      ? Response.json({ ok: true }) : Response.json({ organizationAllows: true, choice: "off", grants: [] });
+    return new Response(null, { status: 404 });
+  } });
+  const denBaseUrl = `http://127.0.0.1:${den.port}/api/den`;
+  const policy = managedDesktopPolicy(config, { sandboxFreshnessMs: 0 });
   const server = await startServer(config, { deferManagedEngineStartup: true });
   const request = (method: string, path: string, headers: Record<string, string>, value?: unknown) => fetch(`http://127.0.0.1:${server.port}/computers/${path}`, {
     method, headers: { ...headers, "content-type": "application/json" }, ...(value ? { body: JSON.stringify(value) } : {}),
@@ -108,19 +122,34 @@ test("sharing and runner routes require owner or host auth; runner credential ne
   const owner = { Authorization: `Bearer ${ownerToken.token}` };
   const host = { "x-openwork-host-token": config.hostToken };
   try {
-    for (const [method, path] of [["GET", "sharing"], ["PUT", "sharing"], ["PUT", "runner"], ["DELETE", "runner"]]) {
-      expect((await request(method, path, { Authorization: `Bearer ${collaborator.token}` })).status).toBe(403);
-    }
+    const runner = { ...credential, baseUrl: denBaseUrl };
+    const denied = { Authorization: `Bearer ${collaborator.token}` };
+    expect((await request("GET", "sharing", denied)).status).toBe(401);
+    expect((await request("GET", "sharing/availability", denied)).status).toBe(401);
+    expect((await request("PUT", "sharing", denied, body())).status).toBe(401);
+    expect((await request("PUT", "runner", denied, runner)).status).toBe(401);
+    expect(getRunnerCredential(config)).toBeNull();
     const response = await request("GET", "sharing", owner);
     expect(response.status).toBe(200);
     expect(computerSharingStateSchema.parse(await response.json()).settings).toEqual(DEFAULT_COMPUTER_SHARING_SETTINGS);
     expect((await request("PUT", "sharing", owner, DEFAULT_COMPUTER_SHARING_SETTINGS)).status).toBe(200);
-    const put = await request("PUT", "runner", host, credential);
+    await policy.setSession({ baseUrl: denBaseUrl, token: "fixture-member", orgId: "fixture-org" });
+    await policy.current();
+    const put = await request("PUT", "runner", host, { ...runner, baseUrl: `${denBaseUrl}/` });
     expect(put.status).toBe(200);
     expect(await put.json()).toEqual({ ok: true });
-    expect(getRunnerCredential(config)).toEqual(credential);
-    expect((await request("GET", "sharing", owner)).status).toBe(200);
+    expect((await request("DELETE", "runner", denied)).status).toBe(401);
+    expect(getRunnerCredential(config)).toEqual(runner);
+    await vi.waitFor(async () => {
+      const sharing = await request("GET", "sharing", owner);
+      expect(computerSharingStateSchema.parse(await sharing.json())).toMatchObject({ sync: "synced", organizationAllows: true });
+    });
+    const before = [...denRequests];
+    const availability = await request("GET", "sharing/availability", owner);
+    expect(availability.status).toBe(200);
+    expect(await availability.json()).toEqual({ availability: { state: "available" } });
+    expect(denRequests).toEqual(before);
     expect((await request("DELETE", "runner", host)).status).toBe(200);
     expect(getRunnerCredential(config)).toBeNull();
-  } finally { await server.stop(); await rm(root, { recursive: true, force: true }); }
+  } finally { await server.stop(); await den.stop(); platform.mockRestore(); await rm(root, { recursive: true, force: true }); }
 });

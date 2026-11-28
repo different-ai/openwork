@@ -102,6 +102,7 @@ const adaRun = await workbot(ada, adaToken)
 const samRun = await workbot(sam, samToken)
 await desktop.report(grant)
 const computerId = await desktop.id()
+assert.equal((await desktop.call("GET", listPath)).status, 200)
 const run = (cwd = "/workspace/logs") => shell(adaRun, { computerId, command: "fixture command", cwd, waitMs: 0 })
 async function ceiling(access: "off" | "created") {
   const updated = await den.as(ada, orgId)("PATCH", "/v1/org/remote-session-settings", { access })

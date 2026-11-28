@@ -22,11 +22,11 @@ import { useDesktopAutomationsEnabled } from "./automation-availability"
 import { automationRunnerCapabilitySets } from "./automation-runner-capabilities"
 import { createAutomationRunnerConnectCoordinator } from "./automation-runner-connect-coordinator"
 import { desktopRunnerId, organizationRunnerId } from "./automation-runner-identity"
+import { createComputerRunnerAvailabilityPoller } from "./computer-runner-availability"
 import { createComputerRunnerDelivery } from "./computer-runner-delivery"
 
 const RUNNER_TOKEN_REFRESH_MS = 30 * 60_000
 const RUNNER_DISCONNECTED_RETRY_MS = 5 * 60_000
-const LOCAL_COMPUTER_CHECK_MS = 5_000
 
 export function AutomationRunnerBridge({ computersEnabled }: { computersEnabled: boolean }) {
   if (useEnterpriseActivationRequired()) return null
@@ -42,9 +42,6 @@ function ActivatedAutomationRunnerBridge({ computersEnabled }: { computersEnable
     if (!isDesktopRuntime() || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return
 
     let availability: ComputerSharingState["availability"] | undefined
-    let localServerIdentity: string | undefined
-    let disposed = false
-    let checkingLocal = false
     let currentSignIn = denSignInKey(readDenSettings())
     const clearCredential = () => { if (computersEnabled) void delivery.setCredential(null) }
     const disconnect = () => {
@@ -131,38 +128,32 @@ function ActivatedAutomationRunnerBridge({ computersEnabled }: { computersEnable
             void refresh()
             return
           }
-          if (computersEnabled) console.warn("[automation-runner] registration failed")
-          else console.warn("[automation-runner] registration failed", error)
+          console.warn("[automation-runner] registration failed", error instanceof DenApiError
+            ? { name: error.name, status: error.status, code: error.code }
+            : { name: error instanceof Error ? error.name : "UnknownError" })
           throw error
         }
       },
     })
 
     const requestConnect = () => void coordinator.request().catch(() => undefined)
-    const checkLocalServer = async () => {
-      if (!computersEnabled || status !== "signed_in" || checkingLocal || thisComputerStillDisconnected()) return
-      checkingLocal = true
-      try {
-        const server = await readLocalComputerServer().catch(() => null)
-        if (disposed || thisComputerStillDisconnected()) return
-        await delivery.setServer(server)
-        if (disposed || thisComputerStillDisconnected()) return
-        const sharing = await server?.client.getComputerSharing().catch(() => undefined)
-        if (disposed || thisComputerStillDisconnected()) return
-        const nextAvailability = sharing?.availability ?? (server?.identity === localServerIdentity ? availability : undefined)
-        const capabilityChanged = (availability?.state === "available") !== (nextAvailability?.state === "available")
-        localServerIdentity = server?.identity
-        availability = nextAvailability
-        if (capabilityChanged) requestConnect()
-      } finally {
-        checkingLocal = false
-      }
-    }
+    const poller = computersEnabled && status === "signed_in" ? createComputerRunnerAvailabilityPoller({
+      readServer: () => thisComputerStillDisconnected() ? Promise.resolve(null) : readLocalComputerServer(),
+      prepareServer: delivery.setServer,
+      onAvailability: next => {
+        const capabilityChanged = (availability?.state === "available") !== (next?.state === "available")
+        availability = next
+        if (capabilityChanged && !thisComputerStillDisconnected()) requestConnect()
+      },
+    }) : null
+    const checkLocalServer = () => { void poller?.refresh() }
     const handleSettingsChanged = () => {
       if (computersEnabled) {
         const nextSignIn = denSignInKey(readDenSettings())
         if (nextSignIn !== currentSignIn) {
           currentSignIn = nextSignIn
+          availability = undefined
+          poller?.reset()
           clearCredential()
         }
         void checkLocalServer()
@@ -175,8 +166,14 @@ function ActivatedAutomationRunnerBridge({ computersEnabled }: { computersEnable
       window.addEventListener(denSessionUpdatedEvent, handleSettingsChanged)
       window.addEventListener("openwork-server-settings-changed", checkLocalServer)
     }
-    const unsubscribeComputer = computersEnabled ? useComputerConnectionStore.subscribe(state => {
-      if (state.disconnectedSignIn !== null) clearCredential()
+    const unsubscribeComputer = computersEnabled ? useComputerConnectionStore.subscribe((state, previous) => {
+      if (state.disconnectedSignIn !== null) {
+        availability = undefined
+        poller?.reset()
+        clearCredential()
+      } else if (previous.disconnectedSignIn !== null) {
+        checkLocalServer()
+      }
     }) : undefined
     const unsubscribeCredentialRejected = window.__OPENWORK_ELECTRON__.automationRunner
       ?.onCredentialRejected?.((rejection) => {
@@ -193,10 +190,9 @@ function ActivatedAutomationRunnerBridge({ computersEnabled }: { computersEnable
       ?.onRunLifecycle?.(observeDesktopAutomationLifecycle)
     if (thisComputerStillDisconnected()) coordinator.computerDisconnected()
     else requestConnect()
-    const localTimer = computersEnabled && status === "signed_in" ? window.setInterval(checkLocalServer, LOCAL_COMPUTER_CHECK_MS) : undefined
-    if (localTimer !== undefined) void checkLocalServer()
+    checkLocalServer()
     return () => {
-      disposed = true
+      poller?.dispose()
       coordinator.dispose()
       unsubscribeCredentialRejected?.()
       unsubscribeRunLifecycle?.()
@@ -207,7 +203,6 @@ function ActivatedAutomationRunnerBridge({ computersEnabled }: { computersEnable
         window.removeEventListener(denSessionUpdatedEvent, handleSettingsChanged)
         window.removeEventListener("openwork-server-settings-changed", checkLocalServer)
       }
-      if (localTimer !== undefined) window.clearInterval(localTimer)
       void disconnect()
     }
   }, [computersEnabled, delivery, deploymentEnabled, refresh, status])

@@ -1697,6 +1697,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     deleteDenSession: async () => {
       await requestJson<unknown>(baseUrl, "/den-session", { hostToken, method: "DELETE", timeoutMs: timeouts.config });
     },
+    getComputerSharingAvailability: async (signal?: AbortSignal) => computerSharingStateSchema.pick({ availability: true }).parse(await requestJson<unknown>(baseUrl, "/computers/sharing/availability", { hostToken, signal, redirect: "error", timeoutMs: timeouts.config })),
     getComputerSharing: async (signal?: AbortSignal) => computerSharingStateSchema.parse(await requestJson<unknown>(baseUrl, "/computers/sharing", { token, hostToken, signal, redirect: "error", timeoutMs: timeouts.config })),
     putComputerSharing: async (body: ComputerSharingSettings) => computerSharingStateSchema.parse(await requestJson<unknown>(baseUrl, "/computers/sharing", { token, hostToken, method: "PUT", body, redirect: "error", errorFieldIsMessage: true, timeoutMs: timeouts.config })),
     putComputerRunner: async (body: { baseUrl: string; token: string }) => {

@@ -56,11 +56,11 @@ export function registerComputerRunnerRoutes<T extends { Variables: Partial<Orga
 
   routes.get("/v1/computer-runners/commands", runnerRoute({
     summary: "List pending work for this computer",
-    description: "Lists up to 20 commands still available to pick up, oldest first. If asked to wait, returns as soon as work arrives.",
+    description: "Lists up to 20 commands still available to pick up, oldest first. If asked to wait, returns as soon as work arrives. Checking in lets Den know this computer is listening for work.",
     responses: { 200: jsonResponse("Pending commands.", computerCommandListResponseSchema), 400: jsonResponse("Invalid wait time.", invalidRequestSchema), 403: forbiddenResponse, 404: notFoundResponse },
   }), authorize, queryValidator(listQuery), async (c) => {
     const runner = c.get("computerRunner")
-    const device = await runnerComputer(runner)
+    const device = await runnerComputer(runner, true)
     const { waitMs } = c.req.valid("query")
     return c.json({ items: device ? await pendingComputerCommands(runner.organizationId, device.id, waitMs, c.req.raw.signal) : [] }, 200)
   })

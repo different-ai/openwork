@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { COMPUTER_SHELL_RUNNER_CAPABILITY } from "@openwork/types/automations"
 import { createOpenworkServerClient } from "../src/app/lib/openwork-server"
 import { automationRunnerCapabilitySets } from "../src/react-app/domains/automations/automation-runner-capabilities"
+import { createComputerRunnerAvailabilityPoller } from "../src/react-app/domains/automations/computer-runner-availability"
 import { createComputerRunnerDelivery } from "../src/react-app/domains/automations/computer-runner-delivery"
 
 for (const deploymentEnabled of [true, false]) {
@@ -20,6 +21,53 @@ for (const deploymentEnabled of [true, false]) {
 
 const realFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = realFetch })
+
+test("checks local availability only; a first answer slows polling until the server changes", async () => {
+  const available = { state: "available" }
+  let identity = "generation 1"
+  let answered = false
+  let requests = 0
+  let delay: number | undefined
+  const observations: unknown[] = []
+  globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init)
+    expect(new URL(request.url).pathname).toBe("/computers/sharing/availability")
+    expect(request.method).toBe("GET")
+    expect(request.headers.get("X-OpenWork-Host-Token")).toBe("fake-host")
+    expect(request.headers.has("Authorization")).toBe(false)
+    requests += 1
+    return answered ? Response.json({ availability: available }) : Response.json({}, { status: 503 })
+  }, { preconnect: realFetch.preconnect })
+  const poller = createComputerRunnerAvailabilityPoller({
+    readServer: async () => server(identity),
+    prepareServer: async () => undefined,
+    onAvailability: value => observations.push(value),
+    schedule: (_, nextDelay) => { delay = nextDelay; return () => { delay = undefined } },
+  })
+  await poller.refresh()
+  expect(delay).toBe(5_000)
+  answered = true
+  await poller.refresh()
+  expect(delay).toBe(30_000)
+  answered = false
+  await poller.refresh()
+  expect(delay).toBe(30_000)
+  identity = "generation 2"
+  await poller.refresh()
+  expect(delay).toBe(5_000)
+  answered = true
+  await poller.refresh()
+  expect(delay).toBe(30_000)
+  poller.reset()
+  answered = false
+  await poller.refresh()
+  expect(delay).toBe(5_000)
+  poller.dispose()
+  await poller.refresh()
+  expect(delay).toBeUndefined()
+  expect(requests).toBe(6)
+  expect(observations).toEqual([undefined, available, available, undefined, available, undefined])
+})
 
 const credential = { baseUrl: "https://den.example.test", token: "fake-runner-token" }
 const server = (identity: string, port = 4567) => ({

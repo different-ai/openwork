@@ -15,6 +15,7 @@ export function createComputerSharing(config: ServerConfig, {
   fetch = externalFetch, platform = checkSandboxPlatform,
   signedIn = () => managedDesktopPolicy(config).hasDenSession(),
   allowed = async () => (await managedDesktopPolicy(config).localSandboxAccess()).enabled,
+  cachedAllowed = () => managedDesktopPolicy(config).cachedLocalSandboxAllowed(),
 } = {}) {
   let credential: RunnerCredential | null = null;
   let authority = new AbortController();
@@ -25,7 +26,7 @@ export function createComputerSharing(config: ServerConfig, {
   let access: { expires: number; value: Promise<ComputerRunnerAccessResponse | null> } | undefined;
   let retry: AbortController | undefined;
   let reporting = Promise.resolve();
-  const available = async (): Promise<ComputerSharingState["availability"]> => {
+  const available = async (policy: () => boolean | Promise<boolean>): Promise<ComputerSharingState["availability"]> => {
     try { await platform(); }
     catch (error) {
       const { detail } = sandboxFailure(error);
@@ -34,11 +35,12 @@ export function createComputerSharing(config: ServerConfig, {
         : { state: "unavailable", reason: "unsupported_platform", message: "Running code from your other computers needs the OpenWork sandbox, which needs a Mac with Apple silicon or Linux with KVM." };
     }
     if (!signedIn() || !credential || closed) return { state: "unavailable", reason: "signed_out", message: "Connect this computer to your organization before it can take work." };
-    if (!await allowed().catch(() => false)) return { state: "unavailable", reason: "organization_policy", message: "Your organization needs to allow the OpenWork sandbox before this computer can take work." };
+    if (!await policy()) return { state: "unavailable", reason: "organization_policy", message: "Your organization needs to allow the OpenWork sandbox before this computer can take work." };
     if (offUntil > Date.now()) return { state: "unavailable", reason: "feature_off", message: "Running work on other computers is turned off for your organization." };
     return { state: "available" };
   };
-  const admission = async () => (await available()).state === "available";
+  const verifiedAvailability = () => available(() => allowed().catch(() => false));
+  const admission = async () => (await verifiedAvailability()).state === "available";
   const settings = () => readComputerSharingSettings(config);
   function featureOff(current: RunnerCredential) {
     if (current === credential) offUntil = Date.now() + RUNNER_FEATURE_RECHECK_MS;
@@ -121,7 +123,7 @@ export function createComputerSharing(config: ServerConfig, {
   async function state(): Promise<ComputerSharingState> {
     const [value, report] = await Promise.all([settings(), readAccess()]);
     return {
-      settings: value, availability: await available(), organizationAllows: report?.organizationAllows ?? null,
+      settings: value, availability: await verifiedAvailability(), organizationAllows: report?.organizationAllows ?? null,
       revokedSources: report?.grants.flatMap(({ source, revokedAt }) => revokedAt ? [{ source, revokedAt }] : []) ?? [], sync,
     };
   }
@@ -129,6 +131,7 @@ export function createComputerSharing(config: ServerConfig, {
   refreshIdentity();
   return {
     state, refreshIdentity,
+    availability: () => available(cachedAllowed),
     updateCredential(value: RunnerCredential | null) {
       if (credential?.baseUrl === value?.baseUrl && credential?.token === value?.token) return;
       setRunnerCredential(config, value);

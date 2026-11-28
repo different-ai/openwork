@@ -11,6 +11,21 @@ const computersOff = "Running work on other computers is turned off. Nothing ran
 export class ComputerQueueOff extends Error {
   constructor() { super(computersOff); }
 }
+export class ComputerDenRequestError extends Error {
+  constructor(readonly mayHaveQueued: boolean) { super(computersUnavailable); }
+}
+
+const connectErrors = new Set([
+  "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT",
+  "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_GET_CRL", "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
+  "INVALID_CA", "INVALID_PURPOSE", "CERT_REJECTED", "CERT_UNTRUSTED", "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+function failedToConnect(cause: unknown): boolean {
+  if (cause instanceof AggregateError) return cause.errors.length > 0 && cause.errors.every(failedToConnect);
+  if (!cause || typeof cause !== "object" || !("code" in cause) || typeof cause.code !== "string") return false;
+  return connectErrors.has(cause.code) || cause.code.startsWith("CERT_") || cause.code.startsWith("ERR_CERT_");
+}
 
 type Status = "off" | "enabled" | "unavailable";
 const ttl = { off: 300_000, enabled: 30_000 };
@@ -32,16 +47,21 @@ export function createComputersDen(getSession: () => CloudProviderDenSession | n
     if (!session) return { status: "off" };
     const key = keyOf(session);
     const timeout = AbortSignal.timeout(ms);
-    signal?.throwIfAborted();
-    if (keyOf(identity()) !== key) throw new Error(computersUnavailable);
-    const response = await fetch(`${session.baseUrl}${session.prefix}${path}`, {
-      method: body ? "POST" : "GET", redirect: "error",
-      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
-      headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "Content-Type": "application/json", ...(session.orgId ? { "x-openwork-org-id": session.orgId } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    const payload: unknown = await response.json();
-    if (keyOf(identity()) !== key) throw new Error(computersUnavailable);
+    const requestSignal = signal ? AbortSignal.any([timeout, signal]) : timeout;
+    if (requestSignal.aborted || keyOf(identity()) !== key) throw new ComputerDenRequestError(false);
+    let response: Response;
+    try {
+      response = await fetch(`${session.baseUrl}${session.prefix}${path}`, {
+        method: body ? "POST" : "GET", redirect: "error", signal: requestSignal,
+        headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "Content-Type": "application/json", ...(session.orgId ? { "x-openwork-org-id": session.orgId } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    } catch (error) {
+      throw new ComputerDenRequestError(!failedToConnect(error instanceof Error ? error.cause : undefined));
+    }
+    const mayHaveQueued = response.status < 400 || response.status >= 500;
+    const payload: unknown = await response.json().catch(() => { throw new ComputerDenRequestError(mayHaveQueued); });
+    if (keyOf(identity()) !== key) throw new ComputerDenRequestError(mayHaveQueued);
     if (response.ok) return { status: "ok", payload };
     const failure = failureSchema.safeParse(payload);
     const code = failure.success ? failure.data.code ?? (typeof failure.data.error === "string" ? failure.data.error : failure.data.error?.code) : undefined;
@@ -51,7 +71,7 @@ export function createComputersDen(getSession: () => CloudProviderDenSession | n
       return { status: "off" };
     }
     if (response.status === 404 && code === "computer_not_found") return { status: "missing" };
-    throw new Error(computersUnavailable);
+    throw new ComputerDenRequestError(mayHaveQueued);
   }
   const listComputers = async () => {
     try {
@@ -97,15 +117,17 @@ export function createComputersDen(getSession: () => CloudProviderDenSession | n
     sourceQueue() {
       const session = identity();
       if (!session || session.orgId !== null) return null;
-      const waitMs = COMPUTER_QUEUE_WAIT_MS;
-      const read = async (path: string, signal: AbortSignal, body?: object) => {
+      const read = async (path: string, waitMs: number, signal: AbortSignal, body?: object) => {
         const result = await request(session, path, waitMs + 5_000, body, signal);
         if (result.status === "off") throw new ComputerQueueOff();
-        return computerExecutionSchema.parse(result.payload);
+        if (result.status === "missing") throw new ComputerDenRequestError(false);
+        const parsed = computerExecutionSchema.safeParse(result.payload);
+        if (!parsed.success) throw new ComputerDenRequestError(true);
+        return parsed.data;
       };
       return {
-        enqueue: (computerId: string, call: ComputerToolCall, signal: AbortSignal) => read(`/computers/${encodeURIComponent(computerId)}/commands`, signal, { call, waitMs }),
-        follow: (id: string, signal: AbortSignal) => read(`/commands/${encodeURIComponent(id)}?waitMs=${waitMs}`, signal),
+        enqueue: (computerId: string, call: ComputerToolCall, signal: AbortSignal) => read(`/computers/${encodeURIComponent(computerId)}/commands`, 0, signal, { call, waitMs: 0 }),
+        follow: (id: string, signal: AbortSignal) => read(`/commands/${encodeURIComponent(id)}?waitMs=${COMPUTER_QUEUE_WAIT_MS}`, COMPUTER_QUEUE_WAIT_MS, signal),
       };
     },
   };

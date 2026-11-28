@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { remoteDeviceSchema } from "@openwork/types/den/remote-devices";
@@ -232,7 +232,10 @@ test("legacy access starts off; opting in and saving sends an explicit whole-com
   await until(() => document.querySelector("#device-folder") !== null);
   expect(control('[role="switch"]').getAttribute("aria-checked")).toBe("false");
   expect(textControl("#device-folder").value).toBe("/workspace");
-  expect(control("#device-access-risk").textContent).toContain("access files outside the working folder");
+  expect(control('[role="dialog"]').textContent).not.toContain("access files outside the working folder");
+  const detail = control('button[aria-label="Whole-computer access details"]');
+  await act(async () => detail.focus());
+  await until(() => Boolean(document.querySelector('[data-slot="tooltip-content"]')?.textContent?.includes("access files outside the working folder")));
   expect(accessButton().disabled).toBe(true);
   await act(async () => control('[role="switch"]').click());
   await enter("#device-folder", "/workspace/new");
@@ -266,7 +269,7 @@ test("an organization refusal locks access without blocking a rename", async () 
   const toggle = control('[role="switch"]');
   expect(toggle.getAttribute("aria-checked")).toBe("false");
   expect(toggle.hasAttribute("data-disabled")).toBe(true);
-  expect(toggle.getAttribute("aria-describedby")).toBe("device-access-risk device-access-locked");
+  expect(toggle.getAttribute("aria-describedby")).toBe("device-access-locked");
   const reason = control("#device-access-locked");
   expect(reason.textContent).toBe("Your organization has turned this off. An organization admin can change it.");
   expect(reason.classList.contains("text-muted-foreground")).toBe(true);
@@ -326,6 +329,27 @@ test("computers flag off never reads local sharing on a desktop", async () => {
   const requests = await renderDevices({ enabled: false, sharing: { state: sharingState() } });
   expect(container.textContent).not.toContain(sharingHeading);
   expect(requests.map(({ path }) => path)).toEqual(["/v1/remote-devices"]);
+});
+
+test("full sharing polling stops when Devices unmounts", async () => {
+  const intervals = spyOn(globalThis, "setInterval");
+  const clears = spyOn(globalThis, "clearInterval");
+  try {
+    await renderDevices({ enabled: true, sharing: { state: sharingState() } });
+    await until(() => document.querySelector(optIn) !== null);
+    const query = queryClient.getQueryCache().findAll({ queryKey: ["openwork-server", "computer-sharing"] })[0];
+    expect(query?.getObserversCount()).toBe(1);
+    const index = intervals.mock.calls.findLastIndex(([, delay]) => delay === 5_000);
+    expect(index).toBeGreaterThanOrEqual(0);
+    const timer = intervals.mock.results[index]?.value;
+    clears.mockClear();
+    await act(async () => root.render(null));
+    expect(query?.getObserversCount()).toBe(0);
+    expect(clears).toHaveBeenCalledWith(timer);
+  } finally {
+    intervals.mockRestore();
+    clears.mockRestore();
+  }
 });
 
 test("unavailable sharing shows the server's sentence instead of a switch", async () => {

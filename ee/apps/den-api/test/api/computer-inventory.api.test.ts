@@ -9,7 +9,7 @@ import { COMPUTER_INVENTORY_PAGE_SIZE, computerInventoryDetailResponseSchema, my
 import { COMPUTER_SHELL_RUNNER_CAPABILITY } from "@openwork/types/den/computers"
 import { organizationComputerListResponseSchema, remoteDeviceListResponseSchema, remoteDeviceResponseSchema } from "@openwork/types/den/remote-devices"
 import { deviceInventoryStatus, groupComputerSignIns, type InventorySignIn } from "../../src/computers/inventory.js"
-import { bootDen, field, summary, type Call } from "./harness.js"
+import { bootDen, field, summary, text, type Call } from "./harness.js"
 
 const den = await bootDen()
 after(() => den.close())
@@ -153,6 +153,61 @@ test("desktop permissions are a note, while a registered Daytona computer can ru
   assert.deepEqual(revoked.runCode.sources.map(({ revokedAt, revokedBy }) => [revokedAt, revokedBy]), [[revokedAt.toISOString(), owner.name]])
   await db.update(ComputerGrantTable).set({ revokedByMemberId: normalizeDenTypeId("member", off.owner.memberId) }).where(eq(ComputerGrantTable.targetDeviceId, cloud))
   assert.deepEqual((await detail(cloud)).runCode.sources.map(({ revokedBy }) => revokedBy), [null])
+})
+
+test("folded desktops count sharing on recent sign-ins and change grants on the sign-ins that hold them", async () => {
+  const machineKey = "b2".repeat(32)
+  const access = async (installId: string, label: string) => {
+    const id = await report(asMaya, installId, { label, machineKey })
+    const minted = await asMaya("POST", "/v1/session-runners/token", {
+      runnerId: installId, protocolVersion: 1, supportedExecutionTargets: ["desktop"],
+      capabilities: [COMPUTER_SHELL_RUNNER_CAPABILITY], appVersion: "1.5.0", platform: "darwin", concurrency: 1,
+    })
+    assert.equal(minted.status, 200, summary(minted))
+    const token = text(field(minted.body, "token"), "runner token")
+    const path = "/v1/computer-runners/access"
+    return { id, runnerId: automationRunnerRowId({ organizationId, ownerMemberId: mayaId, runnerId: installId }),
+      share: async (folders: string[]) => {
+        const result = await den.request(token, "PUT", path, { body: { choice: "allow", grants: [{ source: { kind: "workbot" }, folders }] } })
+        assert.equal(result.status, 200, summary(result))
+      },
+    }
+  }
+  const older = await access("packing-first-signin", "Packing Mac first sign-in")
+  const newer = await access("packing-newer-signin", "Packing Mac newer sign-in")
+  const arrangeContact = async (time: Date) => {
+    await db.update(AutomationRunnerTable).set({ last_seen_at: time }).where(eq(AutomationRunnerTable.id, older.runnerId))
+    await db.update(RemoteDeviceTable).set({ lastSeenAt: time }).where(eq(RemoteDeviceTable.id, older.id))
+  }
+  await arrangeContact(new Date(Date.now() - 60_000))
+  await older.share(["/packing"])
+  const row = async () => (await list()).computers.find(({ id }) => id === newer.id)
+  const sources = async () => (await detail(newer.id)).runCode.sources
+  assert.equal((await row())?.mergedSignIns, 1)
+  assert.deepEqual((await row())?.runCode, { value: "sandbox", folders: 1 })
+  assert.deepEqual((await tab()).computers.find(({ id }) => id === newer.id)?.runCode, { value: "sandbox", folders: 1 })
+  assert.deepEqual((await sources()).map(({ key, folders }) => ({ key, folders })), [{ key: "workbot", folders: ["/packing"] }])
+  const path = `/v1/computers/${newer.id}/sources/workbot`
+  assert.equal((await asTomas("DELETE", path)).status, 404)
+  assert.equal((await asMaya("DELETE", path)).status, 200)
+  assert.ok((await sources())[0]?.revokedAt)
+  assert.deepEqual((await row())?.runCode, { value: "no", reason: "not_chosen" })
+  assert.equal((await asMaya("POST", `${path}/restore`)).status, 200)
+  await newer.share(["/packing", "/notes"])
+  assert.deepEqual((await row())?.runCode, { value: "sandbox", folders: 2 })
+  const combined = await sources()
+  assert.equal(combined.length, 1)
+  assert.deepEqual(combined[0]?.folders, ["/packing", "/notes"])
+  assert.equal((await asOwner("DELETE", `/v1/org/computers/${newer.id}/sources/workbot`)).status, 200)
+  const stored = () => db.$primary.select().from(ComputerGrantTable).where(eq(ComputerGrantTable.organizationId, organizationId))
+    .then((grants) => grants.filter(({ targetDeviceId }) => targetDeviceId === older.id || targetDeviceId === newer.id))
+  assert.equal((await stored()).filter(({ revokedAt }) => revokedAt).length, 2)
+  assert.equal((await asMaya("POST", `${path}/restore`)).status, 200)
+  assert.equal((await stored()).filter(({ revokedAt }) => !revokedAt).length, 2)
+  await newer.share([])
+  await arrangeContact(new Date(Date.now() - 30 * 60_000))
+  assert.deepEqual((await row())?.runCode, { value: "no", reason: "nothing_shared" })
+  assert.deepEqual((await sources()).map(({ key, folders }) => ({ key, folders })), [{ key: "workbot", folders: ["/packing"] }])
 })
 
 test("a capable runner supplies effective contact and remote session access, and only active sandbox folders count", async () => {

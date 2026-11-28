@@ -1,17 +1,18 @@
-import { ComputerQueueOff, computersConnecting } from "../den.js";
-import { computerOutcomeUnknown, computerUnreachable } from "../messages.js";
+import { ComputerDenRequestError, ComputerQueueOff, computersConnecting } from "../den.js";
+import { computerOutcomeUnknown, computerSendOutcomeUnknown, computerUnreachable } from "../messages.js";
 import type { ComputerExecutor } from "./index.js";
 
 export const queueExecutor: ComputerExecutor = {
   async run({ id, label, call, signal }, { queue }) {
     if (!queue) throw new Error(computersConnecting);
+    if (signal.aborted) throw new Error(computerUnreachable(label));
     let outcome;
     try {
-      signal.throwIfAborted();
       outcome = await queue.enqueue(id, call, signal);
     } catch (error) {
       if (error instanceof ComputerQueueOff) throw error;
-      throw new Error(computerUnreachable(label));
+      if (error instanceof ComputerDenRequestError && !error.mayHaveQueued) throw new Error(computerUnreachable(label));
+      throw new Error(computerSendOutcomeUnknown(label));
     }
     if (outcome.state === "running") {
       const deadline = Date.parse(outcome.expiresAt) + 15_000;

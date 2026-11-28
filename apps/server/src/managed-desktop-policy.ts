@@ -461,6 +461,9 @@ class ManagedDesktopPolicy {
       enabled: this.sandboxVerification === "verified" && !this.sandboxRulesRestrictive,
     }, verification);
   }
+  cachedLocalSandboxAllowed(): boolean {
+    return this.sandboxOrgVerified && !this.sandboxRulesRestrictive;
+  }
   private freshSandboxAccess(revision: number): SandboxAccess | undefined {
     const fresh = this.sandboxFresh;
     return fresh && fresh.revision === revision && performance.now() < fresh.until

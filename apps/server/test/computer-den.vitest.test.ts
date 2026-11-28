@@ -6,7 +6,7 @@ import type { ComputerToolCall } from "@openwork/types/den/computers";
 
 test("uses the actual runner identity for listing, authorizing, enqueueing and following, without leaking it to member endpoints", async () => {
   const member = { baseUrl: "https://member.example.test", orgId: "fixture-org", token: "member-token" };
-  const device = { baseUrl: "https://runner.example.test", token: "runner-token" };
+  const device = { baseUrl: "https://runner.example.test/api/den", token: "runner-token" };
   let runner: RunnerCredential | null = null;
   const requests: { url: string; method?: string; authorization: string | null; org: string | null; body?: unknown }[] = [];
   const fetch = async (url: string, init?: RequestInit) => {
@@ -36,7 +36,7 @@ test("uses the actual runner identity for listing, authorizing, enqueueing and f
     { url: `${member.baseUrl}/v1/computers/id/authorize`, method: "POST", authorization: "Bearer member-token", org: "fixture-org", body: { action } },
     { url: `${device.baseUrl}/v1/computer-sources/computers`, method: "GET", authorization: "Bearer runner-token", org: null },
     { url: `${device.baseUrl}/v1/computer-sources/computers/id/authorize`, method: "POST", authorization: "Bearer runner-token", org: null, body: { action } },
-    { url: `${device.baseUrl}/v1/computer-sources/computers/other%2Fid/commands`, method: "POST", authorization: "Bearer runner-token", org: null, body: { call, waitMs: 15_000 } },
+    { url: `${device.baseUrl}/v1/computer-sources/computers/other%2Fid/commands`, method: "POST", authorization: "Bearer runner-token", org: null, body: { call, waitMs: 0 } },
     { url: `${device.baseUrl}/v1/computer-sources/commands/id?waitMs=15000`, method: "GET", authorization: "Bearer runner-token", org: null },
   ]);
 });

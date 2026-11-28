@@ -10,7 +10,7 @@ import {
 } from "@openwork/types/den/computer-inventory"
 import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, isExecutableVmProvider, type ComputerOwnerChoice } from "@openwork/types/den/computers"
 import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY } from "@openwork/types/automations"
-import { remoteDeviceTypeLabel } from "@openwork/types/den/remote-devices"
+import { REMOTE_DEVICE_ONLINE_WINDOW_MS, remoteDeviceTypeLabel } from "@openwork/types/den/remote-devices"
 import { deviceDisconnectionJoin } from "../computer-disconnect.js"
 import { db } from "../db.js"
 import { getOrganizationFeaturesByMember } from "../features.js"
@@ -19,7 +19,7 @@ import {
   remoteDeviceRunnerJoin, syncDesktopsFromRunners, WORKBOT_COMPUTER_LABEL, type RemoteDeviceActor,
 } from "../remote-devices.js"
 import { remoteSessionAccessPolicy } from "../remote-sessions/access.js"
-import { sourceViews } from "./grants.js"
+import { sourceViews, updateComputerSource } from "./grants.js"
 import { deviceInventoryStatus, groupComputerSignIns, inventorySessions, type SignInGroup } from "./inventory.js"
 
 const BATCH_SIZE = 500
@@ -41,7 +41,7 @@ function ownerView(memberId: string | null, row: OwnerColumns): ComputerInventor
   }
 }
 
-async function readDevices(viewer: Viewer, after: DeviceId | undefined) {
+async function readDevices(viewer: Viewer, after: DeviceId | undefined, desktopOwner?: RemoteDeviceActor["memberId"]) {
   const d = RemoteDeviceTable
   const r = AutomationRunnerTable
   const rows = await db.$primary.select({
@@ -59,7 +59,8 @@ async function readDevices(viewer: Viewer, after: DeviceId | undefined) {
     .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
     .where(and(
       eq(d.organizationId, viewer.actor.organizationId), isNull(d.removedAt), after ? gt(d.id, after) : undefined,
-      viewer.kind === "member" ? or(eq(d.ownerMemberId, viewer.actor.memberId), isNull(d.ownerMemberId)) : undefined,
+      desktopOwner ? and(eq(d.ownerMemberId, desktopOwner), eq(d.kind, "desktop"), eq(d.provider, "openwork_desktop"))
+        : viewer.kind === "member" ? or(eq(d.ownerMemberId, viewer.actor.memberId), isNull(d.ownerMemberId)) : undefined,
     )).orderBy(asc(d.id)).limit(BATCH_SIZE)
   return rows.map((row) => ({
     ...row, lastSeenAt: latestDeviceContact(row.lastSeenAt, row.runnerSeenAt), appVersion: row.runnerAppVersion ?? row.appVersion,
@@ -124,17 +125,23 @@ function canRunCode(device: Device, kind: SignInGroup<Device>["kind"]) {
   return isExecutableVm(device) || (kind === "desktop" && device.runnerCapabilities?.includes(COMPUTER_SHELL_RUNNER_CAPABILITY) === true)
 }
 
-function runCode(group: SignInGroup<Device>, rules: OrganizationComputerRules, grants: Grant[]): ComputerRunCode {
-  const { newest: device, kind } = group
+function sandboxGrants(grants: Grant[]) {
+  return grants.filter(({ sourceKey }) => sourceKey === "workbot" || isDenTypeId("remoteDevice", sourceKey))
+}
+
+function activeFolders(grants: Grant[]) {
+  return grants.flatMap(({ folders, revokedAt }) => revokedAt ? [] : folders)
+}
+
+function runCode(device: Device, kind: SignInGroup<Device>["kind"], rules: OrganizationComputerRules, grants: Grant[]): ComputerRunCode {
   if (!canRunCode(device, kind)) return kind === "desktop" ? { value: "no", reason: "sandbox_unavailable" } : { value: "not_available" }
   if (!rules.runCode) return { value: "no", reason: "organization" }
   if (device.choice === null) return { value: "no", reason: "not_chosen" }
   if (device.choice !== "allow") return { value: "no", reason: "owner" }
   if (kind === "desktop") {
-    const sandbox = grants.filter((grant) => grant.sourceKey === "workbot" || isDenTypeId("remoteDevice", grant.sourceKey))
-    const active = sandbox.filter((grant) => !grant.revokedAt)
-    if (sandbox.length && !active.length) return { value: "no", reason: "revoked" }
-    const folders = new Set(active.flatMap((grant) => grant.folders))
+    const sandbox = sandboxGrants(grants)
+    if (sandbox.length && sandbox.every(({ revokedAt }) => revokedAt)) return { value: "no", reason: "revoked" }
+    const folders = new Set(activeFolders(sandbox))
     return folders.size ? { value: "sandbox", folders: folders.size } : { value: "no", reason: "nothing_shared" }
   }
   const whole = grants.find((grant) => grant.sourceKey === COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY)
@@ -144,6 +151,44 @@ function runCode(group: SignInGroup<Device>, rules: OrganizationComputerRules, g
   })
   if (!scope) return { value: "no", reason: "owner" }
   return whole?.revokedAt ? { value: "no", reason: "revoked" } : { value: "whole_computer" }
+}
+
+function recentSignIns({ kind, newest, merged }: SignInGroup<Device>, now: number) {
+  return kind === "desktop" ? [newest, ...merged.filter(({ lastSeenAt }) => lastSeenAt && now - lastSeenAt.getTime() <= REMOTE_DEVICE_ONLINE_WINDOW_MS)] : [newest]
+}
+
+function groupRunCode(group: SignInGroup<Device>, rules: OrganizationComputerRules, grants: Map<DeviceId, Grant[]>, now: number): ComputerRunCode {
+  const { kind, newest } = group
+  const representative = runCode(newest, kind, rules, grants.get(newest.id) ?? [])
+  if (kind !== "desktop" || !group.merged.length) return representative
+  const folders = new Set(recentSignIns(group, now).flatMap((device) => {
+    const own = grants.get(device.id) ?? []
+    return runCode(device, kind, rules, own).value === "sandbox" ? activeFolders(sandboxGrants(own)) : []
+  }))
+  return folders.size ? { value: "sandbox", folders: folders.size } : representative
+}
+
+async function computerSourceTargets(viewer: Pick<Viewer, "actor" | "kind">, id: DeviceId) {
+  const d = RemoteDeviceTable
+  const { organizationId, memberId } = viewer.actor
+  const [device] = await db.$primary.select({ kind: d.kind, provider: d.provider, ownerMemberId: d.ownerMemberId }).from(d).where(and(
+    eq(d.organizationId, organizationId), eq(d.id, id), isNull(d.removedAt), viewer.kind === "member" ? eq(d.ownerMemberId, memberId) : undefined,
+  )).limit(1)
+  if (!device) return null
+  const { ownerMemberId } = device
+  if (device.kind !== "desktop" || device.provider !== "openwork_desktop" || !ownerMemberId) return { ownerMemberId, ids: [id] }
+  const ownViewer: Viewer = { kind: "member", actor: { organizationId, memberId: ownerMemberId }, canManageShared: false }
+  const devices = await readBatches((after: DeviceId | undefined) => readDevices(ownViewer, after, ownerMemberId))
+  for (const { newest, merged } of groupComputerSignIns(devices)) {
+    const ids = [newest.id, ...merged.map((row) => row.id)]
+    if (ids.includes(id)) return { ownerMemberId, ids }
+  }
+  return null
+}
+
+export async function updateInventoryComputerSource(viewer: Parameters<typeof updateComputerSource>[0], id: DeviceId, sourceKey: string, change: "revoke" | "restore") {
+  const targets = await computerSourceTargets(viewer, id)
+  return targets ? updateComputerSource(viewer, id, targets, sourceKey, change) : null
 }
 
 function actions(device: Device, viewer: Viewer, now: number) {
@@ -172,7 +217,10 @@ async function deviceRows({ groups, metadata }: Loaded, viewer: Viewer, now: num
     && newest.runnerCapabilities?.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY))
   const [features, grants] = await Promise.all([
     taskGroups.length ? getOrganizationFeaturesByMember(viewer.actor.organizationId) : null,
-    grantsByDevice(viewer.actor.organizationId, groups.filter((group) => includeAllGrants || (group.newest.choice === "allow" && rules.runCode && canRunCode(group.newest, group.kind))).map(({ newest }) => newest.id)),
+    grantsByDevice(viewer.actor.organizationId, groups.flatMap((group) => (
+      includeAllGrants ? [group.newest, ...group.merged] : recentSignIns(group, now)
+        .filter((device) => device.choice === "allow" && rules.runCode && canRunCode(device, group.kind))
+    ).map(({ id }) => id))),
   ])
   const rows = groups.map((group) => {
     const { kind, newest, merged } = group
@@ -180,14 +228,14 @@ async function deviceRows({ groups, metadata }: Loaded, viewer: Viewer, now: num
       ? remoteSessionAccessPolicy({ features: features.forMember(newest.ownerMemberId), metadata }) : null
     const runner = newest.runnerCapabilities && { capabilities: newest.runnerCapabilities, sessionAccess: newest.runnerSessionAccess }
     const access = remoteAccessOf(newest, runner, newest.disconnectedAt !== null, policy)
-    const ownGrants = grants.get(newest.id) ?? []
+    const ownGrants = includeAllGrants ? [newest, ...merged].flatMap(({ id }) => grants.get(id) ?? []) : []
     const kindLabel = kind === "workbot" ? "Cloud computer"
       : kind === "cloud" && newest.provider === "daytona" ? "Daytona computer"
       : kind === "cloud" && newest.provider === "freestyle" ? "Freestyle computer" : remoteDeviceTypeLabel(newest)
     const computer: ComputerInventoryRow = {
       id: newest.id, kind, kindLabel, label: kind === "workbot" ? WORKBOT_COMPUTER_LABEL : newest.label,
       owner: newest.owner, shared: newest.ownerMemberId === null,
-      ...deviceInventoryStatus(newest, kind, now, access), runCode: runCode(group, rules, ownGrants),
+      ...deviceInventoryStatus(newest, kind, now, access), runCode: groupRunCode(group, rules, grants, now),
       sessions: inventorySessions(access), mergedSignIns: merged.length, ...actions(newest, viewer, now),
     }
     const mergedSignIns = merged.map((row): ComputerMergedSignIn => ({
