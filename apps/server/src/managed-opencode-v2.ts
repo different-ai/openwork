@@ -5,7 +5,7 @@ import { agentPermissionEngineV2Rules, type AgentPermissionRule, type EngineV2Pe
 import type { OrganizationMcpServers } from "./organization-mcp-names.js";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { gatewayBase } from "./gateway-quota.js";
-import { openworkAgentPermissionsV2PluginPath, openworkAutoRouteV2PluginPath, openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkPrivateValuesV2PluginPath, openworkMcpReadinessV2PluginPath, openworkProviderFiltersV2PluginPath, openworkProviderSyncV2PluginPath, openworkVisibleReasoningV2PluginPath } from "./openwork-extensions-plugin-path.js";
+import { openworkAgentPermissionsV2PluginPath, openworkAutoRouteV2PluginPath, openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkPrivateValuesV2PluginPath, openworkMcpReadinessV2PluginPath, openworkProviderFiltersV2PluginPath, openworkProviderKeysV2PluginPath, openworkProviderSyncV2PluginPath, openworkVisibleReasoningV2PluginPath } from "./openwork-extensions-plugin-path.js";
 import { DRIVE_UPLOAD_PERMISSION, GMAIL_DRAFT_PERMISSION, OUTLOOK_DRAFT_PERMISSION } from "./extensions/cloud-upload-constants.js";
 import { pathToFileURL } from "node:url";
 import { openworkSandboxV2PluginPath } from "./openwork-extensions-plugin-path.js";
@@ -28,6 +28,8 @@ export interface OpencodeV2ModelSpec {
 }
 
 export type OpencodeV2ProviderFilters = Record<string, { whitelist?: string[]; blacklist?: string[] }>;
+
+export const UNSET_API_KEY = "openwork-engine-v2-preview-unset";
 
 export interface OpencodeV2ProviderSpec {
   id: string;
@@ -204,6 +206,7 @@ export function renderOpencodeV2Config(input: {
   desktopSession?: string;
   providerFilters?: OpencodeV2ProviderFilters;
   providerFiltersPluginDirectory?: string;
+  providerKeysPluginDirectory?: string;
   mcpResultsPluginDirectory?: string;
   mcpReadinessPluginDirectory?: string;
   visibleReasoningPluginDirectory?: string;
@@ -268,6 +271,7 @@ export function renderOpencodeV2Config(input: {
       models,
     };
   }
+  const keyedProviders = enabledProviders.filter(provider => !provider.native && provider.apiKey !== UNSET_API_KEY).map(provider => provider.id);
   const gatewayProviders = Object.fromEntries(enabledProviders.flatMap((provider) => {
     const base = gatewayBase(provider.id, provider.baseUrl);
     return base ? [[provider.id, base.href]] : [];
@@ -291,6 +295,10 @@ export function renderOpencodeV2Config(input: {
     ...(Object.keys(filters).length && input.providerFiltersPluginDirectory ? [{
       package: pathToFileURL(input.providerFiltersPluginDirectory).href,
       options: { providers: filters },
+    }] : []),
+    ...(keyedProviders.length && input.providerKeysPluginDirectory ? [{
+      package: pathToFileURL(input.providerKeysPluginDirectory).href,
+      options: { providers: keyedProviders },
     }] : []),
     ...(input.mcpResultsPluginDirectory ? [{ package: pathToFileURL(input.mcpResultsPluginDirectory).href }] : []),
     ...(input.mcpReadinessPluginDirectory ? [{ package: pathToFileURL(input.mcpReadinessPluginDirectory).href }] : []),
@@ -398,6 +406,7 @@ async function createManagedOpencodeV2ServerInner(
   const providerCredentialBrokerPath = join(providerSyncPluginDirectory, "credential-broker.cjs");
   const gatewayQuotaPluginDirectory = join(instanceRoot, "gateway-quota-plugin");
   const providerFiltersPluginDirectory = join(instanceRoot, "provider-filters-plugin");
+  const providerKeysPluginDirectory = join(instanceRoot, "provider-keys-plugin");
   const mcpResultsPluginDirectory = join(instanceRoot, "mcp-results-plugin");
   const mcpReadinessPluginDirectory = join(instanceRoot, "mcp-readiness-plugin");
   const visibleReasoningPluginDirectory = join(instanceRoot, "visible-reasoning-plugin");
@@ -450,6 +459,10 @@ async function createManagedOpencodeV2ServerInner(
   await writeFile(join(providerFiltersPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
   await writeFile(join(providerFiltersPluginDirectory, "server.js"),
     `export { default } from ${JSON.stringify(pathToFileURL(openworkProviderFiltersV2PluginPath()).href)};\n`, { mode: 0o600 });
+  await mkdir(providerKeysPluginDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(join(providerKeysPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+  await writeFile(join(providerKeysPluginDirectory, "server.js"),
+    `export { default } from ${JSON.stringify(pathToFileURL(openworkProviderKeysV2PluginPath()).href)};\n`, { mode: 0o600 });
   await mkdir(mcpResultsPluginDirectory, { recursive: true, mode: 0o700 });
   await writeFile(join(mcpResultsPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
   await writeFile(join(mcpResultsPluginDirectory, "server.js"),
@@ -581,6 +594,7 @@ async function createManagedOpencodeV2ServerInner(
       ...(options.providerSession ? { providerSyncPluginDirectory, desktopSession: options.providerSession.url } : {}),
       providerFiltersPluginDirectory,
       providerFilters,
+      providerKeysPluginDirectory,
       mcpResultsPluginDirectory,
       mcpReadinessPluginDirectory,
       visibleReasoningPluginDirectory,

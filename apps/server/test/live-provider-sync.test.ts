@@ -9,7 +9,7 @@ import { EnvService } from "../src/env-file.js";
 import { createEngineV2Preview, shouldSyncLiveProviderOwnerTransition, shouldWaitForMirroredProviders, waitForEngineV2Catalog } from "../src/engine-v2-preview.js";
 import { managedDesktopPolicy } from "../src/managed-desktop-policy.js";
 import { serve } from "../src/serve-node.js";
-import { renderOpencodeV2Config, type OpencodeV2ProviderSpec } from "../src/managed-opencode-v2.js";
+import { renderOpencodeV2Config, UNSET_API_KEY, type OpencodeV2ProviderSpec } from "../src/managed-opencode-v2.js";
 import { createV2ProviderSessionBridge, providerSessionIdentity } from "../src/opencode-v2-provider-session.js";
 import type { ServerConfig } from "../src/types.js";
 import { readGlobalRuntimeOpencodeConfig, writeGlobalRuntimeOpencodeConfig } from "../src/runtime-opencode-config-store.js";
@@ -40,6 +40,13 @@ test("live owner strips the entire Gateway config row while retaining local/lega
   assert.ok(serialized.includes('"ipr_test":{"whitelist":["model"],"blacklist":["blocked"]}'));
   assert.ok(!serialized.includes("den-test-secret"));
   assert.ok(!serialized.includes("OPENWORK_PROVIDER_SESSION_TOKEN"));
+});
+
+test("a provider is bound to the key OpenWork gives it; built-in providers and providers without a key are not", () => {
+  const builtIn: OpencodeV2ProviderSpec = { id: "anthropic", name: "Anthropic", apiKey: "built-in-test-secret", models: [], native: true };
+  const keyless: OpencodeV2ProviderSpec = { ...legacy, id: "signed_in", apiKey: UNSET_API_KEY };
+  const rendered = renderOpencodeV2Config({ providers: [gateway, legacy, builtIn, keyless], skills: [], providerKeysPluginDirectory: "/plugins/keys", disabledProviderIds: ["ipr_test"] });
+  assert.ok(JSON.stringify(rendered.plugins).includes('"options":{"providers":["lpr_test"]}'));
 });
 
 test("filters for live-only rows survive separately and disabled providers win", () => {

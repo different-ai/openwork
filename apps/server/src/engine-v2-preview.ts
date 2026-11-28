@@ -33,6 +33,7 @@ import {
   installOpencodeV2Binary,
   type ManagedOpencodeV2Server,
   type OpencodeV2ProviderSpec,
+  UNSET_API_KEY,
 } from "./managed-opencode-v2.js";
 import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -76,7 +77,6 @@ export type { EngineV2SkippedProvider, EngineV2SkippedProviderReason } from "./o
 
 const OPENCODE_V2_VERSION = constants.opencodeV2Version;
 const PREVIEW_STATE_FILE = "engine-v2-preview.json";
-const UNSET_API_KEY = "openwork-engine-v2-preview-unset";
 const CATALOG_MIRROR_TIMEOUT_MS = 60_000;
 export const ENGINE_V2_UPKEEP_WAITS: Readonly<Record<"providerPushJoinMs" | "workspaceProviderReadyMs" | "mcpRetryMs" | "mcpHealthMs" | "engineRestartMs" | "engineRestartMaxMs", number>> = Object.freeze({
   providerPushJoinMs: 10_000,

@@ -16,7 +16,7 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1").each(["off", "tool
   const captured = join(root, "capabilities.json");
   const catalog = join(root, "catalog.json");
   const sentinel = join(root, "must-not-spawn");
-  for (const name of ["openwork-context-v2", "openwork-mcp-results-v2", "openwork-mcp-readiness-v2", "openwork-visible-reasoning-v2", "openwork-auto-route-v2", "openwork-sandbox-v2", "openwork-private-values-v2"]) {
+  for (const name of ["openwork-context-v2", "openwork-mcp-results-v2", "openwork-mcp-readiness-v2", "openwork-visible-reasoning-v2", "openwork-auto-route-v2", "openwork-provider-keys-v2", "openwork-sandbox-v2", "openwork-private-values-v2"]) {
     const source = pathToFileURL(fileURLToPath(new URL(`../src/opencode-plugins/${name}.ts`, import.meta.url))).href;
     await writeFile(join(plugins, `${name}.js`), name === "openwork-sandbox-v2"
       ? `import { writeFile } from "node:fs/promises";\nimport plugin from ${JSON.stringify(source)};\nexport default { id: plugin.id, async setup(context) { await writeFile(${JSON.stringify(captured)}, JSON.stringify({ context: Object.keys(context), tool: Object.keys(context.tool), mcp: Object.keys(context.mcp), session: Object.keys(context.session), browser: context.browser && Object.keys(context.browser), codemode: context.codemode && Object.keys(context.codemode) })); const close = await plugin.setup(context); await writeFile(${JSON.stringify(catalog)}, JSON.stringify(await context.tool.list())); return close; } };\n`
