@@ -81,7 +81,12 @@ export async function startAcmeGithubGit(names: readonly string[], parent = tmpd
       if (!head) return null;
       const raw = await text(dir, ["cat-file", "commit", head]);
       const headers = raw.split("\n\n", 1)[0]?.split("\n") ?? [];
-      return { sha: head, author: headers.find(line => line.startsWith("author "))?.slice(7), parent: headers.find(line => line.startsWith("parent "))?.slice(7) };
+      return {
+        sha: head,
+        author: headers.find(line => line.startsWith("author "))?.slice(7),
+        committer: headers.find(line => line.startsWith("committer "))?.slice(10),
+        parent: headers.find(line => line.startsWith("parent "))?.slice(7),
+      };
     },
     async handle(request: IncomingMessage, response: ServerResponse, url: URL, auth: Credentials) {
       const json = (status: number, body: unknown) => {

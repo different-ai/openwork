@@ -4,7 +4,7 @@ import { z } from "zod";
 import { checkoutRepository, checkoutTitle, cloudCodingChatApprovalWorld } from "../worlds/cloud-coding-chat-approval.ts";
 
 const test = spec.world(cloudCodingChatApprovalWorld, {
-  timeout: 600_000, needs: { commands: ["pnpm", "git", "npm"] },
+  timeout: 600_000, needs: { commands: ["pnpm", "git", "npm", "curl"] },
   resources: { surfaces: ["appWeb", "web"], services: ["den", "mock"] },
 });
 const branch = "openwork/fix-rounding";
@@ -18,25 +18,28 @@ const button = (label: string) => ({ role: "button", label }) as const;
 test("a person approves a push from their chat and the pull request opens in their name", async ({ world, user, probe, step, evidence }) => {
   const chat = user.on(world.app);
   const dashboard = user.on(world.dashboard);
-  await step("before: the chat has no pending push and GitHub has no new branch", async () => {
+  await step("an ordinary app token cannot start Cloud coding", async () => {
     await chat.see("composer", { timeoutMs: 45_000 });
-    await chat.notSee({ text: prompt });
+    const result = await world.startWithoutWorkerProof();
+    expect(result).toEqual({ error: "unknown_capability", hasTask: false, hasSetup: false, before: 0, after: 0 });
     const pending = await probe.api(world.maya, pendingPath);
     expect(pending.response.status).toBe(200);
-    expect(pending.body).toMatchObject({ approvals: [] });
-    const writes = world.git.writes();
-    const newBranch = await world.git.readBranch(checkoutRepository, branch);
-    expect(writes).toHaveLength(0);
-    expect(newBranch).toBeNull();
-    evidence.recordAssertionEvidence("No push is waiting in Maya's chat", `The composer shows no push request. GitHub recorded ${writes.length} writes and has no ${branch} branch.`, newBranch === null && writes.length === 0);
-    await chat.screenshot();
+    const { approvals } = approvalList.parse(pending.body);
+    expect(approvals).toHaveLength(0);
+    await chat.notSee({ text: prompt });
+    await chat.notSee(button("Allow once"));
+    evidence.recordAssertionEvidence("The desktop-style request gets no Cloud coding task", `The same app token without a worker proof returned ${result.error}. Tasks: ${result.before} → ${result.after}. Pending approvals: ${approvals.length}. The Web chat composer showed no push panel.`, result.error === "unknown_capability" && result.after === result.before && approvals.length === 0);
   });
 
-  const task = await step("OpenWork starts the code change on a cloud computer", async () => {
+  const task = await step("OpenWork prepares the chat's own cloud computer", async () => {
     const started = await world.startTask();
-    expect(started.status).toBe("running");
-    expect(started.leakedSetupCode).toBe(false);
-    evidence.recordAssertionEvidence("OpenWork starts the checkout fix without sharing its setup code", `The agent got ${started.status}. The setup code arrived only in the cloud computer's kickoff.`, started.status === "running" && !started.leakedSetupCode);
+    expect(started.status).toBe("ready");
+    expect(started.hasSeparateSession).toBe(false);
+    expect(started.sessionsAfter).toBe(started.sessionsBefore);
+    expect(started.computersBefore).toBe(1);
+    expect(started.computersAfter).toBe(1);
+    await chat.notSee({ text: /occ_setup_/ });
+    evidence.recordAssertionEvidence("The agent can set up the checkout without a separate session", `The signed-in Web agent received ${started.status} and the one-time setup command for ${started.workFolder}. The chat showed no setup code. Cloud computers: ${started.computersBefore} → ${started.computersAfter}; cloud sessions: ${started.sessionsBefore} → ${started.sessionsAfter}.`, !started.hasSeparateSession && started.sessionsAfter === started.sessionsBefore && started.computersAfter === started.computersBefore);
     return started;
   });
 
@@ -44,6 +47,7 @@ test("a person approves a push from their chat and the pull request opens in the
     const requested = await task.requestPush(branch);
     const asked = requestLine.exec(requested.output)?.[0];
     expect(requested.code, requested.output).toBe(3);
+    expect(await requested.folderExists()).toBe(true);
     expect(asked).toBeDefined();
     evidence.recordAssertionEvidence("The computer waits for Maya's decision", `npm test: 1 passed. The helper exited ${requested.code} (waiting). ${asked}`, requested.code === 3 && Boolean(asked));
     return requested;
@@ -97,10 +101,13 @@ test("a person approves a push from their chat and the pull request opens in the
     expect(pushed?.sha).toBe(approval.headSha);
     expect(pushed?.parent).toBe(world.mainSha);
     expect(pushed?.author).toMatch(/^Maya Chen <101\+maya-chen@users\.noreply\.github\.com> /);
+    expect(pushed?.committer).toBe(pushed?.author);
     expect(main?.sha).toBe(world.mainSha);
     expect(allMaya).toBe(true);
     expect(world.git.pulls()).toMatchObject([{ number: 1, html_url: url, title: checkoutTitle, user: { login: "maya-chen" } }]);
-    evidence.recordAssertionEvidence("Only the approved commit goes to GitHub, as Maya", `The helper exited ${result.code}: Pull request opened: ${url}. The approved and pushed commits match (${pushed?.sha.slice(0, 12)}). All ${writes.length} GitHub writes used Maya's token. The commit is authored by Maya Chen and main is unchanged.`, allMaya && pushed?.sha === approval.headSha && main?.sha === world.mainSha);
+    const folderAfter = await request.folderExists();
+    expect(folderAfter).toBe(false);
+    evidence.recordAssertionEvidence("Only the approved commit goes to GitHub, as Maya", `The helper exited ${result.code}: Pull request opened: ${url} as maya-chen. Approved SHA ${approval.headSha.slice(0, 12)} = pushed SHA ${pushed?.sha.slice(0, 12)}. All ${writes.length} GitHub writes used Maya's token. Maya Chen authored and committed the change. Parent and main still point to ${main?.sha.slice(0, 12)}. Task folder: present while waiting → removed.`, !folderAfter && allMaya && pushed?.sha === approval.headSha);
     return url;
   });
 
@@ -135,6 +142,7 @@ test("a person denies a push and nothing is pushed", async ({ world, user, step,
     const task = await world.startTask();
     const requested = await task.requestPush(deniedBranch);
     expect(requested.code, requested.output).toBe(3);
+    expect(await requested.folderExists()).toBe(true);
     await chat.see({ text: prompt }, { timeoutMs: 45_000 });
     await chat.see({ text: deniedBranch });
     await chat.see(button("Deny"));
@@ -155,7 +163,9 @@ test("a person denies a push and nothing is pushed", async ({ world, user, step,
     expect(writes).toHaveLength(0);
     expect(await world.git.readBranch(checkoutRepository, deniedBranch)).toBeNull();
     expect(world.git.pulls()).toHaveLength(0);
-    evidence.recordAssertionEvidence("Deny leaves GitHub untouched", `${denied} The helper exited ${done.code} (denied): ${done.output.trim()}. GitHub has ${writes.length} writes, no new branch, and no pull request.`, done.code === 4 && writes.length === 0);
+    const folderAfter = await request.folderExists();
+    expect(folderAfter).toBe(false);
+    evidence.recordAssertionEvidence("Deny leaves GitHub untouched", `${denied} The helper exited ${done.code} (denied). GitHub writes: 0 → ${writes.length}; no new branch or pull request. Task folder: present while waiting → removed.`, !folderAfter && done.code === 4 && writes.length === 0);
     await chat.screenshot();
   });
 });
