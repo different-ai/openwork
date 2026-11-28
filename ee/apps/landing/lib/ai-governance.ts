@@ -20,7 +20,7 @@ AI governance defines who can use AI, with which data, through which tools and p
 
 ## Evaluate the platform, not the promise
 
-Test identity and offboarding, model permissions, provider choice including AWS Bedrock, routed usage visibility, supported clients, and the local-first data boundary. OpenWork and OpenCode with the OpenWork plugin support company AI gateway models. Claude Code, Codex, and Cursor use the MCP gateway for skills and connections; their AI gateway model integration is in progress. Adding MCP does not route model traffic. OpenWork does not automatically detect every unsanctioned AI tool.
+Test identity and offboarding, model permissions, provider choice including AWS Bedrock, routed usage visibility, supported clients, and the local-first data boundary. OpenWork and OpenCode with the OpenWork plugin support company AI gateway models. Claude Code, Codex, and Cursor use the MCP gateway for skills and connections, and an AI Gateway API key for company models. Adding MCP alone does not route model traffic. OpenWork does not automatically detect every unsanctioned AI tool.
 
 ## FAQ
 

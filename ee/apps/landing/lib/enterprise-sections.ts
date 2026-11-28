@@ -53,13 +53,13 @@ export type EnterpriseAgent = {
 export const enterpriseAgents: EnterpriseAgent[] = [
   { id: "openwork", name: "OpenWork", via: "Desktop app", skills: "ready", models: "ready" },
   { id: "opencode", name: "OpenCode", via: "With the opencode-openwork plugin", skills: "ready", models: "ready" },
-  { id: "claude-code", name: "Claude Code", via: "Through the MCP gateway", skills: "ready", models: "in-progress" },
-  { id: "codex", name: "Codex", via: "Through the MCP gateway", skills: "ready", models: "in-progress" },
-  { id: "cursor", name: "Cursor", via: "Through the MCP gateway", skills: "ready", models: "in-progress" }
+  { id: "claude-code", name: "Claude Code", via: "MCP gateway and an AI Gateway API key", skills: "ready", models: "ready" },
+  { id: "codex", name: "Codex", via: "MCP gateway and an AI Gateway API key", skills: "ready", models: "ready" },
+  { id: "cursor", name: "Cursor", via: "MCP gateway and an AI Gateway API key", skills: "ready", models: "ready" }
 ];
 
 export const enterpriseAgentsNote =
-  "AI gateway model integration for Claude Code, Codex, and Cursor is in progress. Connecting an MCP server alone does not route a client’s model traffic.";
+  "Claude Code, Codex, and Cursor use AI gateway models with an AI Gateway API key that each person creates. Cursor’s cloud agents are not supported yet. Connecting an MCP server alone does not route a client’s model traffic.";
 
 export const enterpriseDataPath = {
   local: ["Files and folders", "Workspace processing"],
