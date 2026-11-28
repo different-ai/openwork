@@ -195,7 +195,7 @@ export function DetailsToggle({ open, onToggle, label, alwaysVisible = false }: 
 
 export function isOpenWorkActivity(part: DynamicToolUIPart): boolean {
   if (OPENWORK_NATIVE_TOOL.test(part.toolName)) return true
-  if (!/^(?:openwork|openwork-cloud)_/.test(part.toolName)) return false
+  if (!/^(?:(?:openwork|openwork-cloud)_|(?:execute_capability|search_capabilities|request_agent_connector_access)$)/.test(part.toolName)) return false
   const input = part.input
   const name = typeof input === "object" && input !== null && "name" in input && typeof input.name === "string" ? input.name : ""
   return !/^(?:mcp|native|plugin):/.test(name)

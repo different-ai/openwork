@@ -323,6 +323,10 @@ export function getCapabilityCallSentence(
     }
   }
 
+  if (toolName === "request_agent_connector_access") {
+    return { service: null, present: "Asking you for access…", past: "Asked you for access", failure: "Couldn't ask you for access" }
+  }
+
   if (toolName.endsWith("_list_skills")) {
     return { service: null, present: "Looking through your skills…", past: "Looked through your skills" }
   }

@@ -1,3 +1,4 @@
+import type { PersonalAgentToolCatalog } from "@openwork/types/den/personal-agents";
 import { Monitor, Plug } from "lucide-react";
 import { useState } from "react";
 
@@ -27,4 +28,11 @@ export function AgentConnectionLogo({ connectionId, name, size = "sm", muted = f
             : <Plug className={`${mark} text-dls-secondary`} strokeWidth={1.8} />}
     </span>
   );
+}
+
+export function agentConnectorIdentities(catalog: PersonalAgentToolCatalog | undefined) {
+  return (catalog?.connections ?? []).map((connection) => ({
+    id: `mcp:${connection.connectionId}`, name: connection.name, connectionId: connection.connectionId,
+    iconUrl: composerConnectorLogoUrls({ name: connection.name })[0] ?? null, serviceUrl: null, toolNamespace: null,
+  }));
 }

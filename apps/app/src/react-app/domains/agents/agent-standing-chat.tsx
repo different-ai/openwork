@@ -14,8 +14,10 @@ import { agentChatFor, agentChatKey, useAgentChatStore } from "./agent-chat-stor
 import { AGENT_ROW_INSET, AgentRunEntry } from "./agent-run-result";
 import { agentThreadTimeline } from "./agent-thread-messages";
 import { AgentChangeRequest } from "./agent-change-request";
+import { agentConnectorIdentities } from "./agent-connection-logo";
 import { AgentToolReceipt, canDecideAgentToolRequest, isVisibleAgentRequest } from "./agent-tool-request";
 import { useAgentsRuntime, type AgentsRuntime } from "./agents-runtime";
+import { useAgentToolsQuery } from "./use-agent-permissions";
 import { agentsQueryRoot, isActiveRun, useAgentDetail, useAgentRequestsQuery, useAgentRunsQuery } from "./use-agents";
 
 type ThreadSend = { input: SendPersonalAgentChatMessage; createdAt: number };
@@ -39,6 +41,8 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
   const local = useLocal();
   const agent = useAgentDetail(runtime, agentId);
   const displayName = agent?.agent.name ?? name;
+  const catalog = useAgentToolsQuery(runtime, agentId).data;
+  const connectorIdentities = useMemo(() => agentConnectorIdentities(catalog), [catalog]);
   const paused = Boolean(agent?.agent.pausedAt);
   const sendInProgress = useRef(false);
   const [text, setText] = useState("");
@@ -147,7 +151,7 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
           </div>
           : item.kind === "chat"
           ? <RemoteTranscriptView key={item.key} threadKey={`${threadKey}:${item.key}`} messages={item.messages}
-            running={item === lastChat && (running || Boolean(pending))} showThinking={local.prefs.showThinking} developerMode={false} assistantBubbles />
+            running={item === lastChat && (running || Boolean(pending))} showThinking={local.prefs.showThinking} developerMode={false} assistantBubbles connectorIdentities={connectorIdentities} />
           : agent && <AgentRunEntry key={item.key} runtime={runtime} agentId={agentId} role={agent.role} run={item.run}
             routineName={agent.routines.find((routine) => routine.id === item.run.automationId)?.name ?? displayName} />)}
         {requests.isError && <p className={`${AGENT_ROW_INSET} text-xs text-dls-secondary`}>{t("agents.requests_unavailable")}</p>}
