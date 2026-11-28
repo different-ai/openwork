@@ -1,5 +1,6 @@
 import { denFetch, freshSession, type DenSession } from "@openwork/behaviors";
 import { queryDenDatabase, type Seed } from "@openwork/env";
+import { computerAuthorizeResponseSchema } from "@openwork/types/den/computers";
 import { remoteDeviceResponseSchema } from "@openwork/types/den/remote-devices";
 import { z } from "zod";
 import { enableOrganizationCapabilities, seededOrganizationId } from "./organization-capabilities.ts";
@@ -138,13 +139,21 @@ export async function computersInventoryWorld(seed: Seed) {
     const viewport = { width: 1440, height: 1000, deviceScaleFactor: 1 };
     const mayaWeb = await seed.web({ den, signedInAs: maya, startPath: "/dashboard/my-computers", headless: true, viewport });
     const priyaWeb = await seed.web({ den, signedInAs: priya, startPath: "/dashboard/computers", headless: true, viewport });
+    const tomasWeb = await seed.web({ den, signedInAs: tomas, startPath: "/dashboard/my-computers", headless: true, viewport });
+    const priyaSummary = await seed.web({ den, signedInAs: priya, startPath: "/dashboard/computers", headless: true, viewport });
     return {
-      maya: mayaWeb, priya: priyaWeb,
+      maya: mayaWeb, priya: priyaWeb, tomas: tomasWeb, priyaSummary,
       devices: { mayaMac, mayaWindows, tomasMac, tomasLinux, buildBox, priyaMac, shared, jonasMac, jonasWindows, olderLinux, olderMac },
       mayaOldIds, instanceId,
       url: (path: string) => new URL(path, den.ref.webUrl).toString(),
       turnOnComputers: () => enableOrganizationCapabilities(seed, den.admin, { computers: true }, orgId),
       memberRequest: (path: string) => request(maya, path),
+      async authorizeBuildBox() {
+        const result = await request(tomas, `/v1/computers/${buildBox.id}/authorize`, "POST", {
+          action: { type: "shell", command: "ls", cwd: "/workspace" },
+        });
+        return { status: result.response.status, result: computerAuthorizeResponseSchema.safeParse(result.body).data };
+      },
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
     };
   } catch (error) { await stack.disposeAsync(); throw error; }

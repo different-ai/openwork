@@ -11,7 +11,11 @@ const tab = (name: string) => ({ testId: `computer-inventory-tab-${name}` });
 const row = (id: string) => ({ testId: `computer-inventory-row-${id}` });
 const selector = (testId: string) => `[data-testid="${testId}"]`;
 const vagueStatus = /Not checked yet|Not reported/i;
-const permissionsNote = "Computer Use needs permissions on this Mac.";
+const permissionsNote = "Computer Use needs permissions";
+const wholeComputer = "Yes, whole computer";
+const tomasSource = "Tomás Rivera's OpenWork apps";
+const ruleSwitch = { testId: "computer-rules-run-code" };
+const rulesSummary = { testId: "computer-inventory-rules" };
 const wait = { timeoutMs: 90_000 };
 
 test("Maya Okafor and Priya Nair find computers instead of sorting through sign-ins", async ({ world, user, probe, step, evidence }) => {
@@ -80,13 +84,16 @@ test("Maya Okafor and Priya Nair find computers instead of sorting through sign-
   await step("after: Maya sees one row per computer and four older sign-ins folded away", async () => {
     await maya.see(row(devices.mayaMac.id), wait);
     await maya.see({ testId: "computer-inventory-merged" });
+    await maya.see({ text: "3 of 4 reachable now" });
     const list = await texts(myPage, rows);
+    const order = [names.mayaMac, names.mayaWindows, names.workbot, names.shared];
     const shared = containing(list, names.shared);
     const merged = await texts(myPage, historic);
     const hidden = (await texts(myPage, `${historic} li`)).length;
     await maya.screenshot();
-    witness("Maya's MacBook, Windows PC and Workbot computer each have one row", `${list.length - shared} personal rows plus ${shared} organization-shared row; ${merged.join(" ")}; ${hidden} older sign-ins shown by default`,
-      list.length === 4 && shared === 1 && [names.mayaMac, names.mayaWindows, names.workbot].every((label) => containing(list, label) === 1)
+    witness("Maya’s desktops come first, then Workbot and the shared computer", `${list.length - shared} personal rows plus ${shared} organization-shared row; 3 of 4 reachable now; ${merged.join(" ")}; ${hidden} older sign-ins shown by default`,
+      list.length === 4 && shared === 1 && order.every((label, index) => list[index]?.includes(label))
+      && list.some((text) => text.includes(names.workbot) && text.includes("Cloud computer"))
       && merged.some((text) => text.includes("4 older sign-ins") && text.includes("merged in")) && hidden === 0 && list.every((text) => !vagueStatus.test(text)));
   });
 
@@ -226,5 +233,127 @@ test("Maya Okafor and Priya Nair find computers instead of sorting through sign-
     const team = await texts(myPage, selector("computer-inventory"));
     witness("Other members' private computers are absent and Maya is denied the team inventory", `${personal.length} permitted rows; ${leaks.length} private rows visible; team inventory HTTP ${admin.response.status}; private details HTTP ${tomas.response.status}/${jonas.response.status}; ${team.length} team lists on the redirected page`,
       personal.length === 4 && leaks.length === 0 && admin.response.status === 403 && tomas.response.status === 404 && jonas.response.status === 404 && team.length === 0);
+  });
+
+  const tomas = user.on(world.tomas), tomasPage = probe.on(world.tomas);
+  const summary = user.on(world.priyaSummary);
+  const buildRow = row(devices.buildBox.id);
+  const buildDetail = selector(`computer-inventory-detail-${devices.buildBox.id}`);
+  const buildCode = `${selector(buildRow.testId)} [data-run-code] > span:last-child > span`;
+  const sources = `${buildDetail} ul[aria-label="Sources of access"] > li`;
+  const confirm = { testId: "confirm-dialog-action" };
+
+  await step("after: Tomás sees what whole-computer access would allow before agreeing", async () => {
+    await tomas.reload();
+    await tomas.see(buildRow, wait);
+    await tomas.click(buildRow);
+    await tomas.type({ role: "textbox", label: "Working folder" }, "/workspace");
+    await tomas.click({ role: "switch", label: "Let my OpenWork apps use this whole computer" });
+    await tomas.see({ role: "heading", label: "Allow whole-computer access to Build box?" });
+    const dialog = (await texts(tomasPage, selector("confirm-dialog"))).join(" ");
+    const code = (await texts(tomasPage, buildCode)).join(" ");
+    await tomas.screenshot();
+    witness("Before consent, Build box still says No and the dialog names the effects and the starting folder",
+      `Run code here: ${code}; ${dialog}`, code === "No" && dialog.includes("read, change and delete anything on Build box") && dialog.includes("work starts in /workspace"));
+  });
+
+  await step("after: Tomás allows his OpenWork apps to use the whole Build box", async () => {
+    await tomas.click(confirm);
+    await tomas.see(buildRow, { ...wait, text: /Yes, whole computer/ });
+    const code = (await texts(tomasPage, buildCode)).join(" ");
+    const source = await texts(tomasPage, sources);
+    await tomas.screenshot();
+    witness("Build box now allows whole-computer access with the chosen working folder", `Run code here: ${code}; ${source.length} access source; working folder /workspace`,
+      code === wholeComputer && source.length === 1 && source.some((text) => text.includes(tomasSource) && text.includes("/workspace")));
+  });
+
+  await step("after: Tomás sees what his app was allowed to do without exposing the command", async () => {
+    const { status, result } = await world.authorizeBuildBox();
+    await tomas.click({ testId: "computers-refresh" });
+    await tomas.click({ role: "button", label: "Activity" });
+    const activity = { text: /OpenWork app was allowed to run a command in \/workspace for Tomás Rivera/ };
+    await tomas.see(activity, wait);
+    const entries = await texts(tomasPage, `${buildDetail} ul[aria-label="Recent activity"] > li > p`);
+    const commands = entries.filter((item) => item.includes("was allowed to run a command in /workspace"));
+    const leaked = entries.some((item) => /\bls\b/.test(item));
+    await tomas.screenshot();
+    witness("Den allows the signed-in app’s request and Activity shows the source, action, folder and person",
+      `HTTP ${status}, ${result?.decision.outcome}; this is the same single authorization request the desktop local server makes. ${commands.length} command activity: ${commands.join(" ")}; command text exposed: ${leaked}.`,
+      status === 200 && result?.decision.outcome === "allow" && result.decision.route === "checked" && result.connection?.provider === "daytona"
+      && commands.length === 1 && commands.some((item) => item.includes("Tomás Rivera's OpenWork app") && item.includes("for Tomás Rivera")) && !leaked);
+  });
+
+  await step("after: Priya can see who has access to Build box without owning it", async () => {
+    await priya.navigate(world.url("/dashboard/computers"));
+    await priya.see(tab("cloud"), wait);
+    await openTab("cloud", devices.buildBox.id);
+    await priya.click(buildRow);
+    await priya.see({ text: tomasSource }, wait);
+    const source = await texts(teamPage, sources);
+    const detail = (await texts(teamPage, buildDetail)).join(" ");
+    await priya.see({ role: "button", label: "Revoke" });
+    await priya.screenshot();
+    witness("Priya sees Tomás’s access and can revoke it, but only Tomás can change the settings",
+      `${source.length} source: ${tomasSource}; ${wholeComputer}; Only Tomás Rivera can change these.`,
+      source.length === 1 && source.some((text) => text.includes(tomasSource) && text.includes("/workspace"))
+      && detail.includes("Only Tomás Rivera can change these") && (await texts(teamPage, buildCode)).join(" ") === wholeComputer);
+  });
+
+  await step("after: Priya reviews which source she is about to revoke", async () => {
+    await priya.click({ role: "button", label: "Revoke" });
+    await priya.see({ role: "heading", label: "Revoke access?" });
+    const dialog = (await texts(teamPage, selector("confirm-dialog"))).join(" ");
+    await priya.screenshot();
+    witness("The confirmation names the affected source, computer and who can allow access again", dialog,
+      dialog.includes(`${tomasSource} will no longer be able to run code on Build box`) && dialog.includes("Only its owner can allow it again"));
+  });
+
+  await step("after: Priya revokes access and Den refuses the same request from Tomás’s app", async () => {
+    await priya.click(confirm);
+    await priya.see({ text: /Revoked by Priya Nair on/ }, wait);
+    await priya.see({ text: "Access was revoked." }, wait);
+    const code = await probe.eventually(async () => (await texts(teamPage, buildCode)).join(" "), {
+      within: 30_000, until: (text) => text === "No", label: "Build box no longer allows code after revocation",
+    });
+    const { status, result } = await world.authorizeBuildBox();
+    const refused = result?.decision.outcome === "refuse" ? result.decision : null;
+    const source = await texts(teamPage, sources);
+    await priya.screenshot();
+    witness("The source records Priya’s name and the same app cannot run code anymore",
+      `${source.length} source; Run code here: ${code}; HTTP ${status}, ${result?.decision.outcome}: ${refused?.message ?? "no refusal message"}`,
+      source.length === 1 && source.some((text) => text.includes(tomasSource) && text.includes("Revoked by Priya Nair on"))
+      && code === "No" && status === 200 && refused?.code === "computer_not_allowed" && refused.message.includes("I can't use Build box") && result?.connection === null);
+  });
+
+  await step("after: Priya turns off code from other computers and the team summary reflects it", async () => {
+    await priya.click({ role: "link", label: "Change rules" });
+    await priya.see(ruleSwitch, wait);
+    const rule = selector(ruleSwitch.testId);
+    const wasOn = (await texts(teamPage, `${rule}[aria-checked="true"]`)).length;
+    await priya.click(ruleSwitch);
+    await priya.see({ text: "Saved." }, wait);
+    await priya.see({ role: "button", label: "Undo" });
+    await priya.wheelAt({ x: 1140, y: 720, deltaY: 525 });
+    await priya.see({ text: "Required" });
+    const isOff = (await texts(teamPage, `${rule}[aria-checked="false"]`)).length;
+    const sandbox = await texts(teamPage, '[data-testid="computer-rules"] div:has(> div > div > svg.lucide-lock-keyhole)');
+    await summary.reload();
+    await summary.see(rulesSummary, { ...wait, text: /Agents on other computers can't run code/ });
+    await priya.screenshot();
+    witness("An organization rule can be turned off with Undo, while the personal sandbox stays required",
+      `Code rule: ${wasOn === 1 ? "On" : "unexpected"} to ${isOff === 1 ? "Off" : "unexpected"}; Saved with Undo; ${sandbox.length} locked sandbox rule; team summary says agents can't run code.`,
+      wasOn === 1 && isOff === 1 && sandbox.length === 1 && sandbox.some((text) => text.includes("runs in the sandbox") && text.includes("Required")));
+  });
+
+  await step("after: Priya undoes the organization change and the team summary returns to allowed", async () => {
+    await priya.click({ role: "button", label: "Undo" });
+    const checked = await probe.eventually(() => texts(teamPage, `${selector(ruleSwitch.testId)}[aria-checked="true"]`), {
+      within: 30_000, until: (items) => items.length === 1, label: "the code setting turns back on",
+    });
+    await priya.notSee({ role: "button", label: "Undo" });
+    await summary.reload();
+    await summary.see(rulesSummary, { ...wait, text: /Agents on other computers can run code/ });
+    await summary.screenshot();
+    witness("Undo restores the previous rule in Settings and on Computers", `${checked.length} enabled code rule; team summary says agents can run code.`, checked.length === 1);
   });
 });
