@@ -1,8 +1,18 @@
+import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import type { MicrosandboxMount } from "@openwork/sandbox-microsandbox";
+
+import { runtimeStorageDir } from "./runtime-db.js";
+import type { ServerConfig } from "./types.js";
+
+export function protectedMountPaths(config: ServerConfig) {
+  return [runtimeStorageDir(config), process.env.MSB_HOME || join(homedir(), ".microsandbox"), join(homedir(), ".openwork", "msb")];
+}
+
+export class SandboxProtectedMountError extends Error {}
 
 type Grant = { path: string; effect: "allow" | "ask" | "deny" };
 
@@ -72,7 +82,7 @@ function restrictionPaths(externalDirectory: Readonly<Record<string, unknown>>):
 function validateMount(mount: MicrosandboxMount, hostPath: string, directory: boolean, protectedPaths: string[], restrictions: string[]): MicrosandboxMount {
   if (!directory) throw new SandboxFolderError(mount.guestPath);
   if (hostPath === "/" || protectedPaths.some(path => inside(path, hostPath) || inside(hostPath, path))) {
-    throw new Error("A sandbox mount would expose protected runtime state. Remove that Authorized Folder.");
+    throw new SandboxProtectedMountError("A sandbox mount would expose protected runtime state. Remove that Authorized Folder.");
   }
   if (restrictions.some(path => inside(path, hostPath) || inside(hostPath, path))) {
     throw new Error("A sandbox bind aliases a restricted Authorized Folder subtree.");

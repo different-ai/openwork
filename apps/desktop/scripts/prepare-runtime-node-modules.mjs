@@ -22,7 +22,7 @@ export const requiredRoots = [{
   // does not preserve it in the packaged server's resolution tree.
   name: "@openwork/sandbox-microsandbox",
   fromPackageJson: resolve(desktopRoot, "../server/package.json"),
-}, ...["@openwork/computers", "@openwork/sandbox-daytona"].map(name => ({
+}, ...["@openwork/computers", "@openwork/sandbox-daytona", "@openwork/sandbox-freestyle"].map(name => ({
   name, fromPackageJson: resolve(desktopRoot, "../server/package.json"),
 }))];
 
@@ -125,7 +125,7 @@ export function stageRuntimeNodeModules(outdir, { roots = requiredRoots, platfor
         if (source === resolvedPackage.root) return true;
         const parts = relative(resolvedPackage.root, source).split(sep);
         if (parts.includes("node_modules")) return false;
-        if (["@openwork/sandbox-microsandbox", "@openwork/sandbox", "@openwork/sandbox-daytona", "@openwork/computers"].includes(name)) return ["dist", "package.json"].includes(parts[0]);
+        if (["@openwork/sandbox-microsandbox", "@openwork/sandbox", "@openwork/sandbox-daytona", "@openwork/sandbox-freestyle", "@openwork/computers"].includes(name)) return ["dist", "package.json"].includes(parts[0]);
         // The core's published entrypoints are dist (Node) and src (Bun/dev).
         // Do not ship checkout-only tests, tooling or incidental local links.
         if (name === "@openwork/remote-sessions") return ["dist", "src", "package.json"].includes(parts[0]);

@@ -12,7 +12,7 @@ import { SANDBOX_TOOL_NAMES } from "../src/sandbox-tool-host.js";
 import { computerBridgeFixture, computersFixture } from "./fixtures/computers.js";
 
 const root = { sessionId: "root", directory: "/root-folder" };
-async function fixture(initial: Awaited<ReturnType<ComputerRouting["status"]>>, withPermission = true) {
+async function fixture(initial: Awaited<ReturnType<ComputerRouting["status"]>>, withPermission = true, personal = false) {
   let feature = initial;
   const service = createComputerService(computersFixture("/root-folder"), {
     async authorize() { throw new Error("Den authorization should not be reached in this test"); },
@@ -21,7 +21,7 @@ async function fixture(initial: Awaited<ReturnType<ComputerRouting["status"]>>, 
   const host = vi.fn(async () => "host result");
   const run = vi.fn<ComputerRouting["execute"]>(async () => ({ content: [{ type: "text", text: "remote result" }] }));
   const pick = vi.fn<ComputerRouting["select"]>(async () => "selected");
-  const binding = vi.fn<ComputerRouting["binding"]>(async () => ({ id: "vm", label: "Build box", folder: "/workspace" }));
+  const binding = vi.fn<ComputerRouting["binding"]>(async () => ({ id: "vm", label: "Build box", folder: "/workspace", ...(personal ? { shares: { surface: "sandbox", folders: ["/workspace"] } } : {}) }));
   const permissions = vi.fn<ComputerRouting["permissions"]>(async ({ sessionId }, name, input) => {
     const target = sessionId === "root" ? await binding(root) : null;
     return target ? service.permissions(target, name, input) : null;
@@ -58,8 +58,9 @@ async function fixture(initial: Awaited<ReturnType<ComputerRouting["status"]>>, 
   return { available, invoke, host, run, assert, pick, permissions, async changeStatus(value: typeof initial) { feature = value; await refresh(); } };
 }
 
-test("a child uses its root's computer but asserts permission as the invoking child before dispatch", async () => {
-  const f = await fixture("enabled");
+for (const personal of [false, true]) {
+test(`a child asserts its own permission before dispatch (personal: ${personal})`, async () => {
+  const f = await fixture("enabled", true, personal);
   const asked = Promise.withResolvers<void>();
   const approved = Promise.withResolvers<void>();
   f.assert.mockImplementationOnce(() => { asked.resolve(); return approved.promise; });
@@ -77,14 +78,19 @@ test("a child uses its root's computer but asserts permission as the invoking ch
   expect(f.host).not.toHaveBeenCalled();
 });
 
-test("the engine's rejection propagates without any remote or local execution", async () => {
-  const f = await fixture("enabled");
+test(`the engine's reject and deny propagate without local fallback (personal: ${personal})`, async () => {
+  const f = await fixture("enabled", true, personal);
   const declined = new Error("Fixture engine decline");
   f.assert.mockRejectedValueOnce(declined);
   await expect(f.invoke("shell", "root")).rejects.toBe(declined);
+  const denied = new Error("Permission denied: shell");
+  f.assert.mockRejectedValueOnce(denied);
+  await expect(f.invoke("shell", "root")).rejects.toBe(denied);
   expect(f.run).not.toHaveBeenCalled();
   expect(f.host).not.toHaveBeenCalled();
 });
+
+}
 
 test("cancelling during approval prevents dispatch even if the assertion then resolves", async () => {
   const f = await fixture("enabled");
@@ -133,9 +139,9 @@ test("an engine without permission support fails closed only for a bound tool", 
   expect(await f.invoke("shell", "unbound")).toBe("host result");
 });
 
-test.each(["Second box", "this computer", "Build box"])("the bridge rejects stale approval after selecting %s", async selection => {
+for (const personal of [false, true]) test.each(["Second box", "this computer", "Build box"])(`the bridge rejects stale approval after selecting %s (personal: ${personal})`, async selection => {
   const directory = await mkdtemp(join(tmpdir(), "computer-binding-test-"));
-  const f = await computerBridgeFixture(computersFixture(directory));
+  const f = await computerBridgeFixture(computersFixture(directory), personal);
   const request = (operation: string, bindingId?: string) => fetch(f.bridge.url, {
     method: "POST", headers: { Authorization: `Bearer ${f.bridge.token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ operation, directory, sessionId: "fixture-session", name: "shell", input: { command: "pwd" }, bindingId }),

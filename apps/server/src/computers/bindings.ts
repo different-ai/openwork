@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { computerFolderSchema } from "@openwork/types/den/computers";
+import { COMPUTER_KINDS, computerFolderSchema, computerSandboxScopeSchema } from "@openwork/types/den/computers";
 import type { ServerConfig } from "../types.js";
 import { createWorkspaceKvStore } from "../workspace-kv-store.js";
 
-const bindingSchema = z.object({ id: z.string(), label: z.string(), folder: computerFolderSchema, revision: z.uuid().optional() });
+const bindingSchema = z.object({ id: z.string(), label: z.string(), folder: computerFolderSchema, revision: z.uuid().optional(), kind: z.enum(COMPUTER_KINDS).optional(), provider: z.string().optional(), shares: computerSandboxScopeSchema.optional() });
 export type ComputerBinding = z.infer<typeof bindingSchema>;
 
 export const bindingApprovalId = (binding: ComputerBinding) => binding.revision ?? binding.id;

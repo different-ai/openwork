@@ -123,6 +123,8 @@ import { registerCoreRoutes } from "./routes/core.js";
 import { sandboxPolicyPending } from "./sandbox-engine-transition.js";
 import { readAppliedSandboxSettings, readSandboxSettings, sandboxSettingsUpdateSchema, updateSandboxSettings } from "./sandbox-settings-store.js";
 import { closeLocalSandboxRuntime, localSandboxRuntime } from "./local-sandbox-runtime.js";
+import { closeComputerSharing, computerSharing } from "./computers/sharing.js";
+import { registerComputerSharingRoutes } from "./routes/computer-sharing.js";
 import { registerSandboxStatusRoutes } from "./routes/sandbox-status.js";
 import { runtimeDbPath } from "./runtime-db.js";
 import { registerFileRoutes } from "./routes/files.js";
@@ -857,7 +859,7 @@ export async function startServer(
   managedDesktopPolicy(config).onV2OnlyChange = (enabled) => {
     void engineV2Preview.setV2Only(enabled).catch(() => undefined);
   };
-  managedDesktopPolicy(config).onIdentityDelivered = () => { void engineV2Preview.syncSystemProxy(); };
+  managedDesktopPolicy(config).onIdentityDelivered = () => { computerSharing(config).refreshIdentity(); void engineV2Preview.syncSystemProxy(); };
   managedDesktopPolicy(config).onChange = () => {
     void anonymousInference.initialize(config.port).then((changed) => {
       if (changed && config.workspaces.length > 0) cloudProviderSync.markReloadPending();
@@ -1136,7 +1138,7 @@ export async function startServer(
           route.auth === "host-token"
             ? requireHostToken(request, config)
             : route.auth === "host"
-              ? await requireHost(request, config, tokens)
+              ? await requireHost(request, config, tokens, url.pathname === "/computers/sharing" || url.pathname === "/computers/runner")
               : route.auth === "client" || (route.auth === "policy" && !managedDesktopPolicy(config).authenticatesEvaluation(request))
                 ? await requireClient(request, config, tokens)
                 : undefined;
@@ -1307,6 +1309,7 @@ export async function startServer(
       reloadBaselineRefreshers.delete(config);
       await stopCloudComputer();
       await server.stop();
+      await closeComputerSharing(config).catch(() => console.warn("[openwork:computers] shutdown cleanup failed"));
       await closeLocalSandboxRuntime(config).catch(() => console.warn("[openwork:sandbox] shutdown cleanup failed"));
       if (recoveryError) throw recoveryError;
     },
@@ -2414,7 +2417,7 @@ function requireHostToken(request: Request, config: ServerConfig): Actor {
   throw new ApiError(401, "unauthorized", "Invalid host token");
 }
 
-async function requireHost(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
+async function requireHost(request: Request, config: ServerConfig, tokens: TokenService, forbidNonOwner = false): Promise<Actor> {
   const hostToken = request.headers.get("x-openwork-host-token");
   if (hostToken && hostToken === config.hostToken) {
     return { type: "host", tokenHash: hashToken(hostToken), scope: "owner" };
@@ -2428,6 +2431,7 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
   }
   const scope = await tokens.scopeForToken(bearer);
   if (scope !== "owner") {
+    if (scope && forbidNonOwner) throw new ApiError(403, "forbidden", "Only the owner of this computer can change its sharing settings.");
     throw new ApiError(401, "unauthorized", "Invalid host token");
   }
   const clientId = request.headers.get("x-openwork-client-id") ?? undefined;
@@ -2823,6 +2827,7 @@ function createRoutes(
   });
 
   registerSandboxStatusRoutes({ routes, config, requireClientScope, resolveWorkspaceWithoutBootstrap });
+  registerComputerSharingRoutes(routes, config);
 
   registerClaudeImportRoutes({
     routes,
