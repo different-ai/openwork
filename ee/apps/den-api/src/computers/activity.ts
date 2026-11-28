@@ -3,7 +3,7 @@ import { posix } from "node:path"
 import { and, desc, eq, gt, inArray, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, MemberTable, RemoteDeviceEventTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import type { ComputerAction, ComputerGrantScope } from "@openwork/types/den/computers"
+import type { Computer, ComputerAction, ComputerGrantScope } from "@openwork/types/den/computers"
 import { recordRemoteDeviceEvent, type RemoteDeviceDatabase } from "../remote-device-events.js"
 import type { RemoteDeviceActor } from "../remote-devices.js"
 
@@ -27,12 +27,13 @@ function workingPlace(action: ComputerAction, scope: ComputerGrantScope) {
 }
 
 export async function recordAcceptedComputerWork(database: RemoteDeviceDatabase, input: {
-  actor: RemoteDeviceActor; deviceId: DenTypeId<"remoteDevice">; action: ComputerAction; scope: ComputerGrantScope; source: "workbot" | "owner_app"; now: Date
+  actor: RemoteDeviceActor; deviceId: DenTypeId<"remoteDevice">; targetLabel: string; action: ComputerAction; scope: ComputerGrantScope;
+  source: Computer | null; coalesce?: boolean; now: Date
 }) {
-  const { actor, deviceId, action, scope, source, now } = input
+  const { actor, deviceId, targetLabel, action, scope, source, now } = input
   const place = workingPlace(action, scope)
-  const fingerprint = createHash("sha256").update(JSON.stringify([source, actor.memberId, action.type, place ?? null])).digest("hex")
-  if (source === "owner_app") {
+  const fingerprint = createHash("sha256").update(JSON.stringify([source?.id ?? null, actor.memberId, action.type, place ?? null])).digest("hex")
+  if (input.coalesce) {
     const e = RemoteDeviceEventTable
     const [recent] = await database.select({ id: e.id }).from(e).where(and(
       eq(e.deviceId, deviceId), eq(e.organizationId, actor.organizationId), eq(e.type, "computer_work_accepted"),
@@ -41,11 +42,12 @@ export async function recordAcceptedComputerWork(database: RemoteDeviceDatabase,
     if (recent) return
   }
   const name = (await computerMemberNames(database, actor.organizationId, [actor.memberId])).get(actor.memberId)
-  const who = source === "workbot" ? "Workbot" : name ? `${name.slice(0, 60)}'s OpenWork app` : "An OpenWork app"
-  const location = place ? place.length > 120 ? `${place.slice(0, 117)}...` : place : "its sandbox"
+  const workbot = source?.provider === "workbot"
+  const who = workbot ? "Workbot" : source ? source.label.slice(0, 80) : name ? `${name.slice(0, 60)}'s OpenWork app` : "An OpenWork app"
+  const location = place ? place.length > 70 ? `${place.slice(0, 67)}...` : place : "its sandbox"
   await recordRemoteDeviceEvent(database, {
     organizationId: actor.organizationId, deviceId, type: "computer_work_accepted", now,
-    actor: source === "workbot" ? "workbot" : "member", actorId: actor.memberId, data: { fingerprint },
-    message: `${who} was allowed to ${VERBS[action.type]} in ${location} for ${name?.slice(0, 60) ?? "the computer's owner"}`,
+    actor: workbot ? "workbot" : "member", actorId: actor.memberId, data: { fingerprint },
+    message: `${who} was allowed to ${VERBS[action.type]} in ${location} on ${targetLabel.slice(0, 80)} for ${name?.slice(0, 35) ?? "the computer's owner"}`,
   })
 }

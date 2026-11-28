@@ -13,7 +13,7 @@ const binary = process.env.OPENWORK_TEST_OPENCODE2 ?? "/Applications/OpenWork.ap
 const pendingSchema = z.object({ data: z.array(z.object({ id: z.string(), action: z.string(), resources: z.array(z.string()), save: z.array(z.string()), sessionID: z.string(), source: z.object({ type: z.literal("tool"), messageID: z.string(), id: z.string() }) })) });
 const model = { providerID: "native_fixture", id: "gpt-fixture" };
 
-test("the real native engine asks before routed shell execution", { timeout: 90_000 }, async t => {
+for (const personal of [false, true]) test(`the real native engine asks before routed shell execution (${personal ? "personal computer" : "registered VM"})`, { timeout: 90_000 }, async t => {
   try { await access(binary); } catch { t.skip("needs: pinned OpenCode V2 binary; set OPENWORK_TEST_OPENCODE2"); return; }
   const root = await realpath(await mkdtemp(join(tmpdir(), "computer-routing-native-")));
   const directory = join(root, "workspace");
@@ -28,7 +28,7 @@ test("the real native engine asks before routed shell execution", { timeout: 90_
     const source = new URL(`../src/opencode-plugins/${name}.ts`, import.meta.url).href;
     await writeFile(join(plugins, `${name}.js`), `export { default } from ${JSON.stringify(source)};\n`);
   }
-  const f = await computerBridgeFixture(computersFixture(directory, root));
+  const f = await computerBridgeFixture(computersFixture(directory, root), personal);
   let command = "touch local-shell.txt";
   let requests = 0;
   const inference = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {

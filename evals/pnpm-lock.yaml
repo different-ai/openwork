@@ -39,6 +39,15 @@ importers:
       '@openwork/review':
         specifier: link:../packages/review
         version: link:../packages/review
+      '@openwork/sandbox':
+        specifier: link:../packages/sandbox
+        version: link:../packages/sandbox
+      '@openwork/sandbox-daytona':
+        specifier: link:../packages/sandbox-daytona
+        version: link:../packages/sandbox-daytona
+      '@openwork/sandbox-freestyle':
+        specifier: link:../packages/sandbox-freestyle
+        version: link:../packages/sandbox-freestyle
       '@openwork/sdk':
         specifier: link:../packages/sdk
         version: link:../packages/sdk

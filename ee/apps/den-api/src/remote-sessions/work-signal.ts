@@ -3,7 +3,7 @@ import Redis from "ioredis"
 import { appLogger } from "../observability/logger.js"
 
 type Listener = () => void
-type ChannelName = "work" | "request_done" | "command_updated" | "user_update" | "computer_command_updated"
+type ChannelName = "work" | "request_done" | "command_updated" | "user_update" | "computer_command_updated" | "computer_command_available"
 
 const REDIS_CHANNEL = "openwork:remote-session-signal:v1"
 const INSTANCE_ID = randomUUID()
@@ -42,6 +42,7 @@ const hubs: Record<ChannelName, ReturnType<typeof createSignalHub>> = {
   command_updated: createSignalHub("command_updated"),
   user_update: createSignalHub("user_update"),
   computer_command_updated: createSignalHub("computer_command_updated"),
+  computer_command_available: createSignalHub("computer_command_available"),
 }
 
 type PubSubState = {
@@ -66,7 +67,7 @@ function parseSignalPayload(raw: string): { channel: ChannelName; key: string; o
     const key = parsed.key
     const origin = parsed.origin
     if (
-      (channel === "work" || channel === "request_done" || channel === "command_updated" || channel === "user_update" || channel === "computer_command_updated")
+      (channel === "work" || channel === "request_done" || channel === "command_updated" || channel === "user_update" || channel === "computer_command_updated" || channel === "computer_command_available")
       && typeof key === "string"
       && typeof origin === "string"
     ) {
@@ -181,6 +182,14 @@ export function onComputerCommandUpdated(commandId: string, listener: Listener):
 
 export function signalComputerCommandUpdated(commandId: string): void {
   emit("computer_command_updated", commandId)
+}
+
+export function onComputerCommandAvailable(deviceId: string, listener: Listener): () => void {
+  return hubs.computer_command_available.on(deviceId, listener)
+}
+
+export function signalComputerCommandAvailable(deviceId: string): void {
+  emit("computer_command_available", deviceId)
 }
 
 export function createSignalWaiter(subscribe: (wake: () => void) => () => void) {

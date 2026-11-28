@@ -498,6 +498,9 @@ importers:
       '@openwork/sandbox-daytona':
         specifier: workspace:*
         version: link:../../packages/sandbox-daytona
+      '@openwork/sandbox-freestyle':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-freestyle
       '@openwork/sandbox-microsandbox':
         specifier: workspace:*
         version: link:../../packages/sandbox-microsandbox

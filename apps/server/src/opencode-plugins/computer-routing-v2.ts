@@ -1,3 +1,4 @@
+import { computerSandboxScopeSchema } from "@openwork/types/den/computers";
 import { z } from "zod";
 import { computersSandboxConflict, localComputerTools, routedComputerTool } from "../computers/tool-names.js";
 import { computerApprovalUnavailable } from "../computers/messages.js";
@@ -8,7 +9,7 @@ import type { HostNativeTool, SandboxEngineResult, SandboxPluginContext, Sandbox
 const controlInput = z.strictObject({ computer: z.string().max(256).optional() });
 export const computerStatusSchema = z.enum(["off", "enabled", "unavailable"]);
 type ComputerStatus = z.infer<typeof computerStatusSchema>;
-export const computerBindingSchema = z.object({ id: z.string(), label: z.string(), folder: z.string() });
+export const computerBindingSchema = z.object({ id: z.string(), label: z.string(), folder: z.string(), shares: computerSandboxScopeSchema.optional() });
 type Location = { sessionId: string; directory?: string };
 export type ComputerRouting = {
   status(): Promise<ComputerStatus>;
@@ -72,6 +73,10 @@ export function computerRouting(context: SandboxPluginContext, dependencies: Com
     },
     async instruction(sessionID: string) {
       const binding = await dependencies.binding(await root(sessionID));
+      if (binding?.shares) {
+        const folders = binding.shares.folders.map(path => `${path} (${binding.shares?.writableFolders?.includes(path) ? "can edit" : "read-only"})`).join(", ");
+        return `This chat runs on ${binding.label}, inside its sandbox. Your file and shell tools work there in ${folders}. Other folders on that computer are not reachable, and the sandbox has no internet access. Use absolute paths on that computer.`;
+      }
       return binding ? `This chat runs on ${binding.label}. Your file and shell tools work there, in ${binding.folder}. Use absolute paths on that computer; this machine's files are not there.` : null;
     },
   };

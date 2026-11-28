@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { createServer, type Server } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -62,6 +62,41 @@ test("live: the guest sees only its mounts, and a read-only mount cannot be writ
     await provider.destroy(handle, opts)
     await rm(readOnly, { recursive: true, force: true })
     await rm(readWrite, { recursive: true, force: true })
+  }
+})
+
+test("live: guest root cannot make a read-only mount writable or follow a link out of its mounts", { skip, timeout: 180_000 }, async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "msb-boundary-")))
+  const readOnly = join(root, "read-only")
+  const readWrite = join(root, "can-edit")
+  const unshared = join(root, "unshared")
+  for (const folder of [readOnly, readWrite, unshared]) await mkdir(folder)
+  await writeFile(join(readOnly, "keep.txt"), "from the host")
+  await writeFile(join(unshared, "private.txt"), "never shared")
+  await symlink(unshared, join(readOnly, "host-link"))
+  await symlink(unshared, join(readWrite, "host-link"))
+  const provider = createMicrosandboxProvider({
+    image,
+    network: { egress: "none" },
+    mounts: [{ hostPath: readOnly, guestPath: readOnly, access: "ro" }, { hostPath: readWrite, guestPath: readWrite, access: "rw" }],
+  })
+  const { run: exec } = withBlocks(provider, ["run"])
+  const handle = await provider.create(spec(), opts)
+  try {
+    const identity = await exec(handle, { ...opts, command: "id -u" })
+    assert.equal(identity.stdout.trim(), "0")
+    const remount = await exec(handle, { ...opts, command: `mount -o remount,rw ${readOnly}; echo changed > ${readOnly}/keep.txt; echo $?; echo new > ${readOnly}/new.txt; echo $?; rm -f ${readOnly}/keep.txt; echo $?` })
+    assert.deepEqual(remount.stdout.trim().split("\n"), ["1", "1", "1"])
+    const again = await exec(handle, { ...opts, command: `share=$(grep " ${readOnly} " /proc/mounts | cut -d" " -f1); mkdir -p /mnt/again; mount -t virtiofs "$share" /mnt/again; echo new > /mnt/again/second.txt; echo $?` })
+    assert.equal(again.stdout.trim(), "1")
+    const links = await exec(handle, { ...opts, command: `ln -s ${unshared} ${readWrite}/guest-link; for path in ${readWrite}/guest-link ${readWrite}/host-link ${readOnly}/host-link ${readOnly}/../unshared ${unshared}; do cat $path/private.txt 2>/dev/null; echo $?; done` })
+    assert.deepEqual(links.stdout.trim().split("\n"), ["1", "1", "1", "1", "1"])
+    assert.equal(await readFile(join(readOnly, "keep.txt"), "utf8"), "from the host")
+    assert.deepEqual((await readdir(readOnly)).sort(), ["host-link", "keep.txt"])
+    assert.equal(await readFile(join(unshared, "private.txt"), "utf8"), "never shared")
+  } finally {
+    await provider.destroy(handle, opts)
+    await rm(root, { recursive: true, force: true })
   }
 })
 

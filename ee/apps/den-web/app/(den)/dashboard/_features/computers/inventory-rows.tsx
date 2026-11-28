@@ -7,7 +7,7 @@ import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { StatusDot, secondaryText } from "./computer-parts";
 import { ListRow, OwnerLane, RowLane, RowLaneLabel, RowList, RowListHeader, computerIcon } from "./computer-rows";
 import { SHARED_COMPUTER_LABEL } from "./computers-format";
-import { inventoryStatus, onOff, runCodeLabel, runCodeReason } from "./inventory-format";
+import { inventoryRunCode, inventoryStatus, onOff } from "./inventory-format";
 import { remoteAccessNote, type RemoteAccessVoice } from "./remote-access";
 
 const columns = {
@@ -35,8 +35,8 @@ function MobileLabel({ children }: { children: ReactNode }) {
   return <span className={`block text-xs leading-4 @3xl:hidden ${secondaryText}`} aria-hidden="true">{children}</span>;
 }
 
-export function InventoryLock({ reason }: { reason: string }) {
-  return <LockKeyhole role="img" aria-label={reason} className={`size-4 shrink-0 ${secondaryText}`} strokeWidth={1.5}><title>{reason}</title></LockKeyhole>;
+export function InventoryLock({ reason, decorative = false }: { reason: string; decorative?: boolean }) {
+  return <LockKeyhole role="img" aria-label={reason} aria-hidden={decorative || undefined} className={`size-4 shrink-0 ${secondaryText}`} strokeWidth={1.5}><title>{reason}</title></LockKeyhole>;
 }
 
 export function sessionLockReason(sessions: ComputerInventoryRow["sessions"], voice: RemoteAccessVoice) {
@@ -45,20 +45,18 @@ export function sessionLockReason(sessions: ComputerInventoryRow["sessions"], vo
 
 function InventoryCells({ row, admin, now }: { row: ComputerInventoryRow; admin: boolean; now: number }) {
   const status = inventoryStatus(row.status, now);
-  const runReason = runCodeReason(row.runCode);
+  const run = inventoryRunCode(row.runCode, row.kind);
   const sessionsReason = sessionLockReason(row.sessions, admin ? "team" : "owner");
-  const run = runCodeLabel(row.runCode);
   const read = COMPUTER_READ_SESSIONS_LABELS[row.sessions.readSessions];
-  const runBlocked = row.runCode.value === "no" && row.runCode.reason === "organization";
   return <>
     {admin ? <OwnerLane device={row} lane={`flex ${columns.owner} ${bottom}`} sharedLabel="Shared" /> : null}
     <div role="cell" data-status={row.status.state} className={`shrink-0 leading-5 ${columns.status}`} title={status.detail ?? undefined}>
       <span className="flex items-center gap-2"><StatusDot tone={status.tone} />{status.label}</span>
       {status.detail ? <span className={`block truncate pl-4 text-xs leading-4 ${secondaryText}`}>{status.detail}</span> : null}
     </div>
-    <div role="cell" data-run-code={row.runCode.value} className={`shrink-0 leading-5 ${columns.runCode} ${bottom}`} title={runReason ?? run}>
+    <div role="cell" data-run-code={run.value} className={`shrink-0 leading-5 ${columns.runCode} ${bottom}`} title={run.reason ?? run.label}>
       <MobileLabel>Run code here</MobileLabel>
-      <span className="flex items-center gap-1"><span className="truncate">{run}</span>{runBlocked && runReason ? <InventoryLock reason={runReason} /> : null}</span>
+      <span className="flex items-center gap-1"><span className={run.locked ? secondaryText : "truncate"}>{run.label}</span>{run.locked && run.reason ? <InventoryLock reason={run.reason} /> : null}</span>
     </div>
     <div role="cell" data-send-tasks={row.sessions.sendTasks ? "on" : "off"} className={`shrink-0 leading-5 ${columns.sendTasks} ${bottom}`} title={!row.sessions.sendTasks ? sessionsReason ?? undefined : undefined}>
       <MobileLabel>Send it tasks</MobileLabel>

@@ -123,6 +123,8 @@ import { registerCoreRoutes } from "./routes/core.js";
 import { sandboxPolicyPending } from "./sandbox-engine-transition.js";
 import { readAppliedSandboxSettings, readSandboxSettings, sandboxSettingsUpdateSchema, updateSandboxSettings } from "./sandbox-settings-store.js";
 import { closeLocalSandboxRuntime, localSandboxRuntime } from "./local-sandbox-runtime.js";
+import { closeComputerSharing, computerSharing } from "./computers/sharing.js";
+import { registerComputerSharingRoutes } from "./routes/computer-sharing.js";
 import { registerSandboxStatusRoutes } from "./routes/sandbox-status.js";
 import { runtimeDbPath } from "./runtime-db.js";
 import { registerFileRoutes } from "./routes/files.js";
@@ -857,7 +859,7 @@ export async function startServer(
   managedDesktopPolicy(config).onV2OnlyChange = (enabled) => {
     void engineV2Preview.setV2Only(enabled).catch(() => undefined);
   };
-  managedDesktopPolicy(config).onIdentityDelivered = () => { void engineV2Preview.syncSystemProxy(); };
+  managedDesktopPolicy(config).onIdentityDelivered = () => { computerSharing(config).refreshIdentity(); void engineV2Preview.syncSystemProxy(); };
   managedDesktopPolicy(config).onChange = () => {
     void anonymousInference.initialize(config.port).then((changed) => {
       if (changed && config.workspaces.length > 0) cloudProviderSync.markReloadPending();
@@ -1307,6 +1309,7 @@ export async function startServer(
       reloadBaselineRefreshers.delete(config);
       await stopCloudComputer();
       await server.stop();
+      await closeComputerSharing(config).catch(() => console.warn("[openwork:computers] shutdown cleanup failed"));
       await closeLocalSandboxRuntime(config).catch(() => console.warn("[openwork:sandbox] shutdown cleanup failed"));
       if (recoveryError) throw recoveryError;
     },
@@ -2823,6 +2826,7 @@ function createRoutes(
   });
 
   registerSandboxStatusRoutes({ routes, config, requireClientScope, resolveWorkspaceWithoutBootstrap });
+  registerComputerSharingRoutes(routes, config);
 
   registerClaudeImportRoutes({
     routes,

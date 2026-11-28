@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState } from "react";
+import { useState, type ComponentType } from "react";
 import { computerState, projectComputer } from "@openwork/computers";
 import { COMPUTER_STATE_LABELS, computerFolderSchema, type ComputerAccessSetting, type ComputerOwnerChoice } from "@openwork/types/den/computers";
 import {
@@ -22,8 +22,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { t } from "@/i18n";
-import { ChevronRight, Cloud, Laptop, Lock, MoreHorizontal } from "lucide-react";
+import { ChevronRight, Cloud, Info, Laptop, Lock, MoreHorizontal } from "lucide-react";
 import { useCloudWorkspaceStatus } from "@/react-app/shell/cloud-workspace-overlay";
 import { useAutomationsDenContext, type AutomationsDenContext } from "../../automations/use-automations";
 import { useThisComputerDisconnected } from "../../devices/computer-connection-store";
@@ -42,21 +43,26 @@ const dateLabel = (value: string) => new Date(value).toLocaleString();
 const isOwnRegisteredVm = (device: RemoteDevice) => device.kind === "vm" && device.source === "manual" && device.access === "mine";
 type DeviceAction = { kind: "register" } | { kind: "rename" | "disconnect" | "remove"; device: RemoteDevice };
 
-export function DevicesView({ computersEnabled }: { computersEnabled: boolean }) {
+type DevicesSharingSlot = ComponentType<{
+  scope: readonly unknown[]; devices: RemoteDevice[] | undefined; organizationId: string | null; thisDeviceId: string | null;
+}>;
+
+export function DevicesView({ computersEnabled, SharingSection }: { computersEnabled: boolean; SharingSection: DevicesSharingSlot }) {
   const context = useAutomationsDenContext();
   const { signOut } = useCloudWorkspaceStatus();
-  return <DevicesContent key={`${remoteDevicesContextQueryKey(context).join(":")}:${context.ready}`} context={context} computersEnabled={computersEnabled} organizationName={readDenSettings().activeOrgName?.trim() || null} onSignOut={signOut} />;
+  return <DevicesContent key={`${remoteDevicesContextQueryKey(context).join(":")}:${context.ready}`} context={context} computersEnabled={computersEnabled} SharingSection={SharingSection} organizationName={readDenSettings().activeOrgName?.trim() || null} onSignOut={signOut} />;
 }
 
-export function DevicesContent({ context, computersEnabled, organizationName = null, onSignOut }: { context: AutomationsDenContext; computersEnabled: boolean; organizationName?: string | null; onSignOut?: () => void }) {
+export function DevicesContent({ context, computersEnabled, SharingSection, organizationName = null, onSignOut }: { context: AutomationsDenContext; computersEnabled: boolean; SharingSection: DevicesSharingSlot; organizationName?: string | null; onSignOut?: () => void }) {
   const query = useRemoteDevicesQuery(context);
   const thisDeviceId = useThisDeviceId(context.organizationId);
   const disconnected = useThisComputerDisconnected();
   const [action, setAction] = useState<DeviceAction | null>(null);
   const [outcome, setOutcome] = useState<string | null>(null);
   const begin = (next: DeviceAction) => { setOutcome(null); setAction(next); };
+  const computerSharingSection = computersEnabled ? <SharingSection scope={remoteDevicesContextQueryKey(context)} devices={query.data} organizationId={context.organizationId} thisDeviceId={thisDeviceId} /> : null;
   const sessionAccessSection = <SessionAccessSection />;
-  if (!context.ready) return <LayoutStack><p role="status" className="text-sm text-muted-foreground">Sign in and select an organization in Cloud account to see your devices.</p>{sessionAccessSection}</LayoutStack>;
+  if (!context.ready) return <LayoutStack><p role="status" className="text-sm text-muted-foreground">Sign in and select an organization in Cloud account to see your devices.</p>{computerSharingSection}{sessionAccessSection}</LayoutStack>;
   const devices = query.data ?? [];
   return <LayoutStack>
     {disconnected ? <Alert role="status" data-testid="computer-disconnected" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -73,6 +79,7 @@ export function DevicesContent({ context, computersEnabled, organizationName = n
       {devices.filter(device => device.kind === kind).map(device => <DeviceRow key={device.id} device={device} context={context} thisDevice={isThisComputer(device, context.organizationId, thisDeviceId)} computersEnabled={computersEnabled} onAction={begin} />)}
       {!query.isPending && devices.length > 0 && !devices.some(device => device.kind === kind) ? <p className="text-sm text-muted-foreground">{kind === "desktop" ? "No desktops reported yet." : "No cloud VMs registered yet."}</p> : null}
     </LayoutSection>)}
+    {computerSharingSection}
     {sessionAccessSection}
     {action ? <DeviceDialog key={action.kind === "register" ? "register" : `${action.kind}:${action.device.id}`} action={action} context={context} computersEnabled={computersEnabled} onClose={result => { setAction(null); if (result) setOutcome(result); }} /> : null}
   </LayoutStack>;
@@ -182,10 +189,12 @@ function DeviceDialog({ action, context, computersEnabled, onClose }: { action: 
       {editAccess && access ? <div className="grid gap-4 border-t border-border pt-4">
         <div className="grid gap-2">
           <div className="flex items-center justify-between gap-3">
-            <Label id="device-run-work-label" htmlFor="device-run-work">{t("settings.devices.run_work")}</Label>
-            <Switch id="device-run-work" aria-labelledby="device-run-work-label" aria-describedby={locked ? "device-access-risk device-access-locked" : "device-access-risk"} checked={!locked && choice === "allow"} disabled={busy || locked} onCheckedChange={checked => { setChoiceDraft(checked ? "allow" : "off"); setAccessError(""); }} />
+            <div className="flex items-center gap-1">
+              <Label id="device-run-work-label" htmlFor="device-run-work">{t("settings.devices.run_work")}</Label>
+              <Tooltip><TooltipTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label={t("settings.devices.access_details")} />}><Info aria-hidden className="size-4 text-muted-foreground" strokeWidth={1.5} /></TooltipTrigger><TooltipContent className="max-w-xs">{t("settings.devices.access_risk")}</TooltipContent></Tooltip>
+            </div>
+            <Switch id="device-run-work" aria-labelledby="device-run-work-label" aria-describedby={locked ? "device-access-locked" : undefined} checked={!locked && choice === "allow"} disabled={busy || locked} onCheckedChange={checked => { setChoiceDraft(checked ? "allow" : "off"); setAccessError(""); }} />
           </div>
-          <p id="device-access-risk" className="text-sm text-muted-foreground">{t("settings.devices.access_risk")}</p>
           {locked ? <p id="device-access-locked" className="flex items-start gap-2 text-sm text-muted-foreground"><Lock aria-hidden className="size-4 shrink-0" strokeWidth={1.5} />{t("settings.devices.access_locked")}</p> : null}
         </div>
         <div className="grid gap-2"><Label htmlFor="device-folder">{t("settings.devices.folder")}</Label><Input id="device-folder" value={folder} onChange={event => setFolderDraft(event.target.value)} maxLength={1024} disabled={busy || locked || choice !== "allow"} autoComplete="off" /></div>

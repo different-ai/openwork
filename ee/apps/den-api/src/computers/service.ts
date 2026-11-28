@@ -1,110 +1,109 @@
-import { createComputers, decide, projectComputer, refusal } from "@openwork/computers"
-import { COMPUTER_REFUSAL_CODES, type ComputerAction, type ComputerExecution, type ComputerRefusal } from "@openwork/types/den/computers"
-import { isDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { computerActionForToolCall, createComputers, notPickedUpMessage, offlineMessage, refusal } from "@openwork/computers"
+import { COMPUTER_REFUSAL_CODES, type Computer, type ComputerExecution, type ComputerRefusal, type ComputerSourceListResponse, type ComputerToolCall } from "@openwork/types/den/computers"
+import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
-import { listMemberRemoteDeviceRows } from "../remote-devices.js"
+import { withPrimaryReads } from "../read-routing.js"
+import { listMemberRemoteDeviceRows, readMemberRemoteDeviceRow, type RemoteDeviceActor } from "../remote-devices.js"
 import { createSignalWaiter, onComputerCommandUpdated } from "../remote-sessions/work-signal.js"
-import type { CapabilityRegistryContext } from "../mcp/capability-registry.js"
+import { listedComputer, projectMemberComputer } from "./member.js"
 import { incomingComputerWorkRefusal, loadComputerPolicy } from "./policy.js"
-import { resolveComputerSource } from "./source.js"
-import { enqueueComputerCommand, pruneCallerComputerCommands, readComputerCommand, type ComputerCommand } from "./store.js"
+import { COMPUTER_LISTENING_WINDOW_MS, enqueueComputerCommand, pickupDeadline, pruneCallerComputerCommands, readComputerCommand, type ComputerCommand } from "./store.js"
 
 const refusalCodeSchema = z.enum(COMPUTER_REFUSAL_CODES)
 
-type Caller = Pick<CapabilityRegistryContext, "organizationId" | "principal"> & { memberId: DenTypeId<"member"> }
+export type VerifiedComputerSource = { id: DenTypeId<"remoteDevice">; computer: Computer }
+export type ComputerCaller = RemoteDeviceActor & { userId: DenTypeId<"user">; source: VerifiedComputerSource | null }
 
-async function memberComputers(caller: Caller) {
-  const actor = { organizationId: caller.organizationId, memberId: caller.memberId }
-  const devices = await listMemberRemoteDeviceRows(actor, { canManageShared: false })
-  const source = await resolveComputerSource(caller.principal, actor, devices)
-  return {
-    source: source ? { id: source.row.id, computer: projectComputer({ ...source.device, ownerMemberId: source.row.ownerMemberId }) } : null,
-    computers: devices.map(({ row, device, runner }) => {
-      const computer = projectComputer({ ...device, ownerMemberId: row.ownerMemberId })
-      return { id: row.id, computer, unavailable: incomingComputerWorkRefusal(computer, runner?.capabilities) }
-    }),
-  }
-}
-
-export async function listComputers(caller: Caller) {
-  const { source, computers } = await memberComputers(caller)
-  const items = await Promise.all(computers.map(async ({ id, computer, unavailable }) => {
-    if (source?.id === id) return { ...computer, reach: { outcome: "allow", route: "direct", scope: null } }
-    const reach = unavailable ?? (source
-      ? decide(source.computer, computer, { type: "shell", command: "true" }, await loadComputerPolicy(caller.organizationId, id))
-      : null)
-    return { ...computer, reach }
-  }))
-  return { self: source?.computer ?? null, computers: items }
+export async function listComputers(caller: ComputerCaller): Promise<ComputerSourceListResponse> {
+  const { source } = caller
+  const devices = await listMemberRemoteDeviceRows(caller, { canManageShared: false })
+  const computers = await Promise.all(devices.map(async (item) => listedComputer(
+    caller, item, await loadComputerPolicy(caller.organizationId, item.row.id), source?.computer ?? null,
+  )))
+  return { self: source?.computer ?? null, computers }
 }
 
 function refusedExecution({ layer, code, message, changeableBy }: ComputerRefusal): ComputerExecution {
   return { state: "refused", layer, code, message, changeableBy }
 }
 
-export async function runComputerShell(caller: Caller, computerId: string, action: ComputerAction, waitMs: number) {
-  const { source, computers } = await memberComputers(caller)
-  const target = computers.find(({ id }) => id === computerId)
-  if (!target) return { error: "unknown_computer", message: "That computer isn't available to your account.", retryable: false }
-  if (target.unavailable && source?.id !== target.id) return refusedExecution(target.unavailable)
-  if (target.computer.kind === "registered_vm") return refusedExecution(refusal("owner_app_only", target.computer))
+export async function runComputerTool(caller: ComputerCaller, computerId: string, call: ComputerToolCall, waitMs: number, signal?: AbortSignal): Promise<ComputerExecution | { error: string; message: string; retryable: false }> {
+  const { source } = caller
+  const desktop = source?.computer.kind === "member_machine"
+  const target = isDenTypeId("remoteDevice", computerId) ? await withPrimaryReads(() => readMemberRemoteDeviceRow(caller, computerId)) : null
+  if (!target) {
+    return { error: "unknown_computer", message: "That computer isn't available to your account.", retryable: false }
+  }
+  const computer = projectMemberComputer(target)
+  if (source?.id === computerId) return { state: "unsupported", message: "Use this chat's own tools to work on this computer." }
+  if (computer.kind === "registered_vm") {
+    if (desktop) return { state: "unsupported", message: "Use your OpenWork app to reach this computer directly." }
+    return refusedExecution(refusal("owner_app_only", computer))
+  }
+  const unavailable = incomingComputerWorkRefusal(computer, target.runner?.capabilities)
+  if (unavailable) return refusedExecution(unavailable)
   if (!source) return { error: "source_unverified", message: "This tool only accepts new commands from a Workbot chat.", retryable: false }
-  const policy = await loadComputerPolicy(caller.organizationId, target.id)
+  const policy = await loadComputerPolicy(caller.organizationId, target.row.id)
   return createComputers({
     self: source.computer,
-    computers: [target.computer],
+    computers: [computer],
     policyFor: () => policy,
+    lastSeenAt: () => target.device.lastSeenAt,
+    now: Date.now,
     async run({ scope }) {
+      const now = Date.now()
+      const seen = target.row.lastSeenAt
+      if (computer.kind === "member_machine" && (!seen || now - seen.getTime() > COMPUTER_LISTENING_WINDOW_MS)) {
+        const lastSeenAt = seen?.toISOString() ?? null
+        return { state: "offline", retryable: true, lastSeenAt, message: offlineMessage(computer.label, lastSeenAt, now) }
+      }
       const command = await enqueueComputerCommand({
-        organizationId: caller.organizationId, createdByUserId: normalizeDenTypeId("user", caller.principal.userId),
-        sourceDeviceId: source.id, targetDeviceId: target.id, action, scope,
+        organizationId: caller.organizationId, createdByUserId: caller.userId,
+        sourceDeviceId: source.id, targetDeviceId: target.row.id, call, scope,
       })
-      const result = await followComputerCommand(caller, command.id, waitMs)
+      const result = await followComputerCommand(caller, command.id, waitMs, signal)
       return result ?? { state: "failed", id: command.id, error: { code: "unknown_command", message: "That computer command could not be found." } }
     },
-  }).execute(target.computer, action)
+  }).execute(computer, computerActionForToolCall(call))
 }
 
-async function commandTarget(caller: Caller, command: ComputerCommand) {
-  const { computers } = await memberComputers(caller)
-  return computers.find((computer) => computer.id === command.targetDeviceId)?.computer
-}
-
-async function commandExecution(caller: Caller, command: ComputerCommand): Promise<ComputerExecution> {
+async function commandExecution(caller: ComputerCaller, command: ComputerCommand): Promise<ComputerExecution> {
   const { id, status } = command
   if (status === "done") return { state: "done", id, exitCode: command.exitCode ?? 0, output: command.output ?? "", truncated: command.truncated ?? false }
   const failed = (code = "command_failed", message = "The computer could not finish this command."): ComputerExecution => ({ state: "failed", id, error: { code, message } })
   if (status === "failed") return failed(command.errorCode ?? undefined, command.errorMessage ?? undefined)
+  const target = async () => (await withPrimaryReads(() => readMemberRemoteDeviceRow(caller, command.targetDeviceId)))?.device
   if (status === "refused") {
     const parsed = refusalCodeSchema.safeParse(command.errorCode)
-    if (!parsed.success) return failed()
-    const target = await commandTarget(caller, command)
-    return refusedExecution(refusal(parsed.data, target ?? { label: "That computer" }))
+    return parsed.success ? refusedExecution(refusal(parsed.data, await target() ?? { label: "That computer" })) : failed()
   }
-  if (status === "expired" || command.expiresAt.getTime() <= Date.now()) {
-    const label = (await commandTarget(caller, command))?.label ?? "That computer"
-    if (command.claimedAt) {
-      return { state: "unknown", id, message: `${label} started handling this command but hasn't reported back. It may have run. Ask again later with this command's ID, or check on that computer before running it again.` }
-    }
-    return { state: "failed", id, error: { code: "not_picked_up", message: `${label} didn't pick this up in time. Nothing ran.` } }
+  const now = Date.now()
+  if (command.claimedAt && command.expiresAt.getTime() <= now) {
+    const label = (await target())?.label ?? "That computer"
+    return { state: "unknown", id, message: `${label} started handling this command but hasn't reported back. It may have run. Ask again later with this command's ID, or check on that computer before running it again.` }
+  }
+  if (status === "expired" || (status === "pending" && pickupDeadline(command) <= now)) {
+    const device = await target()
+    return failed("not_picked_up", notPickedUpMessage(device?.label ?? "That computer", device?.lastSeenAt ?? null, now))
   }
   return { state: "running", id, expiresAt: command.expiresAt.toISOString() }
 }
 
-export async function followComputerCommand(caller: Caller, id: string, waitMs: number): Promise<ComputerExecution | null> {
+export async function followComputerCommand(caller: ComputerCaller, id: string, waitMs: number, signal?: AbortSignal): Promise<ComputerExecution | null> {
   if (!isDenTypeId("computerCommand", id)) return null
-  const userId = normalizeDenTypeId("user", caller.principal.userId)
+  const desktopId = caller.source?.computer.kind === "member_machine" ? caller.source.id : null
   const deadline = Date.now() + waitMs
-  await pruneCallerComputerCommands(caller.organizationId, userId)
+  await pruneCallerComputerCommands(caller.organizationId, caller.userId)
   const waiter = createSignalWaiter((wake) => onComputerCommandUpdated(id, wake))
   try {
     for (;;) {
-      const command = await readComputerCommand(caller.organizationId, userId, id)
+      const command = await readComputerCommand(caller.organizationId, caller.userId, id, desktopId)
       if (!command) return null
       const result = await commandExecution(caller, command)
       const remaining = deadline - Date.now()
-      if (result.state !== "running" || remaining <= 0) return result
-      await waiter.wait(Math.min(remaining, 500, Math.max(1, command.expiresAt.getTime() - Date.now())))
+      if (result.state !== "running" || remaining <= 0 || signal?.aborted) return result
+      const timeout = command.status === "pending" ? pickupDeadline(command) : command.expiresAt.getTime()
+      await waiter.wait(Math.min(remaining, 500, Math.max(1, timeout - Date.now())), signal)
     }
   } finally {
     waiter.dispose()

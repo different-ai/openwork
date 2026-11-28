@@ -1,5 +1,5 @@
-import { computerState, decide, ownerWholeVmScope, projectComputer, signedInApp } from "@openwork/computers"
-import type { ComputerAccessSetting, ComputerAction, ComputerAuthorizeResponse, ComputerListResponse, ComputerPolicy, ListedComputer } from "@openwork/types/den/computers"
+import { computerState, decide, ownerWholeVmScope, projectComputer, refusal, signedInApp } from "@openwork/computers"
+import { isExecutableVmProvider, type Computer, type ComputerAccessSetting, type ComputerAction, type ComputerAuthorizeResponse, type ComputerDecision, type ComputerListResponse, type ComputerPolicy, type ListedComputer } from "@openwork/types/den/computers"
 import { and, eq, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { AutomationRunnerTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
@@ -8,39 +8,43 @@ import { listMemberRemoteDeviceRows, readMemberRemoteDeviceRow, type RemoteDevic
 import { withDeadlockRetry } from "../utils/deadlock-retry.js"
 import { recordAcceptedComputerWork } from "./activity.js"
 import { incomingComputerWorkRefusal, loadComputerPolicy } from "./policy.js"
-import { replaceRegisteredVmAccess } from "./store.js"
+import { projectStoredComputer, replaceRegisteredVmAccess } from "./store.js"
+import type { VerifiedComputerSource } from "./service.js"
 
 type MemberComputer = Awaited<ReturnType<typeof listMemberRemoteDeviceRows>>[number]
 type ComputerId = DenTypeId<"remoteDevice">
 
 function isRegisteredVm(row: MemberComputer["row"]) {
-  return row.kind === "vm" && row.source === "manual"
+  return row.kind === "vm" && row.source === "manual" && isExecutableVmProvider(row.provider)
 }
 
 const reachAction: ComputerAction = { type: "shell", command: "true" }
 
-type ComputerView = Pick<MemberComputer, "row" | "device"> & { capabilities?: readonly string[] | null }
+export function projectMemberComputer({ row, device }: MemberComputer) {
+  return projectComputer({ ...device, ownerMemberId: row.ownerMemberId })
+}
 
-function listedComputer(actor: RemoteDeviceActor, { row, device, capabilities }: ComputerView, policy: ComputerPolicy): ListedComputer {
-  const computer = projectComputer({ ...device, ownerMemberId: row.ownerMemberId })
+function reach(source: Computer | null, target: Computer, action: ComputerAction, policy: ComputerPolicy, capabilities: readonly string[] | null | undefined): ComputerDecision {
+  if (source?.id === target.id) return decide(source, target, action, policy)
+  return incomingComputerWorkRefusal(target, capabilities) ?? (source ? decide(source, target, action, policy) : refusal(target.kind === "registered_vm" ? "owner_app_only" : "source_not_allowed", target))
+}
+
+export function listedComputer(actor: RemoteDeviceActor, item: MemberComputer, policy: ComputerPolicy, source: Computer | null, capabilities = item.runner?.capabilities): ListedComputer {
+  const { row, device } = item
+  const computer = projectMemberComputer(item)
   const ownerSetting = row.ownerMemberId === actor.memberId && isRegisteredVm(row)
   const scope = ownerSetting ? ownerWholeVmScope(computer.id, policy) : null
-  const access = !ownerSetting ? null : scope
-    ? { choice: "allow" as const, scope: scope.surface, folders: scope.folders }
-    : { choice: policy.owner.choice === null ? null : "off" as const, folders: [] }
-  return {
-    ...computer,
-    state: computerState(computer),
-    lastSeenAt: device.lastSeenAt,
-    access,
-    reach: incomingComputerWorkRefusal(computer, capabilities) ?? decide(signedInApp(actor.memberId), computer, reachAction, policy),
-  }
+  const access: ListedComputer["access"] = !ownerSetting ? null : scope
+    ? { choice: "allow", scope: scope.surface, folders: scope.folders }
+    : { choice: policy.owner.choice === null ? null : "off", folders: [] }
+  return { ...computer, state: computerState(computer), lastSeenAt: device.lastSeenAt, access, reach: reach(source, computer, reachAction, policy, capabilities) }
 }
 
 export async function listMemberComputers(actor: RemoteDeviceActor): Promise<ComputerListResponse> {
   const devices = await listMemberRemoteDeviceRows(actor, { canManageShared: false })
-  return { computers: await Promise.all(devices.map(async ({ row, device, runner }) =>
-    listedComputer(actor, { row, device, capabilities: runner?.capabilities }, await loadComputerPolicy(actor.organizationId, row.id)),
+  const source = signedInApp(actor.memberId)
+  return { computers: await Promise.all(devices.map(async (item) =>
+    listedComputer(actor, item, await loadComputerPolicy(actor.organizationId, item.row.id), source),
   )) }
 }
 
@@ -50,31 +54,37 @@ export async function setMemberComputerAccess(actor: RemoteDeviceActor, id: Comp
   if (item.row.kind === "desktop") return "choose_on_that_computer"
   if (!isRegisteredVm(item.row)) return "not_configurable"
   await replaceRegisteredVmAccess(item.row, actor.memberId, setting)
-  return listedComputer(actor, item, await loadComputerPolicy(actor.organizationId, item.row.id))
+  return listedComputer(actor, item, await loadComputerPolicy(actor.organizationId, item.row.id), signedInApp(actor.memberId))
 }
 
-export async function authorizeMemberComputer(actor: RemoteDeviceActor, id: ComputerId, action: ComputerAction): Promise<ComputerAuthorizeResponse | null> {
+export async function authorizeMemberComputer(actor: RemoteDeviceActor, id: ComputerId, action: ComputerAction, verifiedSource: VerifiedComputerSource | null = null): Promise<ComputerAuthorizeResponse | null> {
   const item = await readMemberRemoteDeviceRow(actor, id)
   if (!item) return null
-  const { row } = item
-  const { provider, externalId } = row
   const d = RemoteDeviceTable
   return withDeadlockRetry(() => db.transaction(async (tx) => {
-    const [visible] = await tx.select({ id: d.id }).from(d).where(and(
+    const [row] = await tx.select().from(d).where(and(
       eq(d.id, id), eq(d.organizationId, actor.organizationId), isNull(d.removedAt), or(eq(d.ownerMemberId, actor.memberId), isNull(d.ownerMemberId)),
     )).limit(1).for("update")
-    if (!visible) return null
+    if (!row) return null
+    const [sourceRow] = verifiedSource ? await tx.select().from(d).where(and(
+      eq(d.id, verifiedSource.id), eq(d.organizationId, actor.organizationId), eq(d.ownerMemberId, actor.memberId), isNull(d.removedAt),
+    )).limit(1).for("share") : []
+    if (verifiedSource && !sourceRow) return null
+    const source = sourceRow ? projectStoredComputer(sourceRow) : null
+    const caller = source ?? signedInApp(actor.memberId)
     const policy = await loadComputerPolicy(actor.organizationId, row.id, tx)
     const [runner] = row.kind === "desktop" && row.ownerMemberId ? await tx
       .select({ capabilities: AutomationRunnerTable.capabilities }).from(AutomationRunnerTable).where(and(
-        eq(AutomationRunnerTable.id, externalId), eq(AutomationRunnerTable.organization_id, actor.organizationId),
+        eq(AutomationRunnerTable.id, row.externalId), eq(AutomationRunnerTable.organization_id, actor.organizationId),
         eq(AutomationRunnerTable.owner_member_id, row.ownerMemberId),
       )).limit(1) : []
-    const computer = listedComputer(actor, { ...item, capabilities: runner?.capabilities }, policy)
-    const decision = incomingComputerWorkRefusal(computer, runner?.capabilities) ?? decide(signedInApp(actor.memberId), computer, action, policy)
+    const current = { ...item, row, device: { ...item.device, label: row.label } }
+    const capabilities = runner?.capabilities ?? []
+    const computer = listedComputer(actor, current, policy, caller, capabilities)
+    const decision = reach(caller, computer, action, policy, capabilities)
     if (decision.outcome === "allow" && decision.route === "checked") {
-      await recordAcceptedComputerWork(tx, { actor, deviceId: id, action, scope: decision.scope, source: "owner_app", now: new Date() })
+      await recordAcceptedComputerWork(tx, { actor, deviceId: id, targetLabel: computer.label, action, scope: decision.scope, source, coalesce: true, now: new Date() })
     }
-    return { decision, computer, connection: decision.outcome === "allow" && decision.scope?.surface === "whole_vm" && isRegisteredVm(row) ? { provider, externalId } : null }
+    return { decision, computer, connection: decision.outcome === "allow" && decision.scope?.surface === "whole_vm" && isRegisteredVm(row) ? { provider: row.provider, externalId: row.externalId } : null }
   }))
 }

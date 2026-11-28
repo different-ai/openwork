@@ -36,6 +36,7 @@ COPY packages/paths/ packages/paths/
 COPY packages/product-analytics/ packages/product-analytics/
 COPY packages/sandbox/ packages/sandbox/
 COPY packages/sandbox-daytona/ packages/sandbox-daytona/
+COPY packages/sandbox-freestyle/ packages/sandbox-freestyle/
 COPY packages/sandbox-microsandbox/ packages/sandbox-microsandbox/
 COPY packages/types/ packages/types/
 COPY packages/ui/ packages/ui/

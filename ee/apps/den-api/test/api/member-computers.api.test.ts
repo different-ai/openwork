@@ -78,8 +78,8 @@ const computerRefusal = {
   message: "I can't use Build box. Its owner can allow access to the entire computer in Settings > Devices.",
 } satisfies Omit<ComputerRefusal, "outcome">
 const unavailableDesktop = {
-  layer: "computer", code: "not_available_yet", changeableBy: "no_one",
-  message: "Ada's desktop can't take work from other computers yet.",
+  layer: "computer", code: "sandbox_unavailable", changeableBy: "no_one",
+  message: "Ada's desktop can't take work from other computers because it can't run the OpenWork sandbox.",
 } satisfies Omit<ComputerRefusal, "outcome">
 
 async function reportDesktop() {
@@ -262,7 +262,7 @@ test("Workbot computer access cannot be configured here", async () => {
   })
 })
 
-test("An allowed desktop action does not return connection information", async () => {
+test("A generic signed-in app cannot use an owner grant on a personal desktop", async () => {
   const minted = await asAda("POST", "/v1/session-runners/token", {
     runnerId: "ada-runner", protocolVersion: 1, supportedExecutionTargets: ["desktop"], appVersion: "1.7.0",
     platform: "darwin", concurrency: 1, capabilities: [COMPUTER_SHELL_RUNNER_CAPABILITY],
@@ -276,14 +276,15 @@ test("An allowed desktop action does not return connection information", async (
   assert.equal(access.status, 200, summary(access))
   const reserved = await den.request(token, "PUT", "/v1/computer-runners/access", { body: { choice: "allow", grants: [{ source: { kind: "computer", id: "owner_whole_vm" }, folders: ["/workspace"] }] } })
   assert.equal(reserved.status, 400, summary(reserved))
-  const conflicting = await den.request(token, "PUT", "/v1/computer-runners/access", { body: { choice: "allow", grants: [
-    { source: { kind: "owner" }, folders: ["/workspace"] }, { source: { kind: "workbot" }, folders: ["/workspace"] },
+  const duplicate = await den.request(token, "PUT", "/v1/computer-runners/access", { body: { choice: "allow", grants: [
+    { source: { kind: "workbot" }, folders: ["/workspace"] }, { source: { kind: "workbot" }, folders: ["/workspace"] },
   ] } })
-  assertError(conflicting, 400, { error: "invalid_request", message: "Choose different computers. You can also choose the owner's apps or Workbot once, but not both." })
+  assertError(duplicate, 400, { error: "invalid_request", message: "Choose Workbot only once." })
   const computer = (await listed()).find((item) => item.label === label)
   assert.ok(computer)
   const result = await authorize(computer.id)
-  assert.deepEqual([result.decision, result.connection, result.computer.access], [{ ...checked, scope: { ...checked.scope, surface: "sandbox" } }, null, null])
+  assert.equal(field(result.decision, "code"), "source_not_allowed")
+  assert.deepEqual([result.connection, result.computer.access], [null, null])
 })
 
 test("Renaming to a different computer's name is refused regardless of case", async () => {

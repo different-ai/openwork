@@ -1,10 +1,11 @@
 /** @jsxImportSource react */
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { remoteDeviceSchema } from "@openwork/types/den/remote-devices";
 import type { ListedComputer } from "@openwork/types/den/computers";
+import { computerSharingSettingsSchema, DEFAULT_COMPUTER_SHARING_SETTINGS, type ComputerSharingState } from "@openwork/types/computer-sharing";
 import type { AutomationsDenContext } from "../src/react-app/domains/automations/use-automations";
 
 const ownedDom = typeof window === "undefined";
@@ -13,6 +14,8 @@ const { createRoot } = await import("react-dom/client");
 const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const { createDenClient } = await import("../src/app/lib/den");
 const { DevicesContent } = await import("../src/react-app/domains/settings/pages/devices-view");
+const { ComputerSharingSection } = await import("../src/react-app/domains/devices/computer-sharing-section");
+const previousDesktop = Reflect.get(window, "__OPENWORK_ELECTRON__");
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 const realFetch = globalThis.fetch;
@@ -58,6 +61,8 @@ afterEach(async () => {
   container.remove();
   queryClient.clear();
   globalThis.fetch = realFetch;
+  if (previousDesktop === undefined) Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__");
+  else Reflect.set(window, "__OPENWORK_ELECTRON__", previousDesktop);
 });
 
 afterAll(async () => {
@@ -66,8 +71,13 @@ afterAll(async () => {
 });
 
 type RequestEntry = { method: string; path: string; body: unknown };
-async function renderDevices({ enabled, computer = existing, rejectRename = false, rejectAccess = false }: {
-  enabled: boolean; computer?: ListedComputer; rejectRename?: boolean; rejectAccess?: boolean;
+type SharingFixture = { state: ComputerSharingState; folder?: string; refusal?: { error: string } | { message: string }; devices?: typeof devices; beforeWrite?: () => Promise<void> };
+const sharingState = (): ComputerSharingState => ({
+  settings: DEFAULT_COMPUTER_SHARING_SETTINGS, availability: { state: "available" },
+  organizationAllows: true, revokedSources: [], sync: "synced",
+});
+async function renderDevices({ enabled, computer = existing, rejectRename = false, rejectAccess = false, sharing }: {
+  enabled: boolean; computer?: ListedComputer; rejectRename?: boolean; rejectAccess?: boolean; sharing?: SharingFixture;
 }) {
   const requests: RequestEntry[] = [];
   globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -75,17 +85,37 @@ async function renderDevices({ enabled, computer = existing, rejectRename = fals
     const path = new URL(request.url).pathname.replace(/^\/api\/den/, "");
     const body = request.body ? await request.json() : null;
     requests.push({ method: request.method, path, body });
-    if (path === "/v1/remote-devices") return Response.json({ devices });
+    if (path === "/v1/remote-devices") return Response.json({ devices: sharing?.devices ?? devices });
+    if (path === "/computers/sharing" && sharing) {
+      expect(request.headers.get("X-OpenWork-Host-Token")).toBe("test-host");
+      if (request.method === "PUT") {
+        await sharing.beforeWrite?.();
+        if (sharing.refusal) return Response.json(sharing.refusal, { status: 400 });
+        sharing.state = { ...sharing.state, settings: computerSharingSettingsSchema.parse(body) };
+      }
+      return Response.json(sharing.state);
+    }
     if (path === "/v1/computers") return Response.json({ computers: [computer] });
-    if (path === "/v1/remote-devices/build" && request.method === "PATCH") return rejectRename
+    const renamed = devices.find(device => path === `/v1/remote-devices/${device.id}`);
+    if (renamed && request.method === "PATCH") return rejectRename
       ? Response.json({ error: "name_taken", message: "You already have a computer called that. Pick another name." }, { status: 409 })
-      : Response.json({ device: body && typeof body === "object" ? { ...vm, ...body } : vm });
+      : Response.json({ device: body && typeof body === "object" ? { ...renamed, ...body } : renamed });
     if (path === "/v1/computers/build/access" && request.method === "PUT") return rejectAccess
       ? Response.json({ error: "not_configurable", message: "That computer can't be configured here." }, { status: 409 })
       : Response.json({ computer: { ...computer, access: { folders: [], ...body } } });
     throw new Error(`Unexpected request: ${request.method} ${path}`);
   }, { preconnect: realFetch.preconnect });
-  await act(async () => root.render(<QueryClientProvider client={queryClient}><DevicesContent context={context} computersEnabled={enabled} /></QueryClientProvider>));
+  if (sharing) Reflect.set(window, "__OPENWORK_ELECTRON__", { invokeDesktop: async (command: string, url?: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
+    if (command === "openworkServerInfo") return { running: true, baseUrl: "http://127.0.0.1:4567", generation: 1, hostToken: "test-host" };
+    if (command === "pickDirectory") return sharing.folder ?? null;
+    if (command === "__cancelTransfer") return;
+    if (command === "__fetch" && url) {
+      const response = await globalThis.fetch(url, init);
+      return { status: response.status, statusText: response.statusText, headers: Object.fromEntries(response.headers), body: await response.text() };
+    }
+    throw new Error(`Unexpected desktop call: ${command}`);
+  } });
+  await act(async () => root.render(<QueryClientProvider client={queryClient}><DevicesContent context={context} computersEnabled={enabled} SharingSection={ComputerSharingSection} /></QueryClientProvider>));
   await until(() => document.querySelector('[data-testid="device-row"]') !== null);
   return requests;
 }
@@ -202,7 +232,10 @@ test("legacy access starts off; opting in and saving sends an explicit whole-com
   await until(() => document.querySelector("#device-folder") !== null);
   expect(control('[role="switch"]').getAttribute("aria-checked")).toBe("false");
   expect(textControl("#device-folder").value).toBe("/workspace");
-  expect(control("#device-access-risk").textContent).toContain("access files outside the working folder");
+  expect(control('[role="dialog"]').textContent).not.toContain("access files outside the working folder");
+  const detail = control('button[aria-label="Whole-computer access details"]');
+  await act(async () => detail.focus());
+  await until(() => Boolean(document.querySelector('[data-slot="tooltip-content"]')?.textContent?.includes("access files outside the working folder")));
   expect(accessButton().disabled).toBe(true);
   await act(async () => control('[role="switch"]').click());
   await enter("#device-folder", "/workspace/new");
@@ -236,7 +269,7 @@ test("an organization refusal locks access without blocking a rename", async () 
   const toggle = control('[role="switch"]');
   expect(toggle.getAttribute("aria-checked")).toBe("false");
   expect(toggle.hasAttribute("data-disabled")).toBe(true);
-  expect(toggle.getAttribute("aria-describedby")).toBe("device-access-risk device-access-locked");
+  expect(toggle.getAttribute("aria-describedby")).toBe("device-access-locked");
   const reason = control("#device-access-locked");
   expect(reason.textContent).toBe("Your organization has turned this off. An organization admin can change it.");
   expect(reason.classList.contains("text-muted-foreground")).toBe(true);
@@ -275,4 +308,179 @@ test("an access conflict leaves the dialog and both drafts in place without savi
   expect(textControl("#device-folder").value).toBe("/workspace/sam");
   expect(control('[role="switch"]').getAttribute("aria-checked")).toBe("false");
   expect(writes(requests).map(({ method }) => method)).toEqual(["PUT"]);
+});
+
+const optIn = '[role="switch"][aria-label="Let my other computers run code here (in the sandbox)"]';
+const sharingHeading = "Run code from my other computers";
+const source = (name: string) => `[role="switch"][aria-label="${name}"]`;
+const toggleSharing = (selector: string) => act(async () => control(selector).click());
+const settled = () => !control(optIn).hasAttribute("data-disabled");
+const sharingWrites = (requests: RequestEntry[]) => writes(requests).filter(({ path }) => path === "/computers/sharing").map(({ body }) => body);
+const studio = remoteDeviceSchema.parse({ ...vm, id: "studio", kind: "desktop", provider: "openwork_desktop", source: "desktop_app", platform: "darwin", availability: "online", label: "Studio Mac" });
+const travel = { ...studio, id: "travel", label: "Studio Mac (2)", availability: "offline", lastSeenAt: stamp };
+
+function buttonWithText(label: string) {
+  const button = [...document.querySelectorAll("button")].find(element => element.textContent === label);
+  if (!button) throw new Error(`Missing ${label}`);
+  return button;
+}
+
+test("computers flag off never reads local sharing on a desktop", async () => {
+  const requests = await renderDevices({ enabled: false, sharing: { state: sharingState() } });
+  expect(container.textContent).not.toContain(sharingHeading);
+  expect(requests.map(({ path }) => path)).toEqual(["/v1/remote-devices"]);
+});
+
+test("full sharing polling stops when Devices unmounts", async () => {
+  const intervals = spyOn(globalThis, "setInterval");
+  const clears = spyOn(globalThis, "clearInterval");
+  try {
+    await renderDevices({ enabled: true, sharing: { state: sharingState() } });
+    await until(() => document.querySelector(optIn) !== null);
+    const query = queryClient.getQueryCache().findAll({ queryKey: ["openwork-server", "computer-sharing"] })[0];
+    expect(query?.getObserversCount()).toBe(1);
+    const index = intervals.mock.calls.findLastIndex(([, delay]) => delay === 5_000);
+    expect(index).toBeGreaterThanOrEqual(0);
+    const timer = intervals.mock.results[index]?.value;
+    clears.mockClear();
+    await act(async () => root.render(null));
+    expect(query?.getObserversCount()).toBe(0);
+    expect(clears).toHaveBeenCalledWith(timer);
+  } finally {
+    intervals.mockRestore();
+    clears.mockRestore();
+  }
+});
+
+test("unavailable sharing shows the server's sentence instead of a switch", async () => {
+  const message = "This computer can't run the OpenWork sandbox.";
+  await renderDevices({ enabled: true, sharing: { state: { ...sharingState(), availability: { state: "unavailable", reason: "unsupported_platform", message } } } });
+  await until(() => Boolean(container.textContent?.includes(message)));
+  expect(container.textContent).toContain(sharingHeading);
+  expect(document.querySelector(optIn)).toBeNull();
+});
+
+test("organization policy keeps the sharing choice visible but locked", async () => {
+  const initial = sharingState();
+  const requests = await renderDevices({ enabled: true, sharing: { state: { ...initial, organizationAllows: false, settings: { ...initial.settings, enabled: true } } } });
+  await until(() => document.querySelector(optIn) !== null);
+  const toggle = control(optIn);
+  const note = document.getElementById(toggle.getAttribute("aria-describedby") ?? "");
+  expect(toggle.hasAttribute("data-disabled")).toBe(true);
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  expect(note?.textContent).toBe("Your admin turned this off for the organization");
+  expect(note?.querySelector("svg")).not.toBeNull();
+  expect(note?.classList.contains("text-muted-foreground")).toBe(true);
+  await toggleSharing(optIn);
+  expect(sharingWrites(requests)).toEqual([]);
+});
+
+test("turn on sharing, add a read-only folder, allow edits, then stop sharing the folder", async () => {
+  const path = "/Users/test/project";
+  const requests = await renderDevices({ enabled: true, sharing: { state: sharingState(), folder: path } });
+  await until(() => document.querySelector(optIn) !== null);
+  expect(control(optIn).getAttribute("aria-checked")).toBe("false");
+  await toggleSharing(optIn);
+  await until(() => settled() && control(optIn).getAttribute("aria-checked") === "true");
+  expect(container.textContent).toContain("On, but nothing is shared yet");
+  expect(container.textContent).toContain("No folders shared. Work from another computer has nothing to open.");
+  await act(async () => buttonWithText("Share a folder").click());
+  await until(() => settled() && document.querySelector(`[title="${path}"]`) !== null);
+  const select = '[role="combobox"][aria-label="Access to project"]';
+  expect(control(select).querySelector('[data-slot="select-value"]')?.textContent).toBe("Read-only");
+  await toggleSharing(select);
+  await until(() => document.querySelectorAll('[role="option"]').length === 2);
+  const options = [...document.querySelectorAll('[role="option"]')];
+  expect(options.map(element => element.textContent)).toEqual(["Read-only", "Can edit"]);
+  const editOption = options.find(element => element.textContent === "Can edit");
+  if (!(editOption instanceof HTMLElement)) throw new Error("Missing Can edit option");
+  await act(async () => {
+    editOption.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }));
+    editOption.click();
+  });
+  await until(() => settled() && control(select).querySelector('[data-slot="select-value"]')?.textContent === "Can edit");
+  await toggleSharing('button[aria-label="Stop sharing project"]');
+  await until(() => settled() && document.querySelector(select) === null);
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(sharingWrites(requests)).toEqual([
+    { enabled: true, folders: [], sources: [] },
+    { enabled: true, folders: [{ path, access: "read" }], sources: [] },
+    { enabled: true, folders: [{ path, access: "edit" }], sources: [] },
+    { enabled: true, folders: [], sources: [] },
+  ]);
+});
+
+test("two similarly named computers stay distinct; grants and optimistic revoke use IDs", async () => {
+  const initial = sharingState();
+  const fixture: SharingFixture = { state: { ...initial, settings: { ...initial.settings, enabled: true } }, devices: [studio, travel] };
+  const requests = await renderDevices({ enabled: true, sharing: fixture });
+  await until(() => document.querySelector(source("Studio Mac (2)")) !== null);
+  expect(control(source("Studio Mac")).getAttribute("aria-checked")).toBe("false");
+  expect(control(source("Studio Mac (2)")).closest("li")?.textContent).toContain("Offline, last seen");
+  await toggleSharing(source("Studio Mac (2)"));
+  await until(settled);
+  await toggleSharing(source("Workbot"));
+  await until(settled);
+  const pendingWrite = Promise.withResolvers<void>();
+  fixture.beforeWrite = () => pendingWrite.promise;
+  try {
+    await toggleSharing(source("Studio Mac (2)"));
+    expect(control(source("Studio Mac (2)")).getAttribute("aria-checked")).toBe("false");
+    expect(fixture.state.settings.sources).toHaveLength(2);
+  } finally {
+    pendingWrite.resolve();
+  }
+  await until(settled);
+  expect(sharingWrites(requests)).toEqual([
+    { enabled: true, folders: [], sources: [{ kind: "computer", id: "travel" }] },
+    { enabled: true, folders: [], sources: [{ kind: "computer", id: "travel" }, { kind: "workbot" }] },
+    { enabled: true, folders: [], sources: [{ kind: "workbot" }] },
+  ]);
+});
+
+test("a refreshed Den revoke locks the source; a removed computer can be removed locally", async () => {
+  const initial = sharingState();
+  const fixture: SharingFixture = {
+    state: { ...initial, settings: { ...initial.settings, enabled: true, sources: [{ kind: "computer", id: "studio" }, { kind: "computer", id: "removed" }] } },
+    devices: [studio],
+  };
+  const requests = await renderDevices({ enabled: true, sharing: fixture });
+  await until(() => document.querySelector(source("Studio Mac")) !== null);
+  expect(control(source("Studio Mac")).getAttribute("aria-checked")).toBe("true");
+  fixture.state = { ...fixture.state, revokedSources: [{ source: { kind: "computer", id: "studio" }, revokedAt: stamp }] };
+  await act(async () => queryClient.refetchQueries({ queryKey: ["openwork-server", "computer-sharing"] }));
+  await until(() => control(source("Studio Mac")).getAttribute("aria-checked") === "false");
+  const revoked = control(source("Studio Mac"));
+  expect(revoked.hasAttribute("data-disabled")).toBe(true);
+  expect(revoked.closest("li")?.textContent).toContain("Revoked in your organization's settings");
+  expect(revoked.closest("li")?.textContent).toContain("Allow it again from My Computers.");
+  expect(container.textContent).toContain("A removed computer");
+  await act(async () => buttonWithText("Remove").click());
+  await until(() => settled() && !container.textContent?.includes("A removed computer"));
+  expect(sharingWrites(requests)).toEqual([{ enabled: true, folders: [], sources: [{ kind: "computer", id: "studio" }] }]);
+});
+
+test("folder validation shows the server's sentence inline and does not keep the optimistic folder", async () => {
+  const initial = sharingState();
+  const refusal = "Choose a folder that isn't already shared inside another folder.";
+  await renderDevices({ enabled: true, sharing: {
+    state: { ...initial, settings: { ...initial.settings, enabled: true } }, folder: "/Users/test/project/subfolder", refusal: { error: refusal }, devices: [studio],
+  } });
+  await until(() => document.querySelector(optIn) !== null);
+  await act(async () => buttonWithText("Share a folder").click());
+  await until(() => document.querySelector('[role="alert"]') !== null);
+  expect(control('[role="alert"]').textContent).toBe(refusal);
+  expect(document.querySelector('[aria-label="Stop sharing subfolder"]')).toBeNull();
+});
+
+test("a desktop rename keeps Den's name conflict inline without adding cloud access controls", async () => {
+  const requests = await renderDevices({ enabled: true, rejectRename: true });
+  await edit("Rename", "Ada");
+  expect(document.querySelector('#device-folder')).toBeNull();
+  await enter('#device-label', 'Studio Mac');
+  await save();
+  await until(() => document.querySelector('[role="dialog"] [role="alert"]') !== null);
+  expect(control('[role="dialog"] [role="alert"]').textContent).toBe("You already have a computer called that. Pick another name.");
+  expect(writes(requests)).toEqual([{ method: "PATCH", path: "/v1/remote-devices/desktop", body: { label: "Studio Mac" } }]);
+  expect(requests.some(({ path }) => path === "/v1/computers")).toBe(false);
 });

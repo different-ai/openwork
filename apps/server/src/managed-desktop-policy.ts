@@ -5,6 +5,7 @@ import { PRIVATE_VALUE_FILLS_ROUTE, privateValueFillReportResponseSchema, type P
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
+import { getRunnerCredential, setRunnerCredential } from "./computers/runner-credential.js";
 import { createComputersDen } from "./computers/den.js";
 import { externalFetch } from "./server-fetch.js";
 import { createPersonalAgentsFeatureLookup } from "./personal-agents-feature.js";
@@ -89,7 +90,8 @@ export function managedDesktopPolicy(config: ServerConfig, options?: { sandboxFr
 class ManagedDesktopPolicy {
   readonly evaluationToken = randomBytes(32).toString("base64url");
   private session: CloudProviderDenSession | null = null;
-  readonly computersDen = createComputersDen(() => this.session);
+  readonly computersDen = createComputersDen(() => this.session, { runnerCredential: () => getRunnerCredential(this.config) });
+  hasDenSession() { return this.session !== null; }
   private generation = 0;
   private readonly lookupPersonalAgentsFeature = createPersonalAgentsFeatureLookup(externalFetch);
   private installed: { generation: number; policy: DesktopConfig | null } | undefined;
@@ -108,6 +110,7 @@ class ManagedDesktopPolicy {
   }
   async setSession(session: CloudProviderDenSession): Promise<void> {
     const current = this.session;
+    if (current && (current.orgId !== session.orgId || current.baseUrl !== session.baseUrl)) setRunnerCredential(this.config, null);
     if (!current || sessionKey(current) !== sessionKey(session)) {
       this.generation++;
       const generation = this.generation;
@@ -131,6 +134,7 @@ class ManagedDesktopPolicy {
   }
   async clearSession(): Promise<void> {
     this.session = null;
+    setRunnerCredential(this.config, null);
     this.resetSandboxAuthority();
     this.generation++;
     this.installed = undefined;
@@ -456,6 +460,9 @@ class ManagedDesktopPolicy {
       ...this.sandboxAuthority(), scope: "unverified",
       enabled: this.sandboxVerification === "verified" && !this.sandboxRulesRestrictive,
     }, verification);
+  }
+  cachedLocalSandboxAllowed(): boolean {
+    return this.sandboxOrgVerified && !this.sandboxRulesRestrictive;
   }
   private freshSandboxAccess(revision: number): SandboxAccess | undefined {
     const fresh = this.sandboxFresh;

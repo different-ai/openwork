@@ -5,10 +5,20 @@ import { join } from "node:path";
 import { test, expect, vi } from "vitest";
 import { createFakeProvider } from "@openwork/sandbox/testing";
 import { SandboxError, type RunSpec } from "@openwork/sandbox";
-import { runOnComputer } from "../src/computers/executor.js";
+import { computerExecutor, type ComputerExecutorDeps } from "../src/computers/executors/index.js";
+import { computerToolCallSchema, computerWholeVmScopeSchema, isExecutableVmProvider, type ComputerGrantScope, type ComputerToolName } from "@openwork/types/den/computers";
 import { computerActionForTool, translateComputerInput } from "../src/computers/input.js";
 import { SANDBOX_TOOL_NAMES, SandboxToolError } from "../src/sandbox-tool-host.js";
 import nativeSchemas from "./fixtures/opencode-2.2.6-computer-tools.json";
+
+async function runOnComputer({ connection, scope, label, tool, input, signal }: {
+  connection: { provider: string; externalId: string }; scope?: ComputerGrantScope | null;
+  label: string; tool: ComputerToolName; input: unknown; signal: AbortSignal;
+}, deps: ComputerExecutorDeps) {
+  const folder = computerWholeVmScopeSchema.safeParse(scope).data?.folders[0];
+  const call = computerToolCallSchema.parse({ tool, input: translateComputerInput(tool, input, folder ?? "/workspace") });
+  return computerExecutor(isExecutableVmProvider(connection.provider) ? connection.provider : "unsupported").run({ id: connection.externalId, connection, scope, label, call, signal }, deps);
+}
 
 const cases = {
   shell: [{ command: "pwd", workdir: "project", timeout: 35, background: false }, { type: "shell", command: "pwd", cwd: "/workspace/project", timeoutMs: 35 }],
@@ -52,9 +62,25 @@ test("starts only the addressed VM, waits, then runs in the working folder", asy
   expect(result.content[0]?.text).toBe("/workspace/project");
 });
 
+test("selects Freestyle and acquires an existing VM by its vmId with a key from the source environment", async () => {
+  const { provider, onRun, call } = fixture();
+  const handle = await provider.create({ idempotencyKey: "freestyle-box", image: null, env: {}, labels: {}, storage: [], exposePorts: [] }, { timeoutMs: 1000 });
+  await provider.stop(handle, { timeoutMs: 1000 });
+  const get = vi.spyOn(provider, "get").mockResolvedValueOnce({ ...handle, state: "stopped" });
+  const connection = { provider: "freestyle", externalId: "registered-vm-id" };
+  const providerFactory = vi.fn(async () => provider);
+  await expect(runOnComputer({ ...call, connection }, { env: { DAYTONA_API_KEY: "fixture-daytona" }, providerFactory })).rejects.toThrow("Build box needs its Freestyle key on this machine before OpenWork can reach it. Nothing ran there.");
+  expect(providerFactory).not.toHaveBeenCalled();
+  const env = { FREESTYLE_API_KEY: "fixture-freestyle" };
+  await runOnComputer({ ...call, connection }, { env, providerFactory });
+  expect(get).toHaveBeenCalledExactlyOnceWith({ providerId: provider.id, ref: { vmId: "registered-vm-id" } });
+  expect(providerFactory).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ name: "Freestyle" }), env.FREESTYLE_API_KEY, env);
+  expect(onRun).toHaveBeenCalledOnce();
+});
+
 test("does not create a missing VM", async () => {
   const { operations, options, call } = fixture();
-  await expect(runOnComputer(call, options)).rejects.toThrow(/^Build box no longer exists at its provider\. Choose another computer\. Nothing ran there\.$/);
+  await expect(runOnComputer(call, options)).rejects.toThrow(/^Build box no longer exists at Daytona\. Choose another computer\. Nothing ran there\.$/);
   expect(operations).toEqual(["get"]);
 });
 
@@ -68,7 +94,7 @@ test.each(["lookup", "startup"])("reports a computer's error state during %s wit
     await provider.stop(handle, { timeoutMs: 1000 });
     vi.spyOn(provider, "inspect").mockResolvedValueOnce({ ...handle, state: "error" });
   }
-  await expect(runOnComputer({ ...call, connection: { ...call.connection, externalId } }, options)).rejects.toThrow(/^Build box has a problem at its provider\. Check it with the provider before trying again\. Nothing ran there\.$/);
+  await expect(runOnComputer({ ...call, connection: { ...call.connection, externalId } }, options)).rejects.toThrow(/^Build box has a problem at Daytona\. Check it with Daytona before trying again\. Nothing ran there\.$/);
   expect(onRun).not.toHaveBeenCalled();
 });
 

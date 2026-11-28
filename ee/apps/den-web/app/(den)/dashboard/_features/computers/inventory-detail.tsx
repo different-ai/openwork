@@ -18,7 +18,7 @@ import { TimeAgo, hairline, secondaryText } from "./computer-parts";
 import { absoluteTime, SHARED_COMPUTER_LABEL } from "./computers-format";
 import { InventoryDetailActions, InventoryMergedSignIns, useInventoryActions } from "./inventory-actions";
 import { saveWholeComputerChoice, useChangeComputerSourceAccess, useInventoryDetail, useRefreshInventory, type InventoryScope } from "./inventory-data";
-import { inventoryDate, inventoryOwnerName, onOff, runCodeLabel, runCodeReason } from "./inventory-format";
+import { inventoryDate, inventoryOwnerName, inventoryRunCode, onOff } from "./inventory-format";
 import { InventoryError } from "./inventory-parts";
 import { InventoryLock, sessionLockReason } from "./inventory-rows";
 import { MyComputerActivity } from "./my-computers-screen";
@@ -58,11 +58,21 @@ function Installed({ installed, now, onRemove }: { installed: Detail["installed"
   </DetailCard>;
 }
 
+export function SharedFolderRows({ folders, writableFolders }: Pick<ComputerSourceAccess, "folders" | "writableFolders">) {
+  return <ul aria-label="Shared folders" className={`text-xs ${secondaryText}`}>
+    {folders.map((folder) => <li key={folder} className={`flex min-h-10 items-center justify-between gap-2 border-t py-1 ${hairline}`}>
+      <code className="min-w-0 wrap-anywhere">{folder}</code>
+      <span className="shrink-0">{writableFolders.includes(folder) ? "Can edit" : "Read-only"}</span>
+    </li>)}
+  </ul>;
+}
+
 function SourceRow({ detail, scope, source }: { detail: Detail; scope: InventoryScope; source: ComputerSourceAccess }) {
   const [confirming, setConfirming] = useState(false);
   const sourceLabelId = useId();
   const toast = useDenToast();
   const mutation = useChangeComputerSourceAccess(scope, detail.computer.id, source.key);
+  const desktop = detail.computer.kind === "desktop";
   const whole = source.scope === "whole_computer";
   const folders = source.folders.filter((folder) => folder.trim());
   const computer = detail.computer.label;
@@ -76,24 +86,25 @@ function SourceRow({ detail, scope, source }: { detail: Detail; scope: Inventory
     toast({ title: next === "restore" ? "Allowed again" : "Revoked", description: changed.label });
   }
 
-  return <li className={`flex min-h-10 flex-wrap items-start gap-2 border-t py-2 ${hairline}`} aria-busy={mutation.isPending}>
-    <div className="min-w-0 flex-1">
-      <p id={sourceLabelId} className="font-medium wrap-anywhere">{source.label}</p>
-      <p className={secondaryText}>{whole ? "Whole computer" : "In sandbox"}</p>
-      {folders.length ? <div className={`mt-1 text-xs ${secondaryText}`}>
+  return <li className={`border-t ${hairline}`} aria-busy={mutation.isPending}>
+    <div className="flex min-h-10 items-center justify-between gap-2 py-1">
+      <p id={sourceLabelId} className="min-w-0 wrap-anywhere font-medium">{source.label}</p>
+      {canAct ? <DenButton variant="secondary" size="xs" className="shrink-0" aria-describedby={sourceLabelId} disabled={mutation.isPending}
+        onClick={() => {
+          if (action === "revoke") setConfirming(true);
+          else void change(action).catch(() => {});
+        }}>{label}</DenButton> : null}
+    </div>
+    {!desktop ? <p className={secondaryText}>{whole ? "Whole computer" : "In sandbox"}</p> : null}
+    {folders.length ? desktop ? <SharedFolderRows folders={folders} writableFolders={source.writableFolders} />
+      : <div className={`text-xs ${secondaryText}`}>
         <span>{whole ? "Working folder" : "Shared folders"}</span>
         <ul>{folders.map((folder) => <li key={folder}><code className="wrap-anywhere">{folder}</code></li>)}</ul>
-      </div> : !whole ? <p className={`text-xs ${secondaryText}`}>No shared folders</p> : null}
-      {source.revokedAt ? <p className={`mt-1 text-xs wrap-anywhere ${secondaryText}`}>
-        {source.revokedBy ? `Revoked by ${source.revokedBy} on ` : "Revoked on "}<time dateTime={source.revokedAt}>{absoluteTime(source.revokedAt)}</time>
-      </p> : null}
-      {mutation.error && mutation.variables === "restore" ? <p className="mt-1 text-xs text-[var(--ow-danger)]" role="alert">{mutation.error.message}</p> : null}
-    </div>
-    {canAct ? <DenButton variant="secondary" size="xs" aria-describedby={sourceLabelId} disabled={mutation.isPending}
-      onClick={() => {
-        if (action === "revoke") setConfirming(true);
-        else void change(action).catch(() => {});
-      }}>{label}</DenButton> : null}
+      </div> : !whole ? <p className={`pb-2 text-xs ${secondaryText}`}>No shared folders</p> : null}
+    {source.revokedAt ? <p className={`pb-2 text-xs wrap-anywhere ${secondaryText}`}>
+      {source.revokedBy ? `Revoked by ${source.revokedBy} on ` : "Revoked on "}<time dateTime={source.revokedAt}>{absoluteTime(source.revokedAt)}</time>
+    </p> : null}
+    {mutation.error && mutation.variables === "restore" ? <p className="pb-2 text-xs text-[var(--ow-danger)]" role="alert">{mutation.error.message}</p> : null}
     <ConfirmDialog destructive confirm={confirming ? {
       title: "Revoke access?",
       description: `${source.label} will no longer be able to run code on ${computer}. Only its owner can allow it again.`,
@@ -176,18 +187,17 @@ function WholeComputerChoice({ detail, scope }: { detail: Detail; scope: Invento
   </div>;
 }
 
-function RunCode({ detail, scope }: { detail: Detail; scope: InventoryScope }) {
-  const code = detail.runCode.value;
-  const reason = runCodeReason(code);
+export function InventoryRunCodeCard({ detail, scope }: { detail: Detail; scope: InventoryScope }) {
+  const run = inventoryRunCode(detail.runCode.value, detail.computer.kind, detail.callerIsOwner);
   return <DetailCard title="Run code here">
-    {code.value === "not_available" ? <p>Agents on other computers can&apos;t run code on {detail.computer.label} yet.</p> : <>
-      <p>{runCodeLabel(code)}</p>
-      {reason ? <p className={`flex items-start gap-2 text-xs ${secondaryText}`}>
-        {code.value === "no" && code.reason === "organization" ? <InventoryLock reason={reason} /> : null}{reason}
-      </p> : null}
-    </>}
+    <dl>
+      <DetailValue label="Other computers" value={<span className={`flex items-center gap-1 ${run.locked ? secondaryText : ""}`}>
+        {run.label}{run.locked && run.reason ? <InventoryLock reason={run.reason} decorative /> : null}
+      </span>} />
+    </dl>
+    {run.reason ? <p className={`text-xs ${secondaryText}`}>{run.reason}{run.setting ? <span className="block">{run.setting}</span> : null}</p> : null}
     <Sources detail={detail} scope={scope} />
-    {code.value !== "not_available" && detail.computer.kind === "cloud" && detail.callerIsOwner && detail.runCode.canChange ? <WholeComputerChoice detail={detail} scope={scope} /> : null}
+    {run.value !== "not_available" && detail.computer.kind === "cloud" && detail.callerIsOwner && detail.runCode.canChange ? <WholeComputerChoice detail={detail} scope={scope} /> : null}
   </DetailCard>;
 }
 
@@ -269,7 +279,7 @@ export function InventoryDetail({ id, scope, onClose, onRemoved, canDisconnect =
       </div> : null}
       <div className={cardGrid}>
         <Installed installed={detail.installed} now={now} onRemove={removeSignIn} />
-        <RunCode detail={detail} scope={scope} />
+        <InventoryRunCodeCard detail={detail} scope={scope} />
         <Sessions detail={detail} />
       </div>
       <InventoryDetailActions row={row} set={actionsFor(row, detail.installed.mergedSignIns)} />

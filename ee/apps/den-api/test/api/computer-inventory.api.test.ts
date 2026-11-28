@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { after, test } from "node:test"
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { eq } from "@openwork-ee/den-db/drizzle"
 import { AutomationRunnerTable, ComputerGrantTable, MemberTable, OrganizationTable, RemoteDeviceTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { workbotSessionId, workbotSideChatSessionId } from "@openwork-ee/headless-protocol/workbot-routing"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -9,7 +9,7 @@ import { COMPUTER_INVENTORY_PAGE_SIZE, computerInventoryDetailResponseSchema, my
 import { COMPUTER_SHELL_RUNNER_CAPABILITY } from "@openwork/types/den/computers"
 import { organizationComputerListResponseSchema, remoteDeviceListResponseSchema, remoteDeviceResponseSchema } from "@openwork/types/den/remote-devices"
 import { deviceInventoryStatus, groupComputerSignIns, type InventorySignIn } from "../../src/computers/inventory.js"
-import { bootDen, field, summary, type Call } from "./harness.js"
+import { bootDen, field, summary, text, type Call } from "./harness.js"
 
 const den = await bootDen()
 after(() => den.close())
@@ -67,7 +67,7 @@ test("five sign-ins resolve to one Mac without altering the legacy device list o
   assert.ok(first && newest)
   await db.update(RemoteDeviceTable).set({ lastSeenAt: new Date() }).where(eq(RemoteDeviceTable.id, newest))
   const inventory = await list()
-  assert.deepEqual(inventory.computers.map(({ id, mergedSignIns, runCode }) => ({ id, mergedSignIns, runCode })), [{ id: newest, mergedSignIns: 4, runCode: { value: "not_available" } }])
+  assert.deepEqual(inventory.computers.map(({ id, mergedSignIns, runCode }) => ({ id, mergedSignIns, runCode })), [{ id: newest, mergedSignIns: 4, runCode: { value: "no", reason: "sandbox_unavailable" } }])
   assert.deepEqual(inventory.mergedSignIns.map(({ id }) => id).sort(), ids.slice(0, 4).sort())
   assert.ok(inventory.mergedSignIns.every((signIn) => signIn.computerId === newest && !signIn.canRemove))
   assert.deepEqual((await detail(newest)).installed.mergedSignIns, inventory.mergedSignIns)
@@ -141,7 +141,7 @@ test("desktop permissions are a note, while a registered Daytona computer can ru
   const allow = await asMaya("PUT", `/v1/computers/${cloud}/access`, { choice: "allow", scope: "whole_vm", folders: ["/workspace"] })
   assert.equal(allow.status, 200, summary(allow))
   const own = await detail(cloud)
-  assert.deepEqual(own.runCode, { value: { value: "whole_computer" }, sources: [{ key: "owner_whole_vm", label: "Maya Okafor's OpenWork apps", scope: "whole_computer", folders: ["/workspace"], revokedAt: null, revokedBy: null }], canChange: true, canRevoke: true, canRestore: true })
+  assert.deepEqual(own.runCode, { value: { value: "whole_computer" }, sources: [{ key: "owner_whole_vm", label: "Maya Okafor's OpenWork apps", scope: "whole_computer", folders: ["/workspace"], writableFolders: [], revokedAt: null, revokedBy: null }], canChange: true, canRevoke: true, canRestore: true })
   const admin = await detail(cloud, asOwner, team)
   assert.deepEqual([admin.callerIsOwner, admin.runCode.canChange, admin.runCode.canRevoke, admin.runCode.canRestore], [false, false, true, false])
   const revokedAt = new Date()
@@ -153,6 +153,62 @@ test("desktop permissions are a note, while a registered Daytona computer can ru
   assert.deepEqual(revoked.runCode.sources.map(({ revokedAt, revokedBy }) => [revokedAt, revokedBy]), [[revokedAt.toISOString(), owner.name]])
   await db.update(ComputerGrantTable).set({ revokedByMemberId: normalizeDenTypeId("member", off.owner.memberId) }).where(eq(ComputerGrantTable.targetDeviceId, cloud))
   assert.deepEqual((await detail(cloud)).runCode.sources.map(({ revokedBy }) => revokedBy), [null])
+})
+
+test("folded desktops count sharing on recent sign-ins and change grants on the sign-ins that hold them", async () => {
+  const machineKey = "b2".repeat(32)
+  const access = async (installId: string, label: string) => {
+    const id = await report(asMaya, installId, { label, machineKey })
+    const minted = await asMaya("POST", "/v1/session-runners/token", {
+      runnerId: installId, protocolVersion: 1, supportedExecutionTargets: ["desktop"],
+      capabilities: [COMPUTER_SHELL_RUNNER_CAPABILITY], appVersion: "1.5.0", platform: "darwin", concurrency: 1,
+    })
+    assert.equal(minted.status, 200, summary(minted))
+    const token = text(field(minted.body, "token"), "runner token")
+    const path = "/v1/computer-runners/access"
+    return { id, runnerId: automationRunnerRowId({ organizationId, ownerMemberId: mayaId, runnerId: installId }),
+      share: async (folders: string[]) => {
+        const result = await den.request(token, "PUT", path, { body: { choice: "allow", grants: [{ source: { kind: "workbot" }, folders }] } })
+        assert.equal(result.status, 200, summary(result))
+      },
+    }
+  }
+  const older = await access("packing-first-signin", "Packing Mac first sign-in")
+  const newer = await access("packing-newer-signin", "Packing Mac newer sign-in")
+  const arrangeContact = async (time: Date) => {
+    await db.update(AutomationRunnerTable).set({ last_seen_at: time }).where(eq(AutomationRunnerTable.id, older.runnerId))
+    await db.update(RemoteDeviceTable).set({ lastSeenAt: time }).where(eq(RemoteDeviceTable.id, older.id))
+  }
+  await arrangeContact(new Date(Date.now() - 60_000))
+  await older.share(["/packing"])
+  const row = async () => (await list()).computers.find(({ id }) => id === newer.id)
+  const sources = async () => (await detail(newer.id)).runCode.sources
+  assert.equal((await row())?.mergedSignIns, 1)
+  assert.deepEqual((await row())?.runCode, { value: "sandbox", folders: 1 })
+  assert.deepEqual((await tab()).computers.find(({ id }) => id === newer.id)?.runCode, { value: "sandbox", folders: 1 })
+  assert.deepEqual((await sources()).map(({ key, folders }) => ({ key, folders })), [{ key: "workbot", folders: ["/packing"] }])
+  const path = `/v1/computers/${newer.id}/sources/workbot`
+  assert.equal((await asTomas("DELETE", path)).status, 404)
+  assert.equal((await asMaya("DELETE", path)).status, 200)
+  assert.ok((await sources())[0]?.revokedAt)
+  assert.ok((await detail(newer.id)).activity.some(({ message }) => message === "Maya Okafor revoked access for Workbot"))
+  assert.deepEqual((await row())?.runCode, { value: "no", reason: "not_chosen" })
+  assert.equal((await asMaya("POST", `${path}/restore`)).status, 200)
+  await newer.share(["/packing", "/notes"])
+  assert.deepEqual((await row())?.runCode, { value: "sandbox", folders: 2 })
+  const combined = await sources()
+  assert.equal(combined.length, 1)
+  assert.deepEqual(combined[0]?.folders, ["/packing", "/notes"])
+  assert.equal((await asOwner("DELETE", `/v1/org/computers/${newer.id}/sources/workbot`)).status, 200)
+  const stored = () => db.$primary.select().from(ComputerGrantTable).where(eq(ComputerGrantTable.organizationId, organizationId))
+    .then((grants) => grants.filter(({ targetDeviceId }) => targetDeviceId === older.id || targetDeviceId === newer.id))
+  assert.equal((await stored()).filter(({ revokedAt }) => revokedAt).length, 2)
+  assert.equal((await asMaya("POST", `${path}/restore`)).status, 200)
+  assert.equal((await stored()).filter(({ revokedAt }) => !revokedAt).length, 2)
+  await newer.share([])
+  await arrangeContact(new Date(Date.now() - 30 * 60_000))
+  assert.deepEqual((await row())?.runCode, { value: "no", reason: "nothing_shared" })
+  assert.deepEqual((await sources()).map(({ key, folders }) => ({ key, folders })), [{ key: "workbot", folders: ["/packing"] }])
 })
 
 test("a capable runner supplies effective contact and remote session access, and only active sandbox folders count", async () => {
@@ -174,7 +230,7 @@ test("a capable runner supplies effective contact and remote session access, and
     { source: { kind: "workbot" }, folders: ["/notes", "/work"] },
     { source: { kind: "owner" }, folders: ["/notes", "/other"] },
   ] })
-  await db.update(ComputerGrantTable).set({ revokedAt: new Date() }).where(and(eq(ComputerGrantTable.targetDeviceId, id), eq(ComputerGrantTable.sourceKey, "owner")))
+  await db.insert(ComputerGrantTable).values({ id: createDenTypeId("computerGrant"), organizationId, targetDeviceId: id, sourceKey: "owner", folders: ["/notes", "/other"], revokedAt: new Date() })
   const item = await detail(id)
   assert.deepEqual(item.computer.status, { state: "online", lastSeenAt: seenAt.toISOString() })
   assert.deepEqual(item.sessions, { sendTasks: true, readSessions: "started_by_them", access: { effective: "created", chosen: false, reason: null } })
