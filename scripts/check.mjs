@@ -22,6 +22,11 @@ export const CHECKS = [
     fix: "Fix the type errors above. Do not silence them with `any`, `as` or @ts-ignore.",
   },
   {
+    name: "desktop-packaging-order",
+    command: ["node", "--test", "apps/desktop/scripts/electron-build.test.mjs"],
+    fix: "Build the embedded server's runtime dependencies before staging them for packaging.",
+  },
+  {
     name: "demo-desktops-types",
     command: ["pnpm", "exec", "tsc", "-p", "scripts/demo/tsconfig.json"],
     fix: "Fix the demo launcher type errors; do not silence or cast them away.",
