@@ -23,6 +23,7 @@ import { AGENT_VIEWPORTS, DEFAULT_AGENT_VIEWPORT, type AgentViewportKey } from "
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { PanelTab, PanelTabClose, PanelTabItem, PanelTabList } from "@/components/panel-tabs";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import {
   InputGroup,
@@ -84,6 +85,7 @@ type SidePanelProps = {
   onShowEmptyChooser: () => void;
   onOpenFiles: () => void;
   compactChrome?: boolean;
+  titlebar?: boolean;
   files?: OpenTarget[];
   onOpenFile?: (target: OpenTarget) => void;
   onOpenBrowser?: () => void;
@@ -632,6 +634,7 @@ export function SidePanel({
   sideChat,
   onOpenRemoteTask,
   compactChrome = false,
+  titlebar = false,
   files,
   onOpenFile,
   onOpenBrowser,
@@ -821,7 +824,7 @@ export function SidePanel({
   return (
     <TooltipProvider delay={1000}>
       <div
-        className="flex h-full flex-col"
+        className={cn("flex h-full flex-col", titlebar ? "[&>*:not([data-panel-titlebar-row])]:bg-background" : null)}
         onKeyDownCapture={(event) => {
           if (isBrowserSecretsDialogTarget(event.target)) return;
           if (!handlePanelEscape(event.key, onClose)) return;
@@ -829,9 +832,9 @@ export function SidePanel({
           event.stopPropagation();
         }}
       >
-        {!(tabs.length === 1 && (activeTab?.type === "mcp-app" || activeTab?.type === "remote-thread")) ? <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
-          <div className="flex h-10 items-center gap-1 border-b border-border/60 px-2">
-            <div className="no-scrollbar min-w-0 flex-1 overflow-x-auto">
+        {titlebar || !(tabs.length === 1 && (activeTab?.type === "mcp-app" || activeTab?.type === "remote-thread")) ? <div data-panel-titlebar-row={titlebar ? "" : undefined} className={cn("shrink-0", titlebar ? "bg-dls-surface mac:bg-transparent" : "border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
+          <div data-panel-titlebar={titlebar ? "" : undefined} className={cn("flex items-center gap-1 px-2", titlebar ? "window-titlebar border-b border-border electron:titlebar-drag" : "h-10 border-b border-border/60")}>
+            <div className={cn("no-scrollbar min-w-0 overflow-x-auto", titlebar ? "titlebar-no-drag" : "flex-1")}>
               <PanelTabList
                 values={tabs.map((tab) => tab.id)}
                 onReorder={reorderTabs}
@@ -867,7 +870,7 @@ export function SidePanel({
                 />
                 <TooltipContent>{compactChrome ? "Choose panel destination" : "New tab"}</TooltipContent>
               </Tooltip>
-            ) : !activeTab ? (
+            ) : !activeTab && !titlebar ? (
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -875,6 +878,18 @@ export function SidePanel({
                 aria-label="Close panel"
               >
                 <X />
+              </Button>
+            ) : null}
+            {titlebar ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="ms-auto rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground titlebar-no-drag"
+                onClick={onClose}
+                aria-label="Close side panel"
+                title="Close side panel"
+              >
+                <PanelRight />
               </Button>
             ) : null}
           </div>

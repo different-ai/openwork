@@ -679,6 +679,8 @@ export function SessionPage(props: SessionPageProps) {
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
   const sessionRunsLocally = fileOriginForRuntime({ desktop: isElectronRuntime(), serverUrl: props.openworkServerClient?.baseUrl, sandboxBackend: props.selectedWorkspaceDisplay.sandboxBackend }) === "local";
   const compactChrome = !isMobile && !props.mainContentHeaderActionsRef && isElectronRuntime();
+  const flatPanesEnabled = useDesktopFeature("flatSessionPanes");
+  const flatPanes = flatPanesEnabled && compactChrome && !props.developerMode && props.primarySurface !== "flat";
   const [primaryChatElement, setPrimaryChatElement] = useState<HTMLElement | null>(null);
   const computerUse = isElectronRuntime();
   useComputerEndTurn(props.runtimeSessionStatusById, computerUse);
@@ -1478,8 +1480,15 @@ export function SessionPage(props: SessionPageProps) {
   };
 
   const sidePanelContent = activeSidePanel === "extensions" && props.settingsSlot ? (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-background">
-      {props.settingsSlot}
+    <div className={cn("flex h-full min-h-0 flex-col", !flatPanes && "bg-background")}>
+      {flatPanes ? (
+        <div data-panel-titlebar className="window-titlebar flex shrink-0 items-center justify-end border-b border-border bg-dls-surface px-2 electron:titlebar-drag mac:bg-transparent">
+          <Button variant="ghost" size="icon-sm" className="rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground titlebar-no-drag" aria-label="Close side panel" title="Close side panel" onClick={closeRightPane}>
+            <PanelRight size={16} />
+          </Button>
+        </div>
+      ) : null}
+      <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto", flatPanes && "bg-background")}>{props.settingsSlot}</div>
     </div>
   ) : activeSidePanel === "panel" ? (
     <SidePanel
@@ -1491,6 +1500,7 @@ export function SessionPage(props: SessionPageProps) {
       isLocalWorkspace={sessionRunsLocally}
       onClose={closeRightPane}
       compactChrome={compactChrome}
+      titlebar={flatPanes}
       files={compactChrome ? artifactFileTargets : undefined}
       onOpenFile={compactChrome ? openArtifactTarget : undefined}
       onOpenBrowser={compactChrome && browserPresentation.enabled && browserPresentation.mode === "floating" ? browserPresentation.toggle : undefined}
@@ -1505,118 +1515,18 @@ export function SessionPage(props: SessionPageProps) {
     />
   ) : null;
 
-  return (
-    <SessionReferenceProvider
-      inventories={props.sessionReferenceInventories ?? EMPTY_SESSION_REFERENCE_INVENTORIES}
-      isReferenceCurrent={props.isSessionReferenceCurrent}
-      onOpenReference={handleOpenSessionReference}
-    >
-    <PanelSessionProvider value={panelSessionForChat}>
-    <div ref={props.ref} data-chat-viewport className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text max-lg:fixed max-lg:inset-x-0 max-lg:top-[var(--chat-viewport-top,0px)] max-lg:h-[var(--chat-viewport-height,100dvh)] max-lg:overflow-hidden max-lg:pt-[env(safe-area-inset-top)] mac:bg-transparent">
-      <SidebarProvider
-        open={sidebarOpen}
-        onOpenChange={setSidebarOpen}
-        className={cn(
-          "relative min-h-0 flex-1 mac:bg-transparent",
-          leftSidebarResizing &&
-            "**:data-[slot=sidebar-container]:transition-none **:data-[slot=sidebar-gap]:transition-none",
-          !shellConfig.sidebar && "**:data-[slot=sidebar-container]:hidden **:data-[slot=sidebar-gap]:hidden",
-        )}
-        style={sidebarProviderStyle}
-      >
-        <AppSidebar
-          sessionNumberShortcuts={props.sessionNumberShortcuts}
-          workspaceSessionGroups={sidebarSessionGroups}
-          selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
-          developerMode={props.sidebar.developerMode}
-          selectedSessionId={props.sidebar.selectedSessionId}
-          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
-          sessionStatusById={props.sidebar.sessionStatusById}
-          sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
-          sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
-          sessionAttentionKindById={props.sidebar.sessionAttentionKindById}
-          sessionTreeEnabled={sessionTreeEnabled}
-          connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
-          workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
-          newTaskDisabled={props.sidebar.newTaskDisabled}
-          onSelectWorkspace={props.sidebar.onSelectWorkspace}
-          onOpenSession={openSessionTab}
-          onPrefetchSession={props.sidebar.onPrefetchSession}
-          onCreateTaskInWorkspace={props.sidebar.onCreateTaskInWorkspace}
-          draftScope={props.newTaskComposer?.draftScope}
-          onCreateSplitTaskInWorkspace={props.sidebar.onCreateSplitTaskInWorkspace}
-          onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
-          onOpenDeleteSession={props.onDeleteSession ? openDeleteModal : undefined}
-          onArchiveSession={props.onArchiveSession ? (sessionId, archived, workspaceId) => {
-            void props.onArchiveSession?.(sessionId, archived, workspaceId);
-          } : undefined}
-          onArchiveSessions={props.onArchiveSessions ? (sessions, archived) => {
-            void props.onArchiveSessions?.(sessions, archived);
-          } : undefined}
-          archiveDisabledReason={props.archiveDisabledReason}
-          onOpenCreateGroupModal={openCreateGroupModal}
-          onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
-          onRevealWorkspace={props.sidebar.onRevealWorkspace}
-          onForgetWorkspace={props.sidebar.onForgetWorkspace}
-          onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
-          onOpenSessionSearch={props.sidebar.onOpenSessionSearch}
-          automationsActive={props.sidebar.automationsActive}
-          automationsNeedAttention={props.sidebar.automationsNeedAttention}
-          onOpenAutomations={props.sidebar.onOpenAutomations}
-          dashboardActive={props.sidebar.dashboardActive}
-          dashboardLabel={props.sidebar.dashboardLabel}
-          onOpenDashboard={props.sidebar.onOpenDashboard}
-          conversationHistory={{
-            canGoBack: canGoBackInConversationHistory,
-            canGoForward: canGoForwardInConversationHistory,
-            onNavigate: navigateConversationHistory,
-          }}
-          onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
-          onStartResize={startLeftSidebarResize}
-          onOpenAccountSettings={props.onOpenSettings}
-          onOpenExtensions={props.onOpenExtensions}
-          mobileChatActions={sidebarOnlyChrome ? (
-            <MobileChatActions
-              onFind={findButtonSessionId ? () => useSessionFindStore.getState().openFind({ sessionId: findButtonSessionId }) : undefined}
-              onFiles={openArtifactRailPane}
-              fileCount={artifactTargetCount}
-              onSignIn={showCloudSignIn ? openCloudSignIn : undefined}
-              onParent={parentSessionLink ? returnFromChild : undefined}
-            />
-          ) : undefined}
-          extensionsActive={props.extensionsActive}
-          status={{
-            clientConnected: props.clientConnected,
-            openworkServerStatus: props.openworkServerStatus,
-            developerMode: props.developerMode,
-            showConnectionStatus: Boolean(props.selectedWorkspaceId),
-            providerConnectedIds: props.providerConnectedIds,
-            mcpConnectedCount: props.mcpConnectedCount,
-            showSettingsButton: props.statusBar?.showSettingsButton,
-            reloadBusy: props.statusBar?.reloadBusy,
-            reloadError: props.statusBar?.reloadError,
-            openWorkConnectState: props.statusBar?.openWorkConnectState,
-            onOpenDiagnostics: props.statusBar?.onOpenDiagnostics,
-            onSendFeedback: props.onSendFeedback,
-            directSignIn: compactChrome,
-          }}
-        />
-        <SidebarInset
-          className="min-h-0 min-w-0 overflow-hidden bg-sidebar mac:bg-transparent"
-        >
-          <DebugRailProvider>
-          <FloatingSlotProvider>
-          {sidebarOnlyChrome ? <div className="flex min-w-0 shrink-0 items-end gap-2 pe-2">
+  const sessionHeader = sidebarOnlyChrome ? <div className="flex min-w-0 shrink-0 items-end gap-2 pe-2">
             <MobileChatNavigation />
             <extensions.HeaderTitle sessionId={props.selectedSessionId}>{null}</extensions.HeaderTitle>
           </div> : <header
             data-session-header
             data-sidebar-hidden={!shellConfig.sidebar || !sidebarOpen || isMobile}
+            data-window-edge={flatPanes && sidePanelOpen ? "false" : undefined}
             className={cn(
               "window-titlebar relative flex shrink-0 items-center justify-between gap-3 border-b border-border bg-dls-surface px-3 electron:titlebar-drag @container/titlebar lg:px-4 mac:bg-transparent",
               "[&_[data-session-centered-title]]:absolute [&_[data-session-centered-title]]:left-1/2 [&_[data-session-centered-title]]:max-w-[32%] [&_[data-session-centered-title]]:-translate-x-1/2 lg:[&_[data-session-title-panel-open=true]]:left-[calc(50%-9.375rem)]",
-              props.mainContentHeaderActionsRef ? "min-h-13" : compactChrome && !props.developerMode ? "lg:pr-2" : "lg:pr-1",
-              props.primarySurface !== "flat" && "lg:border-b-0",
+              props.mainContentHeaderActionsRef ? "min-h-13" : flatPanes ? "lg:px-3" : compactChrome && !props.developerMode ? "lg:pr-2" : "lg:pr-1",
+              props.primarySurface !== "flat" && !flatPanes && "lg:border-b-0",
               (!shellConfig.sidebar || !sidebarOpen || isMobile) && "mac:mac-window-controls-inset",
             )}
           >
@@ -1818,6 +1728,7 @@ export function SessionPage(props: SessionPageProps) {
               </DropdownMenu>
               {!isElectronRuntime() && remoteComputersFeature && props.openworkServerClient ? <CloudComputerControl client={props.openworkServerClient} /> : null}
               {computerUse && props.selectedSessionId ? <ComputerControl key={props.selectedSessionId} sessionId={props.selectedSessionId} /> : null}
+              {flatPanes && sidePanelOpen ? null : (
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -1844,18 +1755,124 @@ export function SessionPage(props: SessionPageProps) {
                 />
                 <TooltipContent>{sidePanelOpen ? "Close side panel" : "Open side panel"}</TooltipContent>
               </Tooltip>
+              )}
             </div>}
-          </header>}
+          </header>;
 
-          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2", props.primarySurface !== "flat" && compactChrome && !props.developerMode && "lg:pr-2")}>
+  return (
+    <SessionReferenceProvider
+      inventories={props.sessionReferenceInventories ?? EMPTY_SESSION_REFERENCE_INVENTORIES}
+      isReferenceCurrent={props.isSessionReferenceCurrent}
+      onOpenReference={handleOpenSessionReference}
+    >
+    <PanelSessionProvider value={panelSessionForChat}>
+    <div ref={props.ref} data-chat-viewport className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text max-lg:fixed max-lg:inset-x-0 max-lg:top-[var(--chat-viewport-top,0px)] max-lg:h-[var(--chat-viewport-height,100dvh)] max-lg:overflow-hidden max-lg:pt-[env(safe-area-inset-top)] mac:bg-transparent">
+      <SidebarProvider
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        className={cn(
+          "relative min-h-0 flex-1 mac:bg-transparent",
+          leftSidebarResizing &&
+            "**:data-[slot=sidebar-container]:transition-none **:data-[slot=sidebar-gap]:transition-none",
+          !shellConfig.sidebar && "**:data-[slot=sidebar-container]:hidden **:data-[slot=sidebar-gap]:hidden",
+        )}
+        style={sidebarProviderStyle}
+      >
+        <AppSidebar
+          sessionNumberShortcuts={props.sessionNumberShortcuts}
+          workspaceSessionGroups={sidebarSessionGroups}
+          selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
+          developerMode={props.sidebar.developerMode}
+          selectedSessionId={props.sidebar.selectedSessionId}
+          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
+          sessionStatusById={props.sidebar.sessionStatusById}
+          sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
+          sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
+          sessionAttentionKindById={props.sidebar.sessionAttentionKindById}
+          sessionTreeEnabled={sessionTreeEnabled}
+          connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
+          workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
+          newTaskDisabled={props.sidebar.newTaskDisabled}
+          onSelectWorkspace={props.sidebar.onSelectWorkspace}
+          onOpenSession={openSessionTab}
+          onPrefetchSession={props.sidebar.onPrefetchSession}
+          onCreateTaskInWorkspace={props.sidebar.onCreateTaskInWorkspace}
+          draftScope={props.newTaskComposer?.draftScope}
+          onCreateSplitTaskInWorkspace={props.sidebar.onCreateSplitTaskInWorkspace}
+          onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
+          onOpenDeleteSession={props.onDeleteSession ? openDeleteModal : undefined}
+          onArchiveSession={props.onArchiveSession ? (sessionId, archived, workspaceId) => {
+            void props.onArchiveSession?.(sessionId, archived, workspaceId);
+          } : undefined}
+          onArchiveSessions={props.onArchiveSessions ? (sessions, archived) => {
+            void props.onArchiveSessions?.(sessions, archived);
+          } : undefined}
+          archiveDisabledReason={props.archiveDisabledReason}
+          onOpenCreateGroupModal={openCreateGroupModal}
+          onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
+          onRevealWorkspace={props.sidebar.onRevealWorkspace}
+          onForgetWorkspace={props.sidebar.onForgetWorkspace}
+          onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
+          onOpenSessionSearch={props.sidebar.onOpenSessionSearch}
+          automationsActive={props.sidebar.automationsActive}
+          automationsNeedAttention={props.sidebar.automationsNeedAttention}
+          onOpenAutomations={props.sidebar.onOpenAutomations}
+          dashboardActive={props.sidebar.dashboardActive}
+          dashboardLabel={props.sidebar.dashboardLabel}
+          onOpenDashboard={props.sidebar.onOpenDashboard}
+          conversationHistory={{
+            canGoBack: canGoBackInConversationHistory,
+            canGoForward: canGoForwardInConversationHistory,
+            onNavigate: navigateConversationHistory,
+          }}
+          onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
+          onStartResize={startLeftSidebarResize}
+          onOpenAccountSettings={props.onOpenSettings}
+          onOpenExtensions={props.onOpenExtensions}
+          mobileChatActions={sidebarOnlyChrome ? (
+            <MobileChatActions
+              onFind={findButtonSessionId ? () => useSessionFindStore.getState().openFind({ sessionId: findButtonSessionId }) : undefined}
+              onFiles={openArtifactRailPane}
+              fileCount={artifactTargetCount}
+              onSignIn={showCloudSignIn ? openCloudSignIn : undefined}
+              onParent={parentSessionLink ? returnFromChild : undefined}
+            />
+          ) : undefined}
+          extensionsActive={props.extensionsActive}
+          status={{
+            clientConnected: props.clientConnected,
+            openworkServerStatus: props.openworkServerStatus,
+            developerMode: props.developerMode,
+            showConnectionStatus: Boolean(props.selectedWorkspaceId),
+            providerConnectedIds: props.providerConnectedIds,
+            mcpConnectedCount: props.mcpConnectedCount,
+            showSettingsButton: props.statusBar?.showSettingsButton,
+            reloadBusy: props.statusBar?.reloadBusy,
+            reloadError: props.statusBar?.reloadError,
+            openWorkConnectState: props.statusBar?.openWorkConnectState,
+            onOpenDiagnostics: props.statusBar?.onOpenDiagnostics,
+            onSendFeedback: props.onSendFeedback,
+            directSignIn: compactChrome,
+          }}
+        />
+        <SidebarInset
+          className="min-h-0 min-w-0 overflow-hidden bg-sidebar mac:bg-transparent"
+        >
+          <DebugRailProvider>
+          <FloatingSlotProvider>
+          {flatPanes ? null : sessionHeader}
+
+          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && !flatPanes && "lg:pb-2 lg:pl-2", props.primarySurface !== "flat" && !flatPanes && compactChrome && !props.developerMode && "lg:pr-2")}>
           <ResizablePanelGroup
             orientation="horizontal"
             elementRef={panelGroupRef}
             onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
-            className={cn("min-h-0 flex-1 max-lg:rounded-none", props.primarySurface !== "flat" && "lg:rounded-[14px]")}
+            className={cn("min-h-0 flex-1 max-lg:rounded-none", props.primarySurface !== "flat" && !flatPanes && "lg:rounded-[14px]")}
           >
             <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
-              <main data-session-pane className={cn("flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface", props.primarySurface !== "flat" && "max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
+              <div data-session-column className={cn("flex h-full min-w-0 flex-col", flatPanes && shellConfig.sidebar && sidebarOpen && "border-l border-border")}>
+              {flatPanes ? sessionHeader : null}
+              <main data-session-pane className={cn("flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-dls-surface", props.primarySurface !== "flat" && !flatPanes && "max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
           {props.sandboxTrialNotice}
           {showNarrowPaneSwitcher ? (
             <NarrowPaneSwitcher
@@ -2193,6 +2210,7 @@ export function SessionPage(props: SessionPageProps) {
           </div>
 
               </main>
+              </div>
             </ResizablePanel>
               {sidePanelOpen && !isMobile ? (
               <>
@@ -2202,9 +2220,9 @@ export function SessionPage(props: SessionPageProps) {
                   defaultSize={`${activeSidePanel === "extensions" ? Math.max(browserPanelDefaultWidth, 480) : browserPanelDefaultWidth}px`}
                   minSize={activeSidePanel === "extensions" ? "420px" : "320px"}
                   maxSize="70%"
-                  className="min-h-0 overflow-hidden pl-2 lg:flex lg:flex-col"
+                  className={cn("min-h-0 overflow-hidden lg:flex lg:flex-col", !flatPanes && "pl-2")}
                 >
-                  <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-border bg-dls-surface shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+                  <div className={cn("flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden", flatPanes ? "border-l border-border" : "rounded-[14px] border border-border bg-dls-surface shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
                     {sidePanelContent}
                   </div>
                 </ResizablePanel>

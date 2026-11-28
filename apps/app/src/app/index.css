@@ -71,7 +71,8 @@ html.openwork-electron.openwork-platform-mac:not([data-window-fullscreen="true"]
 }
 
 /* The overlay may be on either side, according to the native desktop settings. */
-html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-session-header],
+html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-session-header]:not([data-window-edge="false"]),
+html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-panel-titlebar],
 html.openwork-electron:is(.openwork-platform-windows, .openwork-platform-linux) [data-settings-titlebar] {
   padding-right: max(--spacing(3), calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)));
 }
