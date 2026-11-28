@@ -1175,6 +1175,7 @@ export const automationProposalSchema = z.object({
 export type AutomationProposal = z.infer<typeof automationProposalSchema>
 
 export const updateAutomationSchema = z.object({
+  maximumRuntimeMs: automationRevisionSchema.shape.maximumRuntimeMs.optional().describe("Maximum Cloud agent run time in milliseconds, from 10 seconds to 60 minutes. Requires automationHourRuntime. Omitting it preserves the saved limit."),
   name: z.string().trim().min(1).max(120).optional(),
   instructions: z.string().trim().min(1).max(100_000).optional(),
   schedule: automationScheduleSchema.optional(),

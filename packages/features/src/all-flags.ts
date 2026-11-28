@@ -6,6 +6,7 @@ export { default as artifactShareLinks } from "@openwork/features/flags/artifact
 export { default as artifactStorage } from "@openwork/features/flags/artifact-storage"
 export { default as automationArchiveRestore } from "@openwork/features/flags/automation-archive-restore"
 export { default as automationFailureNotifications } from "@openwork/features/flags/automation-failure-notifications"
+export { default as automationHourRuntime } from "@openwork/features/flags/automation-hour-runtime"
 export { default as automationSharing } from "@openwork/features/flags/automation-sharing"
 export { default as automationSimpleReview } from "@openwork/features/flags/automation-simple-review"
 export { default as bedrockGuardrails } from "@openwork/features/flags/bedrock-guardrails"
