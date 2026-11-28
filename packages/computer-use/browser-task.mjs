@@ -393,7 +393,7 @@ const SECRET_REFUSALS = {
   secrets_unavailable: `Saved secrets cannot be entered in this browser right now, so nothing was typed. ${SECRET_HANDOFF}`,
   unknown_secret: `That secretRef is not one of this conversation's saved secrets, so nothing was typed. Use one the observation lists in availableSecrets. Without one: ${SECRET_HANDOFF}`,
   secret_not_allowed_here: `That secret is not allowed on this website, so nothing was typed. ${SECRET_HANDOFF}`,
-  sign_in_required: "Take over and sign in directly in the browser, then resume.",
+  sign_in_required: "Sign in directly in the browser, then send your next message.",
   credential_declined: "The person did not confirm entering this secret on this site. Nothing was typed.",
   not_editable: "A saved secret goes only into an editable text, password, email, phone, address or search field. Nothing was typed.",
   stale_element: "The field changed before the secret could be entered, so nothing was typed. Observe again before choosing an action.",
@@ -848,7 +848,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     checkControl(sessionId, scope.control);
     if (getTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed()) fail("tab_closed", "The browser tab closed while navigation was pending.");
     if (ownerOf(tab.tabId) !== sessionId || navigations.get(tab.tabId) !== scope) fail("wrong_conversation", "The browser navigation owner changed.");
-    if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message.");
+    if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they send their next message.");
     if (!enabled()) fail("browser_disabled", "Browser control was disabled while navigation was pending.");
   }
   async function authorizeNavigation(scope, value) {
@@ -918,7 +918,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     const owner = ownerOf(tabId);
     if (owner) {
       pausedSessions.add(owner);
-      const reason = new BrowserTaskError("paused", "The user has taken over this browser conversation.");
+      const reason = new BrowserTaskError("paused", "The user has browser control in this conversation.");
       stopControl(owner, controls.get(owner), reason);
       opening.get(owner)?.abort(reason);
     }
@@ -931,7 +931,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       const sibling = states.get(item.tabId); sibling?.controller?.abort(); forget(sibling); publish(item.tabId, "paused", reason);
     }
     const state = stateFor(tabId); forget(state);
-    state.controller?.abort(new BrowserTaskError("paused", "Browser control paused. It comes back when the user resumes it or sends their next message."));
+    state.controller?.abort(new BrowserTaskError("paused", "Browser control paused. It comes back when the user sends their next message."));
     publish(tabId, "paused", reason);
   }
   function resume(tabId) {
@@ -993,7 +993,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       ...(typeof options.includeText === "boolean" ? { includeText: options.includeText } : {}), reach: mask.span }), mode === "interactive");
     let image, digest;
     if (includeImage) {
-      if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. Take over and complete them directly in the browser, then resume.");
+      if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. The person completes them directly in the browser, then send your next message.");
       if (page.hasCredentialField) fail("credential_on_screen", "This page has a password or code field, or one was filled on it, so no image was taken. Work from its controls without an image.");
       if (secretTabs.has(tab.tabId)) fail("credential_on_screen", "A private value was entered in this tab and the site may show it back, so no image was taken. Work from the page's controls without an image.");
       const png = await captureObservation(tab.view.webContents, page.viewport, (viewport) => capture(tab, viewport));
@@ -1135,7 +1135,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       if (typeof sessionId !== "string" || !sessionId.trim()) fail("missing_session", "Browser control requires a requesting conversation.");
       if (!enabled()) fail("browser_disabled", "Enable OpenWork Browser in Library, or ask your organization to allow browser control.");
       if (operation === "tabs") return { ok: true, provider: "builtin", externalBrowsers: "unsupported", tabs: tabsFor(sessionId).map((item) => ({ tabId: item.tabId, url: safeUrl(item.view.webContents.getURL()), title: cutText(mask, item.view.webContents.getTitle(), 300), visible: isVisible(item.tabId), status: stateFor(item.tabId).status, operation: stateFor(item.tabId).operation })) };
-      if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
+      if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they send their next message. End your turn and wait.");
       const control = controlFor(sessionId);
       controller = new AbortController();
       const requestSignal = AbortSignal.any([controller.signal, control.controller.signal]);
@@ -1162,7 +1162,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         tab = args.tabId ? await Promise.race([resolve(sessionId, args.tabId), canceled]) : matches[0];
         requestSignal.throwIfAborted();
         checkControl(sessionId, control);
-        if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
+        if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they send their next message. End your turn and wait.");
         const opened = !tab;
         if (!tab) {
           tab = await Promise.race([
@@ -1194,8 +1194,8 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       requestSignal.throwIfAborted();
       checkControl(sessionId, control);
       state = stateFor(tab.tabId);
-      if (operation === "pause" || operation === "handoff") { pause(tab.tabId, operation === "handoff" ? "Sign in or continue in the browser, then resume" : "Paused"); return { ok: true, status: "paused", tabId: tab.tabId, next: "user_resume" }; }
-      if (pausedSessions.has(sessionId) || state.status === "paused") fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
+      if (operation === "pause" || operation === "handoff") { pause(tab.tabId, operation === "handoff" ? "Sign in or continue in the browser, then send your next message" : "Paused"); return { ok: true, status: "paused", tabId: tab.tabId, next: "user_resume" }; }
+      if (pausedSessions.has(sessionId) || state.status === "paused") fail("paused", "The user has browser control until they send their next message. End your turn and wait.");
       if (state.controller) fail("busy", "A browser operation is already running in this tab. Wait for its result; do not queue another action.");
       state.controller = controller;
       const navigationScope = trackNavigation(sessionId, tab, requestSignal);
@@ -1646,7 +1646,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           if (!confirmedSite && !(secretSite && action.type !== "fill") && observed.url === contents.getURL() && ["click", "fill", "key"].includes(action.type)
             && await isolated(contents, credentialTarget, observed.id, action)) {
             const site = new URL(observed.url).origin;
-            const refused = !approveCredential ? ["sign_in_required", "Take over and sign in directly in the browser, then resume."]
+            const refused = !approveCredential ? ["sign_in_required", "Sign in directly in the browser, then send your next message."]
               : !await approveCredential(sessionId, { site }, requestSignal) ? ["credential_declined", "The person did not confirm entering a password or code on this site."] : null;
             requestSignal.throwIfAborted();
             if (refused) {

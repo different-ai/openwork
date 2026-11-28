@@ -237,7 +237,6 @@ declare global {
         closeSessionTabs?: (sessionId: string) => Promise<string[]>;
         selectTab?: (tabId: string) => Promise<string>;
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
-        taskControl?: (tabId: string, action: "pause" | "resume") => Promise<void>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
