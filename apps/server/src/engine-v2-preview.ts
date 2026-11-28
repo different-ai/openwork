@@ -825,8 +825,15 @@ export function createEngineV2Preview(options: {
   }
 
   async function settleWorkspaceMcp(workspaceId: string, directory: string, server: string): Promise<void> {
-    if (!sidecar || !chatRouting) return;
-    await ensureWorkspaceReady(directory);
+    const servingChats = () => Boolean(sidecar) && chatRouting;
+    if (!servingChats()) return;
+    try {
+      await ensureWorkspaceReady(directory);
+    } catch (error) {
+      if (!servingChats()) return;
+      throw error;
+    }
+    if (!servingChats()) return;
     await syncWorkspaceMcp(workspaceId, directory, { servers: [server] });
     if (!enabled) return;
     const active = sidecar;
