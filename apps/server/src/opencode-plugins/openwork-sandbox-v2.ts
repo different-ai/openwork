@@ -9,6 +9,8 @@ import {
 import { providerSchemaProblems } from "./provider-safe-tool-schema.js";
 
 import { computerBindingSchema, computerRouting, computerStatusSchema, type ComputerRouting } from "./computer-routing-v2.js";
+import { computerOutcomeUnknown } from "../computers/messages.js";
+import { computerPermissionsSchema } from "../computers/permissions.js";
 
 const modeSchema = z.enum(["off", "tools", "only"]);
 export type SandboxToolMode = z.infer<typeof modeSchema>;
@@ -75,6 +77,16 @@ export type SandboxPluginContext = {
   mcp?: {
     transform(callback: (editor: { list(): Iterable<readonly [string, unknown]>; set(name: string, config: Record<string, unknown>): void }) => void): Promise<Registration>;
     reload?(): Promise<void>;
+  };
+  permission?: {
+    assert(input: {
+      sessionID: string; agent?: string;
+      source: { type: "tool"; messageID: string; id: string };
+      action: string; resources: string[]; save: string[]; metadata: Record<string, unknown>;
+    }): Promise<void>;
+    hook?(name: "evaluate", callback: (event: {
+      readonly action: string; readonly metadata?: Record<string, unknown>; effect: "allow" | "ask" | "deny";
+    }) => Promise<void>): Promise<Registration>;
   };
   session: {
     get?(input: { sessionID: string }): Promise<{ parentID?: string; location?: { directory?: string } } | undefined>;
@@ -226,7 +238,7 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
   }
   return async () => {
     closed = true;
-    try { for (const hook of inference) await hook.dispose(); await prompt.dispose(); } finally {
+    try { for (const hook of inference) await hook.dispose(); await prompt.dispose(); await computers?.close(); } finally {
       try { await registration.dispose(); } finally { await servers?.dispose(); await guard?.dispose(); }
     }
   };
@@ -240,17 +252,18 @@ export default {
     if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || url.username || url.password || url.hash) throw new Error("OpenWork couldn’t connect to the sandbox on this computer.");
     const directory = context.location?.directory;
     if (!directory) throw new Error("Open a project folder in OpenWork before using the sandbox.");
-    const request = async (body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> => {
+    const request = async (body: Record<string, unknown>, signal?: AbortSignal, lostReply?: () => string): Promise<unknown> => {
+      const transportError = (error: unknown): never => { throw lostReply ? new Error(lostReply()) : error; };
       const response = await fetch(url, {
         method: "POST", redirect: "error", signal: signal ?? AbortSignal.timeout(15_000),
         headers: { Authorization: `Bearer ${options.token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ directory, ...body }),
-      });
+      }).catch(transportError);
       if (!response.ok) {
         const failure = z.object({ error: z.string() }).safeParse(await response.json().catch(() => null));
-        throw new Error(failure.success ? failure.data.error.slice(0, 500) : "The sandbox request failed. Try again. Nothing ran on this computer.");
+        throw new Error(failure.success ? failure.data.error.slice(0, 500) : lostReply?.() ?? "The sandbox request failed. Try again. Nothing ran on this computer.");
       }
-      return response.json();
+      return response.json().catch(transportError);
     };
     return setupSandboxTools(context, {
       projectConfigDisabled: ["1", "true"].includes(process.env.OPENCODE_CONFIG_PROJECT_DISABLE?.toLowerCase() ?? ""),
@@ -262,8 +275,15 @@ export default {
         async select(location, input, signal) {
           return z.object({ text: z.string() }).parse(await request({ operation: "computer-select", ...location, directory: location.directory ?? directory, input }, signal)).text;
         },
-        async execute(location, name, input, signal) {
-          return z.object({ result: resultSchema.nullable() }).parse(await request({ operation: "computer-execute", ...location, directory: location.directory ?? directory, name, input }, signal)).result;
+        async permissions(location, name, input, signal) {
+          return z.object({ approval: computerPermissionsSchema.nullable() }).parse(await request({ operation: "computer-permissions", ...location, directory: location.directory ?? directory, name, input }, signal)).approval;
+        },
+        async execute(location, { bindingId, label }, name, input, signal) {
+          const lostReply = () => computerOutcomeUnknown(label, signal.aborted);
+          const response = await request({ operation: "computer-execute", ...location, directory: location.directory ?? directory, bindingId, name, input }, signal, lostReply);
+          const parsed = z.object({ result: resultSchema }).safeParse(response);
+          if (!parsed.success) throw new Error(lostReply());
+          return parsed.data.result;
         },
       } } : {}),
       async status() { return z.object({ mode: modeSchema }).strict().parse(await request({ operation: "status" })).mode; },

@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { computersSandboxConflict, localComputerTools, routedComputerTool } from "../computers/tool-names.js";
+import { computerApprovalUnavailable } from "../computers/messages.js";
+import type { ComputerPermissions } from "../computers/permissions.js";
 import type { SandboxToolCall } from "../sandbox-tool-host.js";
 import type { HostNativeTool, SandboxEngineResult, SandboxPluginContext, SandboxToolMode } from "./openwork-sandbox-v2.js";
 
@@ -12,7 +14,8 @@ export type ComputerRouting = {
   status(): Promise<ComputerStatus>;
   binding(location: Location): Promise<z.infer<typeof computerBindingSchema> | null>;
   select(location: Location, input: z.infer<typeof controlInput>, signal: AbortSignal): Promise<string>;
-  execute(location: Location, name: string, input: unknown, signal: AbortSignal): Promise<SandboxEngineResult | null>;
+  permissions(location: Location, name: string, input: unknown, signal: AbortSignal): Promise<ComputerPermissions | null>;
+  execute(location: Location, approval: ComputerPermissions, name: string, input: unknown, signal: AbortSignal): Promise<SandboxEngineResult>;
 };
 
 export function computerRouting(context: SandboxPluginContext, dependencies: ComputerRouting) {
@@ -38,12 +41,34 @@ export function computerRouting(context: SandboxPluginContext, dependencies: Com
     },
   });
   const routes = (id: string) => routedComputerTool(id) !== undefined;
+  const installPermissionHook = () => context.permission?.hook?.("evaluate", async event => {
+    if (event.action === "shell" && event.metadata?.openworkConfirmRemoteCommand === true && event.effect === "allow") event.effect = "ask";
+  });
+  let permissionHook: ReturnType<typeof installPermissionHook>;
   return {
     control, routes,
+    async close() { await (await permissionHook)?.dispose(); },
     status: () => dependencies.status().catch((): ComputerStatus => "unavailable"),
     async execute(id: string, value: unknown, call: SandboxToolCall) {
       if (!routes(id) && !localComputerTools.has(id)) return null;
-      return dependencies.execute(await root(call.sessionID), id, value, call.signal);
+      const location = await root(call.sessionID);
+      const approval = await dependencies.permissions(location, id, value, call.signal);
+      if (!approval) return null;
+      const permission = context.permission;
+      if (!permission?.assert || !call.messageID || !call.id) throw new Error(computerApprovalUnavailable);
+      for (const { action, resources, save, confirm } of approval.requests) {
+        if (confirm && !await (permissionHook ??= installPermissionHook())) throw new Error(computerApprovalUnavailable);
+        call.signal.throwIfAborted();
+        await permission.assert({
+          sessionID: call.sessionID, agent: call.agent,
+          source: { type: "tool", messageID: call.messageID, id: call.id },
+          action, resources, save, metadata: { computer: approval.label, ...(confirm ? { openworkConfirmRemoteCommand: true } : {}) },
+        });
+      }
+      call.signal.throwIfAborted();
+      const currentLocation = await root(call.sessionID);
+      call.signal.throwIfAborted();
+      return dependencies.execute(currentLocation, approval, id, value, call.signal);
     },
     async instruction(sessionID: string) {
       const binding = await dependencies.binding(await root(sessionID));

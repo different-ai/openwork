@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFakeProvider } from "../../../packages/sandbox/src/testing/fake-provider.js";
 import { createLocalSandboxRuntime } from "../src/local-sandbox-runtime.js";
+import { SandboxError } from "@openwork/sandbox";
 import { createSandboxToolsBridge } from "../src/sandbox-tools-bridge.js";
 import type { ServerConfig } from "../src/types.js";
 import { managedDesktopPolicy } from "../src/managed-desktop-policy.js";
@@ -160,6 +161,22 @@ test("a message mentioning not_found never substitutes for the provider error co
     expect((await runtime.execute(f.workspace, "shell", { command: "true" })).metadata).toMatchObject({ sandboxRestarted: true });
     expect(provider.fake.count("create")).toBe(2);
   } finally { failDestroy = false; await runtime.close(); await f.cleanup(); }
+});
+
+test.each(["transient", "timeout"])("a provider %s after the sandbox command starts does not claim that nothing ran", async code => {
+  const f = await fixture();
+  let ran = false;
+  const provider = createFakeProvider({ onRun: () => {
+    ran = true;
+    throw new SandboxError({ providerId: "microsandbox", code: code === "timeout" ? "timeout" : "transient", message: "private fixture diagnostic" });
+  } });
+  const runtime = createLocalSandboxRuntime(f.config, {
+    settings: useSandbox, access: async () => ({ enabled: true, scope: "fixture" }), provider: async () => provider,
+  });
+  try {
+    await expect(runtime.execute(f.workspace, "shell", { command: "pwd" })).rejects.toThrow(/^OpenWork doesn't know how the sandbox operation ended\. It may have finished\. Check the file or folder in the sandbox before running it again\.$/);
+    expect(ran).toBe(true);
+  } finally { await runtime.close(); await f.cleanup(); }
 });
 
 test("a retained stopped entry resumes the same local guest before reuse", async () => {

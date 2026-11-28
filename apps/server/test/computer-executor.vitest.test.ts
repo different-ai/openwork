@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, expect, vi } from "vitest";
 import { createFakeProvider } from "@openwork/sandbox/testing";
-import type { RunSpec } from "@openwork/sandbox";
+import { SandboxError, type RunSpec } from "@openwork/sandbox";
 import { runOnComputer } from "../src/computers/executor.js";
 import { computerActionForTool, translateComputerInput } from "../src/computers/input.js";
-import { SANDBOX_TOOL_NAMES } from "../src/sandbox-tool-host.js";
+import { SANDBOX_TOOL_NAMES, SandboxToolError } from "../src/sandbox-tool-host.js";
 import nativeSchemas from "./fixtures/opencode-2.2.6-computer-tools.json";
 
 const cases = {
@@ -54,14 +54,28 @@ test("starts only the addressed VM, waits, then runs in the working folder", asy
 
 test("does not create a missing VM", async () => {
   const { operations, options, call } = fixture();
-  await expect(runOnComputer(call, options)).rejects.toThrow("Build box no longer exists at its provider.");
+  await expect(runOnComputer(call, options)).rejects.toThrow(/^Build box no longer exists at its provider\. Choose another computer\. Nothing ran there\.$/);
   expect(operations).toEqual(["get"]);
+});
+
+test.each(["lookup", "startup"])("reports a computer's error state during %s without dispatching", async step => {
+  const { provider, options, call, onRun } = fixture();
+  const handle = await provider.create({ idempotencyKey: "problem-box", image: null, env: {}, labels: {}, storage: [], exposePorts: [] }, { timeoutMs: 1000 });
+  const externalId = handle.ref.ref.sandboxId;
+  if (!externalId) throw new Error("Missing fake VM id");
+  if (step === "lookup") vi.spyOn(provider, "get").mockResolvedValueOnce({ ...handle, state: "error" });
+  else {
+    await provider.stop(handle, { timeoutMs: 1000 });
+    vi.spyOn(provider, "inspect").mockResolvedValueOnce({ ...handle, state: "error" });
+  }
+  await expect(runOnComputer({ ...call, connection: { ...call.connection, externalId } }, options)).rejects.toThrow(/^Build box has a problem at its provider\. Check it with the provider before trying again\. Nothing ran there\.$/);
+  expect(onRun).not.toHaveBeenCalled();
 });
 
 test("missing or legacy consent, missing key, unsupported provider and background commands never acquire a provider", async () => {
   const { providerFactory, options, call } = fixture();
-  await expect(runOnComputer(call, { ...options, env: {} })).rejects.toThrow("needs its Daytona key");
-  await expect(runOnComputer({ ...call, connection: { provider: "freestyle", externalId: "other" } }, options)).rejects.toThrow("can't reach freestyle computers yet");
+  await expect(runOnComputer(call, { ...options, env: {} })).rejects.toThrow(/^Build box needs its Daytona key on this machine before OpenWork can reach it\. Nothing ran there\.$/);
+  await expect(runOnComputer({ ...call, connection: { provider: "openwork_desktop", externalId: "other" } }, options)).rejects.toThrow("Build box can't take work from other computers yet.");
   const rejectedScopes: Parameters<typeof runOnComputer>[0]["scope"][] = [undefined, null, { surface: "sandbox", folders: ["/workspace"] }];
   for (const scope of rejectedScopes) {
     await expect(runOnComputer({ ...call, scope }, options)).rejects.toThrow("owner's approval to access the entire computer");
@@ -70,8 +84,57 @@ test("missing or legacy consent, missing key, unsupported provider and backgroun
   expect(providerFactory).not.toHaveBeenCalled();
 });
 
+test.each(["lookup", "start", "wait"])("a failure during %s reports that nothing ran", async step => {
+  const { provider, options, call, onRun } = fixture();
+  const diagnostic = new Error("private fixture diagnostic");
+  const handle = await provider.create({ idempotencyKey: "cold-box", image: null, env: {}, labels: {}, storage: [], exposePorts: [] }, { timeoutMs: 1000 });
+  const externalId = handle.ref.ref.sandboxId;
+  if (!externalId) throw new Error("Missing fake VM id");
+  if (step === "lookup") vi.spyOn(provider, "get").mockRejectedValueOnce(diagnostic);
+  else {
+    await provider.stop(handle, { timeoutMs: 1000 });
+    if (step === "start") vi.spyOn(provider, "start").mockRejectedValueOnce(diagnostic);
+    else vi.spyOn(provider, "inspect").mockResolvedValueOnce({ ...handle, state: "starting" }).mockRejectedValueOnce(diagnostic);
+  }
+  await expect(runOnComputer({ ...call, connection: { ...call.connection, externalId } }, options)).rejects.toThrow(/^OpenWork couldn't reach Build box\. Nothing ran there\.$/);
+  expect(onRun).not.toHaveBeenCalled();
+});
+
+test.each(["error", "timeout", "cancel"])("a %s after dispatch reports an uncertain result and asks to check before retrying", async outcome => {
+  const { provider, options, call, onRun } = fixture();
+  const handle = await provider.create({ idempotencyKey: "interrupted-box", image: null, env: {}, labels: {}, storage: [], exposePorts: [] }, { timeoutMs: 1000 });
+  const externalId = handle.ref.ref.sandboxId;
+  if (!externalId) throw new Error("Missing fake VM id");
+  const controller = new AbortController();
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<ReturnType<typeof onRun>>();
+  if (outcome === "cancel") {
+    const run = provider.blocks?.run;
+    if (!run) throw new Error("Missing fake shell capability");
+    const installed = vi.spyOn(provider.blocks, "run");
+    installed.mockImplementation(async (target, spec) => {
+      const result = await run(target, spec);
+      started.resolve();
+      await release.promise;
+      return result;
+    });
+  } else {
+    onRun.mockImplementation(() => { throw new SandboxError({ providerId: provider.id, code: outcome === "timeout" ? "timeout" : "unknown", message: "private fixture diagnostic" }); });
+  }
+  const result = runOnComputer({ ...call, signal: controller.signal, connection: { ...call.connection, externalId } }, options);
+  try {
+    if (outcome === "cancel") {
+      await started.promise;
+      controller.abort();
+    }
+    const detail = outcome === "cancel" ? "OpenWork stopped waiting for Build box, but the operation may have partly run or already finished." : "OpenWork doesn't know how the operation ended on Build box. It may have finished.";
+    await expect(result).rejects.toThrow(`${detail} Check the file or folder on that computer before running it again.`);
+    expect(onRun).toHaveBeenCalledTimes(1);
+  } finally { release.resolve({ stdout: "", stderr: "", exitCode: 0 }); }
+});
+
 test("reports specific file errors without exposing provider diagnostics", async () => {
-  const { provider, options, call } = fixture();
+  const { provider, options, call, onRun } = fixture();
   const handle = await provider.create({ idempotencyKey: "file-errors", image: null, env: {}, labels: {}, storage: [], exposePorts: [] }, { timeoutMs: 1000 });
   const externalId = handle.ref.ref.sandboxId;
   const files = provider.blocks?.files;
@@ -82,8 +145,10 @@ test("reports specific file errors without exposing provider diagnostics", async
   await expect(runOnComputer({ ...connected, tool: "read", input: { path: "missing.txt" } }, options)).rejects.toThrow("That path does not exist on this computer.");
   await expect(runOnComputer({ ...connected, tool: "read", input: { path: "invalid.txt" } }, options)).rejects.toThrow("not valid UTF-8 text");
   await expect(runOnComputer({ ...connected, tool: "edit", input: { path: "notes.txt", oldString: "absent", newString: "new" } }, options)).rejects.toThrow("oldString was not found");
+  onRun.mockImplementationOnce(() => { throw new SandboxToolError("The computer reported test-fixture-key."); });
+  await expect(runOnComputer(connected, options)).rejects.toThrow(/^The computer reported \[redacted\]\.$/);
   vi.spyOn(files, "stat").mockRejectedValue(new Error("private fixture diagnostic"));
-  await expect(runOnComputer({ ...connected, tool: "read", input: { path: "notes.txt" } }, options)).rejects.toThrow(/^OpenWork couldn't reach Build box or finish that operation there\.$/);
+  await expect(runOnComputer({ ...connected, tool: "read", input: { path: "notes.txt" } }, options)).rejects.toThrow(/^OpenWork doesn't know how the operation ended on Build box\. It may have finished\. Check the file or folder on that computer before running it again\.$/);
 });
 
 test.skipIf(process.platform === "win32")("lists directories and searches ordinary files inside the configured folder", async () => {

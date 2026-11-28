@@ -1,13 +1,27 @@
 import { matchComputers } from "@openwork/computers";
+import { ZodError } from "zod";
 import { COMPUTER_STATE_LABELS, type ListedComputer } from "@openwork/types/den/computers";
 import { routedComputerTool } from "./tool-names.js";
+import type { SandboxToolName } from "../sandbox-tool-host.js";
 import type { ServerConfig } from "../types.js";
-import { computerBindings, type ComputerBinding } from "./bindings.js";
+import { bindingApprovalId, computerBindings, type ComputerBinding } from "./bindings.js";
 import { computersUnavailable, type createComputersDen } from "./den.js";
 import { runOnComputer } from "./executor.js";
 import { computerActionForTool, translateComputerInput } from "./input.js";
+import { computerBindingChanged, computerCannotTakeWork, computerUnreachable } from "./messages.js";
+import { computerPermissionRequests } from "./permissions.js";
 
-export function createComputerService(config: ServerConfig, den: ReturnType<typeof createComputersDen>) {
+function prepare(tool: SandboxToolName, input: unknown, folder: string) {
+  try {
+    const translated = translateComputerInput(tool, input, folder);
+    return { translated, action: computerActionForTool(tool, translated) };
+  } catch (error) {
+    if (error instanceof ZodError) throw new Error("That request can't run on the other computer. Check the command, path, or search pattern. Nothing ran.");
+    throw error;
+  }
+}
+
+export function createComputerService(config: ServerConfig, den: ReturnType<typeof createComputersDen>, run = runOnComputer) {
   const bindings = computerBindings(config);
   const describe = (computer: ListedComputer) => `${computer.label} (${COMPUTER_STATE_LABELS[computer.state]})`;
   const names = (computers: ListedComputer[]) => computers.length ? computers.map(describe).join(", ") : "No other computers are available.";
@@ -32,21 +46,34 @@ export function createComputerService(config: ServerConfig, den: ReturnType<type
       const [computer] = matches;
       if (!computer) return `I couldn't find a computer called ${query}. ${names(computers)}`;
       if (computer.reach.outcome === "refuse") return computer.reach.message;
-      if (computer.kind !== "registered_vm" || computer.provider !== "daytona") return `OpenWork can't reach ${computer.provider} computers yet.`;
+      if (computer.kind !== "registered_vm" || computer.provider !== "daytona") return computerCannotTakeWork(computer.label);
       const folder = computer.reach.scope?.surface === "whole_vm" ? computer.reach.scope.folders[0] : undefined;
       if (!folder) return `I can't use ${computer.label} without its owner's approval to access the entire computer.`;
       await bindings.set(directory, rootId, { id: computer.id, label: computer.label, folder });
       return `This chat now runs on ${describe(computer)}. Work starts in ${folder} there.`;
     },
-    async execute(binding: ComputerBinding, name: string, input: unknown, signal: AbortSignal) {
+    permissions(binding: ComputerBinding, name: string, input: unknown) {
       const tool = routedComputerTool(name);
       if (!tool) throw new Error(`This chat runs on ${binding.label}. That tool only works on this computer.`);
-      const translated = translateComputerInput(tool, input, binding.folder);
-      const authorization = await den.authorize(binding.id, computerActionForTool(tool, translated), signal);
-      const { decision, connection, computer } = authorization;
+      const { translated } = prepare(tool, input, binding.folder);
+      const requests = computerPermissionRequests(tool, translated);
+      return { bindingId: bindingApprovalId(binding), label: binding.label, requests };
+    },
+    async execute(directory: string, rootId: string, bindingId: string, name: string, input: unknown, signal: AbortSignal) {
+      const getApprovedBinding = async () => {
+        const binding = await bindings.get(directory, rootId);
+        if (!binding || bindingApprovalId(binding) !== bindingId) throw new Error(computerBindingChanged);
+        return binding;
+      };
+      const binding = await getApprovedBinding();
+      const tool = routedComputerTool(name);
+      if (!tool) throw new Error(`This chat runs on ${binding.label}. That tool only works on this computer.`);
+      const { translated, action } = prepare(tool, input, binding.folder);
+      const { decision, connection, computer } = await den.authorize(binding.id, action, signal);
       if (decision.outcome === "refuse") throw new Error(decision.message);
-      if (!connection || computer.kind !== "registered_vm" || computer.id !== binding.id) throw new Error(`OpenWork can't reach ${binding.label} from this chat.`);
-      return runOnComputer({ connection, scope: decision.scope, label: computer.label, tool, input, translated, signal });
+      if (!connection || computer.kind !== "registered_vm" || computer.id !== binding.id) throw new Error(computerUnreachable(binding.label));
+      await getApprovedBinding();
+      return run({ connection, scope: decision.scope, label: computer.label, tool, input, translated, signal });
     },
   };
 }

@@ -26,6 +26,8 @@ test("runs_on lists, refuses, asks about ambiguity, binds by name and clears jus
       },
     }, {
       ...computer, id: "legacy", label: "Legacy VM", reach: { ...computer.reach, scope: { surface: "sandbox", folders: ["/workspace"] } },
+    }, {
+      ...computer, id: "desk", label: "Desk computer", kind: "member_machine", provider: "openwork_desktop", state: "online", availability: "online",
     }] });
     const den = {
       async status(): Promise<"enabled"> { return "enabled"; },
@@ -38,10 +40,11 @@ test("runs_on lists, refuses, asks about ambiguity, binds by name and clears jus
     expect(await service.select("/local", "root", "build")).toContain("Ask which one to use");
     expect(await service.select("/local", "root", "Private box")).toBe("Private box doesn't take work from other computers.");
     expect(await service.select("/local", "root", "Legacy VM")).toContain("owner's approval to access the entire computer");
+    expect(await service.select("/local", "root", "Desk computer")).toBe("Desk computer can't take work from other computers yet.");
     expect(await service.binding("/local", "root")).toBeNull();
     expect(await service.select("/local", "root", " build BOX ")).toContain("Build box (Starts when needed)");
     const reopened = createComputerService({ ...config }, den);
-    expect(await reopened.binding("/local", "root")).toEqual({ id: "build", label: "Build box", folder: "/workspace" });
+    expect(await reopened.binding("/local", "root")).toMatchObject({ id: "build", label: "Build box", folder: "/workspace" });
     expect(await reopened.binding("/other", "root")).toBeNull();
     expect(await reopened.binding("/local", "unrelated")).toBeNull();
     await reopened.select("/local", "root", "this computer");
