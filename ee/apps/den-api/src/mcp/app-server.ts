@@ -281,7 +281,7 @@ async function handleMcpAppServerRequestUntimed(input: {
     if (error instanceof McpAppError) return refuse("not_found")
     throw error
   }
-  if (context.req.header(APP_SITE_HEADER) && !definition.site) return refuse("not_found")
+  if (context.req.header(APP_SITE_HEADER) && !definition.site && !organizationFeatures.artifactShareLinks) return refuse("not_found")
   const server = createMcpAppServer({
     definition,
     scopes: principal.scopes,

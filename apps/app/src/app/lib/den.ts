@@ -4202,6 +4202,20 @@ export function createDenClient(options: {
       return parseBuiltMcpAppPublicSharing(payload);
     },
 
+    async getBuiltMcpAppShareLink(orgId: string, appId: string): Promise<{ url: string }> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-apps/${encodeURIComponent(appId)}/share-link`,
+        { method: "GET", token, organizationId: orgId, cache: "no-store" },
+      );
+      if (!isRecord(payload) || typeof payload.url !== "string" || !URL.canParse(payload.url)) {
+        throw new Error("Invalid artifact share link response.");
+      }
+      const { protocol } = new URL(payload.url);
+      if (protocol !== "https:" && protocol !== "http:") throw new Error("Invalid artifact share link response.");
+      return { url: payload.url };
+    },
+
     async setBuiltMcpAppPublicSharing(
       orgId: string,
       appId: string,

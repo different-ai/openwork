@@ -129,6 +129,7 @@ test("the share dialog retains organization sharing and does not carry a public 
   const context = spyOn(appsClient, "useAppsClient").mockImplementation(() => ({
     client, orgId, scope, identityVerified: true, canManage: false, orgName: "Artifacts",
   }));
+  const features = spyOn(client, "getOrgFeatures").mockResolvedValue({});
   const list = spyOn(client, "listMeLibraryItems").mockResolvedValue([]);
   const directory = spyOn(client, "getLibraryOrgDirectory").mockResolvedValue({ members: [], teams: [], currentMemberId: null });
   const grants = spyOn(client, "listManagedPluginAccess").mockResolvedValue(new Map());
@@ -156,6 +157,7 @@ test("the share dialog retains organization sharing and does not carry a public 
     await renderDialog(false);
     queryClient.clear();
     context.mockRestore();
+    features.mockRestore();
     list.mockRestore();
     directory.mockRestore();
     grants.mockRestore();

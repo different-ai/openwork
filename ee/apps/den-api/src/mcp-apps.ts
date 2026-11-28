@@ -719,6 +719,15 @@ export async function loadMcpAppServerDefinition(input: McpAppAccessInput & { ap
   }
 }
 
+export async function mcpAppShareLink(input: McpAppAccessInput & { appId: string }): Promise<{ url: string }> {
+  if (!env.appMcpServersEnabled) return notFound()
+  const { id, organizationId } = await accessibleRevision(input)
+  const url = new URL("/artifact", env.webUrl)
+  url.searchParams.set("id", id)
+  url.searchParams.set("org", organizationId)
+  return { url: url.href }
+}
+
 export async function loadMcpAppResource(input: McpAppAccessInput & { appId: string; revisionId: string }): Promise<McpAppResource> {
   const versionId = revisionId(input.revisionId)
   const { id, pluginId, organizationId, currentRevisionId, content: current } = await accessibleRevision(input)
