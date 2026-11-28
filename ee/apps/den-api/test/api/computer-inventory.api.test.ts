@@ -191,6 +191,7 @@ test("folded desktops count sharing on recent sign-ins and change grants on the 
   assert.equal((await asTomas("DELETE", path)).status, 404)
   assert.equal((await asMaya("DELETE", path)).status, 200)
   assert.ok((await sources())[0]?.revokedAt)
+  assert.ok((await detail(newer.id)).activity.some(({ message }) => message === "Maya Okafor revoked access for Workbot"))
   assert.deepEqual((await row())?.runCode, { value: "no", reason: "not_chosen" })
   assert.equal((await asMaya("POST", `${path}/restore`)).status, 200)
   await newer.share(["/packing", "/notes"])

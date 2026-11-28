@@ -319,13 +319,13 @@ export async function readComputerInventoryDetail(viewer: Viewer, id: DeviceId, 
   const loaded = await loadInventory(viewer, now)
   const group = loaded.groups.find(({ newest }) => newest.id === id)
   if (!group) return null
-  const { newest } = group
+  const { newest, merged } = group
   const callerIsOwner = newest.ownerMemberId === viewer.actor.memberId && newest.owner?.former !== true
   const canReadGrants = callerIsOwner || viewer.kind === "organization"
   const [{ rows: [entry], rules }, events] = await Promise.all([
     deviceRows({ ...loaded, groups: [group] }, viewer, now.getTime(), canReadGrants),
     db.$primary.select().from(RemoteDeviceEventTable)
-      .where(and(eq(RemoteDeviceEventTable.organizationId, viewer.actor.organizationId), eq(RemoteDeviceEventTable.deviceId, id)))
+      .where(and(eq(RemoteDeviceEventTable.organizationId, viewer.actor.organizationId), inArray(RemoteDeviceEventTable.deviceId, [newest.id, ...merged.map(signIn => signIn.id)])))
       .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(20),
   ])
   if (!entry) return null

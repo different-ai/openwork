@@ -208,7 +208,7 @@ export function decide(source: Computer, target: Computer, action: ComputerActio
 export function formatLastSeen(lastSeenAt: string | null, now: number): string {
   if (lastSeenAt === null) return "not seen yet"
   const minutes = Math.floor((now - Date.parse(lastSeenAt)) / 60_000)
-  if (minutes < 1) return "just now"
+  if (minutes < 1) return "less than a minute ago"
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
   const [amount, unit] = days >= 1 ? [days, "day"] : hours >= 1 ? [hours, "hour"] : [minutes, "minute"]

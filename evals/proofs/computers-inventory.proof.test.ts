@@ -135,11 +135,12 @@ test("Maya Okafor and Priya Nair find computers instead of sorting through sign-
     const older = await texts(teamPage, selector("computer-inventory-older"));
     const tomas = (await texts(teamPage, selector(row(devices.tomasMac.id).testId))).join(" ");
     const status = (await texts(teamPage, `${selector(row(devices.tomasMac.id).testId)} [data-status="online"]`)).join(" ");
+    const code = (await texts(teamPage, `${selector(row(devices.tomasMac.id).testId)} [data-run-code="no"] > span:last-child > span`)).join(" ");
     const offline = (await texts(teamPage, `${selector(row(devices.tomasLinux.id).testId)} [data-status="offline"]`)).join(" ");
     const headers = await texts(teamPage, '[data-testid="computer-inventory"] [role="columnheader"]');
     await priya.screenshot();
-    witness("The Mac with missing permissions is still online, and the Linux PC shows its last contact", `${list.length} desktop rows by default; ${tabs.join(" / ")}; ${status} with permission note: ${tomas.includes(permissionsNote)}; Linux PC: ${offline}; ${older.join(" ")}`,
-      list.length === 5 && containing(list, names.mayaMac) === 1 && status === "Online" && tomas.includes(permissionsNote)
+    witness("The Mac with missing permissions is still online, and the Linux PC shows its last contact", `${list.length} desktop rows by default; ${tabs.join(" / ")}; ${status} with permission note: ${tomas.includes(permissionsNote)}; Run code here: ${code}; Linux PC: ${offline}; ${older.join(" ")}`,
+      list.length === 5 && containing(list, names.mayaMac) === 1 && status === "Online" && code === "No" && tomas.includes(permissionsNote)
       && /Offline.*Last seen 3 days ago/.test(offline) && tabs.join(" / ") === "Desktops 7 / Cloud 5 / Needs attention 1 / Former members 2"
       && ["Computer", "Owner", "Status", "Run code here", "Send it tasks", "Read its sessions"].every((label) => headers.includes(label))
       && older.some((text) => text.includes("2 not heard")) && rules.length === 1 && rules.some((text) => text.includes("Change rules")) && list.every((text) => !vagueStatus.test(text)));
@@ -271,7 +272,7 @@ test("Maya Okafor and Priya Nair find computers instead of sorting through sign-
     const { status, result } = await world.authorizeBuildBox();
     await tomas.click({ testId: "computers-refresh" });
     await tomas.click({ role: "button", label: "Activity" });
-    const activity = { text: /OpenWork app was allowed to run a command in \/workspace for Tomás Rivera/ };
+    const activity = { text: /OpenWork app was allowed to run a command in \/workspace on Build box for Tomás Rivera/ };
     await tomas.see(activity, wait);
     const entries = await texts(tomasPage, `${buildDetail} ul[aria-label="Recent activity"] > li > p`);
     const commands = entries.filter((item) => item.includes("was allowed to run a command in /workspace"));

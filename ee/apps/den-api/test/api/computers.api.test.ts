@@ -278,7 +278,7 @@ test("An unclaimed command past its deadline says nothing ran, disappears from t
     .where(eq(ComputerCommandTable.id, normalizeDenTypeId("computerCommand", id)))
   const expired = await shell(adaRun, { id, waitMs: 0 })
   assert.equal(expired.isError, true, expired.raw)
-  assert.deepEqual(expired.structured, { state: "failed", id, error: { code: "not_picked_up", message: "Ada's MacBook didn't respond. It may be asleep; it was last seen just now. Nothing ran." } })
+  assert.deepEqual(expired.structured, { state: "failed", id, error: { code: "not_picked_up", message: "Ada's MacBook didn't respond. It may be asleep; it was last seen less than a minute ago. Nothing ran." } })
   const after = await desktop.call("GET", listPath)
   assert.equal(after.status, 200, summary(after))
   assert.equal(computerCommandListResponseSchema.parse(after.body).items.some((item) => item.id === id), false)

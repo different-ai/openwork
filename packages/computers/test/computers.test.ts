@@ -322,8 +322,8 @@ test("last-seen, offline and not-picked-up wording distinguishes known and unkno
   const lastSeenAt = "2026-11-26T18:00:00Z"
   const seen = Date.parse(lastSeenAt)
   assert.equal(formatLastSeen(null, seen), "not seen yet")
-  assert.equal(formatLastSeen(lastSeenAt, seen - 30_000), "just now")
-  assert.equal(formatLastSeen(lastSeenAt, seen + 59_000), "just now")
+  assert.equal(formatLastSeen(lastSeenAt, seen - 30_000), "less than a minute ago")
+  assert.equal(formatLastSeen(lastSeenAt, seen + 59_000), "less than a minute ago")
   assert.equal(formatLastSeen(lastSeenAt, seen + 60_000), "1 minute ago")
   assert.equal(formatLastSeen(lastSeenAt, seen + 5 * 60_000), "5 minutes ago")
   assert.equal(formatLastSeen(lastSeenAt, seen + 60 * 60_000), "1 hour ago")
