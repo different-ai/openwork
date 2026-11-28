@@ -33,3 +33,11 @@ export function libraryCatalogLink() {
 export function libraryWorkflowLink(configObjectId: string) {
   return new URL(`/dashboard/library/workflows/${encodeURIComponent(configObjectId)}`, env.betterAuthUrl).toString()
 }
+
+export function automationsLink() {
+  return new URL("/dashboard/automations", env.betterAuthUrl).toString()
+}
+
+export function yourConnectionsLink() {
+  return new URL("/dashboard/your-connections", env.betterAuthUrl).toString()
+}

@@ -38,6 +38,7 @@ import { listHeadlessModels, slackRunnerAvailable } from "./headless.js"
 import { organizationDefaultModel } from "../workbot/model.js"
 import { publicRequestUrl } from "../request-url.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
+import { answerSlackChoice, slackInteractionSchema } from "./choice.js"
 import {
   BOT_SCOPES,
   REQUIRED_BOT_SCOPES,
@@ -489,7 +490,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         description:
           action === "commands"
             ? "Verify the signed Slack slash command and return an ephemeral link for the member to connect their own account in OpenWork."
-            : "Verify the signed Slack interaction and record supported feedback only for the member who owns the referenced assistant event.",
+            : "Verify the signed Slack interaction and acknowledge it, including link buttons. Feedback is recorded only for the member who owns the referenced assistant event. A choice button starts the next request in that thread only for the member it was addressed to, then replaces the buttons with what they chose.",
         security: [],
         responses: {
           ...webhookResponses,
@@ -531,14 +532,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           } catch {
             return c.json({ ok: false }, 400)
           }
-          const parsed = z
-            .object({
-              team: z.object({ id: z.string() }),
-              user: z.object({ id: z.string() }),
-              api_app_id: z.string(),
-              actions: z.array(z.object({ action_id: z.string(), value: z.string().optional() })).optional(),
-            })
-            .safeParse(payload)
+          const parsed = slackInteractionSchema.safeParse(payload)
           if (
             !parsed.success ||
             parsed.data.team.id !== installation.teamId ||
@@ -557,6 +551,8 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
                 item.value,
               )
             }
+          const choice = await answerSlackChoice(installation, parsed.data)
+          void choice.settled
           return c.json({ ok: true })
         }
         return c.json({

@@ -16,7 +16,9 @@ import {
   type RemoteSessionCommand,
   type RemoteSessionCommandStore,
 } from "../remote-sessions/commands.js"
-import { desktopHandoffMessage, type DesktopHandoffNotice } from "./desktop-handoff-messages.js"
+import { DESKTOP_HANDOFF_REST_LINE, desktopHandoffMessage, desktopHandoffRichMessages, type DesktopHandoffNotice } from "./desktop-handoff-messages.js"
+import { logSlackBlocksRejected, slackComposeDefaults, slackRichEnabled } from "./rich-delivery.js"
+import { postSlackFollowUps, postSlackMessage, type SlackComposeOptions } from "./rich-message.js"
 import { SlackApiError, slackClient, type SlackCall } from "./protocol.js"
 import { getInstallation, resolveSlackActor } from "./repository.js"
 import { checkpointSchema } from "./run.js"
@@ -204,12 +206,29 @@ export type HandoffSweepDeps = {
   slack: (token: string) => SlackCall
   commandStore: RemoteSessionCommandStore
   now: () => number
+  rich?: (handoff: Pick<HandoffRow, "organizationId" | "userId">) => Promise<Pick<SlackComposeOptions, "places" | "imageUrl"> | null>
 }
 
 const defaultSweepDeps: HandoffSweepDeps = {
   slack: slackClient,
   commandStore: databaseRemoteSessionCommandStore,
   now: Date.now,
+  rich: async (handoff) => ((await slackRichEnabled(handoff.organizationId, handoff.userId)) ? slackComposeDefaults() : null),
+}
+
+async function postHandoffNotice(slack: SlackCall, handoff: HandoffRow, notice: DesktopHandoffNotice, deps: HandoffSweepDeps) {
+  const place = { channel: handoff.channelId, thread_ts: handoff.threadTs }
+  const options = notice.kind === "finished" ? await deps.rich?.(handoff) : null
+  const rich = options ? desktopHandoffRichMessages(handoff.recipientUserId, notice, options) : null
+  const [lead, ...rest] = rich?.messages ?? []
+  if (!rich || !lead) {
+    await slack("chat.postMessage", { ...place, ...desktopHandoffMessage(handoff.recipientUserId, notice), unfurl_links: false, unfurl_media: false })
+    return
+  }
+  const onRejected = (code: string) => logSlackBlocksRejected("desktop_handoff", code)
+  await postSlackMessage(slack, place, lead, { onRejected })
+  const complete = await postSlackFollowUps(slack, place, rest, onRejected)
+  if (rich.cut || !complete) await slack("chat.postMessage", { ...place, text: DESKTOP_HANDOFF_REST_LINE }).catch(() => undefined)
 }
 
 async function processHandoff(handoff: HandoffRow, deps: HandoffSweepDeps) {
@@ -230,13 +249,7 @@ async function processHandoff(handoff: HandoffRow, deps: HandoffSweepDeps) {
 
   if (!(await holdLease(handoff, deps.now()))) return false
   try {
-    await deps.slack(installation.botToken)("chat.postMessage", {
-      channel: handoff.channelId,
-      thread_ts: handoff.threadTs,
-      ...desktopHandoffMessage(handoff.recipientUserId, step.notice),
-      unfurl_links: false,
-      unfurl_media: false,
-    })
+    await postHandoffNotice(deps.slack(installation.botToken), handoff, step.notice, deps)
   } catch (error) {
     const code = error instanceof SlackApiError ? error.code : "post_failed"
     appLogger.warn("slack_desktop_handoff_post_failed", { command_id: handoff.commandId, code, attempt: handoff.attempts + 1 })

@@ -45,6 +45,7 @@ export { default as remoteTasksOptIn } from "@openwork/features/flags/remote-tas
 export { default as sessionTree } from "@openwork/features/flags/session-tree"
 export { default as sideChatFromSelection } from "@openwork/features/flags/side-chat-from-selection"
 export { default as sideQuestions } from "@openwork/features/flags/side-questions"
+export { default as slackRichMessages } from "@openwork/features/flags/slack-rich-messages"
 export { default as teamsMeetingTranscripts } from "@openwork/features/flags/teams-meeting-transcripts"
 export { default as toolPermissions } from "@openwork/features/flags/tool-permissions"
 export { default as workbotAgentCheckGate } from "@openwork/features/flags/workbot-agent-check-gate"

@@ -4,6 +4,7 @@ import { RateLimitTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { db } from "../db.js"
+import { markFeaturesUsed } from "../feature-usage.js"
 import {
   defaultWorkbotChannelPostDeps,
   postWorkbotChannelMessage,
@@ -17,6 +18,9 @@ import {
   type WorkbotDirectMessageTarget,
   type WorkbotSlackMember,
 } from "../slack-assistant/direct-message.js"
+import { WORKBOT_ATTRIBUTION_BLOCKS } from "../slack-assistant/bot-post.js"
+import { slackComposeDefaults } from "../slack-assistant/rich-delivery.js"
+import { composeSlackMessages, slackComponentsSchema, type SlackComposeOptions, type SlackOutgoingMessage } from "../slack-assistant/rich-message.js"
 import { checkFixedWindowRateLimit } from "../utils/rate-limit.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
 
@@ -27,17 +31,34 @@ export const SLACK_SEND_AS_BOT_SUMMARY =
 
 const TEXT_MAX = 4_000
 
+const BASE_PROPERTIES = {
+  target: {
+    type: "string",
+    enum: ["me", "channel"],
+    description: "me: a DM to you from the OpenWork app, which notifies you. channel: a post in channelId that starts with a line naming your agent.",
+  },
+  channelId: { type: "string", description: "For target channel: the Slack channel ID, such as C0123ABCD (not its #name). The OpenWork app must be in that channel." },
+  threadTs: { type: "string", description: "Optional: reply in this thread (the parent message's ts)." },
+}
+
 export const SLACK_SEND_AS_BOT_ARGUMENTS_SCHEMA = {
   type: "object",
+  properties: { ...BASE_PROPERTIES, text: { type: "string", maxLength: TEXT_MAX, description: "The message, in Slack mrkdwn." } },
+  required: ["target", "text"],
+  additionalProperties: false,
+}
+
+const { $schema: _draft, ...COMPONENTS_JSON_SCHEMA } = z.toJSONSchema(slackComponentsSchema, { io: "input" })
+
+export const SLACK_SEND_AS_BOT_COMPONENTS_DESCRIPTION =
+  "Optional parts shown under the text, in order. Add them only when they make the message faster to read: a table for three or more items with the same facts, fields for a few facts about one thing, a context line for the source and time, a link button for the one place to go next, choices when their answer should start work in Slack. A short note, one fact or a reminder needs only text. Never put raw Block Kit here."
+
+export const SLACK_SEND_AS_BOT_RICH_ARGUMENTS_SCHEMA = {
+  type: "object",
   properties: {
-    target: {
-      type: "string",
-      enum: ["me", "channel"],
-      description: "me: a DM to you from the OpenWork app, which notifies you. channel: a post in channelId that starts with a line naming your agent.",
-    },
-    channelId: { type: "string", description: "For target channel: the Slack channel ID, such as C0123ABCD (not its #name). The OpenWork app must be in that channel." },
-    text: { type: "string", maxLength: TEXT_MAX, description: "The message, in Slack mrkdwn." },
-    threadTs: { type: "string", description: "Optional: reply in this thread (the parent message's ts)." },
+    ...BASE_PROPERTIES,
+    text: { type: "string", maxLength: TEXT_MAX, description: "The message, in Slack mrkdwn. Notifications and screen readers get this first, so it must make sense without the components." },
+    components: { ...COMPONENTS_JSON_SCHEMA, description: SLACK_SEND_AS_BOT_COMPONENTS_DESCRIPTION },
   },
   required: ["target", "text"],
   additionalProperties: false,
@@ -68,7 +89,7 @@ export function isSlackSendAsBotCapabilityName(name: string): boolean {
   return name === SLACK_SEND_AS_BOT_CAPABILITY
 }
 
-export function searchSlackSendAsBotCapability(query: string): CapabilityMatch[] {
+export function searchSlackSendAsBotCapability(query: string, options: { rich?: boolean } = {}): CapabilityMatch[] {
   const queryTokens = tokenize(query)
   if (queryTokens.length === 0 || asTheUser(queryTokens)) return []
   const exact = query.trim().toLowerCase() === SLACK_SEND_AS_BOT_CAPABILITY
@@ -87,7 +108,7 @@ export function searchSlackSendAsBotCapability(query: string): CapabilityMatch[]
     pathParams: [],
     queryParams: [],
     hasBody: true,
-    argumentsSchema: SLACK_SEND_AS_BOT_ARGUMENTS_SCHEMA,
+    argumentsSchema: options.rich ? SLACK_SEND_AS_BOT_RICH_ARGUMENTS_SCHEMA : SLACK_SEND_AS_BOT_ARGUMENTS_SCHEMA,
     invocation: { argumentsField: "body" },
     readOnly: false,
     kind: "slack_send_as_bot",
@@ -101,6 +122,8 @@ const bodySchema = z.object({
   threadTs: z.string().trim().regex(/^\d{1,12}\.\d{1,8}$/, "threadTs is a Slack message ts, such as 1700000000.000100.").optional(),
 }).strict()
 
+const richBodySchema = bodySchema.extend({ components: slackComponentsSchema.optional() }).strict()
+
 const CHANNEL_ID = /^[CG][A-Z0-9]{8,}$/
 
 export type SlackSendAsBotLimitStore = {
@@ -111,8 +134,11 @@ export type SlackSendAsBotLimitStore = {
 
 export type SlackSendAsBotDeps = {
   resolveMember: (input: { organizationId: string; userId: string }) => Promise<WorkbotDirectMessageTarget>
-  sendDirect: (member: WorkbotSlackMember, message: { text: string; threadTs?: string }) => Promise<WorkbotDirectMessageResult>
-  postChannel: (member: WorkbotSlackMember, message: { channelId: string; text: string; threadTs?: string }) => Promise<WorkbotChannelPostResult>
+  sendDirect: (member: WorkbotSlackMember, message: { text: string; threadTs?: string; rich?: readonly SlackOutgoingMessage[] }) => Promise<WorkbotDirectMessageResult>
+  postChannel: (member: WorkbotSlackMember, message: { channelId: string; text: string; threadTs?: string; rich?: readonly SlackOutgoingMessage[] }) => Promise<WorkbotChannelPostResult>
+  choicesAnswered: (member: WorkbotSlackMember) => Promise<boolean>
+  composeOptions: () => Pick<SlackComposeOptions, "places" | "imageUrl">
+  markRichUsed: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }) => void
   limits: SlackSendAsBotLimitStore
   now: () => number
 }
@@ -133,6 +159,12 @@ export const DEFAULT_SLACK_SEND_AS_BOT_DEPS: SlackSendAsBotDeps = {
   resolveMember: (input) => resolveWorkbotDirectMessageTarget(input),
   sendDirect: (member, message) => sendWorkbotDirectMessageTo(member, message),
   postChannel: (member, message) => postWorkbotChannelMessage(member, message, defaultWorkbotChannelPostDeps),
+  choicesAnswered: async (member) => {
+    const [{ getInstallation }, { slackRunnerAvailable }] = await Promise.all([import("../slack-assistant/repository.js"), import("../slack-assistant/headless.js")])
+    return slackRunnerAvailable() && (await getInstallation(member.connectionId))?.enabled === true
+  },
+  composeOptions: slackComposeDefaults,
+  markRichUsed: (input) => markFeaturesUsed({ ...input, keys: ["slackRichMessages"] }),
   limits: rateLimitStore,
   now: Date.now,
 }
@@ -193,7 +225,7 @@ function destinationFor(body: z.infer<typeof bodySchema>): Destination | string 
 
 const LIMIT_KEYS = { day: "slack-send-as-bot:day:", minute: "slack-send-as-bot:minute:", same: "slack-send-as-bot:same:" } as const
 
-function limitKeys(input: { organizationId: string; userId: string; destination: Destination; text: string }) {
+function limitKeys(input: { organizationId: string; userId: string; destination: Destination; text: string; components?: unknown }) {
   const member = `${input.organizationId}:${input.userId}`
   const place = input.destination.target === "me" ? "me" : `channel:${input.destination.channelId}`
   const sameMessagePrefix = `${LIMIT_KEYS.same}${member}:`
@@ -201,7 +233,7 @@ function limitKeys(input: { organizationId: string; userId: string; destination:
     day: `${LIMIT_KEYS.day}${member}`,
     minute: `${LIMIT_KEYS.minute}${member}`,
     sameMessagePrefix,
-    sameMessage: `${sameMessagePrefix}${createHash("sha256").update(JSON.stringify([place, input.destination.threadTs ?? "", input.text])).digest("hex")}`,
+    sameMessage: `${sameMessagePrefix}${createHash("sha256").update(JSON.stringify([place, input.destination.threadTs ?? "", input.text, ...(input.components === undefined ? [] : [input.components])])).digest("hex")}`,
   }
 }
 
@@ -252,6 +284,7 @@ export type SlackSendAsBotInput = {
   userId: string
   memberId: DenTypeId<"member"> | null
   hasWriteScope: boolean
+  richEnabled?: boolean
   body: unknown
 }
 
@@ -272,7 +305,9 @@ export async function executeSlackSendAsBot(
   if (!input.hasWriteScope) {
     return refusal("insufficient_mcp_scope", `Not sent: this run can only read, and ${SLACK_SEND_AS_BOT_CAPABILITY} requires the mcp:write scope.`, { requiredScope: "mcp:write" })
   }
-  const parsed = bodySchema.safeParse(normalizeToolBody(input.body) ?? {})
+  const body = normalizeToolBody(input.body) ?? {}
+  const checked = input.richEnabled ? null : bodySchema.safeParse(body)
+  const parsed = checked && !checked.success ? checked : richBodySchema.safeParse(body)
   if (!parsed.success) {
     return refusal("invalid_capability_arguments", `Not sent: invalid arguments for ${SLACK_SEND_AS_BOT_CAPABILITY}.`, {
       issues: parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })),
@@ -284,8 +319,24 @@ export async function executeSlackSendAsBot(
   const member = await deps.resolveMember({ organizationId: input.organizationId, userId: input.userId })
   if (!member.ok) return sendFailure(member)
 
+  const components = parsed.data.components
+  let rich: SlackOutgoingMessage[] | undefined
+  if (components) {
+    if (components.some((component) => component.type === "choices") && !(await deps.choicesAnswered(member))) {
+      return refusal("choices_unavailable", "Not sent: buttons the person presses need OpenWork in Slack to be on for this organization, and it isn't. Send it without choices and ask them to reply instead.")
+    }
+    rich = composeSlackMessages([{ type: "mrkdwn", text: parsed.data.text }, ...components], {
+      ...deps.composeOptions(),
+      choiceFor: member.slackUserId,
+      reservedBlocks: destination.target === "channel" ? WORKBOT_ATTRIBUTION_BLOCKS : 0,
+    })
+    if (rich.filter((message) => !message.choice).length !== 1) {
+      return refusal("message_too_large", "Not sent: that is more than one Slack message can hold. Send fewer components or a shorter table.")
+    }
+  }
+
   const { perDay, perMinute } = SLACK_SEND_AS_BOT_LIMITS
-  const keys = limitKeys({ organizationId: input.organizationId, userId: input.userId, destination, text: parsed.data.text })
+  const keys = limitKeys({ organizationId: input.organizationId, userId: input.userId, destination, text: parsed.data.text, components })
   const now = deps.now()
   if (await deps.limits.peek(keys.sameMessage, 1, DAY_MS, now) !== null) {
     return refusal("duplicate_message", "Not sent: the same message already went there in the last 24 hours.")
@@ -297,10 +348,12 @@ export async function executeSlackSendAsBot(
   const minuteWait = await deps.limits.take(keys.minute, perMinute, MINUTE_MS, now)
   if (minuteWait !== null) return burstRefusal(perMinute, minuteWait)
 
+  const message = { text: parsed.data.text, ...(destination.threadTs ? { threadTs: destination.threadTs } : {}), ...(rich ? { rich } : {}) }
   const sent = destination.target === "me"
-    ? await deps.sendDirect(member, { text: parsed.data.text, ...(destination.threadTs ? { threadTs: destination.threadTs } : {}) })
-    : await deps.postChannel(member, { channelId: destination.channelId, text: parsed.data.text, ...(destination.threadTs ? { threadTs: destination.threadTs } : {}) })
+    ? await deps.sendDirect(member, message)
+    : await deps.postChannel(member, { channelId: destination.channelId, ...message })
   if (!sent.ok) return sendFailure(sent)
+  if (rich) deps.markRichUsed({ organizationId: input.organizationId, memberId: input.memberId })
 
   await deps.limits.take(keys.sameMessage, 1, DAY_MS, now)
   await deps.limits.prune(keys.sameMessagePrefix, DAY_MS, now).catch(() => undefined)
@@ -310,9 +363,10 @@ export async function executeSlackSendAsBot(
     channelId: sent.channelId,
     messageTs: sent.messageTs,
     ...("permalink" in sent && sent.permalink ? { permalink: sent.permalink } : {}),
-    message: destination.target === "me"
+    ...(sent.partial ? { partial: true } : {}),
+    message: `${destination.target === "me"
       ? "Sent to you as a DM from the OpenWork app."
-      : "Posted in the channel from the OpenWork app, credited to your agent.",
+      : "Posted in the channel from the OpenWork app, credited to your agent."}${sent.partial ? " The buttons could not be added, so ask them to reply instead. Don't send it again." : ""}`,
   }, false)
 }
 

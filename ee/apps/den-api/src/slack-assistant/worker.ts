@@ -8,6 +8,7 @@ import {
   type Checkpoint,
 } from "./run.js"
 import { z } from "zod"
+import { markFeaturesUsed } from "../feature-usage.js"
 import { appLogger } from "../observability/logger.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
@@ -29,6 +30,7 @@ import {
   type SlackSessionSettings,
 } from "./headless.js"
 import { createLiveFeeds, type LiveFeedSource } from "./live.js"
+import { slackComposeDefaults, slackRichEnabled } from "./rich-delivery.js"
 import { createSlackEventLoop } from "./queue.js"
 import {
   admitSlackRun,
@@ -54,6 +56,7 @@ import { pruneSlackEvents, renewSlackLease, SlackLeaseLostError } from "./reposi
 
 type WorkerDeps = {
   model?: typeof slackTurnModel
+  rich?: (actor: SlackActor) => Promise<boolean>
   slack: typeof slackClient
   runner: (actor: SlackActor) => SlackRunner
   live: LiveFeedSource
@@ -65,9 +68,9 @@ const defaultWorkerDeps: WorkerDeps = {
   live: createLiveFeeds({ open: (sessionId, signal) => openSlackRunnerEvents(sessionId, signal) }),
 }
 
-function slackSessionSettings(workbot: boolean, driveFiles: boolean, answerReply: boolean): SlackSessionSettings {
+function slackSessionSettings(workbot: boolean, driveFiles: boolean, answerReply: boolean, rich: boolean): SlackSessionSettings {
   return workbot
-    ? { instructions: slackWorkbotInstructions({ driveFiles, answerReply }), reactions: true, tasks: true }
+    ? { instructions: slackWorkbotInstructions({ driveFiles, answerReply, rich }), reactions: true, tasks: true }
     : { instructions: "", reactions: false, tasks: false }
 }
 
@@ -142,7 +145,9 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
       }, event)
     },
     live: suppliedDeps.live,
+    rich: suppliedDeps.rich ?? ((actor) => slackRichEnabled(actor.organizationId, actor.userId)),
   }
+  const richNow = async (actor: SlackActor) => (await deps.rich?.(actor)) === true
   const installation = await getInstallation(event.connectionId)
   const payload = slackEventSchema.parse(JSON.parse(event.payload))
   if (!installation?.botToken) {
@@ -206,7 +211,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
   if (payload.type === "app_context_changed") return checkpointEvent(event, { status: "context" })
   if (payload.type === "agent_session_title_changed") return checkpointEvent(event, { status: "done" })
   const cp = checkpointSchema.parse(event.checkpoint ? JSON.parse(event.checkpoint) : {})
-  if (event.status === "watching") return watchSlackEvent(event, installation, slack, deps, cp)
+  if (event.status === "watching") return watchSlackEvent(event, installation, slack, deps, cp, richNow)
   if (!slackRunnerAvailable()) return answerWithoutRunner(event, slack, isInvocation(payload), cp)
   let actor = await resolveSlackActor(installation, event.slackUserId)
   if (!actor && event.status !== "running" && installation.enabled && (await linkConnectedSlackMembers(installation, deps.slack)) > 0)
@@ -288,6 +293,8 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     cp.workbot = true
     cp.driveFiles = true
     cp.answerReply = true
+    cp.rich = await richNow(actor)
+    if (cp.rich) markFeaturesUsed({ organizationId: actor.organizationId, memberId: actor.memberId, keys: ["slackRichMessages"] })
     cp.recipientUserId = event.slackUserId
     cp.recipientTeamId = event.teamId
     cp.privateReply =
@@ -355,8 +362,9 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     },
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
-    settings: slackSessionSettings(cp.workbot, cp.driveFiles, cp.answerReply),
+    settings: slackSessionSettings(cp.workbot, cp.driveFiles, cp.answerReply, cp.rich),
     ...(cp.workbot ? { live: deps.live } : {}),
+    ...(cp.rich && cp.phase === "finish" && (await richNow(actor)) ? { richOptions: slackComposeDefaults() } : {}),
     renew: () => renewSlackLease(event),
     log: (message, fields) => appLogger.warn(message, { event_id: event.id, ...fields }),
   })
@@ -376,7 +384,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     })
 }
 
-async function watchSlackEvent(event: EventRow, installation: InstallationRow, slack: SlackCall, deps: WorkerDeps, cp: Checkpoint) {
+async function watchSlackEvent(event: EventRow, installation: InstallationRow, slack: SlackCall, deps: WorkerDeps, cp: Checkpoint, richNow: (actor: SlackActor) => Promise<boolean>) {
   const stop = () => checkpointEvent(event, { status: "done" })
   if (event.cancelled || !installation.enabled || !slackRunnerAvailable()) return stop()
   const actor = await resolveSlackActor(installation, event.slackUserId)
@@ -387,6 +395,8 @@ async function watchSlackEvent(event: EventRow, installation: InstallationRow, s
     slack,
     messageId: `msg_${event.id}`,
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
+    ...(cp.rich && (await richNow(actor)) ? { richOptions: slackComposeDefaults() } : {}),
+    log: (message, fields) => appLogger.warn(message, { event_id: event.id, ...fields }),
   })
   await checkpointEvent(
     event,

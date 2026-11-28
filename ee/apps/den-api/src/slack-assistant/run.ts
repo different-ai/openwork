@@ -1,5 +1,6 @@
 import { z } from "zod"
-import { excerpt, markdownToPlainText, slackSafeText, splitSlackText } from "./slack-text.js"
+import { composeSlackMessages, markdownToSlackParts, postSlackMessage, type SlackComposeOptions, type SlackOutgoingMessage } from "./rich-message.js"
+import { excerpt, markdownToPlainText, slackSafeText, splitSlackText, withoutSlackBroadcasts } from "./slack-text.js"
 import type { RunnerFailure, SlackRunner, SlackRunSnapshot, SlackRunStep, SlackSessionSettings } from "./headless.js"
 import type { LiveFeed, LiveFeedSource } from "./live.js"
 import { scopeKey, slackReactionName, SlackApiError, type SlackCall } from "./protocol.js"
@@ -32,6 +33,7 @@ export const checkpointSchema = z.object({
   answerReply: z.boolean().default(false),
   answerText: z.string().optional(),
   answerPartsPosted: z.number().default(0),
+  rich: z.boolean().default(false),
   reactTo: z.object({ channel: z.string(), ts: z.string() }).optional(),
   reacted: z.boolean().default(false),
   liveWindow: z.number().default(0),
@@ -88,7 +90,8 @@ export function currentReplyDelta(previous: string, current: string) {
   return current.startsWith(previous) ? current.slice(previous.length) : ""
 }
 export const STREAM_ROTATE_AFTER_MS = 4 * 60_000
-export const STREAM_CHARACTER_LIMIT = 30_000
+export const STREAM_CHARACTER_LIMIT = 11_000
+const STREAM_PART_CHARACTERS = 8_000
 export const STREAM_CONTINUED_LINE = "OpenWork task · continued\n\n"
 
 type Chunk = Record<string, unknown>
@@ -105,6 +108,10 @@ function chunkText(chunks: unknown) {
 
 function streamClosedBySlack(error: unknown) {
   return error instanceof SlackApiError && error.code === "message_not_in_streaming_state"
+}
+
+function streamFullOrClosed(error: unknown) {
+  return streamClosedBySlack(error) || (error instanceof SlackApiError && error.code === "msg_too_long")
 }
 
 async function startStream(slack: SlackCall, checkpoint: Checkpoint, chunks: Chunk[], now: () => number) {
@@ -139,7 +146,8 @@ async function sendChunks(slack: SlackCall, checkpoint: Checkpoint, chunks: Chun
     await slack("chat.appendStream", { channel: checkpoint.channel, ts: checkpoint.streamTs, chunks })
     checkpoint.streamCharacters += size
   } catch (error) {
-    if (!streamClosedBySlack(error)) throw error
+    if (!streamFullOrClosed(error)) throw error
+    if (!streamClosedBySlack(error)) await slack("chat.stopStream", { channel: checkpoint.channel, ts: checkpoint.streamTs, session_status: "processing" }).catch(() => undefined)
     await startStream(slack, checkpoint, [continued(), ...chunks], now)
   }
 }
@@ -193,8 +201,8 @@ async function appendText(
   now: () => number,
   onPart?: (part: string) => Promise<void>,
 ) {
-  for (let offset = 0; offset < text.length; offset += 10_000) {
-    const part = text.slice(offset, offset + 10_000)
+  for (let offset = 0; offset < text.length; offset += STREAM_PART_CHARACTERS) {
+    const part = text.slice(offset, offset + STREAM_PART_CHARACTERS)
     await sendChunks(slack, checkpoint, [{ type: "markdown_text", text: part }], now)
     await onPart?.(part)
   }
@@ -219,11 +227,14 @@ type RunInput = {
   settings?: SlackSessionSettings
   live?: LiveFeedSource
   renew?: () => Promise<void>
+  richOptions?: SlackRichOptions
   log?: (message: string, fields: Record<string, string>) => void
   liveWindowMs?: number
   sleep?: (ms: number) => Promise<void>
   now?: () => number
 }
+
+export type SlackRichOptions = Pick<SlackComposeOptions, "places" | "imageUrl">
 
 type Step = { checkpoint: Checkpoint; delayMs: number; done?: boolean; watch?: boolean }
 
@@ -389,8 +400,29 @@ function feedbackBlock(messageId: string) {
 
 const ANSWER_LIMIT = 11_000
 
+function richMessages(markdown: string, cp: Checkpoint, options: SlackRichOptions, log?: RunInput["log"]): SlackOutgoingMessage[] {
+  const { parts, invalidDirectives } = markdownToSlackParts(markdown, { directives: true })
+  if (invalidDirectives) log?.("slack_rich_component_invalid", { count: String(invalidDirectives) })
+  return composeSlackMessages(parts, { ...options, choiceFor: cp.recipientUserId, reservedBlocks: 1 })
+}
+
+async function postRichAnswer(input: RunInput, cp: Checkpoint, options: SlackRichOptions, feedback: Record<string, unknown>) {
+  const messages = richMessages(cp.answerText ?? "", cp, options, input.log)
+  const last = messages.reduce((found, message, index) => (message.choice ? found : index), -1)
+  for (const [index, message] of messages.entries()) {
+    if (index < cp.answerPartsPosted) continue
+    await postSlackMessage(input.slack, { channel: cp.channel, thread_ts: cp.threadTs }, message, {
+      after: index === last ? [feedback] : [],
+      onRejected: (code) => input.log?.("slack_rich_message_rejected", { surface: "answer", code }),
+    })
+    cp.answerPartsPosted = index + 1
+    await input.persist?.(cp)
+  }
+}
+
 async function postAnswer(input: RunInput, cp: Checkpoint, feedback: Record<string, unknown>) {
-  const parts = splitSlackText(withoutBroadcasts(cp.answerText ?? ""), ANSWER_LIMIT)
+  if (cp.rich && input.richOptions) return postRichAnswer(input, cp, input.richOptions, feedback)
+  const parts = splitSlackText(withoutSlackBroadcasts(cp.answerText ?? ""), ANSWER_LIMIT)
   for (const [index, part] of parts.entries()) {
     if (index < cp.answerPartsPosted) continue
     await input.slack("chat.postMessage", {
@@ -573,13 +605,6 @@ async function sendStepUpdates(
   }
 }
 
-function withoutBroadcasts(text: string) {
-  return text
-    .replace(/<!(here|channel|everyone)(\|[^>]*)?>/gi, "@\u200b$1")
-    .replace(/<!subteam\^[^>]*>/gi, "@\u200bgroup")
-    .replace(/@(here|channel|everyone)\b/gi, "@\u200b$1")
-}
-
 const REPORT_LIMIT = 11_000
 
 export async function advanceSlackWatch(input: {
@@ -588,6 +613,8 @@ export async function advanceSlackWatch(input: {
   slack: SlackCall
   messageId: string
   persist?: (checkpoint: Checkpoint) => Promise<void>
+  richOptions?: SlackRichOptions
+  log?: (message: string, fields: Record<string, string>) => void
   now?: () => number
 }): Promise<Step> {
   const cp = input.checkpoint
@@ -604,8 +631,24 @@ export async function advanceSlackWatch(input: {
       const written = await input.runner.turnText({ sessionId: cp.sessionId, messageId: report.id })
       if (!written.ok) {
         if (written.retryable) continue
+      } else if (written.text.trim() && cp.rich && input.richOptions) {
+        const messages = richMessages(written.text.trim(), cp, input.richOptions, input.log)
+        for (const [index, message] of messages.entries()) {
+          const partId = `${report.id}#${index}`
+          if (messages.length > 1 && cp.reported.includes(partId)) continue
+          const first = index === 0 && Boolean(mention)
+          await postSlackMessage(input.slack, { channel: cp.channel, thread_ts: cp.threadTs }, message, {
+            before: first ? [{ type: "section", text: { type: "mrkdwn", text: mention } }] : [],
+            textPrefix: first ? `${mention} ` : "",
+            onRejected: (code) => input.log?.("slack_rich_message_rejected", { surface: "report", code }),
+          })
+          if (messages.length > 1) {
+            cp.reported.push(partId)
+            await input.persist?.(cp)
+          }
+        }
       } else if (written.text.trim()) {
-        const parts = splitSlackText(withoutBroadcasts(written.text.trim()), REPORT_LIMIT)
+        const parts = splitSlackText(withoutSlackBroadcasts(written.text.trim()), REPORT_LIMIT)
         for (const [index, part] of parts.entries()) {
           const partId = `${report.id}#${index}`
           if (parts.length > 1 && cp.reported.includes(partId)) continue

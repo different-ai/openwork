@@ -65,6 +65,8 @@ const REMOTE_SESSION_EVENT_INSTRUCTIONS = "After remote-session create or send, 
 
 const SLACK_SEND_AS_BOT_INSTRUCTIONS = "To notify the user or \"send me\" something on Slack (DM me, ping me, remind me, let me know; also in Automations and their instructions), use slack_send_as_bot with target me; slack_send_message posts as the user and does not notify them, so use it only to post as the user."
 
+export const SLACK_SEND_AS_BOT_RICH_INSTRUCTIONS = "slack_send_as_bot can show components under its text (header, text, divider, context, fields, table, image, buttons, choices). Use one only when it reads faster: a table for three or more like items, fields for a few facts about one thing, a context line for source and time, one link button for the next place to go, choices when their answer should start work in Slack. Short notes stay text, and the text must stand alone because notifications show only it."
+
 export const MY_AGENT_INSTRUCTIONS = "To change what Your agent tells the user (\"also watch our Render bill\", \"never tell me about newsletters\": lines added to their brief), what it reads (\"also use Linear\", \"use my Granola for meeting context\": any connector they can use, by name in `sources`) or how often it checks, use putMeAgent; to explain why it was quiet or when it checks next, read the user's agent and its checks."
 
 export const PERSONAL_AGENT_INSTRUCTIONS = "When the person asks for an agent of their own (\"make me an agent that watches #bugs and files issues every morning\"), do not propose an Automation. Where openwork_context lists agent.propose (OpenWork Desktop): call openwork_execute with id agent.propose and args { name, brief, routine: { name, instructions, schedule } }, where schedule is { kind: \"daily\", timezone, hour, minute }, { kind: \"weekly\", timezone, daysOfWeek: [1,2,3,4,5], hour, minute } with 0 for Sunday, or { kind: \"interval\", timezone, everyHours, daysOfWeek, startHour, endHour }, then say in one or two sentences what the agent will do and how often, and nothing about the card; the person starts it from the card. Elsewhere, make it in two steps: createPersonalAgent with body { name, brief }, and when it returns createPersonalAgentRoutine with path { id: the new agent's id } and body { name, instructions, schedule }. The brief is Markdown written from what they said. In agent.propose or createPersonalAgent, include never: [{ app, action }] for things the person said the agent must never do. Tools that change something ask the person first on a run unless already allowed. If the person cannot change the agent, use requestPersonalAgentChange to ask for the change. \"Run it now\" is runPersonalAgentNow with path { id: the agent's id }; follow that run with getAutomationRun using path { id: the returned run.id }, which starts with atr_, until its status is succeeded or failed, then give its result in one or two sentences. \"My agents\" is listPersonalAgents. Say agent and routine, never capability names or ids."
@@ -74,6 +76,7 @@ export function createAgentMcpServer(options: {
   remoteSessionStatus?: boolean
   remoteSessionEvents?: boolean
   canSendSlackMessages?: boolean
+  slackRichMessages?: boolean
   myAgent?: boolean
   personalAgents?: boolean
   harnessFeedbackInstructions?: string
@@ -85,6 +88,7 @@ export function createAgentMcpServer(options: {
     ...(options.remoteSessionStatus ? [REMOTE_SESSION_STATUS_INSTRUCTIONS] : []),
     ...(options.remoteSessionStatus && options.remoteSessionEvents ? [REMOTE_SESSION_EVENT_INSTRUCTIONS] : []),
     ...(options.canSendSlackMessages ? [SLACK_SEND_AS_BOT_INSTRUCTIONS] : []),
+    ...(options.canSendSlackMessages && options.slackRichMessages ? [SLACK_SEND_AS_BOT_RICH_INSTRUCTIONS] : []),
     ...(options.harnessFeedbackInstructions ? [options.harnessFeedbackInstructions] : []),
     ...(options.myAgent ? [MY_AGENT_INSTRUCTIONS] : []),
     ...(options.personalAgents ? [PERSONAL_AGENT_INSTRUCTIONS] : [])].join("\n")
