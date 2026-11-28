@@ -86,6 +86,7 @@ jobs:
           node --test
           .github/scripts/alpha-macos.test.mjs
           .github/scripts/desktop-helper-cache.test.mjs
+          apps/desktop/scripts/electron-build.test.mjs
           .github/scripts/release-inputs.test.mjs
           apps/desktop/scripts/prepare-opencode-v1.test.mjs
           apps/desktop/scripts/prepare-runtime-node-modules.test.mjs
