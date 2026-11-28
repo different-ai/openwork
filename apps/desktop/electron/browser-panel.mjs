@@ -49,6 +49,15 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
   webviewTag: false,
 });
 
+// Sites such as WhatsApp Web reject user agents that carry an Electron/ or
+// app-name token, so the browser panel presents as the Chromium it embeds.
+function chromeUserAgent(userAgent) {
+  const appToken = app.getName().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return userAgent
+    .replace(/\s+Electron\/\S+/g, "")
+    .replace(new RegExp(`\\s+${appToken}/\\S+`, "g"), "");
+}
+
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, readWebsiteRules, websiteRulesWereInForce = false, onWebsiteRulesInForce, showNativeContextMenu, closeNativeContextMenu,
   approveFiles = async () => false, approveCredential = undefined,
   // Secret handles: the app's one store, whether the feature is on (read at each use), and the
@@ -291,6 +300,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // The manager is constructed before app.whenReady(). Only acquire the
     // Electron session when creating a tab, after native window setup.
     const browserSession = session.fromPartition(BROWSER_SESSION_PARTITION);
+    browserSession.setUserAgent(chromeUserAgent(browserSession.getUserAgent()));
     browserSession.on("will-download", (_event, item, contents) => {
       const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === contents);
       if (!tab) return;
