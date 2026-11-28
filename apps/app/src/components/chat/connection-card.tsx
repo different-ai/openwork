@@ -1,19 +1,29 @@
 "use client"
 
-import { useState } from "react"
+import { createContext, useContext, useState, type ReactNode } from "react"
 import type { DynamicToolUIPart } from "ai"
 import { Braces, Check, Loader2, Lock } from "lucide-react"
 import type { ConnectionActionPayload } from "@openwork/types/connection-action-app"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
+import { ServiceMark } from "@/components/ui/service-mark"
 import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
 import { useChatToolReconnect, type ChatToolReconnectCallbacks } from "@/components/tools/use-chat-tool-reconnect"
 import type { ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 import { useOptionalMessageList } from "./message-list-provider"
 
 type ConnectionActionType = NonNullable<ConnectionActionPayload["action"]>["type"]
+
+export type ResolveConnectionCard = (connection: ConnectionActionPayload) => {
+  hidden?: boolean
+  allowMemberAction?: boolean
+  iconUrl?: string
+  renderBlocked?: (props: { fallback: ReactNode; dismiss: () => void }) => ReactNode
+} | undefined
+
+const ConnectionCardResolverContext = createContext<ResolveConnectionCard | undefined>(undefined)
+export const ConnectionCardResolverProvider = ConnectionCardResolverContext.Provider
 
 const ACTION_OWNER = {
   member: "You",
@@ -35,18 +45,6 @@ function blockedTitle(connection: ConnectionActionPayload): string {
   return `${owner} must ${verb} ${connection.connectionName}`
 }
 
-function ServiceMark({ name, iconUrl }: { name: string; iconUrl: string | null | undefined }) {
-  const [failedIcon, setFailedIcon] = useState<string | null>(null)
-  const showImage = Boolean(iconUrl) && iconUrl !== failedIcon
-  return (
-    <span
-      aria-hidden="true"
-      className={cn("flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md", !showImage && "bg-muted text-xs font-medium text-foreground")}
-    >
-      {showImage && iconUrl ? <img src={iconUrl} alt="" className="size-4 object-contain" onError={() => setFailedIcon(iconUrl)} /> : name.charAt(0).toUpperCase()}
-    </span>
-  )
-}
 
 export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectScope, connectorIdentities, allowDiscovery = false, subject }: {
   callbacks?: ChatToolReconnectCallbacks
@@ -58,9 +56,11 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   subject?: string
 }) {
   const messageList = useOptionalMessageList()
+  const resolveCard = useContext(ConnectionCardResolverContext)
   const found = connectionFromChatToolPart(part, { allowDiscovery })
   const connection = found?.connection ?? null
-  const action = connection && connection.actor === "member" && (connection.action?.type === "connect" || connection.action?.type === "reconnect" || connection.action?.type === "update_credentials")
+  const presentation = connection ? resolveCard?.(connection) : undefined
+  const action = connection && presentation?.allowMemberAction !== false && connection.actor === "member" && (connection.action?.type === "connect" || connection.action?.type === "reconnect" || connection.action?.type === "update_credentials")
     ? found?.action ?? null
     : null
   const {
@@ -72,11 +72,11 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
     onReopenAuthorization: callbacks?.onReopenAuthorization ?? messageList?.onMcpReopenAuthorization,
   }, action, reconnectScope, connection?.connectionId)
   const [detailsOpen, setDetailsOpen] = useState(false)
-  if (!connection) return null
+  if (!connection || presentation?.hidden) return null
 
   const name = connection.connectionName
   const identity = (connectorIdentities ?? messageList?.connectorIdentities ?? []).find(entry => entry.connectionId === connection.connectionId)
-  const iconUrl = identity?.iconUrl
+  const iconUrl = presentation?.iconUrl ?? identity?.iconUrl
   const readOnly = messageList?.readOnly ?? false
   const skipped = reconnectState === "skipped"
   const connected = connection.state === "connected" || reconnectState === "connected" || identity?.connectedForMe === true
@@ -103,7 +103,7 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   const actionable = !readOnly && (!settled || decisionAvailable)
   const showDetails = actionable && Boolean(reconnectError)
 
-  return (
+  const card = (
     <section data-testid="desktop-connection-card" aria-label={`${name} connection`} aria-live="polite" className="w-full max-w-full self-start text-sm text-foreground">
       <div className="flex min-h-10 min-w-0 flex-wrap items-center gap-3 px-3 py-1">
         <ServiceMark name={name} iconUrl={iconUrl} />
@@ -157,4 +157,7 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
       ) : null}
     </section>
   )
+  return actionable && blocked && presentation?.renderBlocked
+    ? presentation.renderBlocked({ fallback: card, dismiss: handleDismiss })
+    : card
 }

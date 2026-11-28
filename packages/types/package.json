@@ -704,6 +704,14 @@
       },
       "development": "./src/browser-demonstration.ts",
       "default": "./dist/browser-demonstration.js"
+    },
+    "./den/cloud-coding": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/cloud-coding.d.ts",
+        "default": "./src/den/cloud-coding.ts"
+      },
+      "development": "./src/den/cloud-coding.ts",
+      "default": "./src/den/cloud-coding.ts"
     }
   },
   "files": [

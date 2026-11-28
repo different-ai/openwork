@@ -1,5 +1,6 @@
 import { createContext, useContext, type ComponentType, type ReactNode } from "react";
 import type { DynamicToolUIPart } from "ai";
+import type { ConnectionAuthentication } from "./connection-authentication";
 
 export type SessionProposalCardProps = {
   sessionId: string;
@@ -28,7 +29,8 @@ export type SessionExtensions = {
   ProposalCard: ComponentType<SessionProposalCardProps>;
   TranscriptFooter: ComponentType<{ sessionId: string }>;
   renderStandingChat?: (sessionId: string) => ReactNode;
-  renderChatApprovalDock?: (completedAt: number) => ReactNode;
+  renderChatApprovalDock?: (completedAt: number, active: boolean) => ReactNode;
+  connectionAuthentication?: ReadonlyMap<string, ConnectionAuthentication>;
   Panel: ComponentType<{ sessionId: string | null; compact?: boolean }>;
   proposalCards: boolean;
   ownedSessionIds: ReadonlySet<string>;

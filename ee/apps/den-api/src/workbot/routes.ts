@@ -8,15 +8,15 @@ import { bodyLimit } from "hono/body-limit"
 import { DEN_MCP_OAUTH_RESOURCE } from "../auth.js"
 import { cloudAutomationRuntime } from "../automations/headless-runtime.js"
 import { db } from "../db.js"
-import { attributeAuditRequest, auditUserPrincipalKey } from "../audit/request-capture.js"
+import { attributeAuditRequest, auditChangeCapture, auditUserPrincipalKey } from "../audit/request-capture.js"
 import { mcpPrincipalCredentialId, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
 import { mintHeadlessTurnCredentials } from "../headless-runner/resume-grants.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { workbotTurnLimitScopes } from "../mcp/workbot-turn-limits.js"
-import { jsonResponse, unauthorizedSchema } from "../openapi.js"
+import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../openapi.js"
 import { getOrganizationFeatures, type FeatureMap } from "../features.js"
-import { jsonValidator, tokenRoute } from "../middleware/index.js"
+import { jsonValidator, paramValidator, tokenRoute } from "../middleware/index.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import { createInternalMcpPrincipalHeader } from "../session.js"
@@ -34,7 +34,12 @@ import { CloudAgentGatewayAccessError } from "./gateway-model.js"
 import { workbotIncludedDefaultModel, workbotManagedLunaState, workbotUsesManagedDefault } from "./managed-luna.js"
 import { recordWorkbotTelemetry, workbotTelemetrySchema, workbotTelemetryServiceAuthorized } from "./telemetry.js"
 import { resolvePermissionsForMember } from "../permissions/resolve.js"
-import { workbotOrigin } from "./config.js"
+import { WORKBOT_OAUTH_CLIENT_ID, workbotOrigin } from "./config.js"
+import { cloudCodingPushApprovalListSchema, cloudCodingPushApprovalSchema, cloudCodingPushDecisionInputSchema } from "@openwork/types/den/cloud-coding"
+import { cloudCodingApprovalView, decideCloudCodingApproval, getCloudCodingApproval, listCloudCodingApprovals } from "../cloud-coding/gateway/approvals.js"
+import { recordGatewayEvent } from "../cloud-coding/gateway/audit.js"
+import { markFeaturesUsed } from "../feature-usage.js"
+import { headlessRunTokenId } from "../mcp/headless-run-token.js"
 import { workbotConnectRequestSchema } from "./connect-return-schema.js"
 import { resolvePublicApiBaseUrl } from "../capability-sources/generic-oauth.js"
 import { env } from "../env.js"
@@ -173,9 +178,19 @@ function everydayApp(fact: { name: string; url: string; nativeProviderKey: strin
   return "other"
 }
 
-async function resolve(headers: Headers): Promise<Resolved | Response> {
+const workbotPersonRequired = { error: "workbot_person_required", message: "Sign in to Workbot to review this push." }
+
+async function resolve(headers: Headers, workbotPersonOnly = false): Promise<Resolved | Response> {
   const verified = await verifyMcpRequest(headers, DEN_MCP_OAUTH_RESOURCE)
-  if (verified instanceof Response) return verified
+  if (verified instanceof Response) {
+    if (workbotPersonOnly && verified.status === 401 && /^Bearer\s+\S/i.test(headers.get("authorization") ?? "")) {
+      return Response.json(workbotPersonRequired, { status: 403 })
+    }
+    return verified
+  }
+  if (workbotPersonOnly && (verified.payload.client_id !== WORKBOT_OAUTH_CLIENT_ID || headlessRunTokenId(verified.payload))) {
+    return Response.json(workbotPersonRequired, { status: 403 })
+  }
   const userId = normalizeDenTypeId("user", verified.userId)
   const organizationId = normalizeDenTypeId("organization", verified.organizationId)
   const [member] = await db
@@ -267,7 +282,63 @@ const providerNamesSchema = z.object({
   })),
 })
 
+const pushApprovalError = z.object({ error: z.string(), message: z.string().optional(), feature: z.string().optional() })
+const pushApprovalParams = z.object({ approvalId: z.string() })
+const pushApprovalNotFound = { error: "approval_not_found", message: "This push approval could not be found." }
+
+function pushApprovalDocs(operationId: string, summary: string, description: string, schema: z.ZodType, write = false) {
+  return describeWorkbotRoute({
+    operationId, tags: ["Workbot"], "x-mcp": false, summary, description,
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: jsonResponse(summary, schema),
+      401: jsonResponse("Sign in to Workbot to continue.", unauthorizedSchema),
+      403: jsonResponse("A Workbot person token with the required scope is needed.", pushApprovalError),
+      404: jsonResponse("Cloud coding is off or the approval was not found.", pushApprovalError),
+      ...(write ? { 400: jsonResponse("Check the decision you entered.", invalidRequestSchema), 409: jsonResponse("The approval is no longer pending.", pushApprovalError) } : {}),
+    },
+  })
+}
+
+async function workbotPushApprovalScope(c: Context, write = false) {
+  c.header("Cache-Control", "no-store")
+  const resolved = await resolve(c.req.raw.headers, true)
+  if (resolved instanceof Response) return resolved
+  const auditBlocked = await attributeWorkbot(c, resolved)
+  if (auditBlocked) return auditBlocked
+  if (!resolved.scopes.has(DEN_MCP_READ_SCOPE) || (write && !resolved.scopes.has(DEN_MCP_WRITE_SCOPE))) {
+    return c.json({ error: "insufficient_scope", message: "Sign in to Workbot again to review this push." }, 403)
+  }
+  const member = await withWorkbotSettings(resolved)
+  if (!member.features.cloudCoding) return c.json({ error: "feature_disabled", feature: "cloudCoding" }, 404)
+  if (!member.workbot.enabled) return c.json({ error: WORKBOT_OFF.error, message: WORKBOT_OFF.message }, WORKBOT_OFF.status)
+  const scope = { organizationId: resolved.organization.id, memberId: normalizeDenTypeId("member", resolved.memberId) }
+  markFeaturesUsed({ ...scope, keys: ["cloudCoding"] })
+  return scope
+}
+
 export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono<T>) {
+  app.get("/v1/workbot/cloud-coding/approvals", pushApprovalDocs("listWorkbotCloudCodingApprovals", "List your pending push approvals", "Lists pending Cloud coding pushes for the member signed in to Workbot.", cloudCodingPushApprovalListSchema), tokenRoute, async c => {
+    const scope = await workbotPushApprovalScope(c)
+    if (scope instanceof Response) return scope
+    return c.json(cloudCodingPushApprovalListSchema.parse({ approvals: await listCloudCodingApprovals(scope, "pending") }))
+  })
+  app.get("/v1/workbot/cloud-coding/approvals/:approvalId", pushApprovalDocs("getWorkbotCloudCodingApproval", "Read your push approval", "Returns the current decision and the pull request once it opens.", cloudCodingPushApprovalSchema), tokenRoute, paramValidator(pushApprovalParams), async c => {
+    const scope = await workbotPushApprovalScope(c)
+    if (scope instanceof Response) return scope
+    const approval = await getCloudCodingApproval(scope, c.req.param("approvalId"))
+    return approval ? c.json(await cloudCodingApprovalView(approval)) : c.json(pushApprovalNotFound, 404)
+  })
+  app.post("/v1/workbot/cloud-coding/approvals/:approvalId/decision", pushApprovalDocs("decideWorkbotCloudCodingApproval", "Allow once or deny your push", "Decides a pending push for the member signed in to Workbot. Allow once applies only to the commit shown in the approval.", cloudCodingPushApprovalSchema, true), tokenRoute, paramValidator(pushApprovalParams), jsonValidator(cloudCodingPushDecisionInputSchema), async c => {
+    const scope = await workbotPushApprovalScope(c, true)
+    if (scope instanceof Response) return scope
+    const { decision } = c.req.valid("json")
+    const approval = await decideCloudCodingApproval(scope, c.req.param("approvalId"), decision,
+      (tx, row) => recordGatewayEvent(tx, auditChangeCapture(c), decision === "allow_once" ? "cloud_coding.push.approved" : "cloud_coding.push.denied", row))
+    if (!approval) return c.json(pushApprovalNotFound, 404)
+    if (approval === "not_pending") return c.json({ error: "approval_not_pending", message: "This push approval is no longer waiting for a decision." }, 409)
+    return c.json(await cloudCodingApprovalView(approval))
+  })
   app.get("/v1/workbot/model-recovery", describeWorkbotRoute({
     tags: ["Workbot"], operationId: "getWorkbotModelRecovery", "x-mcp": false,
     summary: "Get my Workbot model recovery options",

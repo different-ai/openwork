@@ -6,6 +6,7 @@ import { DEN_SHUTDOWN_DRAIN_MS, installGracefulShutdown, trackEventStreams } fro
 import { markDraining } from "./drain-state.js"
 import app from "./app.js"
 import { startSlackAssistantWorker } from "./slack-assistant/worker.js"
+import { startCloudCodingSlackNoticeWorker } from "./cloud-coding/slack/notices.js"
 import { startSlackDesktopHandoffWorker } from "./slack-assistant/desktop-handoff.js"
 import { startWorkbotProactiveWorker } from "./workbot-proactive/worker.js"
 import { startHarnessFeedbackNotifier } from "./harness-feedback/notifier.js"
@@ -40,6 +41,7 @@ configureRemoteSessionSignalRedis(env.databaseRedisUrl)
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
+const stopCloudCodingSlackNoticeWorker = startCloudCodingSlackNoticeWorker()
 const stopMcpEventWorker = startMcpEventWorker()
 const stopNativeEventWorker = startNativeEventWorker()
 const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
@@ -99,6 +101,7 @@ async function stopBackgroundLoops() {
     stopLifecycleEmailLoop(),
     stopSlackAssistantWorker(),
     stopSlackDesktopHandoffWorker(),
+    stopCloudCodingSlackNoticeWorker(),
     stopWorkbotProactiveWorker(),
     stopHarnessFeedbackWorker(),
     stopHarnessFeedbackNotifier(),

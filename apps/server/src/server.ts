@@ -3,6 +3,7 @@ import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./o
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { privateValueFillReportSchema } from "@openwork/types/den/private-value-fills";
+import { openworkCloudV1RegistrationConfig } from "./cloud-coding-worker-proof.js";
 import { createFileSendApprovals, markFileSendApproved, type FileSendApprovals } from "./file-send-approval.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import { readHostResponse } from "./host-response.js";
@@ -5636,7 +5637,7 @@ async function postMcpEntryWithRetry(
       const response = await loopbackFetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify({ name, config: mcpConfig }),
+        body: JSON.stringify({ name, config: openworkCloudV1RegistrationConfig(name, mcpConfig) }),
         signal: AbortSignal.timeout(15_000),
       });
       enginePoolForConfig(config)?.reportRequestSuccess(url.origin);

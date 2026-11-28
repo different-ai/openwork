@@ -16,6 +16,8 @@ import { registerOrgWorkflowRunRoutes } from "./codemode-runs.js"
 import { registerOrgWorkflowRoutes } from "./codemode-scripts.js"
 import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
+import { registerCloudCodingRoutes } from "./cloud-coding.js"
+import { registerCloudCodingApprovalRoutes } from "./cloud-coding-approvals.js"
 import { registerOrgCoreRoutes } from "./core.js"
 import { registerOrgConfigBlobRoutes } from "./config-blobs.js"
 import { registerOrgServiceReadinessRoutes } from "./service-readiness.js"
@@ -85,6 +87,8 @@ function extractLegacyOrgProxyTarget(pathname: string) {
 
 export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & RequestIdVariables }>(app: Hono<T>) {
   registerOrgCoreRoutes(app)
+  registerCloudCodingRoutes(app)
+  registerCloudCodingApprovalRoutes(app)
   registerOrgServiceReadinessRoutes(app)
   registerOrgDiagnosticsRoutes(app)
   registerOrgActivityRoutes(app)

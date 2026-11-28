@@ -33,6 +33,9 @@ const computerStep = (updates: string[], running: boolean, at: number, extra: Re
 const working = (turnValue: FixtureTurn): FixtureTurn => ({ ...turnValue, status: "working", finishedAt: null })
 
 export const scenarios: Record<string, () => FixtureThread> = {
+  "cloud-coding": () => ({ name: "Workbot", organizationName: "Acme Corp", status: "idle", hasEarlier: false, filesEnabled: true,
+    turns: [turn("cloud-coding-update", "Update the setup instructions in acme/storefront.", ago(30), [said("I updated the README and setup guide. The tests passed. The push is ready for your approval.")])],
+  }),
   remote: () => ({ name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [hello(), turn("remote-parent", "Check the browser changes on my Mac Studio", ago(400), [said("The checks are running on your Mac Studio. I'll reply here with the result.")], {
       tasks: [

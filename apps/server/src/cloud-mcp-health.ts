@@ -1,4 +1,5 @@
 import { createHash, webcrypto } from "node:crypto";
+import { withCloudCodingWorkerProof } from "./cloud-coding-worker-proof.js";
 import { readFile } from "node:fs/promises";
 import type { createOpencodeClient, McpStatus, ToolIds, ToolList } from "@opencode-ai/sdk/v2/client";
 import { ApiError } from "./errors.js";
@@ -1336,6 +1337,14 @@ function describeTransportError(error: unknown): Record<string, unknown> {
   return { ...first, ...(chain.length > 1 ? { causes: chain.slice(1) } : {}) };
 }
 
+export function cloudMcpProbeHeaders(authorization: string): Record<string, string> {
+  return withCloudCodingWorkerProof({
+    accept: "application/json, text/event-stream",
+    authorization,
+    "content-type": "application/json",
+  });
+}
+
 async function readDirectCloudTools(config: Record<string, unknown>): Promise<DirectCloudToolsSnapshot> {
   const url = readString(config.url);
   const authorization = authorizationHeader(config);
@@ -1383,11 +1392,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
     return { ...directToolsNotChecked(), checked: true, missing: expectedDirectToolNames(), trace: trace(), error: failureResult.details, failure: failureResult };
   }
 
-  const baseHeaders: Record<string, string> = {
-    accept: "application/json, text/event-stream",
-    authorization,
-    "content-type": "application/json",
-  };
+  const baseHeaders = cloudMcpProbeHeaders(authorization);
   try {
     const initialized = await timed({
       step: "initialize",

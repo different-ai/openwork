@@ -1,3 +1,4 @@
+import { deleteCloudCodingOrganizationData, revokeCloudCodingTokens } from "../../cloud-coding/links.js"
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import {
   AuditEventResourceTable,
@@ -76,6 +77,7 @@ async function unlessTableMissing(work: () => Promise<unknown>): Promise<void> {
 }
 
 export async function purgeOrganizationHistory(organizationId: OrganizationId): Promise<void> {
+  await revokeCloudCodingTokens(await db.transaction(tx => deleteCloudCodingOrganizationData(organizationId, tx)))
   const memberIds = (await db
     .select({ id: MemberTable.id })
     .from(MemberTable)

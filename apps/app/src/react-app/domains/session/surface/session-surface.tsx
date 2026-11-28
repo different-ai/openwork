@@ -3501,6 +3501,11 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
     try {
       const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
       const isAuthorizationCurrent = () => isCurrent() && isChatMcpReconnectScopeCurrent(scope, currentScope());
+      const connectionAuthentication = extensions.connectionAuthentication?.get(action.connectionId);
+      if (connectionAuthentication) {
+        return connectionAuthentication.authenticate({ client: denClient, baseUrl: settings.baseUrl, organizationId,
+          isCurrent: isAuthorizationCurrent, onProgress, openUrl: openDesktopUrl });
+      }
       const result = await authenticateChatConnection({
         connectionId: action.connectionId,
         connectionName: action.connectionName,
@@ -3528,7 +3533,7 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
       });
       throw error;
     }
-  }, [props.onOpenConnect, props.sessionId, props.workspaceId, refreshOrgMcpConnections]);
+  }, [extensions.connectionAuthentication, props.onOpenConnect, props.sessionId, props.workspaceId, refreshOrgMcpConnections]);
 
   const handleMcpReopenAuthorization = useCallback(async (
     action: ChatToolReconnectAction,
@@ -3545,9 +3550,11 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
     });
   }, [props.sessionId, props.workspaceId]);
 
-  const nativeConnectionRequest = props.respondQuestion && props.draftScope && props.isControlTarget && !archived && archiveStateKnown && !archiveHeld
+  const nativeConnectionCandidate = props.respondQuestion && props.draftScope && props.isControlTarget && !archived && archiveStateKnown && !archiveHeld
     ? nativeChatConnectionDecision({ question: props.activeQuestion, owner: sessionOwner, sessionId: props.sessionId, messages: baseRenderedMessages })
     : null;
+  const nativeConnectionRequest = nativeConnectionCandidate
+    && extensions.connectionAuthentication?.get(nativeConnectionCandidate.connectionId)?.enabled !== false ? nativeConnectionCandidate : null;
   const connectionContextRef = useRef({ owner: sessionOwner, messages: baseRenderedMessages, request: nativeConnectionRequest, respond: props.respondQuestion });
   connectionContextRef.current = { owner: sessionOwner, messages: baseRenderedMessages, request: nativeConnectionRequest, respond: props.respondQuestion };
   const getConnectionDecision = useCallback((toolCallId: string): ChatConnectionDecisionBinding | null => {
@@ -4167,7 +4174,7 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
                   />
                   </div>
                 ) : null}
-                {approvalsEnabled && !archived && extensions.renderChatApprovalDock?.(completedAt)}
+                {approvalsEnabled && !archived && extensions.renderChatApprovalDock?.(completedAt, props.isControlTarget)}
               </div>
             ) : null
           }

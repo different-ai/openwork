@@ -8,6 +8,9 @@ import {
   type Checkpoint,
 } from "./run.js"
 import { z } from "zod"
+import { isDenTypeId } from "@openwork-ee/utils/typeid"
+import { organizationFeatureEnabled } from "../features.js"
+import { getCloudCodingApproval, getCloudCodingPullRequest } from "../cloud-coding/gateway/approvals.js"
 import { appLogger } from "../observability/logger.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
@@ -65,10 +68,10 @@ const defaultWorkerDeps: WorkerDeps = {
   live: createLiveFeeds({ open: (sessionId, signal) => openSlackRunnerEvents(sessionId, signal) }),
 }
 
-function slackSessionSettings(workbot: boolean, driveFiles: boolean, answerReply: boolean): SlackSessionSettings {
+function slackSessionSettings(workbot: boolean, driveFiles: boolean, answerReply: boolean, computer: boolean): SlackSessionSettings {
   return workbot
-    ? { instructions: slackWorkbotInstructions({ driveFiles, answerReply }), reactions: true, tasks: true }
-    : { instructions: "", reactions: false, tasks: false }
+    ? { instructions: slackWorkbotInstructions({ driveFiles, answerReply }), reactions: true, tasks: true, computer }
+    : { instructions: "", reactions: false, tasks: false, computer }
 }
 
 function leasedRunner(runner: SlackRunner, event: EventRow): SlackRunner {
@@ -208,7 +211,13 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
   const cp = checkpointSchema.parse(event.checkpoint ? JSON.parse(event.checkpoint) : {})
   if (event.status === "watching") return watchSlackEvent(event, installation, slack, deps, cp)
   if (!slackRunnerAvailable()) return answerWithoutRunner(event, slack, isInvocation(payload), cp)
-  let actor = await resolveSlackActor(installation, event.slackUserId)
+  const continuation = cp.cloudCodingContinuation
+  const actorForContinuation = continuation ? await resolveSlackActor(installation, event.slackUserId) : null
+  if (continuation && (!actorForContinuation || actorForContinuation.memberId !== continuation.memberId)) {
+    await releaseSlackThread(event)
+    return checkpointEvent(event, { status: "done" })
+  }
+  let actor = actorForContinuation ?? await resolveSlackActor(installation, event.slackUserId)
   if (!actor && event.status !== "running" && installation.enabled && (await linkConnectedSlackMembers(installation, deps.slack)) > 0)
     actor = await resolveSlackActor(installation, event.slackUserId)
   if (!actor) {
@@ -252,7 +261,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
   }
   const { thread, busy } = await lockSlackThread(event, actor)
   if (!thread) {
-    if (busy && !cp.queuedNoticeShown) {
+    if (busy && !continuation && !cp.queuedNoticeShown) {
       const notice = { channel: event.channelId, thread_ts: event.threadTs, text: QUEUED_LINE }
       const privateReply = installation.shadowMode || /(^|\s)--private(?=\s|$)/.test(payload.text ?? "")
       if (privateReply && payload.channel_type !== "im")
@@ -340,6 +349,16 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     return
   }
   cp.sessionId ??= thread.sessionId ?? undefined
+  const computer = await organizationFeatureEnabled(actor.organizationId, "cloudCoding", { userId: actor.userId })
+  if (continuation && cp.phase === "send") {
+    const approvalId = continuation.approvalId
+    const approval = isDenTypeId("cloudCodingPushApproval", approvalId)
+      ? await getCloudCodingApproval({ organizationId: actor.organizationId, memberId: actor.memberId }, approvalId) : null
+    if (!computer || !cp.sessionId || cp.sessionId !== thread.sessionId || approval?.status !== "approved" || await getCloudCodingPullRequest(approval.id)) {
+      await releaseSlackThread(event)
+      return checkpointEvent(event, { status: "done" })
+    }
+  }
   const result = await advanceSlackRun({
     checkpoint: cp,
     slack,
@@ -355,7 +374,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     },
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
-    settings: slackSessionSettings(cp.workbot, cp.driveFiles, cp.answerReply),
+    settings: slackSessionSettings(cp.workbot, cp.driveFiles, cp.answerReply, computer),
     ...(cp.workbot ? { live: deps.live } : {}),
     renew: () => renewSlackLease(event),
     log: (message, fields) => appLogger.warn(message, { event_id: event.id, ...fields }),

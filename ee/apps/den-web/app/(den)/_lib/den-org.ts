@@ -996,6 +996,10 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }
 
+export function getCloudCodingRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/cloud-coding`;
+}
+
 export function getMcpConnectionRoute(orgSlug: string | null | undefined, connectorId: string): string {
   return `${getMcpConnectionsRoute(orgSlug)}/${encodeURIComponent(connectorId)}`;
 }

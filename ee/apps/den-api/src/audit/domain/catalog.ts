@@ -1,3 +1,20 @@
+const cloudCodingChangeEmitters = {
+  "cloud_coding.github.connected": "cloud-coding/audit.ts",
+  "cloud_coding.github.disconnected": "cloud-coding/audit.ts",
+  "cloud_coding.settings.updated": "cloud-coding/audit.ts",
+  "cloud_coding.account.linked": "cloud-coding/audit.ts",
+  "cloud_coding.account.unlinked": "cloud-coding/audit.ts",
+  "cloud_coding.link_reminder.sent": "cloud-coding/audit.ts",
+  "cloud_coding.admin_request.sent": "cloud-coding/audit.ts",
+  "cloud_coding.task.started": "cloud-coding/mcp/capabilities.ts",
+  "cloud_coding.push.requested": "cloud-coding/gateway/audit.ts",
+  "cloud_coding.push.approved": "cloud-coding/gateway/audit.ts",
+  "cloud_coding.push.denied": "cloud-coding/gateway/audit.ts",
+  "cloud_coding.push.completed": "cloud-coding/gateway/audit.ts",
+  "cloud_coding.push.refused": "cloud-coding/gateway/audit.ts",
+  "cloud_coding.pull_request.opened": "cloud-coding/gateway/audit.ts",
+}
+
 export const domainChangeEmitters: Readonly<Record<string, string>> = {
   "organization.benefit_setting.updated": "retired (organization grants)",
   "organization.benefit_grant.created": "retired (organization grants)",
@@ -28,6 +45,8 @@ export const domainChangeEmitters: Readonly<Record<string, string>> = {
   "account.profile_updated": "audit/domain/account.ts", "account.email_changed": "audit/domain/account.ts", "account.password_changed": "audit/domain/account.ts",
   "account.identity_linked": "audit/domain/account.ts", "account.identity_unlinked": "audit/domain/account.ts", "account.deleted": "audit/domain/account.ts",
   "account.provider_token.accessed": "audit/domain/account.ts",
+
+  ...cloudCodingChangeEmitters,
 }
 
 export const domainEventCategories: Readonly<Record<string, "security" | "access">> = {

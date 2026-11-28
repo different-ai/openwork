@@ -41,6 +41,7 @@ export const checkpointSchema = z.object({
   taskIds: z.array(z.string()).default([]),
   reported: z.array(z.string()).default([]),
   watchUntil: z.number().optional(),
+  cloudCodingContinuation: z.object({ approvalId: z.string(), memberId: z.string() }).optional(),
 })
 export type Checkpoint = z.infer<typeof checkpointSchema>
 

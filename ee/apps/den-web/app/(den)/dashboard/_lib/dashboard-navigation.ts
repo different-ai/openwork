@@ -5,6 +5,7 @@ import {
   Gauge,
   Radar,
   Globe,
+  GitPullRequest,
   House,
   Laptop,
   LibraryBig,
@@ -28,6 +29,7 @@ import {
   getAuthSecurityRoute,
   getAutomationsRoute,
   getBillingRoute,
+  getCloudCodingRoute,
   getConfigRoute,
   getComputersRoute,
   getDesktopPoliciesRoute,
@@ -98,6 +100,7 @@ export type BuildDashboardNavSectionsInput = {
   canManageDeploymentServices?: boolean;
   workbotEntry?: WorkbotEntry;
   organizationId?: string | null;
+  cloudCoding?: boolean;
 };
 
 export function buildDashboardNavSections({
@@ -113,6 +116,7 @@ export function buildDashboardNavSections({
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
   organizationId = null,
+  cloudCoding = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workbotOff = workbotEntry.kind === "off";
   const workItems: DashboardNavItem[] = [
@@ -137,6 +141,7 @@ export function buildDashboardNavSections({
     ? [
         { href: getPluginsRoute(orgSlug), label: "Plugins", icon: Box },
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
+        ...(cloudCoding ? [{ href: getCloudCodingRoute(orgSlug), label: "Cloud coding", icon: GitPullRequest }] : []),
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         ...(!desktopPolicyScreenRemoved ? [{ href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop }] : []),
         { href: getComputersRoute(orgSlug), label: "Computers", icon: Laptop, testId: "dashboard-nav-computers" },

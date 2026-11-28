@@ -1,3 +1,4 @@
+import { deleteCloudCodingMemberData, revokeCloudCodingTokens } from "./cloud-coding/links.js"
 import { removeMemberPersonalAgentShares } from "./personal-agents/share-cleanup.js"
 import { recordFreeAutoFounder } from "@openwork-ee/den-db"
 import { assertWorkspaceCreateAllowed } from "./workspace-create-limit.js"
@@ -1988,6 +1989,7 @@ export async function removeOrganizationMember(input: {
   requiredPermission?: PermissionKey
   actorlessAuthorityUserId?: typeof AuthUserTable.$inferSelect["id"] | null
 }): Promise<MemberMutationResult> {
+  let githubTokens: string[] = []
   let gatewayCredentials: Awaited<ReturnType<typeof revokeInferenceCredentialsForMembers>> = []
   const capture = currentAuditChangeCapture(input.organizationId)
   if (input.removedByOrgMemberId) {
@@ -2077,6 +2079,7 @@ export async function removeOrganizationMember(input: {
     }
 
     gatewayCredentials = await revokeInferenceCredentialsForMembers(tx, [member.id])
+    githubTokens = await deleteCloudCodingMemberData({ organizationId: input.organizationId, memberId: member.id }, tx)
     await tx
       .delete(ConnectedAccountTable)
       .where(and(
@@ -2188,6 +2191,7 @@ export async function removeOrganizationMember(input: {
   }
 
   await revokeUpstreamCredentials(gatewayCredentials)
+  await revokeCloudCodingTokens(githubTokens)
 
   await revokeOrganizationApiKeysForMember({
     organizationId: input.organizationId,

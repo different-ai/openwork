@@ -11,6 +11,8 @@ import {
   MemberTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { CLOUD_CODING_SLACK_ACTION_PREFIX } from "@openwork/types/den/cloud-coding"
+import { handleCloudCodingSlackAction } from "../cloud-coding/slack/interactions.js"
 import { attributeAuditRequest, auditServiceAttribution, auditSessionUserAttribution } from "../audit/request-capture.js"
 import { appLogger } from "../observability/logger.js"
 import { db } from "../db.js"
@@ -489,7 +491,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         description:
           action === "commands"
             ? "Verify the signed Slack slash command and return an ephemeral link for the member to connect their own account in OpenWork."
-            : "Verify the signed Slack interaction and record supported feedback only for the member who owns the referenced assistant event.",
+            : "Verify the signed Slack interaction and accept feedback or a Cloud coding decision only from the requester.",
         security: [],
         responses: {
           ...webhookResponses,
@@ -516,8 +518,6 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           )
         )
           return c.json({ ok: false }, 401)
-        const auditBlocked = await attributeSlackInstallation(c, installation)
-        if (auditBlocked) return auditBlocked
         const form = new URLSearchParams(raw)
         if (
           action === "commands" &&
@@ -536,6 +536,10 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
               team: z.object({ id: z.string() }),
               user: z.object({ id: z.string() }),
               api_app_id: z.string(),
+              type: z.string().optional(),
+              channel: z.object({ id: z.string() }).optional(),
+              message: z.object({ ts: z.string() }).optional(),
+              container: z.object({ channel_id: z.string().optional(), message_ts: z.string().optional() }).optional(),
               actions: z.array(z.object({ action_id: z.string(), value: z.string().optional() })).optional(),
             })
             .safeParse(payload)
@@ -545,7 +549,23 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
             parsed.data.api_app_id !== installation.appId
           )
             return c.json({ ok: false }, 403)
-          for (const item of parsed.data.actions ?? [])
+          const { data } = parsed
+          const click = data.type === "block_actions" ? data.actions?.find((item) => item.action_id.startsWith(CLOUD_CODING_SLACK_ACTION_PREFIX)) : null
+          if (click) {
+            const channel = data.channel?.id ?? data.container?.channel_id
+            const messageTs = data.message?.ts ?? data.container?.message_ts
+            if (channel && messageTs && (!data.container?.channel_id || data.container.channel_id === channel) &&
+                (!data.container?.message_ts || data.container.message_ts === messageTs) &&
+                (click.value === "allow_once" || click.value === "deny")) {
+              await handleCloudCodingSlackAction(c, installation, {
+                actionId: click.action_id, decision: click.value, userId: data.user.id, channel, messageTs,
+              }).catch(() => appLogger.warn("cloud_coding_slack_decision_failed", { connection_id: connectionId }))
+            }
+            return c.json({ ok: true })
+          }
+          const auditBlocked = await attributeSlackInstallation(c, installation)
+          if (auditBlocked) return auditBlocked
+          for (const item of data.actions ?? [])
             if (
               item.action_id.startsWith("slack_feedback:") &&
               (item.value === "positive" || item.value === "negative")
@@ -559,6 +579,8 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
             }
           return c.json({ ok: true })
         }
+        const auditBlocked = await attributeSlackInstallation(c, installation)
+        if (auditBlocked) return auditBlocked
         return c.json({
           response_type: "ephemeral",
           text: `Connect your own Slack account in OpenWork: <${openworkYourConnectionsUrl(connectionId)}|Connect OpenWork>`,

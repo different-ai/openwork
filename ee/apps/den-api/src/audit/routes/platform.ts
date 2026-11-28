@@ -82,6 +82,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   readOnly("/openapi.json", "api_docs.openapi.read", "platform.discovery", "api_document", null),
   readOnly("/v1/config-blobs/schema/:formatVersion", "config_blob.schema.read", "platform.discovery", "api_document", null, "Public JSON Schema of the config blob format (envelope and area spec schemas); no organization, no flag, side-effect free."),
   readOnly("/v1/app-version", "app_version.read", "platform.discovery", "app_version", null),
+  readOnly("/v1/cloud-coding/gateway/helper.mjs", "cloud_coding.helper.download", "platform.discovery", "cloud_coding_helper", null, "Public static JavaScript with no credentials or organization data."),
   readOnly("/v1/orgs/sso/singleton", "auth.sso_singleton.read", "platform.discovery", "deployment", null),
   readOnly("/v1/auth/bootstrap/status", "auth.bootstrap.status.read", "platform.discovery", "deployment", null),
   readOnly("/v1/features", "feature.deployment.list", "platform.discovery", "feature", null, "Public deployment-wide feature state (kill switch and operator locks, never organization overrides) for people without an organization; side-effect free."),

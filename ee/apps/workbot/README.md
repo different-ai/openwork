@@ -15,7 +15,7 @@ browser ── chat.openworklabs.com (this app: page + API) ──┬── Den 
 - **Den stays the identity provider.** Workbot is Den's first-party OAuth client `openwork-workbot` (PKCE, no
   secret, no consent screen, one return address `${WORKBOT_PUBLIC_URL}/auth/callback`). Den creates it from
   `DEN_WORKBOT_URL`. The access token Workbot gets only works on Den's `/mcp/agent` resource and on
-  `GET /v1/workbot/session` and `POST /v1/workbot/run-token`; it never sees the person's Den session.
+  Workbot routes in Den, including `GET /v1/workbot/session`, `POST /v1/workbot/run-token`, and Cloud coding approvals. It never sees the person's Den session.
 - **Each turn** gets a fresh member-scoped token from `POST /v1/workbot/run-token` (at most an hour). Den refuses it
   when membership or the required access grant is no longer valid.
 

@@ -4,6 +4,7 @@ export * from "./idp.ts";
 export * from "./entra-stand-in.ts";
 export * from "./mock-google.ts";
 export * from "./mock-github.ts";
+export * from "./mock-github-cloud-coding.ts";
 export * from "./mock-cloud-runtime.ts";
 export * from "./mock-mcp.ts";
 export * from "./not-implemented.ts";

@@ -39,6 +39,20 @@ tokens never leave Den. Email is never an identity
 source. Membership, connector grants, credential freshness, and the
 platform capability are rechecked while processing each turn.
 
+## Cloud coding
+
+Members with Cloud coding enabled can use the Slack conversation's Linux computer
+when the deployment's runner has a computer backend. Push requests appear in the
+assistant's reply thread (including the private DM when private replies are enabled).
+Only the requester can approve or deny; a decision in Slack or OpenWork settles
+that same request. The thread message updates and includes the pull request link
+when it is available.
+
+The existing manifest already enables interactivity at the Slack interactions URL
+and requests `chat:write`. Existing installations using that manifest do not need
+new scopes or reinstallation. For older or customized manifests, enable
+interactivity with the generated URL and grant `chat:write` if it is missing.
+
 ## Delivery and recovery
 
 - HTTPS Events API ingress verifies the timestamp and HMAC over the original

@@ -51,6 +51,10 @@ import type {
   UpdatePersonalAgentRoutine,
 } from "@openwork/types/den/personal-agents";
 import type { DecideToolApproval, ToolApproval, ToolApprovalList } from "@openwork/types/den/tool-permissions";
+import {
+  cloudCodingOverviewSchema, cloudCodingPushApprovalListSchema, cloudCodingPushApprovalSchema,
+  cloudCodingPushDecisionInputSchema, cloudCodingRedirectSchema, type CloudCodingPushDecisionInput,
+} from "@openwork/types/den/cloud-coding";
 import type { GatewayAuthorizationRequest, GatewayProviderSummary } from "@openwork/types/den/gateway";
 import { parseGatewayUsableModel } from "./gateway-usable-model";
 import type { DesktopStartupReport } from "@openwork/types/den/diagnostics";
@@ -3584,6 +3588,38 @@ export function createDenClient(options: {
 
     async rememberForPersonalAgent(orgId: string, agentId: string, input: RememberForPersonalAgent): Promise<PersonalAgentMemory | PersonalAgentPendingChange> {
       return requestJson<PersonalAgentMemory | PersonalAgentPendingChange>(baseUrls, `/v1/personal-agents/${encodeURIComponent(agentId)}/memory/notes`, { method: "POST", token, organizationId: orgId, body: input });
+    },
+
+    async listCloudCodingApprovals(orgId: string) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/cloud-coding/approvals?status=pending", { method: "GET", token, organizationId: orgId });
+      return cloudCodingPushApprovalListSchema.parse(payload).approvals;
+    },
+
+    async getCloudCodingApproval(orgId: string, approvalId: string) {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/cloud-coding/approvals/${encodeURIComponent(approvalId)}`, { method: "GET", token, organizationId: orgId });
+      return cloudCodingPushApprovalSchema.parse(payload);
+    },
+
+    async decideCloudCodingApproval(orgId: string, approvalId: string, decision: CloudCodingPushDecisionInput["decision"]) {
+      const body = cloudCodingPushDecisionInputSchema.parse({ decision });
+      const payload = await requestJson<unknown>(baseUrls, `/v1/cloud-coding/approvals/${encodeURIComponent(approvalId)}/decision`, { method: "POST", token, organizationId: orgId, body });
+      return cloudCodingPushApprovalSchema.parse(payload);
+    },
+
+    async requestCloudCodingAdmin(orgId: string) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/cloud-coding/admin-requests", { method: "POST", token, organizationId: orgId });
+      if (!isRecord(payload) || payload.sent !== true) throw new Error("The request was not confirmed.");
+      return { sent: true } as const;
+    },
+
+    async getCloudCodingOverview(orgId: string) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/cloud-coding", { method: "GET", token, organizationId: orgId });
+      return cloudCodingOverviewSchema.parse(payload);
+    },
+
+    async startCloudCodingGitHubLink(orgId: string) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/cloud-coding/github/link/start", { method: "POST", token, organizationId: orgId });
+      return cloudCodingRedirectSchema.parse(payload);
     },
 
     async listToolApprovals(orgId: string): Promise<ToolApprovalList> {
