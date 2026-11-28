@@ -1,6 +1,6 @@
 import {
   COMPUTER_INVENTORY_STATE_LABELS, ORGANIZATION_COMPUTER_INVENTORY_TABS,
-  type ComputerInventoryOwner, type ComputerInventoryRow, type ComputerInventoryState,
+  type ComputerInventoryKind, type ComputerInventoryOwner, type ComputerInventoryRow, type ComputerInventoryState,
   type ComputerMergedSignIn, type ComputerRunCode, type ComputerRunCodeOffReason,
   type OrganizationComputerInventoryTab, type OrganizationComputerRules,
 } from "@openwork/types/den/computer-inventory";
@@ -82,26 +82,31 @@ export function inventoryStatus(status: ComputerInventoryRow["status"], now: num
   };
 }
 
+const DEVICES_SETTING = "Settings > Devices on this computer";
+const OWNER_CHOICE = `They choose in ${DEVICES_SETTING}.`;
 const RUN_CODE_REASONS: Record<ComputerRunCodeOffReason, string> = {
   organization: "The organization turned it off.",
   owner: "Its owner turned it off.",
   not_chosen: "Its owner has not chosen yet.",
   revoked: "Access was revoked.",
   sandbox_unavailable: "This computer can't run the OpenWork sandbox.",
-  nothing_shared: "Its owner has not shared a folder with another computer yet.",
+  nothing_shared: `Its owner hasn't shared a folder with another computer yet. ${OWNER_CHOICE}`,
 };
 
-export function runCodeLabel(runCode: ComputerRunCode): string {
-  switch (runCode.value) {
-    case "no": return "No";
-    case "not_available": return "Not available yet";
-    case "sandbox": return `In sandbox, ${runCode.folders ? countLabel(runCode.folders, "folder") : "no folders"}`;
-    case "whole_computer": return "Yes, whole computer";
-  }
-}
-
-export function runCodeReason(runCode: ComputerRunCode) {
-  return runCode.value === "no" ? RUN_CODE_REASONS[runCode.reason] : null;
+export function inventoryRunCode(code: ComputerRunCode, kind: ComputerInventoryKind, callerIsOwner = false) {
+  const desktop = kind === "desktop";
+  const runCode: ComputerRunCode = desktop && code.value === "not_available"
+    ? { value: "no", reason: "sandbox_unavailable" }
+    : code;
+  const off = runCode.value === "no" ? runCode.reason : null;
+  const reason = desktop && off === "not_chosen" ? `Its owner hasn't turned this on. ${OWNER_CHOICE}`
+    : off ? RUN_CODE_REASONS[off] : null;
+  const setting = desktop && callerIsOwner && off === "owner" ? DEVICES_SETTING : null;
+  const label = runCode.value === "no" ? "No"
+    : runCode.value === "not_available" ? "Not available yet"
+      : runCode.value === "sandbox" ? `In sandbox, ${runCode.folders ? countLabel(runCode.folders, "folder") : "no folders"}`
+        : "Yes, whole computer";
+  return { value: runCode.value, label, reason, setting, locked: Boolean(off) && (desktop || off === "organization") };
 }
 
 export function inventoryOwnerName(owner: ComputerInventoryOwner | null) {
