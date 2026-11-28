@@ -4,7 +4,7 @@ import { isAutoModel, modelTitle } from "./model-catalog";
 
 export type ModelSearchIntent = { fast?: true; effort?: string };
 
-export type ModelSearchMatch = { option: ModelOption; score: number; complete: boolean; preferredProvider: boolean };
+export type ModelSearchMatch = { option: ModelOption; score: number };
 
 export type ModelSearchResult = {
   matches: ModelSearchMatch[];
@@ -90,7 +90,7 @@ function bestScore(query: string, words: Iterable<string>) {
 
 type ProviderHint = { key: string; label: string; ids: Set<string>; words: Set<string> };
 
-function providerIndex(options: readonly ModelOption[], scoped: boolean): ProviderHint[] {
+function providerIndex(options: readonly ModelOption[]): ProviderHint[] {
   const hints = new Map<string, ProviderHint>();
   const add = (key: string, label: string, words: readonly string[], id?: string) => {
     const hint = hints.get(key) ?? { key, label, ids: new Set<string>(), words: new Set<string>() };
@@ -102,18 +102,11 @@ function providerIndex(options: readonly ModelOption[], scoped: boolean): Provid
   for (const option of options) {
     const label = option.description?.trim() || option.providerID;
     const words = [...nameWords(option.providerID), ...nameWords(label)];
-    if (scoped) {
-      const known = Object.keys(KNOWN_PROVIDERS).filter((key) => words.includes(key)
-        || normalize(KNOWN_PROVIDERS[key]) === normalize(label)
-        || (key === "openwork" && isAutoModel(option)));
-      if (known.length) {
-        for (const key of known) add(key, KNOWN_PROVIDERS[key], [], option.providerID);
-        continue;
-      }
-    }
-    const key = isAutoModel(option) || option.providerID === "openwork" ? "openwork"
-      : Object.keys(KNOWN_PROVIDERS).find((known) => words.includes(known) || normalize(KNOWN_PROVIDERS[known]) === normalize(label)) ?? normalize(label);
-    add(key, KNOWN_PROVIDERS[key] ?? label, words, option.providerID);
+    const known = Object.keys(KNOWN_PROVIDERS).filter((key) => words.includes(key)
+      || normalize(KNOWN_PROVIDERS[key]) === normalize(label)
+      || (key === "openwork" && isAutoModel(option)));
+    if (known.length) for (const key of known) add(key, KNOWN_PROVIDERS[key], [], option.providerID);
+    else add(normalize(label), label, words, option.providerID);
   }
   return [...hints.values()];
 }
@@ -130,15 +123,14 @@ function matchProvider(word: string, hints: readonly ProviderHint[]): ProviderHi
   return best?.hint;
 }
 
-export function searchModels(options: readonly ModelOption[], query: string, settings: { providerFilterSyncFix?: boolean } = {}): ModelSearchResult {
-  const scoped = settings.providerFilterSyncFix === true;
+export function searchModels(options: readonly ModelOption[], query: string): ModelSearchResult {
   const typed = normalize(query).split(/[\s,]+/).map((word) => word.replace(/^[^a-z0-9]+|[^a-z0-9.]+$/g, "")).filter(Boolean);
   const indexed = options.filter((option) => !option.disabled).map((option) => {
     const title = modelTitle(option);
     return { option, title, words: new Set([...nameWords(title), ...nameWords(option.modelID)]) };
   });
   const allWords = new Set(indexed.flatMap((entry) => [...entry.words]));
-  const hints = providerIndex(indexed.map((entry) => entry.option), scoped);
+  const hints = providerIndex(indexed.map((entry) => entry.option));
   const intent: ModelSearchIntent = {};
   const modelWords: string[] = [];
   const optionalWords: string[] = [];
@@ -173,22 +165,21 @@ export function searchModels(options: readonly ModelOption[], query: string, set
       if (value > 0) matched++;
       score += value;
     }
-    if (scoped ? matched !== modelWords.length : modelWords.length > 0 && matched === 0) continue;
+    if (matched !== modelWords.length) continue;
     for (const word of optionalWords) if (bestScore(word, entry.words) >= 80) score += 15;
     const providerHits = providers.filter((hint) => servedBy(hint, entry)).length;
-    if (scoped ? providerHits !== providers.length : modelWords.length === 0 && providers.length > 0 && providerHits === 0) continue;
-    const complete = matched === modelWords.length;
+    if (providerHits !== providers.length) continue;
     const honoured = intent.fast || intent.effort ? resolveSearchIntent(entry.option, intent).applied.length : 0;
-    score += (complete ? 1_000 : matched * 100) + providerHits * 300 + honoured * 150 - entry.title.length / 100;
-    matches.push({ option: entry.option, score, complete, preferredProvider: providers.length > 0 && providerHits === providers.length });
+    score += 1_000 + providerHits * 300 + honoured * 150 - entry.title.length / 100;
+    matches.push({ option: entry.option, score });
   }
   matches.sort((a, b) => b.score - a.score);
   return {
     matches, intent, modelWords,
-    ...(scoped && providerWords.length ? { providerQuery: providerWords.join(" ") } : {}),
+    ...(providerWords.length ? { providerQuery: providerWords.join(" ") } : {}),
     ...(providers.length ? { provider: {
       label: providers.map((hint) => hint.label).join(" "),
-      found: matches.some((match) => match.complete && match.preferredProvider),
+      found: matches.length > 0,
     } } : {}),
   };
 }

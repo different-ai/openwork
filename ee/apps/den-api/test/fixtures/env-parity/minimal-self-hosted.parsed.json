@@ -1,0 +1,285 @@
+{
+  "databaseUrl": "mysql://openwork:placeholder-database-password@mysql.example.internal:3306/openwork_den",
+  "dbEncryptionKey": "placeholder-db-encryption-key-0123456789abcdef",
+  "dbMode": "mysql",
+  "planetscale": null,
+  "readReplica": null,
+  "betterAuthSecret": "placeholder-better-auth-secret-0123456789abcdef",
+  "betterAuthUrl": "https://openwork.example.test",
+  "betterAuthCookieDomain": "openwork.example.test",
+  "authCookiePrefix": "openwork-den",
+  "trustedProxies": [],
+  "webClientIpSecret": "<undefined>",
+  "webUrl": "https://openwork.example.test",
+  "databaseRedisUrl": "<undefined>",
+  "databaseRedisAllowInsecureInternal": false,
+  "mcpResourceUrl": "https://api.openwork.example.test/mcp",
+  "mcpAdditionalResources": [],
+  "betterAuthTrustedOrigins": [
+    "https://openwork.example.test"
+  ],
+  "webAppHosts": [
+    "openwork.example.test"
+  ],
+  "devMode": false,
+  "botIdProtectionEnabled": false,
+  "allowPrivateMcpUrls": false,
+  "configBlobs": {
+    "secretEnvAllowlist": []
+  },
+  "maintenanceToken": "<undefined>",
+  "headlessRunnerCallbackToken": "<undefined>",
+  "agentEvaluationApiKey": "<undefined>",
+  "gatewayKey": "<undefined>",
+  "gatewayOrigin": "<undefined>",
+  "planGatingEnabled": false,
+  "generatedArtifactViewsEnabled": false,
+  "appMcpServersEnabled": true,
+  "artifactStorage": {
+    "backend": null,
+    "unavailableReason": "DEN_ARTIFACT_STORAGE_BACKEND is not set.",
+    "maxBytes": 20971520,
+    "maxRows": 10000
+  },
+  "scimMaintenanceIntervalMs": 300000,
+  "lifecycleEmails": {
+    "enabled": false,
+    "intervalMs": 900000
+  },
+  "adminMetrics": {
+    "enabled": true,
+    "fastIntervalMs": 300000,
+    "heavyIntervalMs": 1800000
+  },
+  "mcpRegistrationProbe": {
+    "enabled": false,
+    "tryRegistration": false,
+    "intervalMs": 86400000
+  },
+  "requireEmailVerification": false,
+  "passwordBreachScreeningEnabled": true,
+  "apiKeyRateLimitMax": 600,
+  "github": {
+    "clientId": "<undefined>",
+    "clientSecret": "<undefined>"
+  },
+  "githubConnectorApp": {
+    "appId": "<undefined>",
+    "clientId": "<undefined>",
+    "clientSecret": "<undefined>",
+    "privateKey": "<undefined>",
+    "webhookSecret": "<undefined>"
+  },
+  "githubSync": {
+    "workerIntervalMs": 5000,
+    "retryBaseMs": 30000,
+    "maxAttempts": 5,
+    "reconcileBatchSize": 25,
+    "reconcileMinAgeMs": 21600000,
+    "reconcileMaxBatches": 20,
+    "reconcileRunBudgetMs": 45000,
+    "reconcileProbeConcurrency": 4
+  },
+  "google": {
+    "clientId": "<undefined>",
+    "clientSecret": "<undefined>"
+  },
+  "email": {
+    "from": "<undefined>",
+    "supportAddress": "<undefined>"
+  },
+  "resend": {
+    "apiKey": "<undefined>"
+  },
+  "smtp": {
+    "host": "<undefined>",
+    "port": 587,
+    "user": "<undefined>",
+    "pass": "<undefined>",
+    "secure": false
+  },
+  "loops": {
+    "apiKey": "<undefined>",
+    "marketingEnabled": false
+  },
+  "linear": {
+    "apiKey": "<undefined>",
+    "teamId": "<undefined>",
+    "apiBase": "https://api.linear.app/graphql",
+    "completedStateId": "<undefined>"
+  },
+  "orgMode": "single_org",
+  "singleOrg": {
+    "name": "OpenWork",
+    "slug": "default",
+    "allowPublicSignup": false,
+    "ownerEmails": []
+  },
+  "port": 8790,
+  "corsOrigins": [
+    "https://openwork.example.test"
+  ],
+  "apiPublicUrl": "https://api.openwork.example.test",
+  "serviceVersion": "dev",
+  "helm": {
+    "chartVersion": "<undefined>",
+    "appVersion": "<undefined>"
+  },
+  "publicUrlTrustedOrigins": [
+    "https://openwork.example.test"
+  ],
+  "publicProxyTrustedOrigins": [
+    "https://openwork.example.test"
+  ],
+  "installerArtifactsDir": "<undefined>",
+  "installerReleaseTag": "<latest desktop release tag>",
+  "installerReleaseTagExplicit": false,
+  "installerReleaseRepo": "different-ai/openwork",
+  "installerCacheDir": "<tmpdir>/openwork-desktop-artifacts",
+  "desktopReleasesBaseUrl": "<undefined>",
+  "desktopReleasesMode": "github",
+  "googleOAuthAuthorizeUrl": "<undefined>",
+  "googleOAuthTokenUrl": "<undefined>",
+  "googleOAuthUserinfoUrl": "<undefined>",
+  "googleApiBaseUrl": "<undefined>",
+  "microsoftOAuthAuthorizeUrl": "<undefined>",
+  "microsoftOAuthTokenUrl": "<undefined>",
+  "microsoftGraphBaseUrl": "<undefined>",
+  "desktopDenBaseUrl": "<undefined>",
+  "marketingUrl": "https://openwork.example.test",
+  "mcpClaimNamespace": "https://openwork.example.test",
+  "bootstrapAdminEmails": [
+    "admin@example.test"
+  ],
+  "initialAdminBootstrapCode": "<undefined>",
+  "provisionerMode": "stub",
+  "workerProvisioningReconcileIntervalMs": 60000,
+  "workerProvisioningReconcileStaleMs": 180000,
+  "workerProvisioningReconcileBatchSize": 10,
+  "cloudProvisionDeadlineMs": 900000,
+  "cloudMaterializationFailureCooldownMs": 120000,
+  "cloudIdleStopMs": 1800000,
+  "cloudIdleLoopIntervalMs": 60000,
+  "cloudIdleStopBatchSize": 10,
+  "cloudActivityProbeTimeoutMs": 10000,
+  "cloudUnreachableGraceMs": 60000,
+  "cloudStopFlushTimeoutMs": 20000,
+  "workerUrlTemplate": "<undefined>",
+  "workerActivityBaseUrl": "https://openwork.example.test",
+  "automations": {
+    "enabled": true,
+    "runtimeEnabled": true,
+    "pollIntervalMs": 15000,
+    "batchSize": 25,
+    "maxConcurrency": 4,
+    "headlessMaxConcurrency": 16,
+    "leaseMs": 60000,
+    "runTimeoutMs": 900000,
+    "runnerClaimDeadlineMs": 900000
+  },
+  "dashboardsEnabled": false,
+  "sandbox": {
+    "workplaceUrl": null,
+    "gateway": null
+  },
+  "features": {
+    "deployment": "self_hosted",
+    "locks": {}
+  },
+  "auditCaptureEnabled": true,
+  "auditVisibilityEnabled": true,
+  "auditSelfHostedEnabled": false,
+  "corsHandledByEdge": false,
+  "openworkWebEnabled": false,
+  "workspaceCreateLimit": {
+    "limit": 3,
+    "contact": "mailto:team@openworklabs.com"
+  },
+  "openaiSafety": {
+    "webhookSecret": "<undefined>",
+    "readKey": "<undefined>"
+  },
+  "inferenceFree": {
+    "enabled": false,
+    "weeklyBudgetUsd": 5,
+    "weeklyLimitAmount": 500000000,
+    "modelID": "openai/gpt-6-luna"
+  },
+  "workbotFreeGrantSecret": null,
+  "inferenceProxyBaseUrl": "http://127.0.0.1:8791",
+  "modelsPublicBaseUrl": "http://127.0.0.1:8791",
+  "gatewayEnabled": false,
+  "gatewayProxyBaseUrl": "<undefined>",
+  "gatewayPublicBaseUrl": "http://127.0.0.1:8791",
+  "openRouterManagementApiKey": "<undefined>",
+  "openRouterWorkspaceId": "<undefined>",
+  "stripe": {
+    "secretKey": "<undefined>",
+    "webhookSecret": "<undefined>",
+    "inferencePriceId": "<undefined>",
+    "seatPriceId": "<undefined>",
+    "openworkWebPriceId": "<undefined>",
+    "billingSuccessUrl": "<undefined>",
+    "billingCancelUrl": "<undefined>"
+  },
+  "render": {
+    "apiBase": "https://api.render.com/v1",
+    "apiKey": "<undefined>",
+    "ownerId": "<undefined>",
+    "workerRepo": "https://github.com/different-ai/openwork",
+    "workerBranch": "dev",
+    "workerRootDir": "ee/apps/den-worker-runtime",
+    "workerPlan": "standard",
+    "workerRegion": "oregon",
+    "workerOpenworkVersion": "<undefined>",
+    "workerNamePrefix": "den-worker",
+    "workerPublicDomainSuffix": "<undefined>",
+    "customDomainReadyTimeoutMs": 240000,
+    "provisionTimeoutMs": 900000,
+    "healthcheckTimeoutMs": 180000,
+    "pollIntervalMs": 5000
+  },
+  "vercel": {
+    "apiBase": "https://api.vercel.com",
+    "token": "<undefined>",
+    "teamId": "<undefined>",
+    "teamSlug": "<undefined>",
+    "dnsDomain": "<undefined>"
+  },
+  "daytona": {
+    "envPath": "<undefined>",
+    "apiUrl": "https://app.daytona.io/api",
+    "apiKey": "<undefined>",
+    "target": "<undefined>",
+    "snapshot": "<undefined>",
+    "sandboxClass": "container",
+    "image": "node:24.22.1-bookworm",
+    "resources": {
+      "cpu": 2,
+      "memory": 4,
+      "disk": 8
+    },
+    "public": false,
+    "autoStopInterval": 0,
+    "autoPauseInterval": 5,
+    "autoArchiveInterval": 10080,
+    "autoDeleteInterval": -1,
+    "signedPreviewExpiresSeconds": 86400,
+    "sandboxNamePrefix": "den-daytona-worker",
+    "sharedVolumeName": "den-daytona-workers",
+    "workspaceMountPath": "/workspace",
+    "dataMountPath": "/persist/openwork",
+    "runtimeWorkspacePath": "<tmpdir>/openwork-workspace",
+    "runtimeDataPath": "<tmpdir>/openwork-data",
+    "sidecarDir": "<tmpdir>/openwork-sidecars",
+    "openworkPort": 8787,
+    "opencodePort": 4096,
+    "createTimeoutSeconds": 300,
+    "deleteTimeoutSeconds": 120,
+    "stopTimeoutSeconds": "<undefined>",
+    "healthcheckTimeoutMs": 300000,
+    "checkpointIntervalSeconds": 300,
+    "checkpointKeep": 3,
+    "pollIntervalMs": 1000
+  }
+}

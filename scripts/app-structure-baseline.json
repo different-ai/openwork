@@ -1246,12 +1246,6 @@
     {
       "file": "apps/app/src/react-app/domains/models/model-picker-list.tsx",
       "rule": "cross-domain",
-      "target": "apps/app/src/react-app/domains/session/status/use-desktop-feature",
-      "count": 1
-    },
-    {
-      "file": "apps/app/src/react-app/domains/models/model-picker-list.tsx",
-      "rule": "cross-domain",
       "target": "apps/app/src/react-app/domains/shortcuts/model-shortcuts-store",
       "count": 1
     },

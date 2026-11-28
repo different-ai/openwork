@@ -23,7 +23,7 @@ The first pass retired 37 other switches. See [the original retirement guide](..
 - Microphone and speech-recognition OS permissions, platform support checks and the person's start/stop controls.
 - File-sharing Allow/Ask/Block policy, remembered-grant revocation and recipient/folder boundaries.
 - Your agent's real organization/team enablement, member opt-out/snooze/mute, data-source permissions, message limits and working hours. The separate experimental brief, check-gate and send-check rollouts are unchanged.
-- Computer ownership, visibility, organization remote-access policy, per-device consent and trusted-host checks. `remoteComputers` and `remoteTasksOptIn` are separate, retained rollouts; GA inventory does not grant remote control.
+- Computer ownership, visibility, organization remote-access policy, per-device consent and trusted-host checks. `remoteTasksOptIn` is a separate, retained rollout; GA inventory does not grant remote control.
 
 No historical rollout, override, usage, outcome or audit data is deleted. Retired Helm keys and older admin inputs remain accepted and ignored. Fixed response-only compatibility fields keep supported older clients on the GA path without retaining configurable switches. New clients must not gate behavior on those compatibility fields.
 

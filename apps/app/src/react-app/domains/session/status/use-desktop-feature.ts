@@ -8,7 +8,7 @@ import { useAutomationsDenContext } from "@/react-app/domains/automations/use-au
 
 const FEATURE_STALE_MS = 30_000
 
-type DesktopFeatureKey = "remoteComputers" | "remoteSessionLiveSync" | "questionMinimize" | "questionInThread" | "importOpencodeConnections" | "lowStorageWarning" | "sessionTree" | "sideChatFromSelection" | "sideQuestions" | "providerFilterSyncFix" | "browserSecretHandles" | "officeOutlinePreview" | "composerInlineSuggestions" | "followUpDelivery" | "flatSessionPanes"
+type DesktopFeatureKey = "remoteSessionLiveSync" | "questionInThread" | "sessionTree" | "sideChatFromSelection" | "sideQuestions" | "browserSecretHandles" | "officeOutlinePreview" | "composerInlineSuggestions" | "followUpDelivery" | "flatSessionPanes"
 
 export function useDesktopFeature(key: DesktopFeatureKey): boolean {
   const denAuth = useDenAuth()
@@ -27,4 +27,8 @@ export function useDesktopFeature(key: DesktopFeatureKey): boolean {
     select: (features) => features[key] === true,
   })
   return context.ready ? organization.enabled : denAuth.status === "signed_out" && !deployment.isError && deployment.data === true
+}
+
+export function useSignedInToOrganization(): boolean {
+  return useAutomationsDenContext().ready
 }

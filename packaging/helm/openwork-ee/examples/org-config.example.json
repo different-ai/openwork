@@ -1,0 +1,77 @@
+{
+  "format": "openwork.config-blob",
+  "formatVersion": 1,
+  "scope": ["settings.general", "members.teams", "connectors.mcp", "plugins.skills"],
+  "areas": {
+    "settings": {
+      "general": {
+        "specVersion": 1,
+        "items": [
+          {
+            "name": "General settings",
+            "spec": {
+              "allowedEmailDomains": null,
+              "allowedDesktopVersions": null,
+              "automations": { "desktop": true, "cloud": false },
+              "desktopAppRestrictions": {}
+            }
+          }
+        ]
+      }
+    },
+    "members": {
+      "teams": {
+        "specVersion": 1,
+        "items": [
+          {
+            "key": "operations",
+            "name": "Operations",
+            "spec": { "grantsOrganizationAdmin": false, "managedBy": "manual" }
+          }
+        ]
+      }
+    },
+    "connectors": {
+      "mcp": {
+        "specVersion": 1,
+        "items": [
+          {
+            "key": "example-handbook",
+            "name": "Example handbook",
+            "spec": {
+              "url": "https://handbook.example.com/mcp",
+              "authType": "none",
+              "credentialMode": "shared",
+              "exposeDirectly": false,
+              "apiKeyAuthScheme": "bearer",
+              "apiKey": null,
+              "requestHeaders": [],
+              "oauth": null,
+              "access": {
+                "orgWide": false,
+                "teams": [{ "$ref": "members.teams/operations" }],
+                "members": []
+              }
+            }
+          }
+        ]
+      }
+    },
+    "plugins": {
+      "skills": {
+        "specVersion": 1,
+        "items": [
+          {
+            "name": "weekly-summary",
+            "spec": {
+              "type": "skill",
+              "content": {
+                "rawSourceText": "---\nname: weekly-summary\ndescription: Summarize weekly progress and next steps.\n---\nGroup notes into completed work, blockers, and next steps. Flag missing information instead of guessing.\n"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

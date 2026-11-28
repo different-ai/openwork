@@ -1,6 +1,11 @@
 /**
- * What a feature declaration looks like. Each feature lives in its own file
- * under ./flags and is collected by ./registry.ts.
+ * What a preview flag declaration looks like. Every preview is declared in
+ * ./previews.ts and collected by ./registry.ts.
+ *
+ * A preview flag gates unfinished work. It has an owner and a day it expires:
+ * by then the work ships (the key moves to ./retired.ts and its checks are
+ * removed) or is cut. Permanent settings are not previews: what a deployment
+ * can do is a capability, and what an organization chooses is an org setting.
  */
 
 export type FeatureDeployment = "cloud" | "self_hosted"
@@ -22,23 +27,27 @@ export const FEATURE_CATEGORIES = {
 
 export type FeatureCategory = keyof typeof FEATURE_CATEGORIES
 
-export type FeatureDefinition = {
+type Day = `${number}-${number}-${number}`
+
+export type PreviewDefinition = {
   label: string
   description: string
   category: FeatureCategory
-  added: `${number}-${number}-${number}`
-  since: `${number}-${number}`
-  author: string
+  added: Day
+  owner: string
+  expiresOn: Day
   docs?: `docs/${string}.md`
   deployments: readonly FeatureDeployment[]
   default: boolean
-  permanent?: boolean
   outcomes?: true
 }
 
-/** Declares one feature. The file name is the key in kebab-case: flags/new-thing.ts declares `newThing`. */
-export function defineFeature<const T extends FeatureDefinition>(feature: T): T {
-  return feature
+/** The registry's entries are previews; the rest of the code still calls them features. */
+export type FeatureDefinition = PreviewDefinition
+
+/** Declares one preview flag. The export name in ./previews.ts is its key. */
+export function definePreview<const T extends PreviewDefinition>(preview: T): T {
+  return preview
 }
 
 export const everywhere = ["cloud", "self_hosted"] as const

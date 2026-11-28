@@ -111,7 +111,7 @@ import { BrowserPresentationSurfaces, BrowserRailButton } from "../panel/browser
 import { DebugRailProvider, DebugRailSlot } from "../panel/debug-rail-slot";
 import { SessionDebugPanel } from "../surface/debug-panel";
 import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-slot";
-import { useDesktopFeature } from "../status/use-desktop-feature";
+import { useDesktopFeature, useSignedInToOrganization } from "../status/use-desktop-feature";
 import { SelectionSideChat } from "../links/selection-side-chat";
 import { SideQuestionPanel } from "../links/side-question-panel";
 import { showSideChatTab } from "../links/side-question-store";
@@ -675,7 +675,7 @@ export function SessionPage(props: SessionPageProps) {
     setSidePanel: setCurrentSidePanel,
   });
   const { isPoppedOut: browserIsPoppedOut, placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
-  const remoteComputersFeature = useDesktopFeature("remoteComputers");
+  const signedInToOrganization = useSignedInToOrganization();
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
   const sessionRunsLocally = fileOriginForRuntime({ desktop: isElectronRuntime(), serverUrl: props.openworkServerClient?.baseUrl, sandboxBackend: props.selectedWorkspaceDisplay.sandboxBackend }) === "local";
   const compactChrome = !isMobile && !props.mainContentHeaderActionsRef && isElectronRuntime();
@@ -1726,7 +1726,7 @@ export function SessionPage(props: SessionPageProps) {
                   ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
-              {!isElectronRuntime() && remoteComputersFeature && props.openworkServerClient ? <CloudComputerControl client={props.openworkServerClient} /> : null}
+              {!isElectronRuntime() && signedInToOrganization && props.openworkServerClient ? <CloudComputerControl client={props.openworkServerClient} /> : null}
               {computerUse && props.selectedSessionId ? <ComputerControl key={props.selectedSessionId} sessionId={props.selectedSessionId} /> : null}
               {flatPanes && sidePanelOpen ? null : (
               <Tooltip>

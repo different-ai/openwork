@@ -281,7 +281,7 @@ const invalid: [Record<string, string | boolean>, string][] = [
   [{ ...runner, "config.public.apiOrigin": "", "config.public.webOrigin": "https://192.0.2.10" }, "set config.public.apiOrigin explicitly"],
   [{ ...runner, "config.public.apiOrigin": "", "config.public.webOrigin": "https://[2001:db8::10]" }, "set config.public.apiOrigin explicitly"],
   [{ ...runner, "denApi.env.DEN_API_PUBLIC_URL": "https://other.example.test" }, "origin env overrides"],
-  [{ ...runner, "denApi.env.DEN_BASE_URL": "https://other.example.test" }, "origin env overrides"],
+  [{ ...runner, "denApi.env.DEN_BASE_URL": "https://other.example.test" }, "overrides chart-owned wiring"],
 ];
 for (const [index, [settings, diagnostic]] of invalid.entries()) {
   test(`an operator gets a safe diagnostic for invalid companion configuration ${index + 1}`, ({ evidence }) => {

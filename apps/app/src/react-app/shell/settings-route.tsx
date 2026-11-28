@@ -10,7 +10,6 @@ import { useAutoAccess } from "@/react-app/domains/cloud/auto-access-ui";
 import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
 import { openNewSessionDraft } from "@/react-app/domains/session/chat/new-session-destination";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "@/components/ui/sonner";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
@@ -205,7 +204,7 @@ import { applyDefaultModelPreference } from "./command-palette-models";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
-import { getDenInferenceUrl, markFeatureUsed, isDenOrgAdminRole, readDenSettings, type DenSettings } from "@/app/lib/den";
+import { getDenInferenceUrl, isDenOrgAdminRole, readDenSettings, type DenSettings } from "@/app/lib/den";
 import { denDashboardUrl } from "@/app/lib/den-dashboard-links";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { useUiStateStore } from "./ui-state-store";
@@ -787,9 +786,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     (scope: "project" | "global") => connectionsStore.readMcpConfigFile(scope),
     [connectionsStore],
   );
-  const providerFilterSyncFixEnabled = useDesktopFeature("providerFilterSyncFix");
-  const providerFilterSyncFixRef = useRef(providerFilterSyncFixEnabled);
-  providerFilterSyncFixRef.current = providerFilterSyncFixEnabled;
   const providerAuthStore = useMemo(
     () =>
       createProviderAuthStore({
@@ -810,7 +806,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           routeStateRef.current.selectedWorkspaceId.trim() ||
           null,
         openworkServer: openworkServerStore,
-        providerFilterSyncFixEnabled: () => providerFilterSyncFixRef.current,
         setProviders,
         setProviderDefaults,
         setProviderConnectedIds,
@@ -1209,22 +1204,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
 
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
-  const importOpencodeConnectionsEnabled = useDesktopFeature("importOpencodeConnections");
   const opencodeConnectionsImport = useMemo(() => {
-    if (!importOpencodeConnectionsEnabled || !openworkClient || !runtimeWorkspaceId) return undefined;
+    if (!openworkClient || !runtimeWorkspaceId) return undefined;
     return {
       workspaceId: runtimeWorkspaceId,
       preview: () => openworkClient.previewOpencodeConnections(runtimeWorkspaceId),
-      importConnections: (names: string[]) => {
-        markFeatureUsed("importOpencodeConnections");
-        return openworkClient.importOpencodeConnections(runtimeWorkspaceId, names);
-      },
+      importConnections: (names: string[]) => openworkClient.importOpencodeConnections(runtimeWorkspaceId, names),
       onImported: () => {
         void refreshMcpServersRef.current?.();
         window.setTimeout(() => void refreshMcpServersRef.current?.(), 4_000);
       },
     };
-  }, [importOpencodeConnectionsEnabled, openworkClient, runtimeWorkspaceId]);
+  }, [openworkClient, runtimeWorkspaceId]);
   routeStateRef.current.runtimeWorkspaceId = runtimeWorkspaceId;
   routeStateRef.current.selectedWorkspaceOpenworkClient = selectedWorkspaceEndpoint?.client ?? openworkClient;
   const cloudMcpHealth = cloudMcpHealthResult?.workspaceId === runtimeWorkspaceId
@@ -1956,7 +1947,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     runtimeWorkspaceId,
     organizationName: cloudSession.activeOrgName,
     share: providerAuthStore.shareDeviceProvider,
-    guided: providerFilterSyncFixEnabled ? {
+    guided: {
       confirmArrival: providerAuthStore.syncSharedDeviceProvider,
       removeDeviceKey: async (providerId, organizationProviderId) => {
         const current = local.prefs.defaultModel;
@@ -1971,7 +1962,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       showOrganizationProviders: () => {
         document.querySelector('[data-provider-scope="organization"]')?.scrollIntoView({ block: "center", behavior: "smooth" });
       },
-    } : undefined,
+    },
   });
   const openProviderCloudPage = deviceShare.resolved && !deviceShare.canShare ? undefined : openProvidersInDen;
   const shareRequested = route.tab === "ai" && new URLSearchParams(location.search).get("share") === "1";

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "OpenWork feature registry: declare a feature once, resolve it per deployment and organization.",
+  "description": "OpenWork preview flags: declare unfinished work once, resolve it per deployment and organization.",
   "exports": {
     ".": {
       "types": {
@@ -37,21 +37,37 @@
       "development": "./src/define.ts",
       "default": "./src/define.ts"
     },
-    "./all-flags": {
+    "./previews": {
       "types": {
-        "openwork-build": "./dist/types/src/all-flags.d.ts",
-        "default": "./src/all-flags.ts"
+        "openwork-build": "./dist/types/src/previews.d.ts",
+        "default": "./src/previews.ts"
       },
-      "development": "./src/all-flags.ts",
-      "default": "./src/all-flags.ts"
+      "development": "./src/previews.ts",
+      "default": "./src/previews.ts"
     },
-    "./flags/*": {
+    "./retired": {
       "types": {
-        "openwork-build": "./dist/types/src/flags/*.d.ts",
-        "default": "./src/flags/*.ts"
+        "openwork-build": "./dist/types/src/retired.d.ts",
+        "default": "./src/retired.ts"
       },
-      "development": "./src/flags/*.ts",
-      "default": "./src/flags/*.ts"
+      "development": "./src/retired.ts",
+      "default": "./src/retired.ts"
+    },
+    "./preview-rules": {
+      "types": {
+        "openwork-build": "./dist/types/src/preview-rules.d.ts",
+        "default": "./src/preview-rules.ts"
+      },
+      "development": "./src/preview-rules.ts",
+      "default": "./src/preview-rules.ts"
+    },
+    "./capability-check": {
+      "types": {
+        "openwork-build": "./dist/types/src/capability-check.d.ts",
+        "default": "./src/capability-check.ts"
+      },
+      "development": "./src/capability-check.ts",
+      "default": "./src/capability-check.ts"
     }
   },
   "scripts": {

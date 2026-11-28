@@ -3,8 +3,8 @@
 // helpers/openwork-computer-use.exe) lists windows and installed apps, captures
 // the selected window and sends input; an installed app that is not open is
 // started when the agent opens it; the shared runtime adds sessions, receipts, Take over,
-// Continue, Stop and watch frames. It needs no system permissions and does not
-// depend on the remoteComputers rollout. Main process only.
+// Continue, Stop and watch frames. It needs no system permissions and no
+// organization sign-in. Main process only.
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

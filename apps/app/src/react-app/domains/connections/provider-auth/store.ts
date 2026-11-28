@@ -321,7 +321,6 @@ export type ProviderAuthStoreSnapshot = {
 type CreateProviderAuthStoreOptions = {
   claudeCheckTiming?: { pollMs?: number; settleMs?: number; timeoutMs?: number; followUpMs?: number; signInPollMs?: number };
   claudeSignInAvailable?: () => boolean;
-  providerFilterSyncFixEnabled?: () => boolean;
   nativeOpenworkClient?: () => OpenworkServerClient | null;
   nativeWorkspaceId?: () => string | null;
   client: () => Client | null;
@@ -2702,21 +2701,15 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!isCurrent() || !await pushDenSession() || !isCurrent()) {
       throw new Error("The active account or organization changed, or its session could not be delivered. Nothing was shared.");
     }
-    const result = await client.shareDeviceProvider(providerId, orgId, verifiedToken);
-    if (isCurrent() && !options.providerFilterSyncFixEnabled?.()) {
-      await Promise.allSettled([refreshCloudOrgProviders({ force: true }), runCloudProviderSync("manual")]);
-    }
-    return result;
+    return client.shareDeviceProvider(providerId, orgId, verifiedToken);
   }
 
   async function syncSharedDeviceProvider(providerId: string, shared: { inferenceProviderId: string; name: string }): Promise<SharedDeviceProviderArrival> {
-    if (!options.providerFilterSyncFixEnabled?.()) return { status: "pending" };
     const contextKey = getCloudProviderSyncContextKey();
     const settings = readDenSettings();
     const orgId = settings.activeOrgId?.trim();
     const token = settings.authToken?.trim();
-    const isCurrent = () => !disposed && options.providerFilterSyncFixEnabled?.() === true
-      && contextKey === getCloudProviderSyncContextKey();
+    const isCurrent = () => !disposed && contextKey === getCloudProviderSyncContextKey();
     if (!orgId || !token || !isCurrent() || !isProviderAllowedByDesktopPolicy({
       providerId: shared.inferenceProviderId,
       restrictToCloud: options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" }),
@@ -2820,7 +2813,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
               const previouslyLive = usesLiveProviderSync({ baseUrl, status: queryClient.getQueryData<LiveProviderSyncStatus>(key) });
               if (status) queryClient.setQueryData(key, status);
               if (usesLiveProviderSync({ baseUrl, status })) {
-                if ((syncOptions?.fresh && options.providerFilterSyncFixEnabled?.()) || syncOptions?.refreshGatewayCatalog) {
+                if (syncOptions?.fresh || syncOptions?.refreshGatewayCatalog) {
                   await openworkClient.refreshGatewayProviderCatalog(delivery?.controller.signal);
                   if (!isCurrent()) return;
                 }

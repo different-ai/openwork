@@ -2,7 +2,7 @@ import type { Seed } from "@openwork/env";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { bootWorkbot, enableWorkbot, signInWorkbot } from "../../worlds/lib/workbot.ts";
+import { bootWorkbot, signInWorkbot } from "../../worlds/lib/workbot.ts";
 import { ACME_MODEL, gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "../../worlds/lib/acme-gateway.ts";
 import { denFetch } from "../packages/behaviors/src/den.ts";
 
@@ -75,8 +75,6 @@ export async function remoteDevicesWorkbotWorld(seed: Seed) {
     return {
       web,
       call: signed.call,
-      /** Workbot's computer and Devices, on or off together for the seeded organization. */
-      setEnabled: (value: boolean) => enableWorkbot(workbot.den, { remoteComputers: value }),
       /** What the person's signed-in OpenWork Desktop sends on launch, through the route it uses. */
       desktopSignsIn: () => send("PUT", "/v1/remote-devices/this-computer", {
         installId: "devices-proof-macbook", label: "Alex's MacBook Pro", platform: "darwin", appVersion: "1.5.0", osVersion: "25.1.0", arch: "arm64",

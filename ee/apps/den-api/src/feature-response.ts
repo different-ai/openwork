@@ -103,6 +103,12 @@ const retiredClientFeaturesSchema = z.object({
   sandboxTools: retired,
   litellmEntraMemberSignIn: retired,
   workbotEnableAllConnectors: retired,
+  gatewayOpenCodeSetup: retired,
+  importOpencodeConnections: retired,
+  lowStorageWarning: retired,
+  providerFilterSyncFix: retired,
+  questionMinimize: retired,
+  remoteComputers: retired,
   teamSettingsSidebar: z.literal(false).default(false).meta({
     deprecated: true,
     description: "Fixed false compatibility value for the removed team sidebar; not configurable.",

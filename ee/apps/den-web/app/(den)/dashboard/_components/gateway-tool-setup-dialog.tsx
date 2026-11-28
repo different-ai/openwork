@@ -4,11 +4,10 @@ import { Dialog } from "@base-ui/react/dialog";
 import { DEFAULT_GATEWAY_API_KEY_EXPIRY, type CreatedGatewayApiKey } from "@openwork/types/den/gateway-api-keys";
 import { KeyRound, Lock, Plug, Plus, X } from "lucide-react";
 import { useState } from "react";
-import { markFeatureUsed } from "../../_lib/feature-usage";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
 import { expiryFromDays, formatExpiry, useCreateGatewayApiKey } from "./gateway-api-keys-data";
-import { CopyField, GATEWAY_TOOLS, GatewayToolSteps, useGatewayTools, type GatewayToolId } from "./gateway-tool-setup";
+import { CopyField, GATEWAY_TOOLS, GatewayToolSteps, type GatewayToolId } from "./gateway-tool-setup";
 
 type Tool = (typeof GATEWAY_TOOLS)[number];
 
@@ -33,20 +32,16 @@ function ToolMark({ tool, size }: { tool: Tool; size: "sm" | "md" }) {
 
 export function GatewayToolSetupRow({ enabled, baseUrl }: { enabled: boolean; baseUrl: string }) {
   const [open, setOpen] = useState<GatewayToolId | null>(null);
-  const tools = useGatewayTools();
-  const tool = tools.find((entry) => entry.id === open) ?? null;
+  const tool = GATEWAY_TOOLS.find((entry) => entry.id === open) ?? null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-2 py-2" data-testid="gateway-tool-setup-row">
       <span className="w-12 shrink-0 text-[12px] font-medium leading-5 text-[var(--dls-text-secondary)]">Set up</span>
       <div className="flex flex-wrap items-center gap-1.5">
-        {tools.map((entry) => (
+        {GATEWAY_TOOLS.map((entry) => (
           <button
             key={entry.id}
             type="button"
-            onClick={() => {
-              setOpen(entry.id);
-              if (entry.id === "opencode") markFeatureUsed("gatewayOpenCodeSetup");
-            }}
+            onClick={() => setOpen(entry.id)}
             aria-label={`Set up ${entry.name}`}
             title={entry.line}
             data-testid={`gateway-tool-setup-${entry.id}`}

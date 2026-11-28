@@ -120,33 +120,23 @@ describe("a long question leaves room for the chat", () => {
     options: Array.from({ length: 30 }, (_, index) => ({ label: `Plan ${index + 1}`, description: "Details ".repeat(40) })),
   }];
 
-  for (const collapsible of [false, true]) {
-    test(`the question text and the options each scroll in a bounded area (minimize ${collapsible ? "on" : "off"})`, async () => {
-      await render(<QuestionPanel questions={long} busy={false} collapsible={collapsible} requestId="long" onReply={() => {}} />, ({ container }) => {
-        const text = container.querySelector("[data-question-text]");
-        const body = container.querySelector("[data-question-body]");
-        expect(text?.className).toContain("max-h-[min(9rem,22vh)]");
-        expect(text?.className).toContain("overflow-y-auto");
-        expect(body?.className).toContain("max-h-[min(18rem,40vh)]");
-        expect(body?.className).toContain("overflow-auto");
-      });
+  test("the question text and the options each scroll in a bounded area", async () => {
+    await render(<QuestionPanel questions={long} busy={false} requestId="long" onReply={() => {}} />, ({ container }) => {
+      const text = container.querySelector("[data-question-text]");
+      const body = container.querySelector("[data-question-body]");
+      expect(text?.className).toContain("max-h-[min(9rem,22vh)]");
+      expect(text?.className).toContain("overflow-y-auto");
+      expect(body?.className).toContain("max-h-[min(18rem,40vh)]");
+      expect(body?.className).toContain("overflow-auto");
     });
-  }
+  });
 });
 
-describe("minimizing a pending question (questionMinimize)", () => {
+describe("minimizing a pending question", () => {
   beforeEach(() => clearQuestionDrafts());
 
-  test("off: the panel has no Minimize control and renders as before", () => {
-    const off = renderToStaticMarkup(<QuestionPanel questions={questions} busy={false} onReply={() => {}} onDismiss={() => {}} />);
-    const offWithId = renderToStaticMarkup(<QuestionPanel questions={questions} busy={false} requestId="que_off" shortcutActive onReply={() => {}} onDismiss={() => {}} />);
-    expect(off).not.toContain("Minimize");
-    expect(off).not.toContain("data-question-collapsed");
-    expect(offWithId).toBe(off);
-  });
-
-  test("on: opens expanded with Minimize beside Dismiss", () => {
-    const html = renderToStaticMarkup(<QuestionPanel collapsible requestId="que_1" questions={questions} busy={false} onReply={() => {}} onDismiss={() => {}} />);
+  test("opens expanded with Minimize beside Dismiss", () => {
+    const html = renderToStaticMarkup(<QuestionPanel requestId="que_1" questions={questions} busy={false} onReply={() => {}} onDismiss={() => {}} />);
     expect(html).toContain('data-question-collapsed="false"');
     expect(html).toContain("Minimize");
     expect(html).toContain("Dismiss");
@@ -155,7 +145,7 @@ describe("minimizing a pending question (questionMinimize)", () => {
 
   test("multi-select picks and a typed answer survive minimizing and reopening", async () => {
     const replies: string[][][] = [];
-    await render(<QuestionPanel collapsible requestId="que_multi" questions={multiSelect} busy={false} onReply={(answers) => replies.push(answers)} onDismiss={() => {}} />, async ({ container }) => {
+    await render(<QuestionPanel requestId="que_multi" questions={multiSelect} busy={false} onReply={(answers) => replies.push(answers)} onDismiss={() => {}} />, async ({ container }) => {
       await click(button(container, "Typecheck"));
       await click(button(container, "End to end"));
       await type(customInput(container), "also lint");
@@ -182,7 +172,7 @@ describe("minimizing a pending question (questionMinimize)", () => {
 
   test("a typed answer to a single-choice question survives minimizing and reopening", async () => {
     const replies: string[][][] = [];
-    await render(<QuestionPanel collapsible requestId="que_single" questions={questions} busy={false} onReply={(answers) => replies.push(answers)} />, async ({ container }) => {
+    await render(<QuestionPanel requestId="que_single" questions={questions} busy={false} onReply={(answers) => replies.push(answers)} />, async ({ container }) => {
       await type(customInput(container), "wrap up instead");
       await click(button(container, "Minimize"));
       await settle(250);
@@ -196,7 +186,7 @@ describe("minimizing a pending question (questionMinimize)", () => {
 
   test("the second of two questions stays current, with the first answer kept", async () => {
     const replies: string[][][] = [];
-    await render(<QuestionPanel collapsible requestId="que_two" questions={twoQuestions} busy={false} onReply={(answers) => replies.push(answers)} />, async ({ container }) => {
+    await render(<QuestionPanel requestId="que_two" questions={twoQuestions} busy={false} onReply={(answers) => replies.push(answers)} />, async ({ container }) => {
       await click(button(container, "main"));
       await settle(200);
       expect(container.textContent).toContain("Question 2 of 2");
@@ -218,19 +208,19 @@ describe("minimizing a pending question (questionMinimize)", () => {
     const chord = () => act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "M", shiftKey: true, ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }));
     });
-    await render(<QuestionPanel collapsible shortcutActive requestId="que_chord" questions={multiSelect} busy={false} onReply={() => {}} />, async ({ container, rerender }) => {
+    await render(<QuestionPanel shortcutActive requestId="que_chord" questions={multiSelect} busy={false} onReply={() => {}} />, async ({ container, rerender }) => {
       await chord();
       expect(collapsed(container)).toBe("true");
       await chord();
       expect(collapsed(container)).toBe("false");
-      await rerender(<QuestionPanel collapsible shortcutActive={false} requestId="que_chord" questions={multiSelect} busy={false} onReply={() => {}} />);
+      await rerender(<QuestionPanel shortcutActive={false} requestId="que_chord" questions={multiSelect} busy={false} onReply={() => {}} />);
       await chord();
       expect(collapsed(container)).toBe("false");
     });
   });
 
   test("leaving the chat and coming back restores it; a new question opens expanded", async () => {
-    const panel = (requestId: string, asked: QuestionInfo[]) => <QuestionPanel collapsible requestId={requestId} questions={asked} busy={false} onReply={() => {}} />;
+    const panel = (requestId: string, asked: QuestionInfo[]) => <QuestionPanel requestId={requestId} questions={asked} busy={false} onReply={() => {}} />;
     await render(panel("que_a", multiSelect), async ({ container, rerender, remount }) => {
       await click(button(container, "Unit tests"));
       await click(button(container, "Minimize"));
@@ -254,7 +244,7 @@ describe("minimizing a pending question (questionMinimize)", () => {
   });
 });
 
-describe("minimizing a question from another computer (questionMinimize)", () => {
+describe("minimizing a question from another computer", () => {
   const pending: RemoteSessionPending = {
     kind: "question", requestId: "que_remote", questions: [{
       header: "Checks", question: "Which checks should run?", multiple: true, custom: true,
@@ -262,16 +252,9 @@ describe("minimizing a question from another computer (questionMinimize)", () =>
     }],
   };
 
-  test("off: no Minimize control", async () => {
-    await render(<RemoteThreadAnswerCard pending={pending} computer="Studio Mac" onAnswer={async () => null} />, ({ container }) => {
-      expect(container.textContent).not.toContain("Minimize");
-      expect(container.querySelector("[data-question-collapsed]")).toBeNull();
-    });
-  });
-
-  test("on: picks and typed text survive minimizing and reopening", async () => {
+  test("picks and typed text survive minimizing and reopening", async () => {
     const sent: RemoteSessionAnswerInput[] = [];
-    await render(<RemoteThreadAnswerCard collapsible pending={pending} computer="Studio Mac" onAnswer={async (answer) => { sent.push(answer); return null; }} />, async ({ container }) => {
+    await render(<RemoteThreadAnswerCard pending={pending} computer="Studio Mac" onAnswer={async (answer) => { sent.push(answer); return null; }} />, async ({ container }) => {
       await click(button(container, "Unit tests"));
       await type(customInput(container), "also lint");
       await click(button(container, "Minimize"));

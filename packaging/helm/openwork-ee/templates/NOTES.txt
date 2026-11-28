@@ -24,3 +24,24 @@ Keep these only for a deliberate split-origin/migration topology. For the
 single-origin recommended deployment, clear them so Den derives the values from
 config.public.webOrigin.
 {{- end }}
+
+{{- $legacy := include "openwork-ee.legacyEnv" . | fromYaml -}}
+{{- if or $legacy (ne (.Values.config.provisioner.mode | default "stub") "stub") .Values.config.internal.inferenceProxyBaseUrl }}
+
+WARNING: Deprecated legacy Cloud Web worker or Cloud SaaS settings are in use.
+Existing settings remain supported for upgrades. Do not copy them into new
+self-hosted installs. For AI Gateway routing, prefer the documented Gateway values.
+{{- range $key, $_ := $legacy }}
+  - {{ $key }}
+{{- end }}
+{{- end }}
+
+{{- $appVersion := toString .Chart.AppVersion -}}
+{{- range $path, $tag := dict "image.tag" .Values.image.tag "denApi.image.tag" .Values.denApi.image.tag "denWeb.image.tag" .Values.denWeb.image.tag }}
+{{- if and $tag (ne (toString $tag) $appVersion) }}
+
+WARNING: {{ $path }}={{ $tag | quote }} overrides chart appVersion {{ $appVersion | quote }}.
+Use images that are compatible with this chart and its migration Job. Clear the
+image tag override to use the chart's appVersion.
+{{- end }}
+{{- end }}

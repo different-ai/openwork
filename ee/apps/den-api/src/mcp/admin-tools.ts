@@ -469,7 +469,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
     "den_list_features",
     {
       description:
-        "Admin read tool: every feature in the registry with its author, internal docs link, the deployments it exists on and this deployment's state (on or off for everyone, kill switch, operator lock).",
+        "Admin read tool: every preview flag in the registry with its owner, the day its ship-or-cut decision is due (expiresOn), internal docs link, the deployments it exists on and this deployment's state (on or off for everyone, kill switch, operator lock).",
       inputSchema: z.object({}),
     },
     async () =>
@@ -484,7 +484,9 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
               label: definition.label,
               category: definition.category,
               added: definition.added,
-              author: definition.author,
+              owner: definition.owner,
+              author: definition.owner,
+              expiresOn: definition.expiresOn,
               docsUrl: featureDocsUrl(key),
               deployments: definition.deployments,
               available: featureAvailableOn(key, env.features.deployment),

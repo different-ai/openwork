@@ -1,5 +1,7 @@
 # Import connections from OpenCode (`importOpencodeConnections`)
 
+> **Generally available:** `importOpencodeConnections` is retired; the enabled behavior is now standard. Rollout, off-state and kill-switch notes below describe the historical rollout.
+
 - **Feature key:** `importOpencodeConnections`
 - **Deployments:** cloud and self-hosted (`everywhere`), off by default
 - **Author:** @benjaminshafii

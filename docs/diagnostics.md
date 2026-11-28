@@ -112,6 +112,12 @@ They could never be verified at the deployment level, so they always showed
 "Couldn't verify". Slack is now checked per organization under Connectors, and
 resumable answers are a detail of the headless runner.
 
+These checks say whether a service answers. Whether the deployment is set up
+to offer Workbot, the Slack assistant, Automations, the AI Gateway or cloud
+computers at all is its capability state, which `GET /v1/org` reports under
+`deploymentCapabilities.capabilities`. See
+[Deployment settings and capabilities](managed-deployments/settings-and-capabilities.md).
+
 ## Endpoint
 
 ```bash

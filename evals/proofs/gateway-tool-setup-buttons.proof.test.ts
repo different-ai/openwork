@@ -12,8 +12,8 @@ test("My Library › Models sets up each tool from its logo, creating a key that
     await user.see({ testId: "gateway-tool-setup-row" }, { timeoutMs: 60_000 });
     await user.see({ text: "Use OpenWork AI Gateway with other tools" });
     const buttons = await probe.dom('[data-testid^="gateway-tool-setup-"][aria-label^="Set up"]');
-    evidence.recordAssertionEvidence("One button per tool", `buttons=${buttons.elements.length}`, buttons.elements.length === 6);
-    expect(buttons.elements).toHaveLength(6);
+    evidence.recordAssertionEvidence("One button per tool", `buttons=${buttons.elements.length}`, buttons.elements.length === 7);
+    expect(buttons.elements).toHaveLength(7);
     await user.screenshot();
   });
 

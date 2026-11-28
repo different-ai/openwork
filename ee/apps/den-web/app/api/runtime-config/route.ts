@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
 import { denUrls } from "@openwork-ee/utils";
+import { readDenApiBase } from "../../_lib/den-api-base";
 import { DEFAULT_OPENWORK_WEB_URL } from "../../(den)/_lib/runtime-config";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +44,7 @@ async function readSingleOrgSsoConfigured(orgMode: string) {
     return false;
   }
 
-  const apiBase = readBaseUrlEnv(process.env, "DEN_API_BASE") ?? "";
+  const apiBase = readDenApiBase();
   if (!apiBase) {
     return false;
   }

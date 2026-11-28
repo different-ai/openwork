@@ -1,3 +1,4 @@
+import { fixedManagedAwsSettingLabel, managedAwsAssistantKeys } from "@openwork/managed-deployments/capabilities"
 import {
   assistantsEnabled, awsNetworkSchema, awsTargetSchema, deploymentConfigurationFieldSchema,
   type AwsAssistants, type AwsManagedDeploymentInput, type AwsNetwork, type AwsTarget,
@@ -21,17 +22,14 @@ export type DeploymentConfigurationPlan =
   }
   | { ok: false; rejection: DeploymentConfigurationRejection }
 
-const COMPUTER_KEYS = ["computerProvider", "computerSecretArn", "computerSnapshot", "daytonaApiUrl", "daytonaTarget"] satisfies (keyof AwsAssistants)[]
-const OWN_RUNNER_KEYS = ["headlessRunnerEnabled", "workbotEnabled", "slackAssistantEnabled", "modelProtocol", "modelBaseUrl", "model", "modelSecretArn"] satisfies (keyof AwsAssistants)[]
-const FIXED_FIELD_NAMES: Partial<Record<DeploymentConfigurationField, string>> = {
-  domainName: "address", "target.accountId": "AWS account", "target.region": "region", "target.route53ZoneId": "hosted zone", "target.network": "network",
-}
+const COMPUTER_KEYS = managedAwsAssistantKeys("with_gateway_runtime")
+const OWN_RUNNER_KEYS = managedAwsAssistantKeys("not_editable")
 
 /** Shown to the person as is. `invalid_configuration` normally carries the schema's own sentence instead. */
 export function deploymentConfigurationRejectionMessage(code: DeploymentConfigurationRejectionCode, field: DeploymentConfigurationField | null): string {
   switch (code) {
     case "field_not_editable": {
-      const name = field ? FIXED_FIELD_NAMES[field] : undefined
+      const name = field ? fixedManagedAwsSettingLabel(field) : undefined
       return `${name ? `The ${name}` : "This value"} can't be changed after installation. Create a new deployment to use a different one.`
     }
     case "gateway_cannot_be_removed": return "The gateway runtime can't be turned off. Removing it would delete the runner's files, secrets and backups."

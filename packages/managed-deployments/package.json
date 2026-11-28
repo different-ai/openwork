@@ -23,6 +23,20 @@
       },
       "default": "./src/configuration.ts"
     },
+    "./capabilities": {
+      "types": {
+        "openwork-build": "./dist/types/src/capabilities.d.ts",
+        "default": "./src/capabilities.ts"
+      },
+      "default": "./src/capabilities.ts"
+    },
+    "./capability-state": {
+      "types": {
+        "openwork-build": "./dist/types/src/capability-state.d.ts",
+        "default": "./src/capability-state.ts"
+      },
+      "default": "./src/capability-state.ts"
+    },
     "./lifecycle": {
       "types": {
         "openwork-build": "./dist/types/src/lifecycle.d.ts",

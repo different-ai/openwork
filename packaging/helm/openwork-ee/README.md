@@ -18,6 +18,39 @@ See [Gateway configuration and stable contracts](../../../ee/apps/gateway/README
 - optional Ingress for web and API hosts
 - pre-install/pre-upgrade migration Job scaffold
 
+## Two-file deployment handoff
+
+1. **Deployment operator:** copy [values.minimal-capabilities.yaml](examples/values.minimal-capabilities.yaml)
+   to `values.yaml`. Replace the example host and bootstrap email, provide HTTPS
+   routing, and pre-create the referenced Secret in the release namespace. See
+   [Migration TCP configuration](#migration-tcp-configuration) for the database
+   requirement. Use this YAML with `helm upgrade --install ... -f values.yaml`.
+   For an existing release, start from its current values; the example is not
+   a replacement for its infrastructure settings and Secret references.
+2. **Organization admin:** copy [org-config.example.json](examples/org-config.example.json)
+   to `acme.config.json`. Replace or remove the placeholder connector and review
+   the workspace policy, skill and team before applying. Once Den is running,
+   open **Config → Import**, upload the JSON and review the plan in merge mode.
+   To omit an area, remove it from both `scope` and `areas`. See the
+   [Org Config format](../../../docs/features/config-blobs/format.md).
+
+Optional per-org previews: a platform admin can add `settings.features` (or
+`settings.preview_flags` on releases that use that name) to `scope` and the
+matching area under `areas.settings`. Use `specVersion: 1` and an item with
+`id` set to an active preview key, its display `name`, and `spec: { "enabled": true }`.
+Leave this out unless you want early access. Import can opt in, not turn previews off.
+
+- Only for deployment-wide environment locks, put supported `config.features` keys in `previews.values.yaml`.
+- Layer it with `-f values.yaml -f previews.values.yaml`; never pass `acme.config.json` to Helm.
+- Keep the overlay out of ordinary installs and remove a lock when its preview retires.
+
+Audit availability and its installation-wide gates stay in `config.audit`.
+To set capture for one organization, import `settings.audit` with
+`spec.captureOn`; `config.audit.captureOn` in Helm values is rejected. The
+organization setting does not grant audit entitlement or override the install gates.
+See the [chart values audit](../../../docs/managed-deployments/helm-values-audit.md)
+for the deployment settings that cannot be replaced by an import.
+
 ## Gateway Compatibility (Chart 0.2.0)
 
 `gateway: {}` is intentionally sparse, with **no canonical defaults** that could
@@ -395,7 +428,7 @@ helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
 
 ### Features
 
-OpenWork features are declared once, one file each under `packages/features/src/flags`,
+OpenWork features are declared once, as preview flags in `packages/features/src/previews.ts`,
 and rolled out along several dimensions: which products a feature exists on,
 on or off for everyone, per-organization overrides, and a kill switch.
 Platform admins change these in `/admin` without a redeploy. As the operator,
@@ -404,8 +437,8 @@ you can also lock a feature for the whole install under `config.features`:
 ```yaml
 config:
   features:
-    permissions: "true"            # on for everyone on this install
-    computerUse: "false" # off for everyone on this install
+    automationSharing: "true"   # on for everyone on this install
+    sessionTree: "false"        # off for everyone on this install
 ```
 
 - `""` (the default) follows `/admin`, which starts from the default listed
@@ -413,18 +446,28 @@ config:
 - `"true"` or `"false"` locks the feature for everyone. `/admin` shows "Set by
   deployment config" for it. The `/admin` kill switch still turns it off.
 
-Each key renders `DEN_FEATURE_<KEY>` for den-api. Features that are not part
-of self-hosted installs have no key, so they can't be turned on here. With the
-published chart, a key that isn't a feature fails `helm install`. A chart
+Each key renders `DEN_FEATURE_<KEY>` for den-api. The published chart lists
+every feature in the registry. A feature that is not part of self-hosted
+installs is marked `(cloud only)` there: den-api ignores its key on a
+self-hosted install and logs a warning, so it can't be turned on here. Keys of
+retired features are not in the registry any more. With the published chart, a
+key that isn't a feature fails `helm install`. A chart
 installed from a checkout accepts any key, and den-api ignores the ones it
 does not know with a warning in its log.
 
 `config.deployment` (`DEN_DEPLOYMENT`) is `self_hosted` unless this is
 OpenWork Cloud. Don't change it on a customer install.
 
+A feature is how OpenWork ships unfinished work. It is not how you choose what
+this install can do: Workbot, the Slack assistant, Automations, the AI Gateway
+and cloud computers are capabilities, set with the values and environment
+variables listed in
+[Deployment settings and capabilities](../../../docs/managed-deployments/settings-and-capabilities.md).
+No capability needs a feature turned on.
+
 For supported keys, defaults and descriptions, run
 `helm show values oci://ghcr.io/different-ai/charts/openwork-ee` and read
-`config.features`. The [feature registry](../../../packages/features/src/flags)
+`config.features`. The [feature registry](../../../packages/features/src/previews.ts)
 is the source of truth.
 
 The chart in git lists no feature keys, so adding a feature never changes it.
@@ -459,8 +502,8 @@ config:
 ```
 
 These render `DEN_AUTOMATIONS_ENABLED=true` and
-`DEN_AUTOMATIONS_RUNTIME_ENABLED=true` for Den. An entirely unconfigured Den
-keeps availability fail-closed while preserving the legacy runtime. When using
+`DEN_AUTOMATIONS_RUNTIME_ENABLED=true` for Den. A Den with neither variable set
+also has Automations on. When using
 raw environment variables, an explicit `DEN_AUTOMATIONS_ENABLED` value also
 becomes the runtime default: `false` is therefore a complete shutdown unless
 `DEN_AUTOMATIONS_RUNTIME_ENABLED=true` explicitly selects mixed-version
@@ -1622,7 +1665,28 @@ the browser only talks to Den. Use a shared read-only PVC when
 consumed in MySQL, so the guided flow is safe when preview and acceptance land
 on different API replicas.
 
+## Validate CI overrides before upgrading
+
+Run `helm lint` and `helm template` with the same files, in the same order, and
+with the same `--set` overrides as your deployment pipeline. Rendering rejects
+unknown chart settings and Den API/Web `env` overrides of core wiring; the
+error names the typed value to use instead. Extra environment variables such as
+`NODE_OPTIONS`, Kubernetes annotations and labels, and feature locks under
+`config.features` retain their existing interfaces.
+
+Keep explicit legacy worker or Cloud SaaS values during an upgrade if you still
+use them. Bare self-hosted values no longer put those defaults in the shared
+ConfigMap. Installation notes warn about legacy overrides and image tags that
+differ from the chart's `appVersion`. Resolve an unintentional mismatch before
+running the migration Job. The notes do not change your image selection.
+
 ## Health Probes
+
+Set `tests.liveHealthCheck: true`, then run `helm test <release> --namespace
+<namespace> --logs` after deployment to add an HTTP request to the Den API
+Service's `/health` endpoint. This is off by default. The hook fails on a
+network error, timeout, redirect or non-2xx response; it does not check public
+ingress, database readiness or organization configuration.
 
 The chart uses the existing service health endpoints:
 

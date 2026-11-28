@@ -1,0 +1,14 @@
+# Copy to values.yaml. Replace the example hosts and pre-create the Secret
+# in the release namespace (see README). Ingress/TLS are provided separately.
+secret:
+  create: false
+  existingSecret: openwork-ee-secrets
+
+config:
+  public:
+    webOrigin: https://openwork.example.com
+    authCallbackUrl: https://openwork.example.com
+    # Addresses allowed to bootstrap the first administrator; not org membership.
+    bootstrapAdminEmails: admin@example.com
+    # Choose deployment capabilities separately as needed (see README).
+    # Import organization policy as <org>.config.json after /setup.

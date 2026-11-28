@@ -17,6 +17,26 @@ OpenWork's primary private-cloud shape uses the published Helm chart, a managed 
   </Card>
 </CardGroup>
 
+## Choose your installation capabilities
+
+Use your chart, Terraform module, or managed installer to choose what the installation can run. Support and defaults differ by target; these are not five switches on every installer. For Helm, start with your provider's values example. Use `gateway.enabled` for AI Gateway and `config.public.automationsEnabled` and `config.public.automationsRuntimeEnabled` for Automations; see the [chart reference](https://github.com/different-ai/openwork/tree/dev/packaging/helm/openwork-ee) for dependencies and valid values.
+
+| Capability | What it enables | What to check before deploying |
+| --- | --- | --- |
+| [AI Gateway](/self-host/gateway) | Shared access to models through organization-managed providers | Off by default on Helm and the direct Terraform modules. Supply a matching image, HTTPS endpoint, and shared database and encryption configuration. |
+| Workbot | Browser chat with an agent | Needs Workbot and the headless runner. The AWS ECS module can deploy both. The Helm chart installs each as an opt-in (`headlessRunner.enabled`, `workbot.enabled`), off by default. |
+| Slack assistant | Agent replies in Slack threads | Needs the headless runner and a configured Slack integration. The AWS ECS module has a separate opt-in; on Helm it is on once a runner is installed. |
+| Automations | Scheduled work on desktops or, with a runner, in the cloud | Enabled by default on Helm and AWS ECS. The direct Cloud Run module does not support the runtime even if you set its Automations input. |
+| Cloud computers | Agent access to a cloud browser and desktop | Needs the headless runner and a Daytona or Freestyle provider set on it. The runner the Helm chart installs has no computer provider. |
+
+The Azure Container Apps and Google Cloud Run modules do not deploy Workbot or the headless runner. Managed installers have their own limits: the managed Google Cloud installer does not offer these capabilities; managed AWS optional services depend on the selected runtime profile and installer availability.
+
+## Import your organization configuration after setup
+
+After the install is healthy, complete [`/setup`](/self-host/deploy-to-your-cloud/first-administrator) and sign in to your organization. In **Settings › Config › Import**, upload your reviewed `<org>.config.json`, resolve references and secret placeholders, then approve and apply the plan. `<org>.config.json` is a suggested name for your version-controlled file; the dashboard gives downloads a dated name. Follow [Export and import organization configuration](/self-host/export-import-configuration) for merge, review, and rollback.
+
+The file configures supported organization settings such as providers, teams, connectors and desktop policies. It does not provision infrastructure, enable installation capabilities, or replace required setup such as Slack consent. You can also configure the organization directly in the dashboard.
+
 ## Terraform modules (beta)
 
 <Warning>
@@ -127,7 +147,7 @@ Every provider guide uses the same OpenWork boundaries:
 - Den API listens on port `8788` and owns authentication, organizations, policy, and control-plane APIs.
 - A MySQL 8-compatible database stores shared control-plane state.
 - The default migration Job is a pre-install/pre-upgrade hook, not an automatic safe rolling schema cutover.
-- OpenWork Gateway is optional and disabled by default; it retains the `openwork-inference` image and `*-inference` resource names. It is not the separate `den-gateway` Web proxy.
+- AI Gateway is optional and disabled by default; it retains the `openwork-inference` image and `*-inference` resource names. It is not the separate `den-gateway` Web proxy.
 - HTTPS hostnames expose web and API traffic through the provider's load-balancing layer.
 
 Use private database networking in production. Require TLS for public application traffic, encrypt storage and backups, and keep database and authentication secrets in the provider secret store or a Kubernetes Secret—not in a Helm values file.
@@ -164,8 +184,8 @@ count against the shared address.
 5. Prepare provider-specific Helm values for the web and API hostnames.
 6. For a fresh database, install the matching chart/images and verify initialization before opening traffic. For an existing database, follow the release-specific migration and rollout procedure; Gateway requires the [quiesced upgrade guide](/self-host/gateway-upgrade), not an unattended rolling upgrade.
 7. Point DNS at the load balancer and verify trusted HTTPS.
-8. [Create the first administrator](/self-host/deploy-to-your-cloud/first-administrator).
-9. Configure SAML or OIDC SSO and invite or provision members.
+8. [Create the first administrator in `/setup`](/self-host/deploy-to-your-cloud/first-administrator).
+9. [Import `<org>.config.json`](#import-your-organization-configuration-after-setup) or configure the organization in the dashboard. Verify SSO and invite or provision members as needed.
 
 ## Before you start
 
@@ -183,7 +203,7 @@ You need:
 
 ## After deployment
 
-To configure Gateway, follow [Enable OpenWork Gateway](/self-host/gateway). This requires the Gateway-capable chart implementation introduced in `0.2.0` or later, matching release images, and an authenticated capability-version-1 response. Gateway is GA for admins in every organization when configured; no platform-admin organization grant or organization API toggle is needed. `GATEWAY_ENABLED` and `deploymentCapabilities.aiGateway` remain installation configuration checks. Neither legacy service enablement nor existing OpenWork Models billing enables the deployment automatically.
+To configure Gateway, follow [Enable AI Gateway](/self-host/gateway). This requires the Gateway-capable chart implementation introduced in `0.2.0` or later, matching release images, and an authenticated capability-version-1 response. Gateway is GA for admins in every organization when configured; no platform-admin organization grant or organization API toggle is needed. `GATEWAY_ENABLED` and `deploymentCapabilities.aiGateway` remain installation configuration checks. Neither legacy service enablement nor existing OpenWork Models billing enables the deployment automatically.
 
 ## Scheduled maintenance jobs
 
@@ -197,7 +217,7 @@ Two maintenance tasks run on a schedule instead of on every request, so busy wri
 
 Each endpoint answers `404` when its token is not configured and `401` for a wrong token. All are safe to rerun, and GitHub reconcile runs are safe to overlap.
 
-With Helm, enable each job and its token as described in [Enable OpenWork Gateway](/self-host/gateway#optional-admin-webhook-and-retention) and the chart README's *Audit usage refresh* and *GitHub connector reconcile* sections. On Cloud Run, ECS Fargate, or Docker Compose, schedule the calls yourself with Cloud Scheduler, EventBridge Scheduler, or host cron, from a network location that can reach the internal service:
+With Helm, enable each job and its token as described in [Enable AI Gateway](/self-host/gateway#optional-admin-webhook-and-retention) and the chart README's *Audit usage refresh* and *GitHub connector reconcile* sections. On Cloud Run, ECS Fargate, or Docker Compose, schedule the calls yourself with Cloud Scheduler, EventBridge Scheduler, or host cron, from a network location that can reach the internal service:
 
 ```sh
 # Hourly, only when Gateway is enabled

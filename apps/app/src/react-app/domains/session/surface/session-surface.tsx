@@ -2202,7 +2202,6 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
   const followUpDeliveryEnabled = useDesktopFeature("followUpDelivery");
   const waitingFollowUpIds = useFollowUpDeliveryStore((state) =>
     (followUpDeliveryEnabled ? state.booksByWorkspaceId[props.workspaceId]?.[props.sessionId] : undefined) ?? NO_WAITING_FOLLOW_UPS);
-  const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
   const questionInThreadEnabled = useDesktopFeature("questionInThread");
   const dismissThreadQuestionBeforeSendRef = useRef(false);
   const followUpSuggestion = useFollowUpSuggestion({
@@ -4141,7 +4140,6 @@ function WorkspaceSessionSurface(props: SessionSurfaceProps) {
                     key={dockedQuestion.id}
                     questions={dockedQuestion.questions}
                     busy={props.questionReplyBusy ?? false}
-                    collapsible={questionMinimizeEnabled}
                     requestId={dockedQuestion.id}
                     shortcutActive={props.isControlTarget}
                     onReply={(answers) => Promise.resolve(props.respondQuestion?.(dockedQuestion.id, answers)).catch(() => {})}

@@ -21,6 +21,8 @@ test("the checks CI requires are the commands pnpm check runs", () => {
     "node scripts/check-outbound-access.mjs",
     "node scripts/check-node-source-imports.mjs",
     "pnpm features:check",
+    "pnpm --filter @openwork/managed-deployments test",
+    "pnpm --filter @openwork-ee/den-api test:env",
     "node .github/scripts/typecheck-shipped.mjs --all",
     "node scripts/check-app-structure.mjs",
     "node scripts/check-package-names.mjs",
