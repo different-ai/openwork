@@ -77,20 +77,20 @@ test("cross-packaging stages the target CPU's native runtime, not the build host
   assert.ok(!existsSync(join(output, "@superradcompany/microsandbox-win32-x64-msvc")));
 });
 
-test("a dependency named like a Node builtin is staged from its package, not resolved to the builtin", (t) => {
+test("staging copies an npm package that shares its name with a Node built-in", (t) => {
   const root = mkdtempSync(join(tmpdir(), "staged-builtin-name-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const pkg = (name, dependencies = {}) => {
     const directory = join(root, "node_modules", name);
     mkdirSync(join(directory, "dist"), { recursive: true });
-    writeFileSync(join(directory, "package.json"), JSON.stringify({ name, version: "1.0.0", type: "module", main: "./dist/index.js", dependencies }));
-    writeFileSync(join(directory, "dist/index.js"), "export const fixture = true;");
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ name, version: "1.0.0", main: "./dist/index.js", dependencies }));
+    writeFileSync(join(directory, "dist/index.js"), "module.exports = {};");
   };
   writeFileSync(join(root, "package.json"), JSON.stringify({ private: true }));
-  pkg("cloud-adapter", { buffer: "1.0.0" });
+  pkg("uses-buffer", { buffer: "1.0.0" });
   pkg("buffer");
   const output = join(root, "app/node_modules");
-  const staged = stageRuntimeNodeModules(output, { roots: [{ name: "cloud-adapter", fromPackageJson: join(root, "package.json") }] });
-  assert.deepEqual(staged, ["buffer", "cloud-adapter"]);
-  assert.equal(JSON.parse(readFileSync(join(output, "buffer/package.json"), "utf8")).name, "buffer");
+  const staged = stageRuntimeNodeModules(output, { roots: [{ name: "uses-buffer", fromPackageJson: join(root, "package.json") }] });
+  assert.deepEqual(staged, ["buffer", "uses-buffer"]);
+  assert.ok(existsSync(join(output, "buffer/dist/index.js")));
 });

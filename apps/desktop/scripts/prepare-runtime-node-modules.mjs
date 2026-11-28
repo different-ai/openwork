@@ -40,26 +40,34 @@ export function microsandboxPlatformPackage(platform = process.platform, arch = 
 
 function packageRoot(name, fromPackageJson, resolveTarget = name) {
   const requireFromPackage = createRequire(pathToFileURL(fromPackageJson));
-  let current;
-  try {
-    // A package named like a Node builtin (buffer, events) resolves to the
-    // builtin, which has no files: find its manifest through the search paths.
-    if (isBuiltin(resolveTarget)) throw new Error(`${resolveTarget} resolves to a Node builtin.`);
-    current = dirname(requireFromPackage.resolve(resolveTarget));
-  } catch (error) {
-    // A dependency may export only subpaths. Find its manifest through Node's
-    // normal search directories without requiring a nonexistent root export.
-    for (const searchDirectory of requireFromPackage.resolve.paths(isBuiltin(name) ? `${name}/package.json` : name) ?? []) {
+  // Find a manifest through Node's normal search directories, for a package
+  // whose name Node cannot resolve to a file inside it.
+  const installedPackage = () => {
+    for (const searchDirectory of requireFromPackage.resolve.paths(`${name}/`) ?? []) {
+      const linkedPackageRoot = resolve(searchDirectory, name);
       try {
-        // pnpm links a package next to its own dependencies: resolve the link
-        // so the package's dependencies are found from where it really lives.
-        const linkedPackageRoot = realpathSync(resolve(searchDirectory, name));
         const linkedPackageJson = JSON.parse(readFileSync(join(linkedPackageRoot, "package.json"), "utf8"));
-        if (linkedPackageJson.name === name) return { root: linkedPackageRoot, packageJson: linkedPackageJson };
+        if (linkedPackageJson.name === name) return { root: realpathSync(linkedPackageRoot), packageJson: linkedPackageJson };
       } catch {
-        // Preserve the original module-resolution error if no package matches.
+        // Not installed in this directory; keep searching.
       }
     }
+    return null;
+  };
+  // npm packages such as "buffer" share a name with a Node built-in, and
+  // resolve() answers with the built-in, which has no files to copy.
+  if (isBuiltin(resolveTarget)) {
+    const installed = installedPackage();
+    if (installed) return installed;
+    throw new Error(`Could not find the installed package ${name}, which shares its name with a Node built-in.`);
+  }
+  let current;
+  try {
+    current = dirname(requireFromPackage.resolve(resolveTarget));
+  } catch (error) {
+    // A dependency may export only subpaths, with no root export to resolve.
+    const installed = installedPackage();
+    if (installed) return installed;
     throw error;
   }
   while (current !== dirname(current)) {
