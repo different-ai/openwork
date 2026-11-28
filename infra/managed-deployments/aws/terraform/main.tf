@@ -117,6 +117,17 @@ locals {
     public_subnet_ids  = module.network[0].public_subnet_ids
     private_subnet_ids = module.network[0].private_subnet_ids
   }
+
+  # Fixed values are merged last: an override can never replace them.
+  platform_extra_environment = merge(var.overrides.extra_environment, {
+    OPENWORK_MANAGED_TASK_REVISION = var.tls_task_revision
+  })
+  platform_database = merge(local.tuned.database, {
+    backup_retention_days = 7
+    deletion_protection   = !var.test_disposable
+    skip_final_snapshot   = var.test_disposable
+    apply_immediately     = true
+  })
 }
 
 check "existing_network_inputs" {
@@ -170,8 +181,10 @@ module "platform" {
   # SMTP and SSO after setup.
   require_email_verification = false
 
-  den_api = local.profile.den_api
-  den_web = local.profile.den_web
+  den_api            = local.tuned.den_api
+  den_web            = local.tuned.den_web
+  log_retention_days = local.tuned.log_retention_days
+  database_ca_bundle = var.database_ca_bundle
 
   ai_gateway_enabled     = local.gateway_profile
   ai_gateway_domain_name = local.gateway_profile ? local.managed_gateway_host : ""
@@ -187,15 +200,8 @@ module "platform" {
   workbot_image                = var.workbot_image
   slack_assistant_enabled      = local.managed_slack_assistant_enabled
   automations_enabled          = true
-  extra_environment = {
-    OPENWORK_MANAGED_TASK_REVISION = var.tls_task_revision
-  }
-  database = merge(local.profile.database, {
-    backup_retention_days = 7
-    deletion_protection   = !var.test_disposable
-    skip_final_snapshot   = var.test_disposable
-    apply_immediately     = true
-  })
+  extra_environment            = local.platform_extra_environment
+  database                     = local.platform_database
 }
 
 module "health_agent" {
@@ -217,6 +223,7 @@ module "health_agent" {
   ai_gateway_url           = module.platform.ai_gateway_url
   efs_file_system_id       = module.platform.efs_file_system_id
   runner_backup_vault_name = module.platform.runner_backup_vault_name
+  log_retention_days       = local.tuned.log_retention_days
 }
 
 # ---- Contract outputs (identical on every cloud) ----

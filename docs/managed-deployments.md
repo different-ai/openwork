@@ -199,8 +199,8 @@ clear them or bypass throttling.
   wildcard task-definition deregistration permission is used. See
   `infra/managed-deployments/README.md` for exact ordering and provider-upgrade risk.
 - Deleting the installer stack does **not** delete OpenWork, its database or the
-  Terraform state. Decommissioning is a manual, customer-run `terraform destroy`
-  against the retained state (disable RDS deletion protection first).
+  Terraform state. To remove a deployment, see
+  [Tune, take over and remove](#tune-take-over-and-remove-aws).
 
 ## Configuration changes (approval required)
 
@@ -229,6 +229,47 @@ runtime, or changes its cloud computers. Renaming is saved at once.
 
 Agents cannot prepare configuration changes through MCP. Details, refusal codes
 and the kill switch: `docs/features/managed-deployment-config-updates/README.md`.
+
+## Tune, take over and remove (AWS)
+
+After every successful apply the installer writes a folder named `applied/`
+beside the Terraform state in the customer's bucket
+(`s3://<state bucket>/deployments/<deployment id>/applied/`). Its `README.md`
+has the exact commands for that deployment. It holds no secrets and no state.
+
+- **Tune.** The customer writes `deployments/<deployment id>/overrides.json` in
+  the same bucket. The next run they approve (update, retry or configuration
+  change) applies it; there is no separate "apply tuning now" action yet. Allowed:
+  API and web CPU, memory and task count; database tier, disk size and
+  Multi-AZ; `OTEL_` environment variables; log retention. The installer checks
+  the file before it changes anything. A setting that is not allowed fails the
+  run with "Infrastructure installation failed", and the installer log in AWS
+  CodeBuild names it. The database version, deletion protection, backups,
+  secrets and the network cannot be tuned. AWS runs a fixed number of tasks, so
+  `max_instances` must equal `min_instances`. Changing the database tier
+  restarts the database.
+- **Take over (eject).** The customer writes
+  `deployments/<deployment id>/ejected.json`, downloads the bundle named in
+  `applied/release.json`, copies in the recorded inputs and backend settings,
+  and runs `terraform init` and `terraform plan` with their own AWS identity.
+  The plan is expected to show no changes. While the marker exists the
+  installer refuses every run and changes nothing; status checks continue.
+  From then on the customer reviews every plan themselves: the installer's
+  refusal to delete or replace the database, secrets, storage and network no
+  longer applies. OpenWork still lists the deployment and offers updates; a run
+  started for it fails with the reason in the installer log. Deleting the
+  marker hands the deployment back.
+- **Remove.** The customer takes the deployment over, turns off RDS deletion
+  protection, runs `terraform destroy`, and then removes what
+  `applied/unmanaged.json` lists: retained task definition revisions, the
+  installer stack and its log groups, the final database snapshot, and last
+  the state bucket.
+
+None of this has run against a live account yet. Before release, an isolated
+account must show an install and an update that write `applied/`, a takeover
+plan with no changes, a tuned update, a refused file, a refused run after the
+marker, and a complete removal. Details and the bucket layout:
+`infra/managed-deployments/README.md`.
 
 ## Operator setup
 

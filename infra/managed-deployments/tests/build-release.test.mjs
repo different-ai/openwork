@@ -303,6 +303,10 @@ test("installer archive contains every shared operational dependency with identi
     const packagedMain = execFileSync("tar", ["-xOf", bundle, "infra/managed-deployments/aws/terraform/main.tf"], { encoding: "utf8" });
     assert.match(packagedMain, /source\s*=\s*"\.\.\/\.\.\/\.\.\/terraform\/modules\/openwork-aws-ecs"/);
     assert.equal(names.some((name) => /\.(?:tfstate|tfvars|tfplan)(?:\.|$)/.test(name)), false);
+    // A customer who takes the deployment over plans from this bundle alone.
+    for (const name of ["overrides.tf", ".terraform.lock.hcl", "modules/health-agent/main.tf"]) {
+      assert.ok(names.includes(`infra/managed-deployments/aws/terraform/${name}`), name);
+    }
   } finally {
     rmSync(output, { recursive: true, force: true });
   }
