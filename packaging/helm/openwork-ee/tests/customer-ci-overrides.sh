@@ -58,6 +58,40 @@ reject 'denWeb.env.DEN_API_BASE overrides chart-owned wiring. Remove it and use 
 reject 'config.audit.captureOn is not a Helm setting.' --set config.audit.captureOn=false
 reject 'tests.liveHealthCheck must be a YAML boolean' --set-string tests.liveHealthCheck=false
 
+# Every key of the chart-managed runner and Workbot is a supported value.
+alias="gwm_$(printf '0%.0s' {1..26})_$(printf '1%.0s' {1..26})_$(printf '2%.0s' {1..26})"
+companions=(--set-string image.tag=ci-test --set secret.create=false --set-string secret.existingSecret=ci-supplied-secret
+  --set gateway.enabled=true --set-string config.internal.gatewayProxyBaseUrl=http://gateway:8791
+  --set-string config.public.gatewayPublicBaseUrl=https://models.example.com
+  --set-string config.public.webOrigin=https://den.example.com --set-string config.public.apiOrigin=https://api.example.com
+  --set headlessRunner.enabled=true
+  --set-string headlessRunner.image.repository=registry.example.com/openwork-headless-runner --set-string headlessRunner.image.tag=ci-test
+  --set-string headlessRunner.model.protocol=openai-responses --set-string "headlessRunner.model.alias=$alias"
+  --set-string headlessRunner.secret.existingSecret=runner-runtime --set-string headlessRunner.secret.apiTokenKey=api-token
+  --set-string headlessRunner.secret.callbackTokenKey=callback-token --set-string headlessRunner.secret.grantKey=grant-key
+  --set headlessRunner.persistence.enabled=true --set-string headlessRunner.persistence.existingClaim=
+  --set-string headlessRunner.persistence.size=20Gi --set-string headlessRunner.persistence.storageClass=fast
+  --set-string headlessRunner.resources.requests.cpu=250m
+  --set workbot.enabled=true
+  --set-string workbot.image.repository=registry.example.com/openwork-workbot --set-string workbot.image.tag=ci-test
+  --set-string workbot.publicUrl=https://chat.example.com
+  --set-string workbot.secret.existingSecret=workbot-runtime --set-string workbot.secret.sessionSecretKey=session-secret
+  --set workbot.ingress.enabled=true --set-string workbot.ingress.className=ci-ingress
+  --set-string 'workbot.ingress.annotations.ci\.example\.com/idle-timeout=3600' --set-string workbot.ingress.tlsSecretName=workbot-tls
+  --set-string workbot.resources.requests.cpu=100m)
+check "${companions[@]}"
+contains 'name: ci-check-openwork-ee-headless-runner'
+contains 'name: ci-check-openwork-ee-workbot'
+contains 'image: "registry.example.com/openwork-headless-runner:ci-test"'
+contains 'storage: "20Gi"'
+contains 'ci.example.com/idle-timeout: "3600"'
+contains '- name: DEN_HEADLESS_RUNNER_URL'
+contains '- name: DEN_WORKBOT_URL'
+reject 'headlessRunner.replicas is not supported by the chart-managed companion interface' "${companions[@]}" --set headlessRunner.replicas=2
+reject 'headlessRunner.persistence.path is not supported by the chart-managed companion interface' "${companions[@]}" --set-string headlessRunner.persistence.path=/data
+reject 'workbot.ingress.host is not supported by the chart-managed companion interface' "${companions[@]}" --set-string workbot.ingress.host=chat.example.com
+echo 'PASS chart-managed runner and Workbot values'
+
 render --show-only templates/configmap.yaml >"$scratch/rendered"
 contains "OPENWORK_HELM_CHART_VERSION: \"$(awk '/^version:/ {print $2}' "$chart/Chart.yaml")\""
 contains "OPENWORK_HELM_APP_VERSION: $(awk '/^appVersion:/ {print $2}' "$chart/Chart.yaml")"

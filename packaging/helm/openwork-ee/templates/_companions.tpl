@@ -129,9 +129,8 @@ http://{{ include "openwork-ee.fullname" . }}-headless-runner:8795
 {{- if or (not $image.repository) (ne (include "openwork-ee.imageTag" (dict "root" $ "componentTag" $image.tag)) $denTag) -}}{{- fail "chart-managed companions require matching Den API, Den Web, Gateway and runner image tags and nonempty repositories" -}}{{- end -}}
 {{- end -}}
 {{- /* Legacy env remains legal with opt-ins off, but must never override managed wiring. */ -}}
-{{- range $key := list "DEN_BASE_URL" "DEN_API_PUBLIC_URL" -}}
-{{- if hasKey $.Values.denApi.env $key -}}{{- fail "remove Den API origin env overrides and use config.public.webOrigin/apiOrigin with chart-managed companions" -}}{{- end -}}
-{{- end -}}
+{{- /* openwork-ee.validateEnvOverrides already refuses denApi.env.DEN_BASE_URL on every install. */ -}}
+{{- if hasKey .Values.denApi.env "DEN_API_PUBLIC_URL" -}}{{- fail "remove Den API origin env overrides and use config.public.webOrigin/apiOrigin with chart-managed companions" -}}{{- end -}}
 {{- range $env := list .Values.denApi.env .Values.denWeb.env -}}
 {{- range $key, $_ := $env -}}
 {{- if or (hasPrefix "DEN_HEADLESS_RUNNER_" $key) (eq $key "DEN_WORKBOT_URL") -}}{{- fail "remove DEN_HEADLESS_RUNNER_* and DEN_WORKBOT_URL env overrides before enabling chart-managed companions" -}}{{- end -}}

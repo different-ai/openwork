@@ -59,7 +59,8 @@ tests: liveHealthCheck
     {{- $_ := set $rules (printf "%s.probes.%s" $component $probe) "initialDelaySeconds periodSeconds timeoutSeconds failureThreshold" -}}
   {{- end -}}
 {{- end -}}
-{{/* Companion maps have their own validation when the companion chart work lands. */}}
+{{/* headlessRunner and workbot are chart keys. openwork-ee.companions.validate
+     (_companions.tpl) names their supported keys and rejects any other. */}}
 {{- $open := list "config.features" "config.administratorRecovery.teams" "global" "headlessRunner" "workbot" "ingress.annotations" "migrations.podAnnotations" "migrations.resources" -}}
 {{- range $component := list "denApi" "denWeb" "gateway" "inference" -}}
   {{- range $field := list "env" "podAnnotations" "podLabels" "resources" "service.annotations" -}}
