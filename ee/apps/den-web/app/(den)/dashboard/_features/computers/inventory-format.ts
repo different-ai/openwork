@@ -87,6 +87,8 @@ const RUN_CODE_REASONS: Record<ComputerRunCodeOffReason, string> = {
   owner: "Its owner turned it off.",
   not_chosen: "Its owner has not chosen yet.",
   revoked: "Access was revoked.",
+  sandbox_unavailable: "This computer can't run the OpenWork sandbox.",
+  nothing_shared: "Its owner has not shared a folder with another computer yet.",
 };
 
 export function runCodeLabel(runCode: ComputerRunCode): string {

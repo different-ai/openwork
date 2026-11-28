@@ -7,6 +7,7 @@ import type {
   ComputerFolder,
   ComputerGrantScope,
   ComputerOwnerChoice,
+  ComputerToolCall,
 } from "@openwork/types/den/computers"
 import { compatJsonColumn, denTypeIdColumn } from "../columns"
 
@@ -36,6 +37,7 @@ export const ComputerGrantTable = mysqlTable(
     targetDeviceId: denTypeIdColumn("remoteDevice", "target_device_id").notNull(),
     sourceKey: varchar("source_key", { length: 64 }).notNull(),
     folders: compatJsonColumn<ComputerFolder[]>("folders").notNull(),
+    writableFolders: compatJsonColumn<ComputerFolder[]>("writable_folders"),
     revokedAt: timestamp("revoked_at", { fsp: 3 }),
     revokedByMemberId: denTypeIdColumn("member", "revoked_by_member_id"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
@@ -64,6 +66,7 @@ export const ComputerCommandTable = mysqlTable(
     sourceDeviceId: denTypeIdColumn("remoteDevice", "source_device_id").notNull(),
     targetDeviceId: denTypeIdColumn("remoteDevice", "target_device_id").notNull(),
     action: compatJsonColumn<ComputerAction>("action").notNull(),
+    call: compatJsonColumn<ComputerToolCall>("call"),
     scope: compatJsonColumn<ComputerGrantScope>("scope").notNull(),
     status: varchar("status", { length: 16 }).$type<ComputerCommandStatus>().notNull().default("pending"),
     exitCode: int("exit_code"),

@@ -7,6 +7,11 @@ export type ComputerKind = (typeof COMPUTER_KINDS)[number]
 export const COMPUTER_ROLES = ["source", "target"] as const
 export type ComputerRole = (typeof COMPUTER_ROLES)[number]
 
+export const COMPUTER_EXECUTABLE_VM_PROVIDERS = ["daytona", "freestyle"] as const
+export function isExecutableVmProvider(provider: unknown): provider is (typeof COMPUTER_EXECUTABLE_VM_PROVIDERS)[number] {
+  return COMPUTER_EXECUTABLE_VM_PROVIDERS.some((candidate) => candidate === provider)
+}
+
 export const computerSchema = z.object({
   id: z.string(),
   kind: z.enum(COMPUTER_KINDS),
@@ -32,11 +37,18 @@ function sharedFoldersSchema(max: number) {
 }
 
 const foldersSchema = sharedFoldersSchema(32)
+const sandboxFolderFields = { folders: foldersSchema, writableFolders: foldersSchema.optional() }
+
+function writableFoldersAreShared(value: { folders: ComputerFolder[]; writableFolders?: ComputerFolder[] }): boolean {
+  return value.writableFolders?.every((folder) => value.folders.includes(folder)) ?? true
+}
+const writableFoldersCheck = { path: ["writableFolders"], message: "Writable folders must also be shared folders." }
 
 export const computerSandboxScopeSchema = z.strictObject({
   surface: z.literal("sandbox"),
-  folders: foldersSchema,
-})
+  ...sandboxFolderFields,
+}).refine(writableFoldersAreShared, writableFoldersCheck)
+export type ComputerSandboxScope = z.infer<typeof computerSandboxScopeSchema>
 const workingFolderSchema = z.array(computerFolderSchema).length(1)
 export const computerWholeVmScopeSchema = z.strictObject({
   surface: z.literal("whole_vm"),
@@ -74,9 +86,63 @@ export const computerActionSchema = z.discriminatedUnion("type", [
 ]).meta({ ref: "ComputerAction" })
 export type ComputerAction = z.infer<typeof computerActionSchema>
 
+export const COMPUTER_TOOL_NAMES = ["shell", "read", "write", "edit", "glob", "grep"] as const
+export type ComputerToolName = (typeof COMPUTER_TOOL_NAMES)[number]
+export const COMPUTER_TOOL_CALL_MAX_BYTES = 128_000
+const utf8 = new TextEncoder()
+const toolTextSchema = z.string().min(1).max(32_000)
+const toolContentSchema = z.string().max(32_000)
+const toolLimitSchema = z.number().int().min(1).max(2_000).optional()
+const toolCallSchema = z.discriminatedUnion("tool", [
+  z.strictObject({ tool: z.literal("shell"), input: z.strictObject({
+    command: toolTextSchema,
+    cwd: computerFolderSchema,
+    timeoutMs: z.number().int().min(1).max(120_000).optional(),
+  }) }),
+  z.strictObject({ tool: z.literal("read"), input: z.strictObject({
+    path: computerFolderSchema,
+    offset: z.number().int().min(1).optional(),
+    limit: toolLimitSchema,
+  }) }),
+  z.strictObject({ tool: z.literal("write"), input: z.strictObject({ path: computerFolderSchema, content: toolContentSchema }) }),
+  z.strictObject({ tool: z.literal("edit"), input: z.strictObject({
+    path: computerFolderSchema,
+    oldString: toolTextSchema,
+    newString: toolContentSchema,
+    replaceAll: z.boolean().optional(),
+  }) }),
+  z.strictObject({ tool: z.literal("glob"), input: z.strictObject({
+    path: computerFolderSchema,
+    pattern: toolTextSchema,
+    hidden: z.boolean().optional(),
+    limit: toolLimitSchema,
+  }) }),
+  z.strictObject({ tool: z.literal("grep"), input: z.strictObject({
+    path: computerFolderSchema,
+    pattern: toolTextSchema,
+    literal: z.boolean().optional(),
+    include: z.string().max(1_024).optional(),
+    caseSensitive: z.boolean().optional(),
+    limit: toolLimitSchema,
+  }) }),
+])
+export type ComputerToolCall = z.infer<typeof toolCallSchema>
+
+/** Measure the call as UTF-8 JSON, including keys and escaped characters. */
+export function computerToolCallFits(call: ComputerToolCall): boolean {
+  return utf8.encode(JSON.stringify(call)).byteLength <= COMPUTER_TOOL_CALL_MAX_BYTES
+}
+
+export const computerToolCallSchema = toolCallSchema.refine(
+  computerToolCallFits, `Tool calls must be at most ${COMPUTER_TOOL_CALL_MAX_BYTES} bytes.`,
+).meta({ ref: "ComputerToolCall" })
+
 export const COMPUTER_DECISION_LAYERS = ["organization", "computer", "source"] as const
 export type ComputerDecisionLayer = (typeof COMPUTER_DECISION_LAYERS)[number]
-export const COMPUTER_REFUSAL_CODES = ["organization_off", "computer_not_allowed", "not_available_yet", "owner_app_only", "nothing_shared", "folder_not_shared"] as const
+export const COMPUTER_REFUSAL_CODES = [
+  "organization_off", "computer_not_allowed", "not_available_yet", "owner_app_only", "nothing_shared", "folder_not_shared",
+  "sandbox_unavailable", "source_not_allowed", "folder_read_only", "not_owner",
+] as const
 export type ComputerRefusalCode = (typeof COMPUTER_REFUSAL_CODES)[number]
 export const COMPUTER_CHANGEABLE_BY = ["organization_admin", "computer_owner", "no_one"] as const
 export type ComputerChangeableBy = (typeof COMPUTER_CHANGEABLE_BY)[number]
@@ -142,6 +208,12 @@ export type ListedComputer = z.infer<typeof listedComputerSchema>
 export const computerListResponseSchema = z.object({ computers: z.array(listedComputerSchema) })
 export type ComputerListResponse = z.infer<typeof computerListResponseSchema>
 
+export const computerSourceListResponseSchema = z.object({
+  self: computerSchema.nullable(),
+  computers: z.array(listedComputerSchema),
+}).meta({ ref: "ComputerSourceListResponse" })
+export type ComputerSourceListResponse = z.infer<typeof computerSourceListResponseSchema>
+
 export const computerAuthorizeRequestSchema = z.strictObject({ action: computerActionSchema })
 export type ComputerAuthorizeRequest = z.infer<typeof computerAuthorizeRequestSchema>
 
@@ -155,6 +227,7 @@ export type ComputerAuthorizeResponse = z.infer<typeof computerAuthorizeResponse
 export const COMPUTER_COMMAND_STATUSES = ["pending", "claimed", "done", "failed", "refused", "expired"] as const
 export type ComputerCommandStatus = (typeof COMPUTER_COMMAND_STATUSES)[number]
 export const COMPUTER_OUTPUT_MAX_BYTES = 32_000
+export const COMPUTER_COMMAND_PICKUP_MS = 30_000
 export const COMPUTER_COMMAND_RETENTION_MS = 15 * 60_000
 
 const expiresAtSchema = z.iso.datetime({ offset: true })
@@ -163,7 +236,7 @@ const doneFields = { exitCode: z.number().int(), output: z.string(), truncated: 
 
 export const computerExecutionSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("refused"), ...refusalFields }),
-  z.object({ state: z.literal("offline"), message: z.string(), retryable: z.literal(true) }),
+  z.object({ state: z.literal("offline"), message: z.string(), retryable: z.literal(true), lastSeenAt: z.iso.datetime({ offset: true }).nullable().default(null) }),
   z.object({ state: z.literal("unsupported"), message: z.string() }),
   z.object({ state: z.literal("running"), id: z.string(), expiresAt: expiresAtSchema }),
   z.object({ state: z.literal("unknown"), id: z.string(), message: z.string() }),
@@ -180,9 +253,28 @@ const computerRunnerSourceSchema = computerSourceRefSchema.refine(
 )
 export const computerAccessReportSchema = z.strictObject({
   choice: ownerChoiceSchema,
-  grants: z.array(z.strictObject({ source: computerRunnerSourceSchema, folders: foldersSchema })).max(16),
+  grants: z.array(z.strictObject({ source: computerRunnerSourceSchema, ...sandboxFolderFields })
+    .refine(writableFoldersAreShared, writableFoldersCheck)).max(16),
 })
 export type ComputerAccessReport = z.infer<typeof computerAccessReportSchema>
+
+export const computerRunnerAccessResponseSchema = z.object({
+  organizationAllows: z.boolean(),
+  choice: ownerChoiceSchema,
+  grants: z.array(z.object({
+    source: computerSourceRefSchema,
+    folders: z.array(z.string()),
+    writableFolders: z.array(z.string()),
+    revokedAt: z.string().nullable(),
+  })),
+}).meta({ ref: "ComputerRunnerAccessResponse" })
+export type ComputerRunnerAccessResponse = z.infer<typeof computerRunnerAccessResponseSchema>
+
+export const computerSourceCommandRequestSchema = z.strictObject({
+  call: computerToolCallSchema,
+  waitMs: z.number().int().min(0).max(20_000).default(15_000),
+}).meta({ ref: "ComputerSourceCommandRequest" })
+export type ComputerSourceCommandRequest = z.infer<typeof computerSourceCommandRequestSchema>
 
 export const computerCommandListResponseSchema = z.object({
   items: z.array(z.object({ id: z.string(), expiresAt: expiresAtSchema })),
@@ -190,13 +282,15 @@ export const computerCommandListResponseSchema = z.object({
 export type ComputerCommandListResponse = z.infer<typeof computerCommandListResponseSchema>
 
 /** A runner advertising computer_shell_v1 must run each assignment inside its
- * sandbox with only the assignment's scope.folders mounted from the host.
+ * sandbox with only the assignment's scope.folders mounted from the host,
+ * read-only unless listed in scope.writableFolders.
  * Den's check of the requested path is an early refusal, not a sandbox boundary.
  */
 export const computerCommandAssignmentSchema = z.object({
   id: z.string(),
   source: computerSchema,
   action: computerActionSchema,
+  call: computerToolCallSchema.optional(),
   scope: computerSandboxScopeSchema,
   expiresAt: expiresAtSchema,
 })
@@ -205,7 +299,6 @@ export type ComputerCommandAssignment = z.infer<typeof computerCommandAssignment
 export const computerCommandClaimResponseSchema = z.object({ assignment: computerCommandAssignmentSchema })
 export type ComputerCommandClaimResponse = z.infer<typeof computerCommandClaimResponseSchema>
 
-const utf8 = new TextEncoder()
 export const computerCommandCompleteRequestSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("done"),

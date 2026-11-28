@@ -19,7 +19,7 @@ export const COMPUTER_INVENTORY_STATE_LABELS: Record<ComputerInventoryState, str
   has_a_problem: "Has a problem",
 }
 
-export const COMPUTER_RUN_CODE_OFF_REASONS = ["organization", "owner", "not_chosen", "revoked"] as const
+export const COMPUTER_RUN_CODE_OFF_REASONS = ["organization", "owner", "not_chosen", "revoked", "sandbox_unavailable", "nothing_shared"] as const
 export type ComputerRunCodeOffReason = (typeof COMPUTER_RUN_CODE_OFF_REASONS)[number]
 export const computerRunCodeSchema = z.discriminatedUnion("value", [
   z.object({ value: z.literal("no"), reason: z.enum(COMPUTER_RUN_CODE_OFF_REASONS) }),
@@ -132,6 +132,7 @@ export const computerSourceAccessSchema = z.object({
   label: z.string(),
   scope: z.enum(["sandbox", "whole_computer"]),
   folders: z.array(z.string()),
+  writableFolders: z.array(z.string()).default([]),
   revokedAt: timestampSchema.nullable(),
   revokedBy: z.string().nullable().describe("The name of the member who revoked access, or their email if no name is available."),
 }).meta({ ref: "ComputerSourceAccess" })

@@ -9,7 +9,7 @@ import type { RemoteDeviceActor } from "../remote-devices.js"
 import { withDeadlockRetry } from "../utils/deadlock-retry.js"
 import { computerMemberNames } from "./activity.js"
 
-type Grant = Pick<typeof ComputerGrantTable.$inferSelect, "sourceKey" | "folders" | "revokedAt" | "revokedByMemberId">
+type Grant = Pick<typeof ComputerGrantTable.$inferSelect, "sourceKey" | "folders" | "revokedAt" | "revokedByMemberId"> & Partial<Pick<typeof ComputerGrantTable.$inferSelect, "writableFolders">>
 type Viewer = { kind: "member" | "organization"; actor: RemoteDeviceActor }
 
 export async function sourceViews(database: RemoteDeviceDatabase, viewer: Viewer, ownerName: string | null, grants: Grant[]): Promise<ComputerSourceAccess[]> {
@@ -23,13 +23,13 @@ export async function sourceViews(database: RemoteDeviceDatabase, viewer: Viewer
   )) : []
   const names = new Map<string, string>(rows.map(({ id, label }) => [id, label]))
   const revokers = await computerMemberNames(database, organizationId, revokerIds)
-  return grants.map(({ sourceKey, folders, revokedAt, revokedByMemberId }) => {
+  return grants.map(({ sourceKey, folders, writableFolders, revokedAt, revokedByMemberId }) => {
     const whole = sourceKey === COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY
     const label = sourceKey === "workbot" ? "Workbot" : whole || sourceKey === "owner"
       ? ownerName ? `${ownerName}'s OpenWork apps` : "The owner's OpenWork apps"
       : names.get(sourceKey) ?? "A removed computer"
     const revokedBy = revokedAt && revokedByMemberId ? revokers.get(revokedByMemberId) ?? null : null
-    return { key: sourceKey, label, scope: whole ? "whole_computer" : "sandbox", folders, revokedAt: revokedAt?.toISOString() ?? null, revokedBy }
+    return { key: sourceKey, label, scope: whole ? "whole_computer" : "sandbox", folders, writableFolders: writableFolders ?? [], revokedAt: revokedAt?.toISOString() ?? null, revokedBy }
   })
 }
 

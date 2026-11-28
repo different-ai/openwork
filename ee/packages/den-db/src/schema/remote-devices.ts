@@ -37,6 +37,7 @@ export const RemoteDeviceTable = mysqlTable(
     externalId: varchar("external_id", { length: 191 }).notNull(),
     machineKey: varchar("machine_key", { length: 64 }),
     label: varchar("label", { length: 120 }).notNull(),
+    labelChosenAt: timestamp("label_chosen_at", { fsp: 3 }),
     state: varchar("state", { length: 24 }).$type<RemoteDeviceState>().notNull().default("unknown"),
     statusDetail: varchar("status_detail", { length: 300 }),
     appVersion: varchar("app_version", { length: 80 }),

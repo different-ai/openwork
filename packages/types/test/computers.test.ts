@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
+  COMPUTER_COMMAND_PICKUP_MS,
+  COMPUTER_EXECUTABLE_VM_PROVIDERS,
   COMPUTER_OUTPUT_MAX_BYTES,
+  COMPUTER_TOOL_CALL_MAX_BYTES,
+  COMPUTER_TOOL_NAMES,
   COMPUTER_STATE_LABELS,
   COMPUTER_STATES,
   computerAccessReportSchema,
@@ -9,15 +13,24 @@ import {
   computerActionSchema,
   computerAuthorizeRequestSchema,
   computerAuthorizeResponseSchema,
+  computerCommandAssignmentSchema,
   computerCommandCompleteRequestSchema,
   computerDecisionSchema,
   computerExecutionSchema,
   computerFolderSchema,
   computerGrantScopeSchema,
   computerListResponseSchema,
+  computerRunnerAccessResponseSchema,
+  computerSourceCommandRequestSchema,
+  computerSourceListResponseSchema,
   computerSourceRefSchema,
+  computerToolCallFits,
+  computerToolCallSchema,
+  isExecutableVmProvider,
   listedComputerSchema,
 } from "@openwork/types/den/computers"
+import { computerRunCodeSchema, computerSourceAccessSchema } from "@openwork/types/den/computer-inventory"
+import { DEFAULT_COMPUTER_SHARING_SETTINGS, computerSharingSettingsSchema, computerSharingStateSchema } from "@openwork/types/computer-sharing"
 
 const scope = { surface: "sandbox", folders: ["/a/logs"] }
 
@@ -35,6 +48,21 @@ test("sandbox grants accept up to 32 unique folders", () => {
   assert.equal(computerGrantScopeSchema.safeParse({ ...scope, wholeMachine: true }).success, false)
   assert.equal(computerGrantScopeSchema.safeParse({ ...scope, folders: ["/a/logs", "/a/logs"] }).success, false)
   assert.equal(computerGrantScopeSchema.safeParse({ ...scope, folders: numberedFolders(33) }).success, false)
+})
+
+test("sandbox writable folders must be unique and explicitly shared in both scopes and access reports", () => {
+  const source = { kind: "workbot" }
+  const writableFolders = ["/a/logs"]
+  const editable = { ...scope, writableFolders }
+  const report = { choice: "allow", grants: [{ source, folders: scope.folders, writableFolders }] }
+  assert.deepEqual(computerGrantScopeSchema.parse(editable), editable)
+  const allowance = { outcome: "allow", route: "checked", scope: editable }
+  assert.deepEqual(computerDecisionSchema.parse(allowance), allowance)
+  assert.deepEqual(computerAccessReportSchema.parse(report), report)
+  for (const invalid of [["/other"], ["/a/logs/child"], ["/a/logs", "/a/logs"], ["a/logs"]]) {
+    assert.equal(computerGrantScopeSchema.safeParse({ ...editable, writableFolders: invalid }).success, false)
+    assert.equal(computerAccessReportSchema.safeParse({ ...report, grants: [{ ...report.grants[0], writableFolders: invalid }] }).success, false)
+  }
 })
 
 test("folder paths are bounded absolute POSIX paths with no ambiguous segments", () => {
@@ -70,6 +98,49 @@ test("file actions use the same canonical folder paths; only lists and searches 
     for (const path of ["src", "/workspace/../other", "/workspace/", null]) {
       assert.equal(computerActionSchema.safeParse({ type, path }).success, false)
     }
+  }
+})
+
+const toolCalls = [
+  { tool: "shell", input: { command: "true", cwd: "/workspace", timeoutMs: 120_000 } },
+  { tool: "read", input: { path: "/workspace/notes", offset: 1, limit: 2_000 } },
+  { tool: "write", input: { path: "/workspace/notes", content: "" } },
+  { tool: "edit", input: { path: "/workspace/notes", oldString: "old", newString: "", replaceAll: false } },
+  { tool: "glob", input: { path: "/workspace", pattern: "**/*.txt", hidden: true, limit: 1 } },
+  { tool: "grep", input: { path: "/workspace", pattern: "notes", literal: true, include: "*.txt", caseSensitive: false, limit: 1 } },
+]
+
+test("tool calls are strict and all six require a canonical absolute path", () => {
+  assert.deepEqual(COMPUTER_TOOL_NAMES, toolCalls.map(({ tool }) => tool))
+  for (const call of toolCalls) {
+    const pathKey = call.tool === "shell" ? "cwd" : "path"
+    assert.deepEqual(computerToolCallSchema.parse(call), call)
+    for (const path of [undefined, "workspace", "/workspace/../other"]) {
+      assert.equal(computerToolCallSchema.safeParse({ ...call, input: { ...call.input, [pathKey]: path } }).success, false, call.tool)
+    }
+    assert.equal(computerToolCallSchema.safeParse({ ...call, extra: true }).success, false)
+    assert.equal(computerToolCallSchema.safeParse({ ...call, input: { ...call.input, extra: true } }).success, false)
+  }
+  for (const [call, patch] of [
+    [toolCalls[0], { timeoutMs: 120_001 }], [toolCalls[1], { offset: 0 }], [toolCalls[1], { limit: 2_001 }],
+    [toolCalls[2], { content: "x".repeat(32_001) }], [toolCalls[3], { oldString: "" }],
+    [toolCalls[4], { pattern: "" }], [toolCalls[5], { include: "x".repeat(1_025) }],
+  ] as const) {
+    assert.equal(computerToolCallSchema.safeParse({ ...call, input: { ...call.input, ...patch } }).success, false)
+  }
+})
+
+test("tool calls cap serialized UTF-8 bytes, including JSON escaping and keys", () => {
+  assert.equal(COMPUTER_TOOL_CALL_MAX_BYTES, 128_000)
+  const input = { path: "/workspace/notes", oldString: "é".repeat(32_000), newString: "é".repeat(30_000) }
+  const fits = { tool: "edit", input } as const
+  const oversized = { ...fits, input: { ...input, newString: "é".repeat(32_000) } }
+  const escaped = { tool: "write", input: { path: "/workspace/notes", content: "\u0000".repeat(32_000) } } as const
+  assert.equal(computerToolCallFits(fits), true)
+  assert.deepEqual(computerToolCallSchema.parse(fits), fits)
+  for (const call of [oversized, escaped]) {
+    assert.equal(computerToolCallFits(call), false)
+    assert.equal(computerToolCallSchema.safeParse(call).success, false)
   }
 })
 
@@ -180,6 +251,73 @@ test("command completion caps UTF-8 bytes, not just string length", () => {
   for (const output of ["x".repeat(COMPUTER_OUTPUT_MAX_BYTES + 1), "é".repeat(COMPUTER_OUTPUT_MAX_BYTES / 2) + "x"]) {
     assert.equal(computerCommandCompleteRequestSchema.safeParse({ ...done, output }).success, false)
   }
+})
+
+test("offline executions parse older payloads, null and ISO last contact but not arbitrary dates", () => {
+  const offline = { state: "offline", message: "Build box is offline.", retryable: true }
+  for (const lastSeenAt of [null, "2026-11-26T18:00:00Z", "2026-11-26T10:00:00-08:00"]) {
+    assert.deepEqual(computerExecutionSchema.parse({ ...offline, lastSeenAt }), { ...offline, lastSeenAt })
+  }
+  assert.deepEqual(computerExecutionSchema.parse(offline), { ...offline, lastSeenAt: null })
+  assert.equal(computerExecutionSchema.safeParse({ ...offline, lastSeenAt: "yesterday" }).success, false)
+})
+
+test("source and runner contracts carry the tool call, share permissions and pickup deadline", () => {
+  assert.equal(COMPUTER_COMMAND_PICKUP_MS, 30_000)
+  const call = toolCalls[0]
+  assert.deepEqual(computerSourceCommandRequestSchema.parse({ call }), { call, waitMs: 15_000 })
+  for (const waitMs of [0, 20_000]) assert.deepEqual(computerSourceCommandRequestSchema.parse({ call, waitMs }), { call, waitMs })
+  for (const waitMs of [-1, 20_001, 0.5, "100"]) assert.equal(computerSourceCommandRequestSchema.safeParse({ call, waitMs }).success, false)
+  assert.equal(computerSourceCommandRequestSchema.safeParse({ call, action: { type: "read", path: "/workspace" } }).success, false)
+  const self = { id: "studio", provider: "openwork_desktop", kind: "member_machine", label: "Studio Mac", ownerMemberId: "ada", availability: "online" }
+  for (const source of [null, self]) {
+    const listing = { self: source, computers: [listed] }
+    assert.deepEqual(computerSourceListResponseSchema.parse(listing), listing)
+  }
+  const writableFolders = scope.folders
+  const assignment = { id: "command", source: self, scope: { ...scope, writableFolders }, action: { type: "shell", command: "true", cwd: "/workspace" }, expiresAt: "2026-11-26T18:00:00Z" }
+  assert.deepEqual(computerCommandAssignmentSchema.parse(assignment), assignment)
+  assert.deepEqual(computerCommandAssignmentSchema.parse({ ...assignment, call }), { ...assignment, call })
+  const access = { organizationAllows: true, choice: null, grants: [{ source: { kind: "workbot" }, folders: scope.folders, writableFolders, revokedAt: null }] }
+  assert.deepEqual(computerRunnerAccessResponseSchema.parse(access), access)
+  assert.equal(computerRunnerAccessResponseSchema.safeParse({ ...access, organizationAllows: null }).success, false)
+})
+
+test("only Daytona and Freestyle are executable VM providers; inventory accepts new off reasons and old grants", () => {
+  assert.deepEqual(COMPUTER_EXECUTABLE_VM_PROVIDERS, ["daytona", "freestyle"])
+  for (const provider of ["daytona", "freestyle", "workbot", "openwork_desktop", "other", null]) {
+    assert.equal(isExecutableVmProvider(provider), provider === "daytona" || provider === "freestyle")
+  }
+  for (const reason of ["sandbox_unavailable", "nothing_shared"]) {
+    assert.deepEqual(computerRunCodeSchema.parse({ value: "no", reason }), { value: "no", reason })
+  }
+  const source = { key: "workbot", label: "Workbot", scope: "sandbox", folders: ["/workspace"], revokedAt: null, revokedBy: null }
+  assert.deepEqual(computerSourceAccessSchema.parse(source), { ...source, writableFolders: [] })
+})
+
+test("sharing settings default to off and accept only unique folders and personal sources", () => {
+  assert.deepEqual(DEFAULT_COMPUTER_SHARING_SETTINGS, { enabled: false, folders: [], sources: [] })
+  assert.deepEqual(computerSharingSettingsSchema.parse(DEFAULT_COMPUTER_SHARING_SETTINGS), DEFAULT_COMPUTER_SHARING_SETTINGS)
+  const folder = { path: "/workspace", access: "read" }
+  const workbot = { kind: "workbot" }
+  const desktop = { kind: "computer", id: "workbot" }
+  const settings = { enabled: true, folders: [folder], sources: [desktop, workbot] }
+  assert.deepEqual(computerSharingSettingsSchema.parse(settings), settings)
+  for (const invalid of [
+    { extra: true }, { folders: [folder, { ...folder, access: "edit" }] }, { folders: [{ ...folder, path: "workspace" }] },
+    { folders: [{ ...folder, extra: true }] },
+    { folders: numberedFolders(33).map((path) => ({ ...folder, path })) }, { sources: [workbot, workbot] },
+    { sources: [desktop, desktop] }, { sources: [{ kind: "owner" }] }, { sources: [{ ...workbot, id: "other" }] },
+    { sources: Array.from({ length: 17 }, (_, id) => ({ kind: "computer", id: String(id) })) },
+  ]) {
+    assert.equal(computerSharingSettingsSchema.safeParse({ ...settings, ...invalid }).success, false)
+  }
+  const state = {
+    settings, availability: { state: "unavailable", reason: "signed_out", message: "Sign in to take work from another computer." },
+    organizationAllows: null, revokedSources: [{ source: workbot, revokedAt: "2026-11-26T18:00:00Z" }], sync: "pending",
+  }
+  assert.deepEqual(computerSharingStateSchema.parse(state), state)
+  assert.equal(computerSharingStateSchema.safeParse({ ...state, availability: { state: "unavailable", reason: "signed_out" } }).success, false)
 })
 
 test("failed command completion has a bounded snake_case code and message", () => {
