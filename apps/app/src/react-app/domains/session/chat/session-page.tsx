@@ -1482,13 +1482,13 @@ export function SessionPage(props: SessionPageProps) {
   const sidePanelContent = activeSidePanel === "extensions" && props.settingsSlot ? (
     <div className={cn("flex h-full min-h-0 flex-col", !flatPanes && "bg-background")}>
       {flatPanes ? (
-        <div data-panel-titlebar className="window-titlebar flex shrink-0 items-center justify-end border-b border-border bg-dls-surface px-2 electron:titlebar-drag mac:bg-transparent">
+        <div data-panel-titlebar className="window-titlebar flex shrink-0 items-center justify-end px-2 electron:titlebar-drag">
           <Button variant="ghost" size="icon-sm" className="rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground titlebar-no-drag" aria-label="Close side panel" title="Close side panel" onClick={closeRightPane}>
             <PanelRight size={16} />
           </Button>
         </div>
       ) : null}
-      <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto", flatPanes && "bg-background")}>{props.settingsSlot}</div>
+      <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto", flatPanes && "rounded-r-[14px] border border-border bg-dls-surface border border-border shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.45)]")}>{props.settingsSlot}</div>
     </div>
   ) : activeSidePanel === "panel" ? (
     <SidePanel
@@ -1526,7 +1526,7 @@ export function SessionPage(props: SessionPageProps) {
               "window-titlebar relative flex shrink-0 items-center justify-between gap-3 border-b border-border bg-dls-surface px-3 electron:titlebar-drag @container/titlebar lg:px-4 mac:bg-transparent",
               "[&_[data-session-centered-title]]:absolute [&_[data-session-centered-title]]:left-1/2 [&_[data-session-centered-title]]:max-w-[32%] [&_[data-session-centered-title]]:-translate-x-1/2 lg:[&_[data-session-title-panel-open=true]]:left-[calc(50%-9.375rem)]",
               props.mainContentHeaderActionsRef ? "min-h-13" : flatPanes ? "lg:px-3" : compactChrome && !props.developerMode ? "lg:pr-2" : "lg:pr-1",
-              props.primarySurface !== "flat" && !flatPanes && "lg:border-b-0",
+              props.primarySurface !== "flat" && "lg:border-b-0",
               (!shellConfig.sidebar || !sidebarOpen || isMobile) && "mac:mac-window-controls-inset",
             )}
           >
@@ -1862,7 +1862,7 @@ export function SessionPage(props: SessionPageProps) {
           <FloatingSlotProvider>
           {flatPanes ? null : sessionHeader}
 
-          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && !flatPanes && "lg:pb-2 lg:pl-2", props.primarySurface !== "flat" && !flatPanes && compactChrome && !props.developerMode && "lg:pr-2")}>
+          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2", props.primarySurface !== "flat" && compactChrome && !props.developerMode && "lg:pr-2")}>
           <ResizablePanelGroup
             orientation="horizontal"
             elementRef={panelGroupRef}
@@ -1870,9 +1870,9 @@ export function SessionPage(props: SessionPageProps) {
             className={cn("min-h-0 flex-1 max-lg:rounded-none", props.primarySurface !== "flat" && !flatPanes && "lg:rounded-[14px]")}
           >
             <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
-              <div data-session-column className={cn("flex h-full min-w-0 flex-col", flatPanes && shellConfig.sidebar && sidebarOpen && "border-l border-border")}>
+              <div data-session-column className="flex h-full min-w-0 flex-col">
               {flatPanes ? sessionHeader : null}
-              <main data-session-pane className={cn("flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-dls-surface", props.primarySurface !== "flat" && !flatPanes && "max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
+              <main data-session-pane className={cn("flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-dls-surface", flatPanes && "lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)]", flatPanes && (sidePanelOpen ? "lg:rounded-l-[14px] lg:border-r-0" : "lg:rounded-[14px]"), props.primarySurface !== "flat" && !flatPanes && "max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
           {props.sandboxTrialNotice}
           {showNarrowPaneSwitcher ? (
             <NarrowPaneSwitcher
@@ -2222,7 +2222,7 @@ export function SessionPage(props: SessionPageProps) {
                   maxSize="70%"
                   className={cn("min-h-0 overflow-hidden lg:flex lg:flex-col", !flatPanes && "pl-2")}
                 >
-                  <div className={cn("flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden", flatPanes ? "border-l border-border" : "rounded-[14px] border border-border bg-dls-surface shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
+                  <div className={cn("flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden", flatPanes ? null : "rounded-[14px] border border-border bg-dls-surface shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
                     {sidePanelContent}
                   </div>
                 </ResizablePanel>

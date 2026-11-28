@@ -13,16 +13,16 @@ title bar.
 
 With the feature on:
 
-- The chat and the side panel fill the window as two flat columns split by a
-  thin line. The side panel reaches the window's right and bottom edges.
-- The title bar runs across both columns. The side panel's tabs sit in it, and
-  the button that closes the panel is at its far right.
-- With the side panel closed, the chat takes the full width and the button
-  that opens the panel stays in the chat's title bar.
+- The chat and the side panel share one rounded card, split by a thin line,
+  with no gap between them.
+- The side panel's tabs sit in the title bar above the panel, and the button
+  that closes the panel is at the title bar's far right.
+- With the side panel closed, the chat card takes the full width and the
+  button that opens the panel stays in the title bar.
 
 | Off | On |
 | --- | --- |
-| ![Off: chat and side panel as two floating cards](./off.png) | ![On: flat columns with the panel tabs in the title bar](./on.png) |
+| ![Off: chat and side panel as two floating cards](./off.png) | ![On: one rounded card with the panel tabs in the title bar](./on.png) |
 
 ## How it works
 

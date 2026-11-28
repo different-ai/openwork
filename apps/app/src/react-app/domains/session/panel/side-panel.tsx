@@ -824,7 +824,7 @@ export function SidePanel({
   return (
     <TooltipProvider delay={1000}>
       <div
-        className={cn("flex h-full flex-col", titlebar ? "[&>*:not([data-panel-titlebar-row])]:bg-background" : null)}
+        className={cn("flex h-full flex-col", titlebar ? "[&>*:not([data-panel-titlebar-row])]:rounded-r-[14px] [&>*:not([data-panel-titlebar-row])]:border [&>*:not([data-panel-titlebar-row])]:border-border [&>*:not([data-panel-titlebar-row])]:bg-dls-surface" : null)}
         onKeyDownCapture={(event) => {
           if (isBrowserSecretsDialogTarget(event.target)) return;
           if (!handlePanelEscape(event.key, onClose)) return;
@@ -832,8 +832,8 @@ export function SidePanel({
           event.stopPropagation();
         }}
       >
-        {titlebar || !(tabs.length === 1 && (activeTab?.type === "mcp-app" || activeTab?.type === "remote-thread")) ? <div data-panel-titlebar-row={titlebar ? "" : undefined} className={cn("shrink-0", titlebar ? "bg-dls-surface mac:bg-transparent" : "border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
-          <div data-panel-titlebar={titlebar ? "" : undefined} className={cn("flex items-center gap-1 px-2", titlebar ? "window-titlebar border-b border-border electron:titlebar-drag" : "h-10 border-b border-border/60")}>
+        {titlebar || !(tabs.length === 1 && (activeTab?.type === "mcp-app" || activeTab?.type === "remote-thread")) ? <div data-panel-titlebar-row={titlebar ? "" : undefined} className={cn("shrink-0", titlebar ? null : "border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
+          <div data-panel-titlebar={titlebar ? "" : undefined} className={cn("flex items-center gap-1 px-2", titlebar ? "window-titlebar electron:titlebar-drag" : "h-10 border-b border-border/60")}>
             <div className={cn("no-scrollbar min-w-0 overflow-x-auto", titlebar ? "titlebar-no-drag" : "flex-1")}>
               <PanelTabList
                 values={tabs.map((tab) => tab.id)}
