@@ -44,6 +44,7 @@ type GithubRepositorySummary = {
 export type GithubRepositoryTreeEntry = {
   id: string
   kind: "blob" | "tree"
+  mode?: string
   path: string
   sha: string | null
   size: number | null
@@ -587,11 +588,33 @@ export async function getGithubRepositoryTextFile(input: {
   return Buffer.from(response.body.content.replace(/\n/g, ""), "base64").toString("utf8")
 }
 
+export async function getGithubRepositoryBlobText(input: {
+  config: GithubConnectorAppConfig
+  installationId: number
+  organizationId: string
+  repositoryFullName: string
+  sha: string
+}) {
+  const repositoryParts = splitRepositoryFullName(input.repositoryFullName)
+  if (!repositoryParts) {
+    throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
+  }
+
+  const token = await getGithubInstallationAccessToken(input)
+  const response = await requestGithubJson<{ content?: string; encoding?: string }>({
+    headers: { Authorization: `Bearer ${token}` },
+    path: `/repos/${encodeURIComponent(repositoryParts.owner)}/${encodeURIComponent(repositoryParts.repo)}/git/blobs/${encodeURIComponent(input.sha)}`,
+  })
+  if (response.body.encoding !== "base64" || typeof response.body.content !== "string") {
+    throw new GithubConnectorRequestError("GitHub blob response was incomplete.", 502, response.body)
+  }
+  return Buffer.from(response.body.content, "base64").toString("utf8")
+}
+
 export type GithubImportFilePlan = {
   lastSeenSourceRevisionRef: string | null
   path: string
-  sourceFileRevisionRef: string | null
-  sourceRevisionRef: string
+  revision: string
 }
 
 export type GithubImportFileFetchResult =
@@ -612,8 +635,7 @@ export async function fetchGithubImportFilesWithRevisionGuard(input: {
       const index = nextIndex
       nextIndex += 1
       const file = input.files[index]
-      if (file.lastSeenSourceRevisionRef !== null
-        && (file.lastSeenSourceRevisionRef === file.sourceFileRevisionRef || file.lastSeenSourceRevisionRef === file.sourceRevisionRef)) {
+      if (file.lastSeenSourceRevisionRef === file.revision) {
         results[index] = { status: "skipped_unchanged" }
         continue
       }
@@ -696,6 +718,7 @@ export async function getGithubRepositoryTree(input: {
   const treeResponse = await requestGithubJson<{
     truncated?: boolean
     tree?: Array<{
+      mode?: string
       path?: string
       sha?: string
       size?: number
@@ -718,6 +741,7 @@ export async function getGithubRepositoryTree(input: {
         return [{
           id: path,
           kind,
+          mode: entry.mode,
           path,
           sha: typeof entry.sha === "string" ? entry.sha : null,
           size: typeof entry.size === "number" ? entry.size : null,

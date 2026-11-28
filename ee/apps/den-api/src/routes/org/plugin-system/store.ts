@@ -47,6 +47,7 @@ import {
   GithubConnectorRequestError,
   getGithubAppSummary,
   getGithubConnectorAppConfig,
+  getGithubRepositoryBlobText,
   getGithubRepositoryHeadSha,
   getGithubRepositoryTextFile,
   getGithubRepositoryTree,
@@ -63,6 +64,7 @@ import {
   type GithubMarketplaceInfo,
   type GithubDiscoveryTreeEntry,
 } from "./github-discovery.js"
+import { githubSkillBundleRevision, githubSkillFolderEntries, readGithubSkillFiles, selectGithubSkillFiles } from "./github-skill-files.js"
 import { planConnectorImportedResourceCleanup, uniqueIds } from "./connector-cleanup.js"
 import { assignDefaultExternalKey, setExternalKey, type KeyedItem } from "./external-keys.js"
 import {
@@ -82,7 +84,6 @@ import { requestReadFor } from "../../../request-reads.js"
 import { latestConfigObjectVersions } from "../../../config-object-versions.js"
 import {
   checkSkillFiles,
-  isSkillFileText,
   sameSkillFiles,
   selectSkillFilesBySize,
   skillFilesFromPayload,
@@ -136,7 +137,7 @@ import {
 import { resolveImportedConnectorTarget } from "../../../capability-sources/claude-connector-aliases.js"
 import { NATIVE_OAUTH_PROVIDERS } from "../../../capability-sources/provider-registry.js"
 import type { MemberUsableConnectionFacts } from "../mcp-connections.js"
-import { getOrganizationFeatures } from "../../../features.js"
+import { getOrganizationFeatures, organizationFeatureEnabled } from "../../../features.js"
 
 type OrganizationId = PluginArchActorContext["organizationContext"]["organization"]["id"]
 const logger = appLogger.child({ component: "plugin_system_store" })
@@ -201,6 +202,7 @@ type GithubDiscoveryImportPlan = {
   objectType: ConnectorMappingRow["objectType"]
   paths: string[]
   selector: string
+  skillFilesByPath?: Record<string, ReturnType<typeof selectGithubSkillFiles>["entries"]>
 }
 
 type GithubDiscoveryCacheEntry = {
@@ -212,6 +214,7 @@ type GithubDiscoveryCacheEntry = {
   ref: string
   repositoryFullName: string
   sourceRevisionRef: string
+  includesSkillFiles?: boolean
   treeSummary: GithubConnectorDiscoveryTreeSummary
   warnings: string[]
 }
@@ -4659,7 +4662,7 @@ function buildGithubConnectorDiscoverySteps(input: {
   ] satisfies GithubConnectorDiscoveryStep[]
 }
 
-function buildGithubDiscoveryImportPlans(input: { discoveredPlugins: GithubDiscoveredPlugin[]; treeEntries: GithubDiscoveryTreeEntry[] }) {
+function buildGithubDiscoveryImportPlans(input: { discoveredPlugins: GithubDiscoveredPlugin[]; treeEntries: GithubDiscoveryTreeEntry[]; includeSkillFiles?: boolean }) {
   return Object.fromEntries(input.discoveredPlugins.map((plugin) => [
     plugin.key,
     discoveryMappingsForPlugin(plugin).map((mapping) => {
@@ -4675,6 +4678,12 @@ function buildGithubDiscoveryImportPlans(input: { discoveredPlugins: GithubDisco
         objectType: mapping.objectType,
         paths: entries.map((entry) => entry.path),
         selector: mapping.selector,
+        ...(input.includeSkillFiles && mapping.objectType === "skill" ? {
+          skillFilesByPath: Object.fromEntries(entries.filter((entry) => entry.path.endsWith("/SKILL.md") || entry.path === "SKILL.md").map((entry) => [
+            entry.path,
+            selectGithubSkillFiles(githubSkillFolderEntries({ sourcePath: entry.path, treeEntries: input.treeEntries })).entries,
+          ])),
+        } : {}),
       } satisfies GithubDiscoveryImportPlan
     }),
   ])) satisfies Record<string, GithubDiscoveryImportPlan[]>
@@ -5036,38 +5045,14 @@ async function withExistingConnectionReuse(input: { organizationId: Organization
   return result
 }
 
-function githubSkillFolderEntries(input: { sourcePath: string; treeEntries: GithubDiscoveryTreeEntry[] }) {
-  if (input.sourcePath === "SKILL.md") {
-    return input.treeEntries
-      .filter((entry) => entry.kind === "blob" && entry.path !== input.sourcePath)
-      .map((entry) => ({ discoveryPath: entry.path, path: entry.path, size: entry.size }))
-  }
-  if (!input.sourcePath.endsWith("/SKILL.md")) return []
-  const directory = input.sourcePath.slice(0, -"/SKILL.md".length)
-  return input.treeEntries
-    .filter((entry) => entry.kind === "blob" && entry.path.startsWith(`${directory}/`) && entry.path !== input.sourcePath)
-    .map((entry) => ({ discoveryPath: entry.path, path: entry.path.slice(directory.length + 1), size: entry.size }))
-}
-
-async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }): Promise<{ files: SkillFileBody[]; leftOut: string[] }> {
-  const entries = githubSkillFolderEntries({ sourcePath: input.sourcePath, treeEntries: input.snapshot.treeEntries })
-  const selection = selectSkillFilesBySize(entries)
-  const discoveryPathByPath = new Map(entries.map((entry) => [entry.path, entry.discoveryPath]))
-  const texts = await mapPublicGithubConcurrently(selection.included, (path) => getPublicGithubTextFile({
+async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }) {
+  const selection = selectGithubSkillFiles(githubSkillFolderEntries({ sourcePath: input.sourcePath, treeEntries: input.snapshot.treeEntries }))
+  const read = await readGithubSkillFiles(selection.entries, (entries) => mapPublicGithubConcurrently(entries, (entry) => getPublicGithubTextFile({
     branch: input.snapshot.branch,
-    discoveryPath: discoveryPathByPath.get(path) ?? path,
+    discoveryPath: entry.discoveryPath,
     snapshot: input.snapshot,
-  }))
-  const files: Array<{ path: string; text: string }> = []
-  const leftOut = [...selection.leftOut]
-  for (const [index, path] of selection.included.entries()) {
-    const text = texts[index]
-    if (typeof text === "string" && isSkillFileText(text)) files.push({ path, text })
-    else leftOut.push(path)
-  }
-  const checked = checkSkillFiles(files)
-  if ("files" in checked) return { files: checked.files, leftOut: leftOut.sort() }
-  return { files: [], leftOut: entries.map((entry) => entry.path).sort() }
+  })))
+  return { files: read.files, leftOut: [...selection.leftOut, ...read.leftOut].sort() }
 }
 
 async function computeGithubPluginMcpImportPlan(input: {
@@ -6449,6 +6434,7 @@ function readGithubDiscoveryCache(config: Record<string, unknown> | null) {
     classification,
     discoveredPlugins,
     importPlansByPluginKey,
+    includesSkillFiles: cache.includesSkillFiles === true,
     marketplace: isRecord(cache.marketplace) || cache.marketplace === null ? cache.marketplace as GithubMarketplaceInfo | null : null,
     ref,
     repositoryFullName,
@@ -6789,6 +6775,7 @@ function pagedGithubDiscoveryTree(input: { cursor?: string; entries: GithubDisco
 
 async function computeGithubDiscoverySnapshot(input: {
   branch: string
+  includeSkillFiles: boolean
   installationId: number
   organizationId: string
   ref: string
@@ -6807,8 +6794,11 @@ async function computeGithubDiscoverySnapshot(input: {
     wrapGithubConnectorError(error)
   }
 
+  if (input.includeSkillFiles && treeSnapshot.truncated) {
+    throw new PluginArchRouteFailure(409, "github_skill_tree_truncated", "GitHub returned an incomplete repository tree; supporting skill files could not be synced.")
+  }
   const fileTextByPath = await getGithubDiscoveryFileTexts({
-    branch: input.branch,
+    branch: input.includeSkillFiles ? treeSnapshot.headSha : input.branch,
     config: githubConnectorAppConfig(),
     installationId: input.installationId,
     organizationId: input.organizationId,
@@ -6827,7 +6817,9 @@ async function computeGithubDiscoverySnapshot(input: {
     importPlansByPluginKey: buildGithubDiscoveryImportPlans({
       discoveredPlugins: discovery.discoveredPlugins,
       treeEntries: treeSnapshot.treeEntries,
+      includeSkillFiles: input.includeSkillFiles,
     }),
+    includesSkillFiles: input.includeSkillFiles,
     marketplace: discovery.marketplace,
     ref: input.ref,
     repositoryFullName: input.repositoryFullName,
@@ -6842,10 +6834,11 @@ async function computeGithubDiscoverySnapshot(input: {
   } satisfies GithubDiscoverySnapshot
 }
 
-async function computeGithubConnectorDiscovery(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
+async function computeGithubConnectorDiscovery(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext; includeSkillFiles?: boolean }) {
   const discoveryContext = await getGithubDiscoveryContext(input)
   const snapshot = await computeGithubDiscoverySnapshot({
     branch: discoveryContext.branch,
+    includeSkillFiles: input.includeSkillFiles ?? await organizationFeatureEnabled(discoveryContext.organizationId, "githubConnectorSkillFiles"),
     installationId: discoveryContext.installationId,
     organizationId: discoveryContext.organizationId,
     ref: discoveryContext.ref,
@@ -6887,8 +6880,10 @@ async function resolveGithubConnectorDiscovery(input: { connectorInstanceId: Con
     ? discoveryContext.connectorTarget.targetConfigJson as Record<string, unknown>
     : null
   const cached = readGithubDiscoveryCache(targetConfig)
+  const includeSkillFiles = await organizationFeatureEnabled(discoveryContext.organizationId, "githubConnectorSkillFiles")
   if (!input.forceRefresh
     && cached
+    && cached.includesSkillFiles === includeSkillFiles
     && cached.branch === discoveryContext.branch
     && cached.ref === discoveryContext.ref
     && cached.repositoryFullName === discoveryContext.repositoryFullName) {
@@ -6915,12 +6910,13 @@ async function resolveGithubConnectorDiscovery(input: { connectorInstanceId: Con
     }
   }
 
-  const computed = await computeGithubConnectorDiscovery(input)
+  const computed = await computeGithubConnectorDiscovery({ ...input, includeSkillFiles })
   const cache = {
     branch: computed.branch,
     classification: computed.classification,
     discoveredPlugins: computed.discoveredPlugins,
     importPlansByPluginKey: computed.importPlansByPluginKey,
+    includesSkillFiles: computed.includesSkillFiles,
     marketplace: computed.marketplace,
     ref: computed.ref,
     repositoryFullName: computed.repositoryFullName,
@@ -7149,7 +7145,8 @@ async function materializeGithubImportedObject(input: {
   context: PluginArchActorContext
   externalLocator: string
   rawSourceText: string
-  sourceFileRevisionRef?: string | null
+  skillFiles?: SkillFileBody[]
+  sourceFileRevisionRef: string
   sourceRevisionRef: string
 }) {
   const organizationId = input.context.organizationContext.organization.id
@@ -7163,12 +7160,24 @@ async function materializeGithubImportedObject(input: {
   const fileName = input.externalLocator.split("/").filter(Boolean).at(-1) ?? input.externalLocator
   const fileExtension = fileName.includes(".") ? fileName.split(".").at(-1) ?? null : null
 
-  const bindingRevisionRef = input.sourceFileRevisionRef ?? input.sourceRevisionRef
+  const bindingRevisionRef = input.sourceFileRevisionRef
   const existingBinding = await findActiveConnectorSourceBinding({
     connectorMappingId: input.connectorMapping.id,
     externalLocator: input.externalLocator,
     organizationId,
   })
+  if (existingBinding?.lastSeenSourceRevisionRef === bindingRevisionRef) {
+    return getConfigObjectDetail(input.context, existingBinding.configObjectId)
+  }
+  const normalizedPayloadJson = input.connectorMapping.objectType === "skill"
+    ? await skillVersionPayload({
+      organizationId,
+      previousPayload: input.skillFiles === undefined && existingBinding
+        ? (await getLatestVersions([existingBinding.configObjectId])).get(existingBinding.configObjectId)?.normalizedPayloadJson
+        : undefined,
+      value: { normalizedPayloadJson: input.skillFiles === undefined ? undefined : { files: input.skillFiles } },
+    })
+    : metadata.normalizedPayloadJson ?? null
 
   if (!existingBinding) {
     const configObjectId = createDenTypeId("configObject")
@@ -7201,7 +7210,7 @@ async function materializeGithubImportedObject(input: {
         createdVia: "connector",
         id: versionId,
         isDeletedVersion: false,
-        normalizedPayloadJson: metadata.normalizedPayloadJson ?? null,
+        normalizedPayloadJson,
         organizationId,
         rawSourceText: normalizeOptionalString(input.rawSourceText),
         schemaVersion: null,
@@ -7257,73 +7266,71 @@ async function materializeGithubImportedObject(input: {
   }
 
   const binding = existingBinding
-  if (binding.lastSeenSourceRevisionRef !== bindingRevisionRef && binding.lastSeenSourceRevisionRef !== input.sourceRevisionRef) {
-    const versionId = createDenTypeId("configObjectVersion")
-    await db.transaction(async (tx) => {
-      await tx.update(ConfigObjectTable).set({
-        currentFileExtension: normalizeOptionalString(fileExtension ?? undefined),
-        currentFileName: fileName,
-        currentRelativePath: input.externalLocator,
-        description: projection.description,
-        searchText: projection.searchText,
-        status: "active",
-        title: projection.title,
-        updatedAt: now,
-      }).where(eq(ConfigObjectTable.id, binding.configObjectId))
+  const versionId = createDenTypeId("configObjectVersion")
+  await db.transaction(async (tx) => {
+    await tx.update(ConfigObjectTable).set({
+      currentFileExtension: normalizeOptionalString(fileExtension ?? undefined),
+      currentFileName: fileName,
+      currentRelativePath: input.externalLocator,
+      description: projection.description,
+      searchText: projection.searchText,
+      status: "active",
+      title: projection.title,
+      updatedAt: now,
+    }).where(eq(ConfigObjectTable.id, binding.configObjectId))
 
-      await tx.insert(ConfigObjectVersionTable).values({
-        configObjectId: binding.configObjectId,
-        connectorSyncEventId: input.connectorSyncEventId ?? null,
-        createdAt: now,
-        createdByOrgMembershipId,
-        createdVia: "connector",
-        id: versionId,
-        isDeletedVersion: false,
-        normalizedPayloadJson: metadata.normalizedPayloadJson ?? null,
-        organizationId,
-        rawSourceText: normalizeOptionalString(input.rawSourceText),
-        schemaVersion: null,
-        sourceRevisionRef: input.sourceRevisionRef,
-      })
-
-      if (input.connectorMapping.pluginId) {
-        const membership = await tx
-          .select({ id: PluginConfigObjectTable.id })
-          .from(PluginConfigObjectTable)
-          .where(and(
-            eq(PluginConfigObjectTable.pluginId, input.connectorMapping.pluginId),
-            eq(PluginConfigObjectTable.configObjectId, binding.configObjectId),
-          ))
-          .limit(1)
-        if (membership[0]) {
-          await tx.update(PluginConfigObjectTable).set({
-            connectorMappingId: input.connectorMapping.id,
-            membershipSource: "connector",
-            removedAt: null,
-          }).where(eq(PluginConfigObjectTable.id, membership[0].id))
-        } else {
-          await tx.insert(PluginConfigObjectTable).values({
-            configObjectId: binding.configObjectId,
-            connectorMappingId: input.connectorMapping.id,
-            createdAt: now,
-            createdByOrgMembershipId,
-            id: createDenTypeId("pluginConfigObject"),
-            membershipSource: "connector",
-            organizationId,
-            pluginId: input.connectorMapping.pluginId,
-            removedAt: null,
-          })
-        }
-      }
-
-      await tx.update(ConnectorSourceBindingTable).set({
-        deletedAt: null,
-        lastSeenSourceRevisionRef: bindingRevisionRef,
-        status: "active",
-        updatedAt: now,
-      }).where(eq(ConnectorSourceBindingTable.id, binding.id))
+    await tx.insert(ConfigObjectVersionTable).values({
+      configObjectId: binding.configObjectId,
+      connectorSyncEventId: input.connectorSyncEventId ?? null,
+      createdAt: now,
+      createdByOrgMembershipId,
+      createdVia: "connector",
+      id: versionId,
+      isDeletedVersion: false,
+      normalizedPayloadJson,
+      organizationId,
+      rawSourceText: normalizeOptionalString(input.rawSourceText),
+      schemaVersion: null,
+      sourceRevisionRef: input.sourceRevisionRef,
     })
-  }
+
+    if (input.connectorMapping.pluginId) {
+      const membership = await tx
+        .select({ id: PluginConfigObjectTable.id })
+        .from(PluginConfigObjectTable)
+        .where(and(
+          eq(PluginConfigObjectTable.pluginId, input.connectorMapping.pluginId),
+          eq(PluginConfigObjectTable.configObjectId, binding.configObjectId),
+        ))
+        .limit(1)
+      if (membership[0]) {
+        await tx.update(PluginConfigObjectTable).set({
+          connectorMappingId: input.connectorMapping.id,
+          membershipSource: "connector",
+          removedAt: null,
+        }).where(eq(PluginConfigObjectTable.id, membership[0].id))
+      } else {
+        await tx.insert(PluginConfigObjectTable).values({
+          configObjectId: binding.configObjectId,
+          connectorMappingId: input.connectorMapping.id,
+          createdAt: now,
+          createdByOrgMembershipId,
+          id: createDenTypeId("pluginConfigObject"),
+          membershipSource: "connector",
+          organizationId,
+          pluginId: input.connectorMapping.pluginId,
+          removedAt: null,
+        })
+      }
+    }
+
+    await tx.update(ConnectorSourceBindingTable).set({
+      deletedAt: null,
+      lastSeenSourceRevisionRef: bindingRevisionRef,
+      status: "active",
+      updatedAt: now,
+    }).where(eq(ConnectorSourceBindingTable.id, binding.id))
+  })
 
   return getConfigObjectDetail(input.context, binding.configObjectId)
 }
@@ -7333,7 +7340,8 @@ async function materializeGithubImportPlans(input: {
   connectorSyncEventId?: ConnectorSyncEventId
   connectorTarget: ReturnType<typeof serializeConnectorTarget>
   context: PluginArchActorContext
-  importPlans: Array<{ fileShaByPath?: Record<string, string>; mapping: ReturnType<typeof serializeConnectorMapping>; paths: string[] }>
+  importPlans: Array<Omit<GithubDiscoveryImportPlan, "objectType" | "selector"> & { mapping: ReturnType<typeof serializeConnectorMapping> }>
+  readRef: string
   sourceRevisionRef: string
 }) {
   const config = githubConnectorAppConfig()
@@ -7352,11 +7360,16 @@ async function materializeGithubImportPlans(input: {
     throw new PluginArchRouteFailure(409, "invalid_github_materialization_context", "GitHub connector target is missing required materialization context.")
   }
 
-  const plannedFiles = input.importPlans.flatMap((plan) => plan.paths.map((path) => ({
-    mapping: plan.mapping,
-    path,
-    sourceFileRevisionRef: plan.fileShaByPath?.[path] ?? null,
-  })))
+  const plannedFiles = input.importPlans.flatMap((plan) => plan.paths.map((path) => {
+    const entrypointSha = plan.fileShaByPath?.[path] ?? input.sourceRevisionRef
+    const supportingFiles = plan.skillFilesByPath?.[path]
+    return {
+      mapping: plan.mapping,
+      path,
+      supportingFiles,
+      sourceFileRevisionRef: supportingFiles === undefined ? entrypointSha : githubSkillBundleRevision(entrypointSha, supportingFiles),
+    }
+  }))
   const existingBindings = await Promise.all(plannedFiles.map((file) => findActiveConnectorSourceBinding({
     connectorMappingId: file.mapping.id,
     externalLocator: file.path,
@@ -7368,14 +7381,13 @@ async function materializeGithubImportPlans(input: {
       installationId,
       organizationId,
       path,
-      ref: branch,
+      ref: input.readRef,
       repositoryFullName,
     }),
     files: plannedFiles.map((file, index) => ({
       lastSeenSourceRevisionRef: existingBindings[index]?.lastSeenSourceRevisionRef ?? null,
       path: file.path,
-      sourceFileRevisionRef: file.sourceFileRevisionRef,
-      sourceRevisionRef: input.sourceRevisionRef,
+      revision: file.sourceFileRevisionRef,
     })),
   })
 
@@ -7397,6 +7409,14 @@ async function materializeGithubImportPlans(input: {
     if (!result.rawSourceText) {
       continue
     }
+    let skillFiles: SkillFileBody[] | undefined
+    if (file.supportingFiles !== undefined) {
+      const { files } = await readGithubSkillFiles(file.supportingFiles, (entries) => mapPublicGithubConcurrently(entries, (entry) => {
+        if (!entry.sha) throw new GithubConnectorRequestError("GitHub tree entry was missing its blob SHA.", 502)
+        return getGithubRepositoryBlobText({ config, installationId, organizationId, repositoryFullName, sha: entry.sha })
+      })).catch(wrapGithubConnectorError)
+      skillFiles = files
+    }
     materializedConfigObjects.push(await materializeGithubImportedObject({
       connectorInstance: input.connectorInstance,
       connectorMapping: file.mapping,
@@ -7405,6 +7425,7 @@ async function materializeGithubImportPlans(input: {
       context: input.context,
       externalLocator: file.path,
       rawSourceText: result.rawSourceText,
+      skillFiles,
       sourceFileRevisionRef: file.sourceFileRevisionRef,
       sourceRevisionRef: input.sourceRevisionRef,
     }))
@@ -7692,7 +7713,7 @@ export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugin
 
   const plugins = [] as Array<ReturnType<typeof serializePlugin>>
   const mappings = [] as Array<ReturnType<typeof serializeConnectorMapping>>
-  const importPlans = [] as Array<{ fileShaByPath?: Record<string, string>; mapping: ReturnType<typeof serializeConnectorMapping>; paths: string[] }>
+  const importPlans: Parameters<typeof materializeGithubImportPlans>[0]["importPlans"] = []
   for (const discoveredPlugin of selectedPlugins) {
     const plugin = await ensureDiscoveryPlugin({
       context: input.context,
@@ -7722,7 +7743,7 @@ export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugin
         selector: plan.selector,
       })
       mappings.push(mapping)
-      importPlans.push({ fileShaByPath: plan.fileShaByPath, mapping, paths: plan.paths })
+      importPlans.push({ ...plan, mapping })
     }
   }
 
@@ -7732,6 +7753,7 @@ export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugin
     connectorTarget: discovery.connectorTarget,
     context: input.context,
     importPlans,
+    readRef: discovery.cache.includesSkillFiles ? discovery.cache.sourceRevisionRef : discovery.cache.branch,
     sourceRevisionRef: discovery.cache.sourceRevisionRef,
   })
 
@@ -7867,6 +7889,7 @@ export async function githubSetup(input: {
 
   const discovery = await computeGithubDiscoverySnapshot({
     branch: input.branch,
+    includeSkillFiles: await organizationFeatureEnabled(organizationId, "githubConnectorSkillFiles"),
     installationId: input.installationId,
     ref: input.ref,
     repositoryFullName: input.repositoryFullName,
@@ -7901,6 +7924,7 @@ export async function githubSetup(input: {
       classification: discovery.classification,
       discoveredPlugins: discovery.discoveredPlugins,
       importPlansByPluginKey: discovery.importPlansByPluginKey,
+      includesSkillFiles: discovery.includesSkillFiles,
       marketplace: discovery.marketplace,
       ref: discovery.ref,
       repositoryFullName: discovery.repositoryFullName,

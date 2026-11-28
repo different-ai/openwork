@@ -10,6 +10,7 @@ type GithubDiscoveryTreeEntryKind = "blob" | "tree"
 export type GithubDiscoveryTreeEntry = {
   id: string
   kind: GithubDiscoveryTreeEntryKind
+  mode?: string
   path: string
   sha: string | null
   size: number | null
