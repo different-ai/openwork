@@ -8,9 +8,9 @@ import { getGithubData } from "../../../lib/github";
 import { baseOpenGraph, withSocialMetadata } from "../../../lib/seo";
 
 export const metadata = withSocialMetadata({
-  title: "Free, open-source Claude Cowork alternative — OpenWork",
+  title: "OpenWork vs Claude Cowork: features, price and privacy compared",
   description:
-    "OpenWork is the free, open-source Claude Cowork alternative for macOS, Windows, and Linux. Any model, local models, your own API keys.",
+    "Compare OpenWork and Claude Cowork on features, price, and privacy. OpenWork is the free, open-source alternative for macOS, Windows, and Linux, on any model.",
   alternates: {
     canonical: "/alternatives/claude-cowork"
   },
