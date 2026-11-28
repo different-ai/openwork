@@ -18,7 +18,7 @@ const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
 
 test("Maya runs work from Travel MacBook inside Studio Mac's sandbox without sharing the rest of the Mac", async ({ world, user, agent, probe, step, evidence }) => {
   const travel = user.on(world.travel), studio = user.on(world.studio), web = user.on(world.ownerWeb), other = user.on(world.otherWeb);
-  const targetProbe = probe.on(world.studio), webProbe = probe.on(world.ownerWeb);
+  const travelProbe = probe.on(world.travel), targetProbe = probe.on(world.studio), webProbe = probe.on(world.ownerWeb);
   const travelAgent = agent.on(world.travel), studioAgent = agent.on(world.studio);
   const switchState = (label: string, checked: boolean) => targetProbe.dom(`[role="switch"][aria-label="${label}"][aria-checked="${checked}"]`);
   const settings = async (person: typeof studio, control: typeof studioAgent) => {
@@ -57,7 +57,7 @@ test("Maya runs work from Travel MacBook inside Studio Mac's sandbox without sha
     await travel.see({ text: reply }, wait);
     return result;
   };
-  const approve = async (prompt: string, tool: string, args: Record<string, unknown>, showPrompt = false) => {
+  const approve = async (prompt: string, tool: string, args: Record<string, unknown>, expectedTitle?: string) => {
     const queuedBefore = await world.commandCount();
     const filesBefore = await world.fileSnapshot();
     await echoWorld.prepareTurn(prompt, "No tool result was returned.", [{ tool, arguments: args }]);
@@ -66,21 +66,27 @@ test("Maya runs work from Travel MacBook inside Studio Mac's sandbox without sha
     await travel.see("Allow once", { timeoutMs: 120_000 });
     expect(await world.commandCount()).toBe(queuedBefore);
     expect(await world.fileSnapshot()).toEqual(filesBefore);
-    if (showPrompt) await travel.screenshot();
+    let approvalTitle: string | undefined;
+    if (expectedTitle) {
+      await travel.see({ text: expectedTitle }, wait);
+      const card = await travelProbe.dom("[data-permission-approval] div");
+      approvalTitle = card.elements.find(entry => entry.text === expectedTitle)?.text;
+      expect(approvalTitle).toBe(expectedTitle);
+      await travel.screenshot();
+    }
     const start = Date.now();
     await travel.click("Allow once");
     const call = await settle(tool, args);
     const elapsed = Date.now() - start;
     await travel.see("Run task", { timeoutMs: 120_000 });
     if (call?.status === "error") {
-      const travelProbe = probe.on(world.travel);
       const button = 'button[aria-label^="Show details for"]';
       const details = { role: "button", label: /^Show details for Couldn.t / } satisfies Target;
       const count = async () => (await travelProbe.dom(`[data-text-step-row="failed"] ${button}`)).elements.length;
       const matches = await probe.eventually(count, { within: 10_000, label: "the latest failed action has an error disclosure", until: value => value > 0 });
       await travel.click({ ...details, nth: matches - 1 });
     }
-    return { call, elapsed, sent: (await world.commandCount()) - queuedBefore };
+    return { call, elapsed, approvalTitle, sent: (await world.commandCount()) - queuedBefore };
   };
   const inventory = { testId: "my-computer-inventory" };
   const rowIds = [world.target.id, world.source.id].map(id => `computer-inventory-row-${id}`);
@@ -127,7 +133,8 @@ test("Maya runs work from Travel MacBook inside Studio Mac's sandbox without sha
     expect(state.body).toMatchObject({ settings: { enabled: true, folders: [{ path: world.website, access: "read" }, { path: world.drafts, access: "edit" }], sources: [{ kind: "computer", id: world.source.id }] } });
     await studio.see(allowed, wait);
     const on = (await switchState(travelName, true)).elements.length === 1;
-    observed("One computer can use two folders", "Travel MacBook is allowed; website is Read-only, and drafts is Can edit.", on);
+    await studio.see({ role: "status", text: /^On · 2 folders · 1 computer$/ }, wait);
+    observed("One computer can use two folders", "On · 2 folders · 1 computer. Travel MacBook is allowed; website is Read-only, and drafts is Can edit.", on);
     await studio.screenshot();
   });
 
@@ -151,25 +158,25 @@ test("Maya runs work from Travel MacBook inside Studio Mac's sandbox without sha
   });
 
   await step("Travel MacBook asks before reading the website brief", async () => {
-    const { call, sent } = await approve("Read the website brief on Studio Mac.", "read", { path: world.websiteFile }, true);
+    const { call, sent, approvalTitle } = await approve("Read the website brief on Studio Mac.", "read", { path: world.websiteFile }, "Read files on Studio Mac?");
     await travel.see({ text: new RegExp(world.websiteText) }, wait);
-    observed("The read waits for approval, then returns the exact host bytes", `0 before approval; ${sent} sent after; the brief's nonce matched.`, call?.status === "completed" && text(call).includes(world.websiteText) && sent === 1);
+    observed("The read waits for approval, then returns the exact host bytes", `The card showed “${approvalTitle}” before approval; 0 requests before, ${sent} sent after; the brief's nonce matched.`, call?.status === "completed" && text(call).includes(world.websiteText) && sent === 1);
     await travel.screenshot();
   });
 
   const linuxCommand = `uname -s; cat ${quote(world.websiteFile)}`;
   await step("Travel MacBook asks before running a Linux command in the shared folder", async () => {
-    const { call, sent } = await approve("Check the operating system and show the brief from Studio Mac.", "shell", { command: linuxCommand, workdir: world.website }, true);
+    const { call, sent, approvalTitle } = await approve("Check the operating system and show the brief from Studio Mac.", "shell", { command: linuxCommand, workdir: world.website }, "Run a shell command on Studio Mac?");
     await travel.see({ text: /Linux/ }, wait);
-    observed("The command runs in Studio Mac's Linux sandbox, not on macOS", `0 before approval; ${sent} sent after; Linux and the exact website nonce returned.`,
+    observed("The command runs in Studio Mac's Linux sandbox, not on macOS", `The card showed “${approvalTitle}” before approval; 0 requests before, ${sent} sent after; Linux and the exact website nonce returned.`,
       call?.status === "completed" && /^Linux\b/.test(text(call)) && text(call).includes(world.websiteText) && sent === 1);
     await travel.screenshot();
   });
 
   await step("Travel MacBook asks before saving a draft onto Studio Mac", async () => {
-    const { call, sent } = await approve("Save a new draft in Studio Mac's drafts folder.", "write", { path: world.draftFile, content: world.draftText }, true);
+    const { call, sent, approvalTitle } = await approve("Save a new draft in Studio Mac's drafts folder.", "write", { path: world.draftFile, content: world.draftText }, "Modify files on Studio Mac?");
     const bytes = await world.fileSnapshot();
-    observed("A permitted write lands on the Mac's disk", `0 before approval; ${sent} sent after; ${bytes[1]?.length ?? 0} exact bytes in draft.txt.`,
+    observed("A permitted write lands on the Mac's disk", `The card showed “${approvalTitle}” before approval; 0 requests before, ${sent} sent after; ${bytes[1]?.length ?? 0} exact bytes in draft.txt.`,
       call?.status === "completed" && sent === 1 && bytes[1] === world.draftText && bytes[0] === world.websiteText);
     await travel.screenshot();
   });

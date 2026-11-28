@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { computerNames as names, computersInventoryWorld } from "../worlds/computers-inventory.ts";
+import { computerNames as names, computersInventoryWorld, mayaSharedFolders } from "../worlds/computers-inventory.ts";
 
 const test = spec.world(computersInventoryWorld, { timeout: 600_000, resources: { surfaces: ["web"], services: ["den"] } });
 const myLegacyRows = '[role="row"]:has([data-testid^="my-computer-row-"])';
@@ -124,6 +124,15 @@ test("Maya Okafor and Priya Nair find computers instead of sorting through sign-
   await step("after: Maya opens the MacBook's installation and access details", async () => {
     await maya.click({ role: "button", label: "Hide" });
     await detail(maya, myPage, devices.mayaMac.id, "Maya's MacBook", "1.6.0");
+    const subject = selector(`computer-inventory-detail-${devices.mayaMac.id}`);
+    const sources = await texts(myPage, `${subject} ul[aria-label="Sources of access"] > li > div > p`);
+    const folders = `${subject} ul[aria-label="Shared folders"] > li`;
+    const paths = await texts(myPage, `${folders} > code`);
+    const access = await texts(myPage, `${folders} > span`);
+    witness("Maya's Windows PC can read the website folder and edit drafts on her MacBook",
+      `${sources.join(", ")}: ${paths.map((path, index) => `${path} (${access[index]})`).join(", ")}`,
+      sources.length === 1 && sources[0] === names.mayaWindows && paths.length === 2 && access.length === 2
+      && access[paths.indexOf(mayaSharedFolders.website)] === "Read-only" && access[paths.indexOf(mayaSharedFolders.drafts)] === "Can edit");
   });
 
   await step("after: Priya sees the desktop inventory and each tab's count", async () => {
@@ -135,12 +144,17 @@ test("Maya Okafor and Priya Nair find computers instead of sorting through sign-
     const older = await texts(teamPage, selector("computer-inventory-older"));
     const tomas = (await texts(teamPage, selector(row(devices.tomasMac.id).testId))).join(" ");
     const status = (await texts(teamPage, `${selector(row(devices.tomasMac.id).testId)} [data-status="online"]`)).join(" ");
-    const code = (await texts(teamPage, `${selector(row(devices.tomasMac.id).testId)} [data-run-code="no"] > span:last-child > span`)).join(" ");
+    const mayaCode = await texts(teamPage, `${selector(row(devices.mayaMac.id).testId)} [data-run-code="sandbox"] > span:last-child > span`);
+    const otherCode = await texts(teamPage, `${rows} [data-run-code="no"] > span:last-child > span`);
+    const locks = await texts(teamPage, `${rows} [data-run-code] svg.lucide-lock-keyhole`);
     const offline = (await texts(teamPage, `${selector(row(devices.tomasLinux.id).testId)} [data-status="offline"]`)).join(" ");
     const headers = await texts(teamPage, '[data-testid="computer-inventory"] [role="columnheader"]');
     await priya.screenshot();
-    witness("The Mac with missing permissions is still online, and the Linux PC shows its last contact", `${list.length} desktop rows by default; ${tabs.join(" / ")}; ${status} with permission note: ${tomas.includes(permissionsNote)}; Run code here: ${code}; Linux PC: ${offline}; ${older.join(" ")}`,
-      list.length === 5 && containing(list, names.mayaMac) === 1 && status === "Online" && code === "No" && tomas.includes(permissionsNote)
+    witness("Maya's MacBook takes work in its sandbox; the other desktops show No without locks",
+      `${names.mayaMac}: ${mayaCode.join(", ")}; other desktops: ${otherCode.join(", ")}; ${locks.length} run-code locks`,
+      mayaCode.length === 1 && mayaCode[0] === "In sandbox, 2 folders" && otherCode.length === list.length - 1 && otherCode.every((code) => code === "No") && locks.length === 0);
+    witness("The Mac with missing permissions is still online, and the Linux PC shows its last contact", `${list.length} desktop rows by default; ${tabs.join(" / ")}; ${status} with permission note: ${tomas.includes(permissionsNote)}; Linux PC: ${offline}; ${older.join(" ")}`,
+      list.length === 5 && containing(list, names.mayaMac) === 1 && status === "Online" && tomas.includes(permissionsNote)
       && /Offline.*Last seen 3 days ago/.test(offline) && tabs.join(" / ") === "Desktops 7 / Cloud 5 / Needs attention 1 / Former members 2"
       && ["Computer", "Owner", "Status", "Run code here", "Send it tasks", "Read its sessions"].every((label) => headers.includes(label))
       && older.some((text) => text.includes("2 not heard")) && rules.length === 1 && rules.some((text) => text.includes("Change rules")) && list.every((text) => !vagueStatus.test(text)));

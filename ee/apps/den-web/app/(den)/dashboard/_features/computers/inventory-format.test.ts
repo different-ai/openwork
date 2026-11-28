@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { COMPUTER_INVENTORY_KINDS } from "@openwork/types/den/computer-inventory";
+import { COMPUTER_INVENTORY_KINDS, COMPUTER_RUN_CODE_OFF_REASONS } from "@openwork/types/den/computer-inventory";
 import { inventoryRunCode } from "./inventory-format";
 
 const sandboxUnavailable = "This computer can't run the OpenWork sandbox.";
@@ -15,7 +15,7 @@ test("desktop sandbox access reports the number of shared folders", () => {
 
 test("only non-desktops show Not available yet, even with an older response", () => {
   assert.deepEqual(inventoryRunCode({ value: "not_available" }, "desktop"), {
-    value: "no", label: "No", reason: sandboxUnavailable, setting: null, locked: true,
+    value: "no", label: "No", reason: sandboxUnavailable, setting: null, locked: false,
   });
   for (const kind of COMPUTER_INVENTORY_KINDS.filter((kind) => kind !== "desktop")) {
     assert.equal(inventoryRunCode({ value: "not_available" }, kind).label, "Not available yet");
@@ -32,6 +32,14 @@ test("desktop reasons explain which check stopped access and where the owner cho
   assert.equal(inventoryRunCode({ value: "no", reason: "owner" }, "desktop").setting, null);
   assert.equal(inventoryRunCode({ value: "no", reason: "organization" }, "desktop", true).setting, null);
   assert.equal(inventoryRunCode({ value: "no", reason: "revoked" }, "desktop").reason, "Access was revoked.");
+});
+
+test("only organization policy locks the run-code value", () => {
+  for (const kind of COMPUTER_INVENTORY_KINDS) {
+    for (const reason of COMPUTER_RUN_CODE_OFF_REASONS) {
+      assert.equal(inventoryRunCode({ value: "no", reason }, kind).locked, reason === "organization", `${kind}: ${reason}`);
+    }
+  }
 });
 
 test("cloud access keeps its scope and off reason", () => {

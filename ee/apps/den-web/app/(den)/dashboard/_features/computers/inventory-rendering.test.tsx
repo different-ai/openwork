@@ -20,12 +20,18 @@ const desktop: ComputerInventoryRow = {
 };
 const noop = () => undefined;
 
-test("the run-code column keeps a desktop's No and its lock reason visible", () => {
-  const html = renderToStaticMarkup(<InventoryRows rows={[desktop]} openId="" now={now} onToggle={noop} detail={noop} />);
-  assert.match(html, /data-run-code="no"/);
-  assert.match(html, /aria-label="This computer can&#x27;t run the OpenWork sandbox\."/);
-  assert.match(html, />No<\/span>/);
-  assert.doesNotMatch(html, /Not available yet/);
+test("the run-code column shows the reason in a tooltip and only locks organization blocks", () => {
+  const render = (runCode: ComputerInventoryRow["runCode"]) => renderToStaticMarkup(
+    <InventoryRows rows={[{ ...desktop, runCode }]} openId="" now={now} onToggle={noop} detail={noop} />,
+  );
+  const unavailable = render(desktop.runCode);
+  assert.match(unavailable, /data-run-code="no"[^>]*title="This computer can&#x27;t run the OpenWork sandbox\."/);
+  assert.match(unavailable, /<span class="truncate">No<\/span>/);
+  assert.doesNotMatch(unavailable, /lucide-lock-keyhole|Not available yet/);
+  const blocked = render({ value: "no", reason: "organization" });
+  assert.match(blocked, /<span class="text-\[color:var\(--dls-text-secondary\)\]">No<\/span>/);
+  assert.match(blocked, /aria-label="The organization turned it off\."/);
+  assert.match(blocked, /lucide-lock-keyhole/);
 });
 
 test("the desktop owner's detail shows where to change a No, without a switch", () => {
@@ -37,10 +43,9 @@ test("the desktop owner's detail shows where to change a No, without a switch", 
       runCode: { value: { value: "no", reason: "owner" }, sources: [], canChange: true, canRevoke: true, canRestore: true },
       rules: { runCode: true, sessions: "off", requireSandboxOnPersonal: true },
     }} />);
-  assert.match(html, /Its owner turned it off\./);
-  assert.match(html, /Settings &gt; Devices on this computer/);
-  assert.match(html, />No<svg[^>]*aria-hidden="true"/);
-  assert.doesNotMatch(html, /role="switch"|Not available yet/);
+  assert.match(html, /<dt[^>]*>Other computers<\/dt><dd[^>]*><span class="flex items-center gap-1 ">No<\/span><\/dd>/);
+  assert.match(html, /<\/dl><p[^>]*>Its owner turned it off\.<span[^>]*>Settings &gt; Devices on this computer/);
+  assert.doesNotMatch(html, /lucide-lock-keyhole|role="switch"|Not available yet/);
 });
 
 test("desktop folder rows show the access for each folder and default to read-only", () => {

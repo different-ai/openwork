@@ -190,15 +190,12 @@ function WholeComputerChoice({ detail, scope }: { detail: Detail; scope: Invento
 export function InventoryRunCodeCard({ detail, scope }: { detail: Detail; scope: InventoryScope }) {
   const run = inventoryRunCode(detail.runCode.value, detail.computer.kind, detail.callerIsOwner);
   return <DetailCard title="Run code here">
-    <div className={`flex min-h-10 items-center justify-between gap-2 py-1 ${run.locked ? secondaryText : ""}`}>
-      <div className={`min-w-0 text-xs ${secondaryText}`}>
-        {run.reason ? <p>{run.reason}</p> : null}
-        {run.setting ? <p>{run.setting}</p> : null}
-      </div>
-      <span className="flex items-center gap-1 text-right">
+    <dl>
+      <DetailValue label="Other computers" value={<span className={`flex items-center gap-1 ${run.locked ? secondaryText : ""}`}>
         {run.label}{run.locked && run.reason ? <InventoryLock reason={run.reason} decorative /> : null}
-      </span>
-    </div>
+      </span>} />
+    </dl>
+    {run.reason ? <p className={`text-xs ${secondaryText}`}>{run.reason}{run.setting ? <span className="block">{run.setting}</span> : null}</p> : null}
     <Sources detail={detail} scope={scope} />
     {run.value !== "not_available" && detail.computer.kind === "cloud" && detail.callerIsOwner && detail.runCode.canChange ? <WholeComputerChoice detail={detail} scope={scope} /> : null}
   </DetailCard>;

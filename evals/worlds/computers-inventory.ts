@@ -1,6 +1,6 @@
 import { denFetch, freshSession, type DenSession } from "@openwork/behaviors";
 import { queryDenDatabase, type Seed } from "@openwork/env";
-import { computerAuthorizeResponseSchema } from "@openwork/types/den/computers";
+import { COMPUTER_SHELL_RUNNER_CAPABILITY, computerAuthorizeResponseSchema } from "@openwork/types/den/computers";
 import { remoteDeviceResponseSchema } from "@openwork/types/den/remote-devices";
 import { z } from "zod";
 import { enableOrganizationCapabilities, seededOrganizationId } from "./organization-capabilities.ts";
@@ -11,6 +11,8 @@ export const computerNames = {
   priyaMac: "Priya's Mac mini", shared: "Northwind shared computer", instance: "Northwind OpenWork instance",
   jonasMac: "Jonas's MacBook Air", jonasWindows: "Jonas's Windows PC", olderLinux: "Northwind spare Linux PC", olderMac: "Northwind spare Mac",
 };
+
+export const mayaSharedFolders = { website: "/Users/maya/Projects/website", drafts: "/Users/maya/Projects/drafts" };
 
 const memberContext = z.object({ currentMember: z.object({ id: z.string() }) });
 const desktopRoute = "/v1/remote-devices/this-computer";
@@ -112,7 +114,7 @@ export async function computersInventoryWorld(seed: Seed) {
 
     const { token } = z.object({ token: z.string() }).parse(await send(maya, "/v1/session-runners/token", "POST", {
       runnerId: mayaInstallId, protocolVersion: 1, supportedExecutionTargets: ["desktop"], appVersion, platform: "darwin", concurrency: 1,
-      capabilities: ["remote_session_v1", "remote_session_control_v1", "remote_session_access_v1"],
+      capabilities: ["remote_session_v1", "remote_session_control_v1", "remote_session_access_v1", COMPUTER_SHELL_RUNNER_CAPABILITY],
     }));
     await send({ ...maya, token }, "/v1/session-runners/inventory", "PUT", {
       computer: { label: computerNames.mayaMac, platform: "darwin", appVersion },
@@ -146,7 +148,12 @@ export async function computersInventoryWorld(seed: Seed) {
       devices: { mayaMac, mayaWindows, tomasMac, tomasLinux, buildBox, priyaMac, shared, jonasMac, jonasWindows, olderLinux, olderMac },
       mayaOldIds, instanceId,
       url: (path: string) => new URL(path, den.ref.webUrl).toString(),
-      turnOnComputers: () => enableOrganizationCapabilities(seed, den.admin, { computers: true }, orgId),
+      async turnOnComputers() {
+        await enableOrganizationCapabilities(seed, den.admin, { computers: true }, orgId);
+        await send({ ...maya, token }, "/v1/computer-runners/access", "PUT", {
+          choice: "allow", grants: [{ source: { kind: "computer", id: mayaWindows.id }, folders: [mayaSharedFolders.website, mayaSharedFolders.drafts], writableFolders: [mayaSharedFolders.drafts] }],
+        });
+      },
       memberRequest: (path: string) => request(maya, path),
       async authorizeBuildBox() {
         const result = await request(tomas, `/v1/computers/${buildBox.id}/authorize`, "POST", {

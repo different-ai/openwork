@@ -106,7 +106,7 @@ export function inventoryRunCode(code: ComputerRunCode, kind: ComputerInventoryK
     : runCode.value === "not_available" ? "Not available yet"
       : runCode.value === "sandbox" ? `In sandbox, ${runCode.folders ? countLabel(runCode.folders, "folder") : "no folders"}`
         : "Yes, whole computer";
-  return { value: runCode.value, label, reason, setting, locked: Boolean(off) && (desktop || off === "organization") };
+  return { value: runCode.value, label, reason, setting, locked: off === "organization" };
 }
 
 export function inventoryOwnerName(owner: ComputerInventoryOwner | null) {
