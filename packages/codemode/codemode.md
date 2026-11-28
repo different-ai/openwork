@@ -6,8 +6,9 @@ It records current behavior, intentional boundaries, durable rationale, and mate
 Completed implementation history, branch names, test counts, and closed findings belong in git, not here. Remove
 completed work instead of preserving checked-off chronology.
 
-Detailed package API documentation lives in [README.md](./README.md). OpenAPI-specific follow-ups live in
-[src/openapi/TODO.md](./src/openapi/TODO.md).
+Detailed package API documentation lives in [README.md](./README.md). This vendored copy carries no OpenAPI
+implementation, so there are no OpenAPI-specific follow-ups here; [UPSTREAM.md](./UPSTREAM.md) records the files
+dropped at vendoring.
 
 ## How CodeMode Works
 
