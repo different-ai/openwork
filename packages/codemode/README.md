@@ -1,4 +1,4 @@
-# @opencode-ai/codemode
+# @openwork/codemode
 
 Effect-native confined code execution over explicit, schema-described tools.
 
@@ -22,7 +22,7 @@ Within this workspace:
 ```json
 {
   "dependencies": {
-    "@opencode-ai/codemode": "workspace:*"
+    "@openwork/codemode": "workspace:*"
   }
 }
 ```
@@ -34,7 +34,7 @@ Hosts interact with CodeMode through `effect` (tool `run` implementations, `Effe
 Define tools with Effect Schema, then place them in the object tree exposed to programs as `tools`:
 
 ```ts
-import { CodeMode, Tool } from "@opencode-ai/codemode"
+import { CodeMode, Tool } from "@openwork/codemode"
 import { Effect, Schema } from "effect"
 
 const lookupOrder = Tool.make({
@@ -154,28 +154,7 @@ interface Failure {
 
 ### OpenAPI tools
 
-`OpenAPI.fromSpec` turns an OpenAPI 3.x document into a tool subtree - one tool per operation. Dotted `operationId` values form namespaces such as `v2.session.get`. Missing IDs receive a flat method/path fallback such as `getUsersById`; names are sanitized and deduplicated. The host places the subtree under a key in its `tools` tree; that key is the model-visible namespace.
-
-```ts
-import { CodeMode, OpenAPI } from "@opencode-ai/codemode"
-import { Effect } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
-
-const api = OpenAPI.fromSpec({
-  spec: await Bun.file("openapi.json").json(), // parsed document (no YAML)
-  auth: {
-    resolve: ({ name, scopes, operation }) =>
-      name === "BearerAuth" ? Effect.succeed({ type: "bearer", token }) : Effect.succeed(undefined),
-  },
-})
-
-const runtime = CodeMode.make({ tools: { opencode: api.tools } })
-const result = await Effect.runPromise(runtime.execute(code).pipe(Effect.provide(FetchHttpClient.layer)))
-```
-
-`fromSpec` is synchronous and returns `{ tools, skipped }`. The initial adapter supports query `form`/`deepObject`, path/header `simple`, JSON request bodies, JSON responses, and text responses; unsupported parameter encodings, non-JSON request bodies, binary responses, and streaming operations land in `skipped` instead of producing broken tools. Operation and path servers take precedence over document servers unless `baseUrl` explicitly overrides all of them. Tool inputs flatten path, query, header, and closed object-body fields into one model-facing object while retaining their HTTP locations internally. Cross-location name collisions receive a location prefix such as `path_id` and `query_id`; composed, nullable, dictionary, conditionally-required, and non-object JSON bodies remain under `body`. Auth is never model-visible. Responses are limited to 50 MiB, and non-2xx responses become safe tool failures carrying the status and a size-capped body summary. Deferred capabilities are tracked in `src/openapi/TODO.md`.
-
-Supported bearer, basic, header, and query authentication follows OpenAPI `security` semantics and is resolved host-side via `auth.resolve` - credential storage, OAuth flows, and token refresh never enter the compiler. Cookie authentication alternatives are discarded; an operation is skipped when it has no supported alternative. See the option docstrings in `src/openapi/types.ts` for the full semantics. Generated tools require `HttpClient.HttpClient` (from `effect/unstable/http`) in the Effect environment - provide `FetchHttpClient.layer` or a custom/test client layer at execution. The supplied client owns redirect policy; credentialed hosts should reject redirects or strip credentials when the origin changes.
+The OpenWork package omits the upstream OpenAPI adapter. See [UPSTREAM.md](./UPSTREAM.md).
 
 ## Discovery
 
@@ -308,7 +287,7 @@ Failures are data:
 Unknown host failures, defects, invalid outputs, and copying failures are sanitized. To return a safe operational refusal, fail with `toolError`:
 
 ```ts
-import { toolError } from "@opencode-ai/codemode"
+import { toolError } from "@openwork/codemode"
 
 run: ({ id }) => (authorized(id) ? loadOrder(id) : Effect.fail(toolError("Order is unavailable")))
 ```
@@ -358,13 +337,10 @@ The public contract is guided by these equivalences:
 
 Applications that need approval or durable consequences should model those above CodeMode and expose only the currently authorized tools.
 
-## Testing
+## Typecheck
 
-From the package directory:
+From the repository root:
 
 ```sh
-bun test
-bun run typecheck
+pnpm --filter @openwork/codemode typecheck
 ```
-
-`bun test` runs the suite in `test/`, which covers async functions: concurrency, per-call scopes, ordering between awaits, rejections, leftover work, and timeouts.
