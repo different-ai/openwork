@@ -61,7 +61,7 @@ export default async function AiGovernancePage() {
         <p className="governance-label">Where OpenWork fits</p><h2 id="openwork-heading" className="governance-heading mt-3 max-w-[750px]">A governed path for everyday AI work.</h2>
         <div className="governance-prose mt-6 max-w-[850px]">
           <p>OpenWork combines a local-first desktop workspace with organization-managed model access. The AI gateway provides company sign-in, permissions, provider choice, and visibility into routed model usage.</p>
-          <p>OpenWork and OpenCode with the OpenWork plugin support company AI gateway models. Claude Code, Codex, and Cursor can use the MCP gateway for shared skills and connections; AI gateway model integration for those clients is in progress. Connecting MCP alone does not route model traffic.</p>
+          <p>OpenWork and OpenCode with the OpenWork plugin support company AI gateway models. Claude Code, Codex, and Cursor can use the MCP gateway for shared skills and connections, and company AI gateway models with an AI Gateway API key. Connecting MCP alone does not route model traffic.</p>
           <p>Files stay on the user&apos;s PC in local desktop mode, but prompts and file context sent to a remote model leave the device. Analytics, diagnostics, updates, connected services, and optional cloud workers have separate flows. OpenWork is not a network-wide discovery or data-loss prevention tool.</p>
           <div className="flex flex-wrap gap-x-6 gap-y-3"><Link href="/enterprise" className="governance-link">Explore OpenWork Enterprise</Link><Link href="/privacy" className="governance-link">Review the data policy</Link></div>
         </div>

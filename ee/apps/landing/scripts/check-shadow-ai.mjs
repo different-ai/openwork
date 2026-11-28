@@ -56,7 +56,7 @@ for (const {path, title, count} of pages) {
     assert.ok(html.includes(`href="${destination}"`), `${path} links to ${destination}`);
   }
   assert.match(plain(html), /AWS Bedrock/);
-  assert.match(plain(html), /in progress/);
+  assert.match(plain(html), /AI Gateway API key/);
   const { response, body: markdown } = await read(path, "text/markdown");
   assert.match(response.headers.get("content-type"), /text\/markdown/);
   assert.match(response.headers.get("vary"), /Accept/);

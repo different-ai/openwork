@@ -239,8 +239,8 @@ export const guides: Guide[] = [
       "Yes. Add one MCP URL to Claude Code, Codex, Cursor, Claude Desktop, VS Code, or Gemini CLI to get your organization's OpenWork skills and connections.",
     heading: "Can you use OpenWork with Claude Code, Codex, or Cursor?",
     answer:
-      "Yes. Add one MCP server URL to Claude Code, Codex, Cursor, Claude Desktop, VS Code, Gemini CLI, or ChatGPT, and the agent gets your organization's OpenWork skills, plugins, and connections, with the same access rules. AI Gateway models for these tools are in progress.",
-    updated: "2026-10-10",
+      "Yes. Add one MCP server URL to Claude Code, Codex, Cursor, Claude Desktop, VS Code, Gemini CLI, or ChatGPT, and the agent gets your organization's OpenWork skills, plugins, and connections, with the same access rules. With an AI Gateway API key, the same tools can also run on your organization's models.",
+    updated: "2026-11-27",
     keyFacts: [
       "MCP URL: https://api.openworklabs.com/mcp/agent",
       "Sign-in: OAuth in the browser, per organization",
@@ -308,13 +308,20 @@ export const guides: Guide[] = [
         heading: "AI Gateway models in Claude Code, Codex, and Cursor",
         paragraphs: [
           "The OpenWork AI Gateway lets admins add model providers once (OpenAI, Anthropic, Bedrock, Vertex, Azure, or any OpenAI-compatible endpoint), choose who can use them, and set spend limits. Provider keys stay on the server.",
-          "OpenCode already gets these models through the opencode-openwork plugin. We are building the same integration for Claude Code, Codex, and Cursor, so every agent your engineers use runs on approved models with usage counted per person."
+          "Claude Code, Codex, and Cursor can run on those models with an AI Gateway API key. An admin turns on Allow 3rd party tools & harnesses, then each person creates their own key in My Library › Models and picks their tool to get its setup steps. A key only reaches the models its owner is allowed, and its usage counts toward that person's limit.",
+          "This is separate from the MCP URL. Adding the MCP server gives an agent your skills and connections, but it does not route the agent's model traffic. In Cursor, run the agent in Local mode: Cursor's cloud agents do not work with OpenWork models yet. OpenCode gets the same models through the opencode-openwork plugin."
+        ],
+        sources: [
+          { label: "AI Gateway API keys", href: "/docs/ai-gateway/third-party-tools" },
+          { label: "Claude Code setup", href: "/docs/ai-gateway/claude-code" },
+          { label: "Codex CLI setup", href: "/docs/ai-gateway/codex" },
+          { label: "Cursor setup", href: "/docs/ai-gateway/cursor" }
         ]
       }
     ],
     cards: [
       { icon: "route", title: "Connect any MCP client", link: { label: "Setup guide", href: "/docs/start-here/connect-openwork-mcp" } },
-      { icon: "key", title: "Add models once with the AI Gateway", link: { label: "AI Gateway", href: "/docs/ai-gateway/overview" } },
+      { icon: "key", title: "Use your organization's models in these tools", link: { label: "AI Gateway API keys", href: "/docs/ai-gateway/third-party-tools" } },
       { icon: "library", title: "Use OpenCode? Install the plugin", link: { label: "OpenWork and OpenCode", href: "/guides/openwork-and-opencode" } },
       { icon: "users", title: "Share connections with your team", link: { label: "OpenWork Connect", href: "/connect" } }
     ],
@@ -338,7 +345,7 @@ export const guides: Guide[] = [
       {
         question: "Can I use my company's AI Gateway models in Claude Code, Codex, or Cursor?",
         answer:
-          "Not yet. OpenCode gets AI Gateway models today through the opencode-openwork plugin. The same integration for Claude Code, Codex, and Cursor is in progress."
+          "Yes, once an admin turns on Allow 3rd party tools & harnesses. Each person creates an AI Gateway API key in My Library › Models and follows the setup steps for their tool. The key only reaches the models that person is allowed, and usage counts toward their limit."
       },
       {
         question: "How do I switch organizations?",

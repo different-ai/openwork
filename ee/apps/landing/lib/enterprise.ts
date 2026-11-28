@@ -7,7 +7,7 @@ export const enterpriseFaq = [
   {
     question: "Which agents work with the AI gateway?",
     answer:
-      "OpenWork and OpenCode with the opencode-openwork plugin can use your organization's AI gateway models. Claude Code, Codex, and Cursor can access shared skills and connections through the MCP gateway. AI gateway model integration for those clients is in progress. Connecting an MCP server alone does not route a client's model traffic."
+      "OpenWork and OpenCode with the opencode-openwork plugin can use your organization's AI gateway models. Claude Code, Codex, and Cursor can access shared skills and connections through the MCP gateway, and can use the same models with an AI Gateway API key that each person creates once an admin allows 3rd party tools. Connecting an MCP server alone does not route a client's model traffic."
   },
   {
     question: "Can we use AWS Bedrock and our identity provider?",
