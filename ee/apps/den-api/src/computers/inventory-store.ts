@@ -10,7 +10,7 @@ import {
 } from "@openwork/types/den/computer-inventory"
 import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, isExecutableVmProvider, type ComputerOwnerChoice } from "@openwork/types/den/computers"
 import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY } from "@openwork/types/automations"
-import { REMOTE_DEVICE_ONLINE_WINDOW_MS, remoteDeviceTypeLabel } from "@openwork/types/den/remote-devices"
+import { COMPUTER_ACTIVITY_EVENT_TYPES, REMOTE_DEVICE_ONLINE_WINDOW_MS, remoteDeviceTypeLabel } from "@openwork/types/den/remote-devices"
 import { deviceDisconnectionJoin } from "../computer-disconnect.js"
 import { db } from "../db.js"
 import { getOrganizationFeaturesByMember } from "../features.js"
@@ -325,7 +325,10 @@ export async function readComputerInventoryDetail(viewer: Viewer, id: DeviceId, 
   const [{ rows: [entry], rules }, events] = await Promise.all([
     deviceRows({ ...loaded, groups: [group] }, viewer, now.getTime(), canReadGrants),
     db.$primary.select().from(RemoteDeviceEventTable)
-      .where(and(eq(RemoteDeviceEventTable.organizationId, viewer.actor.organizationId), inArray(RemoteDeviceEventTable.deviceId, [newest.id, ...merged.map(signIn => signIn.id)])))
+      .where(and(eq(RemoteDeviceEventTable.organizationId, viewer.actor.organizationId), or(
+        eq(RemoteDeviceEventTable.deviceId, id),
+        merged.length ? and(inArray(RemoteDeviceEventTable.deviceId, merged.map(signIn => signIn.id)), inArray(RemoteDeviceEventTable.type, [...COMPUTER_ACTIVITY_EVENT_TYPES])) : undefined,
+      )))
       .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(20),
   ])
   if (!entry) return null
