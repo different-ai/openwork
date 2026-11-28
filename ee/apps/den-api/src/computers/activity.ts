@@ -9,7 +9,7 @@ import type { RemoteDeviceActor } from "../remote-devices.js"
 
 const COALESCE_MS = 10 * 60_000
 const VERBS: Record<ComputerAction["type"], string> = {
-  shell: "ran a command", read: "read a file", write: "changed a file", list: "listed files", search: "searched files",
+  shell: "run a command", read: "read a file", write: "change a file", list: "list files", search: "search files",
 }
 
 export async function computerMemberNames(database: RemoteDeviceDatabase, organizationId: RemoteDeviceActor["organizationId"], ids: DenTypeId<"member">[]) {
@@ -42,10 +42,10 @@ export async function recordAcceptedComputerWork(database: RemoteDeviceDatabase,
   }
   const name = (await computerMemberNames(database, actor.organizationId, [actor.memberId])).get(actor.memberId)
   const who = source === "workbot" ? "Workbot" : name ? `${name.slice(0, 60)}'s OpenWork app` : "An OpenWork app"
-  const location = place ? place.length > 140 ? `${place.slice(0, 137)}...` : place : "its sandbox"
+  const location = place ? place.length > 120 ? `${place.slice(0, 117)}...` : place : "its sandbox"
   await recordRemoteDeviceEvent(database, {
     organizationId: actor.organizationId, deviceId, type: "computer_work_accepted", now,
     actor: source === "workbot" ? "workbot" : "member", actorId: actor.memberId, data: { fingerprint },
-    message: `${who} ${VERBS[action.type]} in ${location} for ${name?.slice(0, 60) ?? "the computer's owner"}`,
+    message: `${who} was allowed to ${VERBS[action.type]} in ${location} for ${name?.slice(0, 60) ?? "the computer's owner"}`,
   })
 }

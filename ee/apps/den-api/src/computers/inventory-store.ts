@@ -130,17 +130,20 @@ function runCode(group: SignInGroup<Device>, rules: OrganizationComputerRules, g
   if (!rules.runCode) return { value: "no", reason: "organization" }
   if (device.choice === null) return { value: "no", reason: "not_chosen" }
   if (device.choice !== "allow") return { value: "no", reason: "owner" }
-  const active = grants.filter((grant) => !grant.revokedAt)
   if (kind === "desktop") {
-    const folders = new Set(active.filter((grant) => grant.sourceKey !== COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY).flatMap((grant) => grant.folders))
+    const sandbox = grants.filter((grant) => grant.sourceKey !== COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY)
+    const active = sandbox.filter((grant) => !grant.revokedAt)
+    if (sandbox.length && !active.length) return { value: "no", reason: "revoked" }
+    const folders = new Set(active.flatMap((grant) => grant.folders))
     return { value: "sandbox", folders: folders.size }
   }
-  const whole = active.find((grant) => grant.sourceKey === COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY)
+  const whole = grants.find((grant) => grant.sourceKey === COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY)
   const scope = ownerWholeVmScope(device.id, {
     organization: { allowed: rules.runCode, requireSandboxOnPersonal: rules.requireSandboxOnPersonal }, owner: { choice: device.choice },
     grants: whole ? [{ source: { kind: "owner" }, targetId: device.id, scope: { surface: "whole_vm", folders: whole.folders } }] : [],
   })
-  return scope ? { value: "whole_computer" } : { value: "no", reason: "owner" }
+  if (!scope) return { value: "no", reason: "owner" }
+  return whole?.revokedAt ? { value: "no", reason: "revoked" } : { value: "whole_computer" }
 }
 
 function actions(device: Device, viewer: Viewer, now: number) {
@@ -177,7 +180,8 @@ async function deviceRows({ groups, metadata }: Loaded, viewer: Viewer, now: num
     const runner = newest.runnerCapabilities && { capabilities: newest.runnerCapabilities, sessionAccess: newest.runnerSessionAccess }
     const access = remoteAccessOf(newest, runner, newest.disconnectedAt !== null, policy)
     const ownGrants = grants.get(newest.id) ?? []
-    const kindLabel = kind === "cloud" && newest.provider === "daytona" ? "Daytona computer"
+    const kindLabel = kind === "workbot" ? "Cloud computer"
+      : kind === "cloud" && newest.provider === "daytona" ? "Daytona computer"
       : kind === "cloud" && newest.provider === "freestyle" ? "Freestyle computer" : remoteDeviceTypeLabel(newest)
     const computer: ComputerInventoryRow = {
       id: newest.id, kind, kindLabel, label: kind === "workbot" ? WORKBOT_COMPUTER_LABEL : newest.label,
@@ -200,7 +204,7 @@ function instanceRow(instance: Instance) {
     id: instance.id, kind: "instance", kindLabel: "OpenWork instance", label: instance.label,
     owner: ownerView(instance.ownerId, instance), shared: instance.ownerId === null,
     status: { state: failed ? "has_a_problem" : instance.state === "healthy" ? "ready" : "starts_when_needed", lastSeenAt: instance.lastSeenAt?.toISOString() ?? null },
-    notes: failed ? [{ code: "provider_problem", message: "This OpenWork instance could not be reached." }] : [],
+    notes: failed ? [{ code: "provider_problem", message: "Could not be reached" }] : [],
     runCode: { value: "not_available" }, sessions: inventorySessions(null), mergedSignIns: 0,
     canRename: false, canDisconnect: false, canRemove: false,
   }
@@ -214,9 +218,14 @@ const sorted = (a: InventoryEntry, b: InventoryEntry) => Number(reachable(b)) - 
   || (contactAt(b) ?? "").localeCompare(contactAt(a) ?? "") || b.addedAt.localeCompare(a.addedAt) || b.computer.id.localeCompare(a.computer.id)
 const viewRows = (rows: InventoryEntry[]) => ({ computers: rows.map(({ computer }) => computer), mergedSignIns: rows.flatMap(({ mergedSignIns }) => mergedSignIns) })
 
+function myInventoryGroup({ computer }: InventoryEntry) {
+  if (computer.shared) return 3
+  return computer.kind === "desktop" ? 0 : computer.kind === "cloud" ? 1 : 2
+}
+
 export async function listMyComputerInventory(viewer: Extract<Viewer, { kind: "member" }>, now = new Date()): Promise<MyComputerInventoryResponse> {
   const { rows } = await deviceRows(await loadInventory(viewer, now), viewer, now.getTime(), false)
-  return viewRows(rows.sort(sorted))
+  return viewRows(rows.sort((a, b) => myInventoryGroup(a) - myInventoryGroup(b) || sorted(a, b)))
 }
 
 function matchingTabs({ computer }: InventoryEntry): OrganizationComputerInventoryTab[] {

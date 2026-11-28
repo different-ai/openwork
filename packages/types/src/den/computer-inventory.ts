@@ -19,7 +19,7 @@ export const COMPUTER_INVENTORY_STATE_LABELS: Record<ComputerInventoryState, str
   has_a_problem: "Has a problem",
 }
 
-export const COMPUTER_RUN_CODE_OFF_REASONS = ["organization", "owner", "not_chosen"] as const
+export const COMPUTER_RUN_CODE_OFF_REASONS = ["organization", "owner", "not_chosen", "revoked"] as const
 export type ComputerRunCodeOffReason = (typeof COMPUTER_RUN_CODE_OFF_REASONS)[number]
 export const computerRunCodeSchema = z.discriminatedUnion("value", [
   z.object({ value: z.literal("no"), reason: z.enum(COMPUTER_RUN_CODE_OFF_REASONS) }),

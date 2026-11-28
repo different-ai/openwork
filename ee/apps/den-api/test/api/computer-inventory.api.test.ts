@@ -120,9 +120,10 @@ test("one Workbot row uses the latest conversation report, not permissions or im
   const [row] = workbotRows
   assert.equal(workbotRows.length, 1)
   assert.ok(row)
-  assert.deepEqual([row.label, row.mergedSignIns, row.status.state, row.notes.map(({ code }) => code)], ["Workbot's computer", 0, "starts_when_needed", ["update_required"]])
+  assert.deepEqual([row.label, row.kindLabel, row.mergedSignIns, row.status.state], ["Workbot's computer", "Cloud computer", 0, "starts_when_needed"])
+  assert.deepEqual(row.notes, [{ code: "update_required", message: "Workbot's computer needs an update" }])
   await send("last-chat", "failed", "desktop_unresponsive")
-  assert.deepEqual((await detail(row.id)).computer.notes.map(({ code }) => code), ["provider_problem"])
+  assert.deepEqual((await detail(row.id)).computer.notes, [{ code: "provider_problem", message: "Could not be reached" }])
   assert.equal((await detail(row.id)).computer.status.state, "has_a_problem")
 })
 
@@ -134,7 +135,7 @@ test("desktop permissions are a note, while a registered Daytona computer can ru
   } })
   const listed = (await detail(desktop)).computer
   assert.equal(listed.status.state, "online")
-  assert.deepEqual(listed.notes.map(({ code }) => code), ["computer_use_permissions"])
+  assert.deepEqual(listed.notes, [{ code: "computer_use_permissions", message: "Computer Use needs permissions" }])
   const cloud = await register(asMaya, "Build computer", "build-daytona")
   assert.deepEqual((await detail(cloud)).computer.status, { state: "starts_when_needed", lastSeenAt: null })
   const allow = await asMaya("PUT", `/v1/computers/${cloud}/access`, { choice: "allow", scope: "whole_vm", folders: ["/workspace"] })
@@ -147,7 +148,8 @@ test("desktop permissions are a note, while a registered Daytona computer can ru
   const revokerId = normalizeDenTypeId("member", owner.memberId)
   await db.update(ComputerGrantTable).set({ revokedAt, revokedByMemberId: revokerId }).where(eq(ComputerGrantTable.targetDeviceId, cloud))
   const revoked = await detail(cloud)
-  assert.deepEqual(revoked.runCode.value, { value: "no", reason: "owner" })
+  assert.deepEqual(revoked.runCode.value, { value: "no", reason: "revoked" })
+  assert.deepEqual((await tab("?tab=cloud")).computers.find(({ id }) => id === cloud)?.runCode, revoked.runCode.value)
   assert.deepEqual(revoked.runCode.sources.map(({ revokedAt, revokedBy }) => [revokedAt, revokedBy]), [[revokedAt.toISOString(), owner.name]])
   await db.update(ComputerGrantTable).set({ revokedByMemberId: normalizeDenTypeId("member", off.owner.memberId) }).where(eq(ComputerGrantTable.targetDeviceId, cloud))
   assert.deepEqual((await detail(cloud)).runCode.sources.map(({ revokedBy }) => revokedBy), [null])
@@ -178,6 +180,11 @@ test("a capable runner supplies effective contact and remote session access, and
   assert.deepEqual(item.sessions, { sendTasks: true, readSessions: "started_by_them", access: { effective: "created", chosen: false, reason: null } })
   assert.deepEqual(item.runCode.value, { value: "sandbox", folders: 2 })
   assert.deepEqual(item.runCode.sources.map(({ label }) => label), ["Maya Okafor's OpenWork apps", "Workbot"])
+  const revoked = await asOwner("DELETE", `/v1/org/computers/${id}/sources/workbot`)
+  assert.equal(revoked.status, 200, summary(revoked))
+  const allRevoked = { value: "no", reason: "revoked" }
+  assert.deepEqual((await detail(id)).runCode.value, allRevoked)
+  assert.deepEqual((await list()).computers.find((computer) => computer.id === id)?.runCode, allRevoked)
   await db.update(OrganizationTable).set({ metadata: { computers: { runCode: false } } }).where(eq(OrganizationTable.id, organizationId))
   assert.deepEqual((await detail(id)).runCode.value, { value: "no", reason: "organization" })
 })
@@ -208,9 +215,41 @@ test("organization tabs count matching grouped rows, hide older machines, and ke
   assert.ok((await tab("?tab=attention")).computers.some(({ label }) => label === "Permissions Mac"))
   assert.deepEqual((await tab(`?search=${encodeURIComponent(tomas.email.toUpperCase())}`)).counts, { desktops: 4, cloud: 0, attention: 0, former: 0 })
   assert.equal((await tab("?search=jonas%20weber")).counts.former, 1)
-  assert.equal((await detail(instance, asOwner, team)).computer.kind, "instance")
+  const worker = (await detail(instance, asOwner, team)).computer
+  assert.equal(worker.kind, "instance")
+  assert.deepEqual(worker.notes, [{ code: "provider_problem", message: "Could not be reached" }])
+  assert.deepEqual((await detail(shared)).computer.notes, worker.notes)
   assert.equal((await list()).computers.find(({ id }) => id === shared)?.shared, true)
   assert.equal((await list()).computers.some(({ id }) => id === instance || id === former), false)
+})
+
+test("My Computers groups desktops, cloud, Workbot and shared computers without changing the admin order", async () => {
+  const olderDesktop = await report(asOwner, "sort-older-desktop", { label: "Sort fixture older desktop" })
+  const recentDesktop = await report(asOwner, "sort-recent-desktop", { label: "Sort fixture recent desktop" })
+  const offlineDesktop = await report(asOwner, "sort-offline-desktop", { label: "Sort fixture offline desktop" })
+  const readyCloud = await register(asOwner, "Sort fixture ready cloud", "sort-ready-cloud")
+  const failedCloud = await register(asOwner, "Sort fixture failed cloud", "sort-failed-cloud")
+  const sharedCloud = await register(asOwner, "Sort fixture shared cloud", "sort-shared-cloud", true)
+  const token = await den.mintMcpToken(owner, orgId)
+  const call = await den.request(token, "POST", "/v1/workbot/devices/computer", {
+    body: { sessionId: workbotSessionId(orgId, owner.memberId), chat: "main", event: "resumed" },
+  })
+  assert.equal(call.status, 204, summary(call))
+  const now = Date.now()
+  for (const [id, age] of [[olderDesktop, 120_000], [recentDesktop, 60_000], [offlineDesktop, day]] satisfies [typeof olderDesktop, number][]) {
+    await db.update(RemoteDeviceTable).set({ lastSeenAt: new Date(now - age) }).where(eq(RemoteDeviceTable.id, id))
+  }
+  await db.update(RemoteDeviceTable).set({ state: "ready", lastSeenAt: new Date(now - 30_000) }).where(eq(RemoteDeviceTable.id, readyCloud))
+  await db.update(RemoteDeviceTable).set({ state: "unavailable", lastSeenAt: new Date(now) }).where(eq(RemoteDeviceTable.id, failedCloud))
+  await db.update(RemoteDeviceTable).set({ state: "ready", lastSeenAt: new Date(now) }).where(eq(RemoteDeviceTable.id, sharedCloud))
+
+  const { computers } = await list(asOwner)
+  const workbot = computers.find(({ kind }) => kind === "workbot")
+  assert.ok(workbot)
+  assert.deepEqual(computers.filter(({ label, kind }) => label.startsWith("Sort fixture") || kind === "workbot").map(({ id }) => id), [
+    recentDesktop, olderDesktop, offlineDesktop, readyCloud, failedCloud, workbot.id, sharedCloud,
+  ])
+  assert.deepEqual((await tab("?tab=cloud&search=Sort%20fixture")).computers.map(({ id }) => id), [sharedCloud, readyCloud, failedCloud])
 })
 
 test("flag-off inventory answers feature disabled and ignores machine keys, with distinct keys across enabled organizations", async () => {
@@ -280,5 +319,18 @@ test("organization rules recognize independently valid choices and do not treat 
   assert.deepEqual(readOrganizationComputerRules({ remoteSessions: { access: "off" }, computers: { runCode: true } }), { rules: { sessions: "off", runCode: true, requireSandboxOnPersonal: true }, runCodeChosen: true })
   const seen = new Date(base)
   const result = deviceInventoryStatus({ state: "setup_required", platform: "linux", statusDetail: "This VM needs xdotool", disconnectedAt: null, lastSeenAt: seen }, "cloud", base, null)
-  assert.deepEqual([result.status.state, result.notes.map(({ code }) => code)], ["ready", ["computer_use_permissions"]])
+  assert.equal(result.status.state, "ready")
+  assert.deepEqual(result.notes, [{ code: "computer_use_permissions", message: "Computer Use needs setup" }])
+})
+
+test("desktop notes use short labels for disconnection, setup and updates", () => {
+  const seen = new Date(base)
+  const row = { state: "setup_required", platform: "linux", statusDetail: null, disconnectedAt: null, lastSeenAt: seen } satisfies Parameters<typeof deviceInventoryStatus>[0]
+  const connected = deviceInventoryStatus(row, "desktop", base, { effective: "off", chosen: false, reason: "update_required" })
+  assert.deepEqual(connected.notes, [
+    { code: "computer_use_permissions", message: "Computer Use needs setup" },
+    { code: "update_required", message: "Needs an OpenWork update" },
+  ])
+  const disconnected = deviceInventoryStatus({ ...row, state: "ready", disconnectedAt: seen }, "desktop", base, null)
+  assert.deepEqual(disconnected.notes, [{ code: "disconnected", message: "Disconnected from this organization" }])
 })

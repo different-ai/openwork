@@ -100,18 +100,18 @@ export function deviceInventoryStatus(row: Pick<Device, "state" | "lastSeenAt" |
   let state: ComputerInventoryState
   if (kind === "desktop") {
     state = recent && !row.disconnectedAt ? "online" : "offline"
-    if (row.disconnectedAt) notes.push({ code: "disconnected", message: "OpenWork was disconnected from this organization." })
-    if (row.state === "setup_required") notes.push({ code: "computer_use_permissions", message: row.platform === "darwin" ? "Computer Use needs permissions on this Mac." : "Computer Use needs setup on this computer." })
+    if (row.disconnectedAt) notes.push({ code: "disconnected", message: "Disconnected from this organization" })
+    if (row.state === "setup_required") notes.push({ code: "computer_use_permissions", message: row.platform === "darwin" ? "Computer Use needs permissions" : "Computer Use needs setup" })
   } else {
     const updating = kind === "workbot" && row.statusDetail === "Updating to a newer image"
     state = row.state === "unavailable" ? "has_a_problem"
       : recent && !updating && (row.state === "ready" || (kind === "cloud" && row.state === "setup_required")) ? "ready"
       : "starts_when_needed"
-    if (state === "has_a_problem") notes.push({ code: "provider_problem", message: kind === "workbot" ? "Workbot could not reach its computer." : "This cloud computer could not be reached." })
+    if (state === "has_a_problem") notes.push({ code: "provider_problem", message: "Could not be reached" })
     if (row.state === "setup_required") notes.push(kind === "workbot"
-      ? { code: "update_required", message: "Workbot's computer needs to be updated." }
-      : { code: "computer_use_permissions", message: "Computer Use needs setup on this cloud computer." })
+      ? { code: "update_required", message: "Workbot's computer needs an update" }
+      : { code: "computer_use_permissions", message: "Computer Use needs setup" })
   }
-  if (access?.reason === "update_required") notes.push({ code: "update_required", message: "Update OpenWork on this computer to choose remote access." })
+  if (access?.reason === "update_required") notes.push({ code: "update_required", message: "Needs an OpenWork update" })
   return { status: { state, lastSeenAt: row.lastSeenAt?.toISOString() ?? null }, notes }
 }
