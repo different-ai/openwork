@@ -8,7 +8,7 @@ type Decision = "deny" | "allow_once" | "always_allow";
 
 const ORDER: readonly Decision[] = ["deny", "always_allow", "allow_once"];
 
-export function ToolApprovalCard({ title, line, decisions, busy, onDecide, children, turnOn, chooseTools, variant = "card", ...hooks }: {
+export function ToolApprovalCard({ title, line, decisions, busy, onDecide, children, turnOn, chooseTools, icon, eyebrow, tag, details, variant = "card", ...hooks }: {
   variant?: "card" | "inline" | "placeholder" | "dock" | "composer";
   title: string;
   line?: string;
@@ -18,6 +18,10 @@ export function ToolApprovalCard({ title, line, decisions, busy, onDecide, child
   children?: ReactNode;
   turnOn?: { label: string; run: () => void };
   chooseTools?: { label: string; run: () => void };
+  icon?: ReactNode;
+  eyebrow?: string;
+  tag?: string;
+  details?: { label: string; run: () => void };
   "data-agent-ask"?: string;
   "data-tool-approval"?: string;
 }) {
@@ -39,16 +43,23 @@ export function ToolApprovalCard({ title, line, decisions, busy, onDecide, child
   if (variant === "composer") return (
     <div {...hooks} aria-busy={busy} className="flex flex-col gap-3 border-b border-dls-border py-3">
       <div className="flex min-w-0 items-start gap-3">
-        <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
-          <ShieldCheck aria-hidden="true" size={16} strokeWidth={1.9} />
-        </div>
-        <div className="min-w-0">
-          <p className="wrap-anywhere text-[13px] font-medium leading-5 text-dls-text">{title}</p>
-          {line && <p className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{line}</p>}
+        {icon ?? <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-surface text-dls-secondary">
+          <ShieldCheck aria-hidden="true" size={18} strokeWidth={1.9} />
+        </div>}
+        <div className="min-w-0 flex-1">
+          {eyebrow && <p className="text-[12px] leading-4 text-dls-secondary">{eyebrow}</p>}
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="wrap-anywhere text-[14px] font-medium leading-5 text-dls-text">{title}</span>
+            {tag && <span data-tool-approval-tag className="rounded-full border border-dls-border px-1.5 text-[11px] leading-4 text-dls-secondary">{tag}</span>}
+          </p>
+          {line && <p className="mt-1 text-[12px] leading-5 text-dls-secondary">{line}</p>}
         </div>
       </div>
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {turnOn && <Button type="button" size="sm" variant="link" className="me-auto h-auto p-0 text-[12px] text-dls-secondary" data-agent-ask-decision="turn_on" disabled={busy} onClick={turnOn.run}>{turnOn.label}</Button>}
+      <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-2">
+        <div className="me-auto flex flex-wrap items-center gap-x-3 gap-y-1">
+          {details && <Button type="button" size="sm" variant="link" className="h-auto p-0 text-[12px] text-dls-secondary" data-agent-ask-details disabled={busy} onClick={details.run}>{details.label}</Button>}
+          {turnOn && <Button type="button" size="sm" variant="link" className="h-auto p-0 text-[12px] text-dls-secondary" data-agent-ask-decision="turn_on" disabled={busy} onClick={turnOn.run}>{turnOn.label}</Button>}
+        </div>
         {actions}
       </div>
       {children}

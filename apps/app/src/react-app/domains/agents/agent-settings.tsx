@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { currentLocale, t } from "@/i18n";
 
+import { AgentConnectionLogo } from "./agent-connection-logo";
 import { agentOwnerFirstName, agentSpendLine, formatAgentMoney, parseBudgetDollars, toolAccessSummary, toolControlState } from "./agent-permission-words";
 import { firstName } from "./agent-words";
 import type { AgentsRuntime } from "./agents-runtime";
@@ -88,6 +89,7 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnectio
   const chevron = canExpand
     ? <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-dls-secondary transition-transform group-aria-expanded:rotate-90" />
     : <span aria-hidden="true" className="size-3.5 shrink-0" />;
+  const logo = <AgentConnectionLogo connectionId={connection.connectionId} name={connection.name} muted={!enabled && !connection.onlyChosenTools} />;
   const summary = (
     <span className="min-w-0 flex-1">
       <span id={titleId} className="block truncate text-[13px] font-medium text-dls-text">{connection.name}</span>
@@ -106,9 +108,10 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnectio
             className="group h-auto min-w-0 flex-1 justify-start gap-1.5 rounded-sm border-0 p-0 text-start font-normal"
           >
             {chevron}
+            {logo}
             {summary}
           </CollapsibleTrigger>
-        ) : <div className="flex min-w-0 flex-1 items-center gap-1.5">{chevron}{summary}</div>}
+        ) : <div className="flex min-w-0 flex-1 items-center gap-1.5">{chevron}{logo}{summary}</div>}
         <Switch
           size="sm"
           data-agent-connection-switch={connection.name}

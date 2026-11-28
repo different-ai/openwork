@@ -6,7 +6,7 @@ const BUNDLED_LOGOS: { match: RegExp; iconSrc: string }[] = [
   { match: /\bgithub\b|github\.com/i, iconSrc: "/ext-github.svg" },
   { match: /\bnotion\b|notion\.(so|com)/i, iconSrc: "/ext-notion.svg" },
   { match: /\blinear\b|linear\.app/i, iconSrc: "/ext-linear.svg" },
-  { match: /\bgoogle\b|google\.com/i, iconSrc: "/ext-google-workspace.svg" },
+  { match: /\bgoogle\b|\bgmail\b|google\.com/i, iconSrc: "/ext-google-workspace.svg" },
   { match: /\bsentry\b|sentry\.io/i, iconSrc: "/ext-sentry.svg" },
   { match: /\bstripe\b|stripe\.com/i, iconSrc: "/ext-stripe.svg" },
   { match: /\bcontext7\b/i, iconSrc: "/ext-context7.svg" },

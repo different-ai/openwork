@@ -23,7 +23,7 @@ import { isMacPlatform } from "@/app/utils";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { composerHighlightSegments } from "./composer-search";
-import { composerConnectorLogoUrls } from "./composer-connector-logos";
+import { composerConnectorLogoUrls } from "@/react-app/design-system/connector-logos";
 import { loadComposerPlusMenuRecents, recordComposerPlusMenuRecent } from "./composer-plus-menu-recents";
 import {
   buildPlusMenuModel,
