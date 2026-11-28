@@ -8,16 +8,16 @@ import { AGENT_ROW_INSET, AgentRunEntry } from "./agent-run-result";
 import { useAgentsRuntime } from "./agents-runtime";
 import { isActiveRun, useAgentDetail, useAgentRequestsQuery, useAgentRunsQuery } from "./use-agents";
 
-export function AgentTranscriptFooter(props: { sessionId: string; scoped?: boolean }) {
+export function AgentTranscriptFooter(props: { sessionId: string }) {
   const runtime = useAgentsRuntime();
   const chat = useAgentChatStore((state) => agentChatFor(state.chats, runtime, props.sessionId));
   const agent = useAgentDetail(runtime, chat?.agentId);
   const agentId = chat && isStandingChat(chat) && agent ? agent.agent.id : null;
   const active = agent?.routines.some((routine) => isActiveRun(routine.latestRun)) ?? false;
-  const runsQuery = useAgentRunsQuery(runtime, props.scoped ? null : agentId, active);
+  const runsQuery = useAgentRunsQuery(runtime, agentId, active);
   const requestsQuery = useAgentRequestsQuery(runtime, agentId, Boolean(agent?.openRequestCount));
   if (!runtime || !chat || !agent || !agentId) return null;
-  const visibleRuns = (props.scoped ? [] : runsQuery.data ?? []).filter((run) => run.id !== chat.firstRunId).sort((a, b) => a.createdAt - b.createdAt).slice(-5);
+  const visibleRuns = (runsQuery.data ?? []).filter((run) => run.id !== chat.firstRunId).sort((a, b) => a.createdAt - b.createdAt).slice(-5);
   const requests = (requestsQuery.data ?? []).filter((request) => !canDecideAgentToolRequest(request) && isVisibleAgentRequest(agent, request))
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   if (!visibleRuns.length && !requests.length && !runsQuery.isError && !requestsQuery.isError) return null;

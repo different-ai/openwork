@@ -61,7 +61,9 @@ function AgentDockApproval({ sessionId }: { sessionId: string }) {
   const runQueueMessage = agentRunQueueMessage(actions.runNow.error);
   return <>
     {request && <div data-composer-interaction="permission" className="px-4">
-      <AgentToolDecision key={agentChatKey(runtime, request.id)} runtime={runtime} agent={agent} request={request} onAllowed={!request.runId ? undefined : () => {
+      <AgentToolDecision key={agentChatKey(runtime, request.id)} runtime={runtime} agent={agent} request={request}
+        onChooseTools={() => useAgentChatStore.getState().setPanel(agentChatKey(chat, chat.sessionId), "settings")}
+        onAllowed={!request.runId ? undefined : () => {
         if (!request.requestedByCaller) return;
         const previousRun = runs.data?.find((run) => run.id === request.runId);
         const firstRoutine = agent.routines.find((routine) => routine.state !== "archived");

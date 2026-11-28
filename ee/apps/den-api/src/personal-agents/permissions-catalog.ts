@@ -14,6 +14,8 @@ import { readSubjectToolPolicies } from "../tool-permissions/rules.js"
 import { catalogOperationAvailableToCapabilities, filterGmailThreadRead, filterPersonalAgents } from "../mcp/catalog-availability.js"
 import type { McpToolOperation } from "../mcp/catalog.js"
 import { isCredentialBoundNativeOperation } from "../mcp/codemode-tools.js"
+import { externalToolsSearchCacheKey } from "../mcp/external-capabilities.js"
+import { getExternalToolsSearchCache, setExternalToolsSearchCache } from "../mcp/external-tools-search-cache.js"
 import { nativeOperations } from "../mcp/native-capabilities.js"
 import { env } from "../env.js"
 import { OPENWORK_CONNECTION_ID, OPENWORK_CONNECTION_NAME, operationTool } from "./builtin-connection.js"
@@ -39,7 +41,11 @@ export async function personalAgentConnectionTools(caller: PersonalAgentCaller, 
       connectionId: connection.id, callbackMode: connection.oauthConfiguration?.callbackMode ?? "legacy-v1", createdAt: connection.createdAt,
       registeredRedirectUri: typeof registered === "string" ? registered : null,
     })
-    const tools = await listExternalMcpTools(connection, redirect, connection.credentialMode === "per_member" ? { orgMembershipId } : undefined)
+    const cacheKey = externalToolsSearchCacheKey(connection, { orgMembershipId, teamIds: [] })
+    const cached = cacheKey ? getExternalToolsSearchCache(cacheKey) : undefined
+    const tools = cached?.outcome === "success" ? cached.tools
+      : await listExternalMcpTools(connection, redirect, connection.credentialMode === "per_member" ? { orgMembershipId } : undefined)
+    if (cacheKey && cached?.outcome !== "success") setExternalToolsSearchCache(cacheKey, { outcome: "success", tools })
     return { available: true, tools: tools.map((tool) => ({ name: tool.name, title: personalAgentToolTitle(tool), write: !personalAgentToolIsReadOnly(tool.annotations) })) }
   } catch {
     return { available: false, tools: [] }

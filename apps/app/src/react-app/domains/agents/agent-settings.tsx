@@ -26,12 +26,11 @@ const NO_BUDGET = "none";
 type ToolRowProps = {
   tool: PersonalAgentTool;
   lockReason: string | null;
-  saving: boolean;
   sentMessage?: string;
   onChange: (access: PersonalAgentAccess) => void;
 };
 
-function ToolRow({ tool, lockReason, saving, sentMessage, onChange }: ToolRowProps) {
+function ToolRow({ tool, lockReason, sentMessage, onChange }: ToolRowProps) {
   const titleId = useId();
   const reasonId = useId();
   const control = toolControlState(tool);
@@ -48,10 +47,9 @@ function ToolRow({ tool, lockReason, saving, sentMessage, onChange }: ToolRowPro
           spacing={1}
           className="shrink-0"
           disabled={Boolean(lockReason)}
-          aria-disabled={saving || undefined}
           value={[control.access]}
           onValueChange={([value]) => {
-            if (saving || lockReason) return;
+            if (lockReason) return;
             if (value === "allow" && control.allowDisabled) return;
             if (value === "allow" || value === "ask" || value === "block") onChange(value);
             else if (tool.chosen === null && !control.hint) onChange(control.access);
@@ -85,29 +83,32 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnectio
   const sharedLabelId = useId();
   const enabled = !connection.blocked && !connection.lockedByOrganization;
   const canExpand = !connection.lockedByOrganization && connection.tools.length > 0;
+  const status = toolAccessSummary(connection);
+  const plainOff = status === t("agents.permissions_connection_off");
+  const chevron = canExpand
+    ? <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-dls-secondary transition-transform group-aria-expanded:rotate-90" />
+    : <span aria-hidden="true" className="size-3.5 shrink-0" />;
   const summary = (
     <span className="min-w-0 flex-1">
       <span id={titleId} className="block truncate text-[13px] font-medium text-dls-text">{connection.name}</span>
-      <span className="block truncate text-xs text-dls-secondary">{connection.sharedLogin
-        ? t("agents.permissions_shared_account", { name: firstName(connection.sharedLogin.name) })
-        : t("agents.permissions_own_accounts")}</span>
-      <span id={statusId} data-agent-connection-status className="block truncate text-xs text-dls-secondary">{toolAccessSummary(connection)}</span>
+      {connection.sharedLogin && <span className="block truncate text-xs text-dls-secondary">{t("agents.permissions_shared_account", { name: firstName(connection.sharedLogin.name) })}</span>}
+      <span id={statusId} data-agent-connection-status className={plainOff ? "sr-only" : "block truncate text-xs text-dls-secondary"}>{status}</span>
     </span>
   );
 
   return (
     <Collapsible data-agent-connection={connection.name} className="border-t border-dls-border">
-      <div data-agent-connection-header className="flex min-h-11 items-center gap-4 py-1.5 pe-2">
+      <div data-agent-connection-header className="flex min-h-10 items-center gap-3 py-1.5">
         {canExpand ? (
           <CollapsibleTrigger
             render={<Button variant="ghost" />}
             data-agent-connection-toggle
-            className="group h-auto min-w-0 flex-1 justify-start gap-2 rounded-sm border-0 p-0 text-start font-normal"
+            className="group h-auto min-w-0 flex-1 justify-start gap-1.5 rounded-sm border-0 p-0 text-start font-normal"
           >
+            {chevron}
             {summary}
-            <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-dls-secondary transition-transform group-aria-expanded:rotate-90" />
           </CollapsibleTrigger>
-        ) : <div className="flex min-w-0 flex-1 items-center gap-2">{summary}<span aria-hidden="true" className="size-4 shrink-0" /></div>}
+        ) : <div className="flex min-w-0 flex-1 items-center gap-1.5">{chevron}{summary}</div>}
         <Switch
           size="sm"
           data-agent-connection-switch={connection.name}
@@ -115,15 +116,14 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnectio
           aria-describedby={collaboratorReason ? `${statusId} ${reasonId}` : statusId}
           checked={enabled}
           disabled={Boolean(collaboratorReason) || connection.lockedByOrganization}
-          aria-disabled={saving || undefined}
-          onCheckedChange={(checked) => { if (!saving) onConnectionChange(checked); }}
+          onCheckedChange={onConnectionChange}
         />
       </div>
-      {collaboratorReason && <p id={reasonId} className="pb-1 text-xs text-dls-secondary">{collaboratorReason}</p>}
-      {sentConnection && <p role="status" className="pb-1 text-xs text-dls-secondary">{sentConnection}</p>}
+      {collaboratorReason && <p id={reasonId} className="pb-1 ps-5 text-xs text-dls-secondary">{collaboratorReason}</p>}
+      {sentConnection && <p role="status" className="pb-1 ps-5 text-xs text-dls-secondary">{sentConnection}</p>}
       {connection.canShareLogin && (
-        <div className="flex min-h-10 items-center justify-between gap-3 pb-1 pe-2">
-          <span id={sharedLabelId} className="text-xs">{t("agents.permissions_share_login")}</span>
+        <div className="flex min-h-9 items-center justify-between gap-3 pb-1 ps-5">
+          <span id={sharedLabelId} className="min-w-0 text-xs">{t("agents.permissions_share_login")}</span>
           <Switch size="sm" aria-labelledby={sharedLabelId} data-agent-shared-login={connection.name}
             disabled={saving || Boolean(connection.sharedLogin && !memberId)}
             checked={connection.sharedLogin != null && connection.sharedLogin.memberId === memberId}
@@ -131,12 +131,12 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnectio
         </div>
       )}
       {canExpand && <CollapsibleContent>
-        {!enabled && <p data-agent-connection-off-hint className="pb-1 pl-2.5 text-xs text-dls-secondary">{t("agents.permissions_off_pick_tools")}</p>}
+        {!enabled && <p data-agent-connection-off-hint className="pb-1 ps-5 text-xs text-dls-secondary">{t("agents.permissions_off_pick_tools")}</p>}
         {[false, true].map((write) => {
           const tools = connection.tools.filter((tool) => tool.write === write);
           if (!tools.length) return null;
           return (
-            <div key={String(write)} className="pb-1 pl-2.5">
+            <div key={String(write)} className="pb-1 ps-5">
               <h4 className="pb-1 pt-1.5 text-xs font-medium text-dls-secondary">{write ? t("agents.permissions_changes") : t("agents.permissions_reads")}</h4>
               <ul>
                 {tools.map((tool) => (
@@ -144,7 +144,6 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnectio
                     key={tool.name}
                     tool={tool}
                     lockReason={tool.lockedByOrganization ? t("agents.permissions_admin_blocked") : collaboratorReason}
-                    saving={saving}
                     sentMessage={sentTool?.name === tool.name ? sentTool.message : undefined}
                     onChange={(access) => onChange(tool.name, access)}
                   />
@@ -271,7 +270,7 @@ export function AgentSettings({ runtime, agent, onBack }: { runtime: AgentsRunti
         </Button>
         <h2 className="text-sm font-medium">{t("agents.permissions_settings")}</h2>
       </header>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2 pt-3">
+      <div className="-me-4 min-h-0 flex-1 space-y-3 overflow-y-auto pb-2 pe-4 pt-3">
         <section>
           <h3 className="text-[13px] font-medium">{t("agents.permissions_tools")}</h3>
           <p className="pb-2 pt-1 text-xs text-dls-secondary">{t("agents.permissions_defaults")}</p>
@@ -294,7 +293,7 @@ export function AgentSettings({ runtime, agent, onBack }: { runtime: AgentsRunti
               sentTool={sentTool?.connectionId === connection.connectionId ? { name: sentTool.toolName, message: pendingRoutineMessage(agent.owner) } : null}
               sentConnection={sentConnection?.connectionId === connection.connectionId ? pendingRoutineMessage(agent.owner) : null}
               onConnectionChange={(enabled) => save.mutate({ connection: { connectionId: connection.connectionId, enabled } })}
-              saving={save.isPending || share.isPending}
+              saving={share.isPending}
               memberId={memberId}
               onShare={(shared) => {
                 if (shared) setConfirm(connection);
