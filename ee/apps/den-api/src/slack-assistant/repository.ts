@@ -224,7 +224,7 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
 }
 export type SlackActor = NonNullable<Awaited<ReturnType<typeof resolveSlackActor>>>
 
-export async function enqueueSlackEvent(installation: InstallationRow, eventId: string, event: SlackEvent) {
+export async function enqueueSlackEvent(installation: Pick<InstallationRow, "connectionId" | "teamId">, eventId: string, event: SlackEvent) {
   const id = scopeKey(installation.connectionId, eventId)
   return db.transaction(async (tx) => {
     await tx

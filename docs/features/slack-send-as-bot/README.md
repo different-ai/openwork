@@ -28,7 +28,10 @@ when they ask to post "as me". While it is available, the gateway's instructions
 for chats and for writing and running Automations.
 
 Arguments: `target` (`me` or `channel`), `text` (Slack mrkdwn, up to 4,000 characters), `channelId` (a channel ID such
-as `C0123ABCD`, for `channel`) and an optional `threadTs` to reply in a thread.
+as `C0123ABCD`, for `channel`) and an optional `threadTs` to reply in a thread. With the `slackRichMessages` feature
+on, the tool also takes `components` (a table, fields, a context line, link buttons, a question with choice buttons),
+shown under the text. They are validated and composed by OpenWork, never forwarded as written: see
+`docs/features/slack-rich-messages/README.md`.
 
 - **`me`**: a DM to the calling member (the chat's member, or the Automation's owner in an Automation run) in the app's
   Messages tab, which notifies them. Same path as Your agent's DMs (`sendWorkbotDirectMessage`).

@@ -3,7 +3,7 @@ import { appLogger } from "../observability/logger.js"
 import { defaultWorkbotDirectMessageDeps, workbotSlackCall } from "./direct-message.js"
 import { slackRunnerAvailable } from "./headless.js"
 import { SlackApiError, type SlackCall, type SlackEvent } from "./protocol.js"
-import { enqueueSlackEvent, type InstallationRow } from "./repository.js"
+import type { InstallationRow } from "./repository.js"
 import { SLACK_CHOICE_PREFIX, SLACK_LIMITS } from "./rich-message.js"
 import { slackSafeText } from "./slack-text.js"
 
@@ -20,15 +20,17 @@ export type SlackInteraction = z.infer<typeof slackInteractionSchema>
 
 export type SlackChoiceOutcome = "not_a_choice" | "not_addressed" | "unavailable" | "throttled" | "accepted"
 
+export type SlackChoiceInstallation = Pick<InstallationRow, "connectionId" | "teamId" | "enabled" | "botToken" | "channelIds">
+
 export type SlackChoiceDeps = {
-  slack: (installation: InstallationRow) => Promise<SlackCall | null>
-  enqueue: (installation: InstallationRow, eventId: string, event: SlackEvent) => Promise<string | null>
+  slack: (installation: SlackChoiceInstallation) => Promise<SlackCall | null>
+  enqueue: (installation: SlackChoiceInstallation, eventId: string, event: SlackEvent) => Promise<string | null>
   available: () => boolean
 }
 
 const defaultChoiceDeps: SlackChoiceDeps = {
   slack: async (installation) => (installation.botToken ? workbotSlackCall(installation.connectionId, installation.botToken, defaultWorkbotDirectMessageDeps) : null),
-  enqueue: enqueueSlackEvent,
+  enqueue: async (installation, eventId, event) => (await import("./repository.js")).enqueueSlackEvent(installation, eventId, event),
   available: slackRunnerAvailable,
 }
 
@@ -61,7 +63,7 @@ async function tell(slack: SlackCall | null, place: { channel: string; user: str
 }
 
 export async function answerSlackChoice(
-  installation: InstallationRow,
+  installation: SlackChoiceInstallation,
   payload: SlackInteraction,
   deps: SlackChoiceDeps = defaultChoiceDeps,
 ): Promise<{ outcome: SlackChoiceOutcome; settled: Promise<void> }> {
@@ -113,7 +115,7 @@ export async function answerSlackChoice(
         text: prompt ? `${prompt}\n${chosen}` : chosen,
         blocks: [
           ...(prompt ? [{ type: "section", text: { type: "mrkdwn", text: prompt } }] : []),
-          { type: "context", elements: [{ type: "mrkdwn", text: `:white_check_mark: <@${user}> chose *${slackSafeText(label)}*` }] },
+          { type: "context", elements: [{ type: "mrkdwn", text: `✅ <@${user}> chose *${slackSafeText(label)}*` }] },
         ],
       }).then(
         () => undefined,

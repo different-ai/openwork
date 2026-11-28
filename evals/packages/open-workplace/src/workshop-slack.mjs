@@ -1,7 +1,8 @@
 // Workshop Slack ("Open Slack"): a fictional Slack for the workshop gateway, so an app that messages people from its
 // own Slack app (OpenWork's Workbot) can be tried without a real Slack workspace. An app registers a sample Slack app
 // and gets a bot token; each person connects the Slack connector once in their own browser workspace; the bot's
-// direct messages then show up on that person's /slack page. Sandbox only: this is not Slack, and nothing leaves it.
+// direct messages then show up on that person's /slack page, drawn from their Block Kit blocks when they have any
+// (workshop-slack-blocks.mjs). Sandbox only: this is not Slack, and nothing leaves it.
 //
 //   POST /_workshop/slack/apps                 {"bot_name"?} -> a sample workspace (team) with one app and its bot token
 //   POST /slack/teams/<team>/api/<method>      Slack Web API subset, "Authorization: Bearer <bot or member token>"
@@ -14,6 +15,7 @@
 // conversations. Node builtins only, like the rest of this package.
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { escapeHtml } from "./workshop-html.mjs";
+import { BLOCK_STYLE, blocksError, renderBlocks } from "./workshop-slack-blocks.mjs";
 
 const APP_MS = 120 * 24 * 60 * 60 * 1000;
 const APP_LIMIT = 4096;
@@ -33,13 +35,14 @@ const derivedId = (prefix, seed) => prefix + createHash("sha256").update(seed).d
 const randomId = (prefix) => prefix + randomBytes(5).toString("hex").toUpperCase();
 
 /**
- * Slack mrkdwn as HTML: links, mentions, bold, italic, strike and code. The text is escaped first; only the tags
- * written here are ever added, and links are limited to http(s).
+ * Slack mrkdwn as HTML: links, mentions, bold, italic, strike, code and code blocks. The text is escaped first; only the tags
+ * written here are ever added, and links are limited to http(s). Text an app escaped stays text: it is never read again as a link or a mention.
  */
 export function renderMrkdwn(text, mention = (id) => id) {
   const held = [];
   const hold = (html) => `\u0000${held.push(html) - 1}\u0000`;
   let html = escapeHtml(String(text).replace(/[\u0000-\u0008\u000b-\u001f]/g, ""));
+  html = html.replace(/```\n?([\s\S]*?)\n?```/g, (_, code) => hold(`<pre>${code}</pre>`));
   html = html.replace(/`([^`\n]+)`/g, (_, code) => hold(`<code>${code}</code>`));
   html = html.replace(/&lt;(https?:\/\/(?:(?!&gt;|\|)\S)+)(?:\|((?:(?!&gt;)[^\n])*))?&gt;/g, (_, url, label) => hold(`<a href="${url}" target="_blank" rel="noreferrer noopener">${label || url}</a>`));
   html = html.replace(/&lt;@([A-Z0-9]+)&gt;/g, (_, id) => hold(`<span class="mention">@${escapeHtml(mention(id))}</span>`));
@@ -47,7 +50,9 @@ export function renderMrkdwn(text, mention = (id) => id) {
   for (const [mark, tag] of [["\\*", "strong"], ["_", "em"], ["~", "s"]]) {
     html = html.replace(new RegExp(`(^|[\\s(])${mark}([^\\s${mark}](?:[^${mark}\\n]*[^\\s${mark}])?)${mark}(?=$|[\\s.,!?:;)])`, "gm"), `$1<${tag}>$2</${tag}>`);
   }
-  return html.replace(/\u0000(\d+)\u0000/g, (_, index) => held[Number(index)]).replace(/\n/g, "<br>");
+  // Slack shows the three entities an app escaped (&amp; &lt; &gt;) as the characters they stand for.
+  html = html.replace(/&amp;(amp|lt|gt);/g, "&$1;");
+  return html.replace(/\n/g, "<br>").replace(/\u0000(\d+)\u0000/g, (_, index) => held[Number(index)]);
 }
 
 const TOOLS = [
@@ -98,7 +103,7 @@ h1{font-size:18px;margin:0}
 .avatar.person{background:#2b6cb0}
 .body{min-width:0;flex:1}.meta{display:flex;align-items:baseline;gap:6px}.meta time{font-size:12px;color:var(--muted)}
 .text{overflow-wrap:anywhere}.text code{background:rgba(29,28,29,.06);border:1px solid var(--border);border-radius:3px;padding:0 3px;font-size:12px}
-.text a{color:var(--focus)}.mention{background:rgba(29,155,209,.12);color:#1264a3;border-radius:3px;padding:0 2px}
+.text pre{margin:4px 0;padding:8px;background:rgba(29,28,29,.04);border:1px solid var(--border);border-radius:4px;overflow-x:auto;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre}.text a{color:var(--focus)}.mention{background:rgba(29,155,209,.12);color:#1264a3;border-radius:3px;padding:0 2px}
 .replies{list-style:none;margin:6px 0 0;padding:0 0 0 12px;border-left:2px solid var(--border)}.replies .message{padding:4px 0 4px 8px}
 .replies .avatar{width:24px;height:24px;font-size:12px}
 .empty{padding:40px 20px;color:var(--muted);max-width:560px}.empty h2{color:var(--foreground);font-size:18px;margin:0 0 8px}
@@ -109,7 +114,7 @@ button{font:inherit;font-weight:700;min-height:36px;padding:0 14px;border:0;bord
 .hint{margin:6px 0 0;font-size:12px;color:var(--muted)}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media(max-width:700px){body{grid-template-columns:1fr}aside{display:none}}
-`;
+${BLOCK_STYLE}`;
 
 // Keeps the page current without a reload: new messages appear, times show in the reader's own time zone, and the
 // list stays at the newest message unless the reader scrolled up.
@@ -152,7 +157,7 @@ export function createWorkshopSlack({ origin, auth, storage, personName = (parti
   const byTeam = new Map(), byToken = new Map();
   /** `${teamId}:${userId}` -> participantId */
   const members = new Map();
-  /** channelId -> { teamId, userId, participantId, revision, messages: [{ ts, user, text, bot_id?, thread_ts? }] } */
+  /** channelId -> { teamId, userId, participantId, revision, messages: [{ ts, user, text, blocks?, bot_id?, thread_ts? }] } */
   const conversations = new Map();
   const rates = new Map();
 
@@ -265,11 +270,20 @@ export function createWorkshopSlack({ origin, auth, storage, personName = (parti
     return `${Math.floor(micros / 1e6)}.${String(micros % 1e6).padStart(6, "0")}`;
   }
   /** Adds a message; answers `{ message }` or `{ error }` with Slack's error name. */
-  function post(conversation, { user, botId, text, threadTs }) {
-    if (typeof text !== "string" || !text.trim()) return { error: "no_text" };
-    if (text.length > MAX_TEXT) return { error: "msg_too_long" };
+  /** The `blocks` argument as Slack takes it: an array in a JSON body, a JSON string in a form body. */
+  function readBlocks(value) {
+    if (value === undefined || value === null || value === "") return { blocks: undefined };
+    let blocks = value;
+    if (typeof value === "string") { try { blocks = JSON.parse(value); } catch { return { error: "invalid_blocks_format" }; } }
+    const error = blocksError(blocks);
+    return error ? { error } : { blocks };
+  }
+  function post(conversation, { user, botId, text, blocks, threadTs }) {
+    const body = typeof text === "string" ? text : "";
+    if (!body.trim() && !blocks?.length) return { error: "no_text" };
+    if (body.length > MAX_TEXT) return { error: "msg_too_long" };
     if (threadTs !== undefined && !conversation.messages.some((message) => message.ts === threadTs && !message.thread_ts)) return { error: "thread_not_found" };
-    const message = { ts: nextTs(conversation), user, text, ...(botId ? { bot_id: botId } : {}), ...(threadTs ? { thread_ts: threadTs } : {}) };
+    const message = { ts: nextTs(conversation), user, text: body, ...(blocks?.length ? { blocks } : {}), ...(botId ? { bot_id: botId } : {}), ...(threadTs ? { thread_ts: threadTs } : {}) };
     conversation.messages.push(message);
     // Keep each conversation bounded: the oldest message goes first, with its replies.
     while (conversation.messages.length > MAX_MESSAGES) {
@@ -283,7 +297,7 @@ export function createWorkshopSlack({ origin, auth, storage, personName = (parti
   const replyCount = (conversation, ts) => conversation.messages.filter((message) => message.thread_ts === ts).length;
   function wire(conversation, app, message) {
     const replies = message.thread_ts ? 0 : replyCount(conversation, message.ts);
-    return { type: "message", ts: message.ts, user: message.user, text: message.text, ...(message.bot_id ? { bot_id: message.bot_id, app_id: app.appId } : {}), ...(message.thread_ts ? { thread_ts: message.thread_ts } : {}), ...(replies ? { thread_ts: message.ts, reply_count: replies } : {}) };
+    return { type: "message", ts: message.ts, user: message.user, text: message.text, ...(message.blocks ? { blocks: message.blocks } : {}), ...(message.bot_id ? { bot_id: message.bot_id, app_id: app.appId } : {}), ...(message.thread_ts ? { thread_ts: message.thread_ts } : {}), ...(replies ? { thread_ts: message.ts, reply_count: replies } : {}) };
   }
   function history(conversation, app, { limit, oldest, latest }) {
     const size = Math.min(Math.max(Number.parseInt(limit, 10) || 100, 1), 200);
@@ -363,7 +377,9 @@ export function createWorkshopSlack({ origin, auth, storage, personName = (parti
       case "chat.postMessage": {
         const conversation = conversationFor(args.channel);
         if (!conversation) return fail("channel_not_found");
-        const posted = post(conversation, { user: actor.userId, botId: actor.bot ? app.botId : undefined, text: args.text, threadTs: args.thread_ts || undefined });
+        const read = readBlocks(args.blocks);
+        if (read.error) return fail(read.error);
+        const posted = post(conversation, { user: actor.userId, botId: actor.bot ? app.botId : undefined, text: args.text, blocks: read.blocks, threadTs: args.thread_ts || undefined });
         return posted.error ? fail(posted.error) : ok({ channel: args.channel, ts: posted.message.ts, message: wire(conversation, app, posted.message) });
       }
       case "chat.update": {
@@ -372,9 +388,15 @@ export function createWorkshopSlack({ origin, auth, storage, personName = (parti
         const message = conversation.messages.find((entry) => entry.ts === args.ts);
         if (!message) return fail("message_not_found");
         if (message.user !== actor.userId) return fail("cant_update_message");
-        if (typeof args.text !== "string" || !args.text.trim()) return fail("no_text");
-        if (args.text.length > MAX_TEXT) return fail("msg_too_long");
-        message.text = args.text; conversation.revision++; save();
+        const read = readBlocks(args.blocks);
+        if (read.error) return fail(read.error);
+        const text = typeof args.text === "string" ? args.text : undefined;
+        if (!text?.trim() && !read.blocks?.length) return fail("no_text");
+        if (text && text.length > MAX_TEXT) return fail("msg_too_long");
+        // As Slack does: new text without blocks removes the old blocks; blocks without text keep the old text.
+        if (text !== undefined) { message.text = text; delete message.blocks; }
+        if (read.blocks?.length) message.blocks = read.blocks;
+        conversation.revision++; save();
         return ok({ channel: args.channel, ts: message.ts, text: message.text });
       }
       case "chat.getPermalink": {
@@ -469,7 +491,7 @@ export function createWorkshopSlack({ origin, auth, storage, personName = (parti
     const name = fromApp ? found.app.botName : personName(auth.participant(found.conversation.participantId) ?? { name: "You" });
     const at = new Date(Math.round(Number(message.ts) * 1000));
     const mention = (id) => (id === found.app.botUserId ? found.app.botName : memberParticipant(found.app.teamId, id) ? personName(memberParticipant(found.app.teamId, id)) : id);
-    return `<li class="message" id="m-${escapeHtml(message.ts)}"><span class="avatar${fromApp ? "" : " person"}" aria-hidden="true">${escapeHtml(name.slice(0, 1).toUpperCase())}</span><div class="body"><div class="meta"><strong>${escapeHtml(name)}</strong>${fromApp ? '<span class="badge">APP</span>' : ""}<time datetime="${at.toISOString()}">${at.toISOString().slice(0, 16).replace("T", " ")} UTC</time></div><div class="text">${renderMrkdwn(message.text, mention)}</div>${replies.length ? `<ol class="replies">${replies.map((reply) => messageHtml(found, reply)).join("")}</ol>` : ""}</div></li>`;
+    return `<li class="message" id="m-${escapeHtml(message.ts)}"><span class="avatar${fromApp ? "" : " person"}" aria-hidden="true">${escapeHtml(name.slice(0, 1).toUpperCase())}</span><div class="body"><div class="meta"><strong>${escapeHtml(name)}</strong>${fromApp ? '<span class="badge">APP</span>' : ""}<time datetime="${at.toISOString()}">${at.toISOString().slice(0, 16).replace("T", " ")} UTC</time></div>${message.blocks?.length ? `<div class="text blocks">${renderBlocks(message.blocks, (text) => renderMrkdwn(text, mention))}</div>` : `<div class="text">${renderMrkdwn(message.text, mention)}</div>`}${replies.length ? `<ol class="replies">${replies.map((reply) => messageHtml(found, reply)).join("")}</ol>` : ""}</div></li>`;
   }
   function page(participant, url) {
     const all = conversationsOf(participant);
