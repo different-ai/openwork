@@ -90,4 +90,6 @@ ${claudeCoworkAlternativeFaq.map((entry) => `### ${entry.question}\n${entry.answ
 - [Download OpenWork for free](https://openworklabs.com/download)
 - [Migration guide](https://openworklabs.com${MIGRATION_GUIDE_PATH})
 - [Run OpenWork on your own infrastructure](https://openworklabs.com/guides/self-hosted-ai-agent)
+- [OpenWork artifacts compared with Claude artifacts](https://openworklabs.com/guides/claude-artifacts-alternative)
+- [Scheduled work and persistent agents](https://openworklabs.com/guides/persistent-ai-agents)
 `;

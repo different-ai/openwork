@@ -217,7 +217,7 @@ export function GuidesIndexPage({ stars }: { stars: string }) {
           Guides
         </h1>
         <p className="mt-6 max-w-[620px] text-[18px] leading-[29px] text-[var(--lp-body)]">
-          Short answers about how OpenWork works with the tools your teams already use, how to run it yourself, and how to keep AI costs under control.
+          Short answers about how OpenWork works with the tools your teams already use, how to run it yourself, what artifacts and persistent agents are, and how to keep AI costs under control.
         </p>
       </header>
       <ul className="grid gap-3 pb-12 sm:grid-cols-2">

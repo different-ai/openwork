@@ -64,12 +64,30 @@ const claudeSources: CompareSource[] = [
   { label: "Claude Team plan", href: "https://support.claude.com/en/articles/9266767-what-is-the-team-plan" }
 ];
 
-const claudePricesChecked = new Date(`${anthropicPricingCheckedAt}T00:00:00Z`).toLocaleDateString("en-US", {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-  timeZone: "UTC"
-});
+function longDate(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC"
+  });
+}
+
+const claudePricesChecked = longDate(anthropicPricingCheckedAt);
+
+const claudeFeaturesCheckedAt = "2026-11-27";
+
+const claudeArtifactSources: CompareSource[] = [
+  { label: "What are artifacts?", href: "https://support.claude.com/en/articles/17153992-what-are-artifacts-and-how-do-i-use-them" },
+  { label: "Share artifacts", href: "https://support.claude.com/en/articles/9547008-share-artifacts" },
+  { label: "Live artifacts in Claude Cowork", href: "https://support.claude.com/en/articles/14729249-use-live-artifacts-in-claude-cowork" },
+  { label: "Artifacts admin guide", href: "https://support.claude.com/en/articles/16994751-artifacts-admin-guide-for-team-and-enterprise-plans" }
+];
+
+const claudeSchedulingSources: CompareSource[] = [
+  { label: "Scheduled tasks in Claude Cowork", href: "https://support.claude.com/en/articles/13854387-schedule-recurring-tasks-in-claude-cowork" },
+  { label: "Scheduled tasks in Claude Code", href: "https://code.claude.com/docs/en/routines" }
+];
 
 function usd(amount: number): string {
   return `$${amount.toLocaleString("en-US")}`;
@@ -1049,6 +1067,396 @@ export const guides: Guide[] = [
       primary: { label: "Download OpenWork free", href: "/download" },
       secondary: { label: "Self-host docs", href: "/docs/start-here/self-host" }
     }
+  },
+  {
+    slug: "claude-artifacts-alternative",
+    label: "Claude Artifacts alternative",
+    title: "Claude Artifacts alternative: open-source artifacts on any model",
+    description:
+      "Claude artifacts are documents, dashboards, and tools Claude builds beside your chat. OpenWork builds interactive artifacts on any model, each one an MCP App.",
+    heading: "What is an open-source alternative to Claude Artifacts?",
+    answer:
+      "OpenWork. Ask in chat for a dashboard, tracker, form, or calculator, and it opens beside the conversation as an artifact you can reopen, pin, and share. It works with any model, the desktop app is open source, and each artifact is an MCP App that also opens in other MCP clients.",
+    updated: claudeFeaturesCheckedAt,
+    keyFacts: [
+      "Built by asking in chat, on the model you choose",
+      "Live data from each viewer's own connected apps",
+      "Each artifact is an MCP App with its own MCP server",
+      "Shared with teammates, or by public link"
+    ],
+    sections: [
+      {
+        id: "what-claude-artifacts-are",
+        heading: "What Claude artifacts are",
+        paragraphs: [
+          "Anthropic describes an artifact as anything Claude makes for you that you'd put in front of someone: a design, a deck, a document, a dashboard, or a small interactive tool. It opens beside the conversation, and you can edit it, come back to it, and share it.",
+          "Artifacts are on every Claude plan, including Free, and in Claude Code. Claude also has templates to start from: Docs, Slides, Design, and Data, with Sheets, Whiteboards, and Motion in beta. Some templates need a paid plan."
+        ],
+        bullets: [
+          "Artifacts need Claude's cloud code execution and file creation turned on.",
+          "Live artifacts are the ones made in Claude Cowork before August 19, 2026. They still open and share, but they can't be edited in place.",
+          "Legacy artifacts are the ones made in a chat before September 16, 2026. They keep working, but you can't make new ones."
+        ],
+        sources: claudeArtifactSources
+      },
+      {
+        id: "openwork-artifacts",
+        heading: "What OpenWork artifacts are",
+        paragraphs: [
+          "An OpenWork artifact is an interactive view you can come back to: a dashboard, tracker, form, calculator, or lookup. You ask for it in chat, OpenWork builds it, and it opens beside the conversation.",
+          "Artifacts are saved under Artifacts in the sidebar, where you can pin one or share it with teammates. An artifact can read live data from connected apps such as Slack, Linear, or GitHub. It uses the connections of the person viewing it, not the person who built it.",
+          "Documents and spreadsheets are handled as ordinary files. OpenWork writes them into your folder, and you preview, edit, and download them in the app."
+        ],
+        sources: [{ label: "Artifacts in OpenWork", href: "/docs/dashboards/overview" }]
+      },
+      {
+        id: "compare",
+        heading: "Claude artifacts and OpenWork artifacts compared",
+        table: {
+          caption: "Claude artifacts compared with OpenWork artifacts",
+          columns: ["", "Claude artifacts", "OpenWork artifacts"],
+          rows: [
+            ["Models", "Claude", "Any model you connect, including Claude"],
+            [
+              "What you can make",
+              "Documents, decks, designs, dashboards, sheets, whiteboards, animations, and small tools",
+              "Interactive views: dashboards, trackers, forms, calculators, and lookups. Documents and spreadsheets are files in your folder."
+            ],
+            ["Live data", "Connected apps and data platforms", "Connected apps, through each viewer's own sign-in"],
+            [
+              "Sharing",
+              "Your organization, people invited by email, or anyone with the link when an owner allows it",
+              "Teammates in your organization. A public link for artifacts that don't use connected tools."
+            ],
+            ["Hosting", "An Anthropic-hosted page", "OpenWork Cloud, or the OpenWork control plane in your own cloud"],
+            ["Opens in", "Claude, or a browser link", "OpenWork, a browser link, or a compatible MCP client"],
+            ["Source", "Proprietary", "Open-source desktop app (MIT) and a source-available control plane"]
+          ]
+        },
+        sources: claudeArtifactSources
+      },
+      {
+        id: "build",
+        heading: "Build an artifact in OpenWork",
+        steps: [
+          {
+            title: "Download OpenWork and sign in",
+            body: "Install the desktop app, then sign in to OpenWork Cloud in Settings › Account. Artifacts need a sign-in so they can be saved and shared."
+          },
+          {
+            title: "Connect the apps it should read",
+            body: "Add connections such as Slack, Linear, or GitHub. Skip this step for a calculator or another view that needs no outside data."
+          },
+          {
+            title: "Ask for the view you want",
+            body: "For example: “Build a tracker that lists my team's open issues, grouped by owner.” OpenWork builds the artifact and opens it beside the chat."
+          },
+          {
+            title: "Come back to it",
+            body: "Find it under Artifacts › Yours. Pin it to keep it close, or ask in chat for changes."
+          }
+        ]
+      },
+      {
+        id: "share",
+        heading: "Share an artifact",
+        bullets: [
+          "With teammates: share it from the artifact. Each person sees data from their own connections.",
+          "With anyone: for an artifact that doesn't use connected tools, choose Share → Public link → Publish public link. It opens in a browser with no sign-in.",
+          "A public link shows the artifact's content, including any data built into it. It gives no access to your organization, connections, or live data.",
+          "Turn the link off from the same menu at any time. Teammates keep the access you gave them."
+        ]
+      },
+      {
+        id: "mcp-apps",
+        heading: "Artifacts are MCP Apps",
+        paragraphs: [
+          "MCP Apps are a standard extension of the Model Context Protocol. An app is an ordinary MCP server with a tool that points to an HTML interface, and the client shows that interface as real, interactive UI instead of text.",
+          "OpenWork serves each artifact as its own MCP server. The same artifact opens in OpenWork and in any other client that supports MCP Apps, so it is not tied to one assistant."
+        ],
+        bullets: [
+          "Read-only tools inside an artifact can run on their own.",
+          "A tool that changes data needs a click inside the artifact first.",
+          "Developers can also build an MCP App by hand and add it as a connection for the whole organization."
+        ],
+        sources: [
+          { label: "MCP Apps specification", href: "https://modelcontextprotocol.io/docs/extensions/apps" },
+          { label: "Build an MCP App", href: "/docs/dashboards/build-an-mcp-app" }
+        ]
+      },
+      {
+        id: "which",
+        heading: "When to use which",
+        bullets: [
+          "Choose Claude artifacts if your team already works in Claude and wants its templates for decks, designs, documents, and whiteboards.",
+          "Choose OpenWork if you want to pick the model, run the platform in your own cloud, or open the same artifact from more than one AI client.",
+          "They are not exclusive. OpenWork runs on Claude models when you add an Anthropic key."
+        ]
+      }
+    ],
+    cards: [
+      { icon: "monitor", title: "Create, find, and share artifacts", link: { label: "Artifacts docs", href: "/docs/dashboards/overview" } },
+      { icon: "route", title: "Build an MCP App by hand", link: { label: "Build an MCP App", href: "/docs/dashboards/build-an-mcp-app" } },
+      { icon: "cloud", title: "Schedule work that runs without you", link: { label: "Persistent AI agents", href: "/guides/persistent-ai-agents" } },
+      { icon: "users", title: "Compare OpenWork with Claude Cowork", link: { label: "Claude Cowork alternative", href: "/alternatives/claude-cowork" } }
+    ],
+    faq: [
+      {
+        question: "What are Claude artifacts?",
+        answer:
+          "Artifacts are what Claude makes for you to keep and share: a design, a deck, a document, a dashboard, or a small interactive tool. Each one opens beside the conversation, and they are on every Claude plan."
+      },
+      {
+        question: "Is there an open-source alternative to Claude Artifacts?",
+        answer:
+          "Yes. OpenWork builds interactive artifacts such as dashboards, trackers, forms, and calculators from a chat request. The desktop app is MIT-licensed and works with any model."
+      },
+      {
+        question: "Do OpenWork artifacts work with models other than Claude?",
+        answer: "Yes. OpenWork works with any model you connect, including Claude, GPT, Gemini, and open models."
+      },
+      {
+        question: "Can an artifact show live data?",
+        answer:
+          "Yes. An OpenWork artifact can read from connected apps each time it is opened. It uses the viewer's own connections, so a teammate needs their own access to the same app."
+      },
+      {
+        question: "Can I share an artifact with someone outside my company?",
+        answer:
+          "Yes, with a public link, for artifacts that don't use connected tools. Anyone with the link can open it in a browser without signing in, and you can turn the link off."
+      },
+      {
+        question: "What is an MCP App?",
+        answer:
+          "An MCP server with a tool that points to an HTML interface, which the client shows as interactive UI. It is a standard extension of the Model Context Protocol, and every OpenWork artifact is one."
+      }
+    ],
+    cta: {
+      heading: "Ask for the view. Keep it.",
+      sub: "Build your first artifact on the model you choose.",
+      primary: { label: "Download OpenWork free", href: "/download" },
+      secondary: { label: "Artifacts docs", href: "/docs/dashboards/overview" }
+    }
+  },
+  {
+    slug: "persistent-ai-agents",
+    label: "Persistent AI agents",
+    title: "Persistent AI agents: scheduled work that runs without you",
+    description:
+      "A persistent AI agent keeps a job, a schedule, and memory between runs. OpenWork runs scheduled Automations today, and Agents with memory are in private alpha.",
+    heading: "What is a persistent AI agent?",
+    answer:
+      "A persistent AI agent keeps working after the chat ends. It has a standing job, runs on a schedule, and remembers what it did last time. In OpenWork, Automations run any prompt on a schedule today, on your computer or in the cloud. Agents, which add a name, a brief, and memory, are in private alpha.",
+    updated: claudeFeaturesCheckedAt,
+    keyFacts: [
+      "Automations: live, on desktop and in OpenWork Cloud",
+      "Agents with memory: private alpha",
+      "Schedules: once, daily, weekly, every few hours, or around meetings",
+      "Runs on your computer, OpenWork Cloud, or your own cluster"
+    ],
+    sections: [
+      {
+        id: "what-it-means",
+        heading: "What makes an AI agent persistent",
+        paragraphs: ["A chat assistant stops when you close the window. A persistent agent has four things a chat does not."],
+        bullets: [
+          "A standing job, written once: what to check and what to report.",
+          "A schedule or a trigger, so it starts without you.",
+          "Somewhere to run while you are away, such as a cloud runner.",
+          "Memory, so each run can pick up where the last one stopped."
+        ]
+      },
+      {
+        id: "names",
+        heading: "Other names for the same idea",
+        paragraphs: [
+          "Background agents, ambient agents, scheduled tasks, routines, and AI coworkers all describe the same parts in different mixes. When you compare products, check each part instead of the name: what starts a run, where it runs, what it remembers, and who can stop it."
+        ]
+      },
+      {
+        id: "two-ways",
+        heading: "Two ways to do it in OpenWork",
+        table: {
+          caption: "OpenWork Automations compared with OpenWork Agents",
+          columns: ["", "Automations", "Agents"],
+          rows: [
+            ["Status", "Live", "Private alpha"],
+            ["What it is", "A prompt that runs on a schedule", "A named helper with a brief, one or more routines, and memory"],
+            ["Where it runs", "Your computer or OpenWork Cloud", "OpenWork Cloud only"],
+            ["Between runs", "Each run is a new chat you can open afterwards", "Keeps notes that every run reads and that you can edit"],
+            ["Controls", "Admins choose where Automations can run", "Roles, per-tool permissions, and monthly budgets"]
+          ]
+        }
+      },
+      {
+        id: "automations",
+        heading: "Schedule work with Automations",
+        steps: [
+          {
+            title: "Open Automations",
+            body: "In the OpenWork desktop app or in OpenWork Web, open Automations and click New Automation."
+          },
+          {
+            title: "Write the task and choose the model",
+            body: "For example: “Every weekday morning, read new messages in #support and list the ones that still need an answer.”"
+          },
+          {
+            title: "Pick a schedule",
+            body: "Once, Daily, Weekly, Every few hours, or Around my meetings. The last one runs before or after meetings on your Google Calendar and is for Cloud Automations only."
+          },
+          {
+            title: "Read the results",
+            body: "Each run is a normal chat you can open. My Automations in OpenWork Cloud shows the run history and a receipt for each run."
+          }
+        ],
+        sources: [{ label: "Automations", href: "/docs/start-here/do-work-with-it/automations" }]
+      },
+      {
+        id: "desktop-or-cloud",
+        heading: "Desktop or cloud",
+        paragraphs: ["Where you create an Automation decides where it runs."],
+        table: {
+          caption: "Desktop Automations compared with Cloud Automations",
+          columns: ["Kind", "Runs on", "Good for", "Keep in mind"],
+          rows: [
+            [
+              "Desktop Automation",
+              "Your computer, in the app's current workspace",
+              "Work that needs your local files",
+              "Runs only while the desktop app is open and signed in"
+            ],
+            [
+              "Cloud Automation",
+              "OpenWork Cloud",
+              "Work that only needs your connected apps",
+              "Runs with your computer off. Included in Team and Enterprise."
+            ]
+          ]
+        },
+        bullets: ["On a self-hosted deployment, Cloud Automations run on the headless runner in your own cluster."]
+      },
+      {
+        id: "agents",
+        heading: "Agents: a job, routines, and memory",
+        badge: "Private alpha",
+        paragraphs: [
+          "Agents are what OpenWork is building for longer-lived work. They are in private alpha: turned on one organization at a time, not officially supported yet, and likely to change.",
+          "An agent is a named helper for a recurring job. Its brief says what to do and how to report back. Each routine has its own instructions and schedule."
+        ],
+        bullets: [
+          "You create one by chatting. Describe the job, then review a card that lists the schedule and the connections it will use before anything runs.",
+          "It remembers. An agent keeps notes between runs, and every run reads them. The owner and managers can edit the notes.",
+          "It asks before it changes things. Read-only tools are allowed by default, tools that make changes ask first, and each tool can be set to Allow, Ask, or Block.",
+          "It has a budget. The owner sets a monthly budget, and admins can pause, transfer, or archive any agent.",
+          "It can be shared, when the organization allows it. Each person keeps their own conversation with the agent."
+        ],
+        sources: [
+          { label: "Agents in OpenWork", href: "/docs/agents/overview" },
+          { label: "What an agent remembers", href: "/docs/agents/memory" },
+          { label: "Choose what an agent can use", href: "/docs/agents/permissions" }
+        ]
+      },
+      {
+        id: "limits",
+        heading: "What agents can't do yet",
+        bullets: [
+          "Routines run only in OpenWork Cloud.",
+          "Approving a tool request doesn't resume the run that asked. The approval applies to the next run.",
+          "Built-in connections such as Google Workspace are read-only for agents.",
+          "There are no separate notifications. Results and requests appear under Needs your attention in the sidebar.",
+          "Budgets are checked when a run starts, so one run can take an agent over its limit."
+        ],
+        sources: [{ label: "What agents can't do yet", href: "/docs/agents/limits" }]
+      },
+      {
+        id: "claude",
+        heading: "How Claude handles scheduled work",
+        paragraphs: ["Claude has two scheduling features: scheduled tasks in Claude Cowork, and scheduled tasks in Claude Code."],
+        table: {
+          caption: "Claude scheduled tasks compared with OpenWork Automations",
+          columns: ["", "Claude Cowork scheduled tasks", "Claude Code scheduled tasks (formerly routines)", "OpenWork Automations"],
+          rows: [
+            ["Status", "All paid plans", "Research preview, on paid plans", "Live. Cloud Automations are in Team and Enterprise."],
+            [
+              "What starts a run",
+              "Hourly, daily, weekly, on weekdays, or on demand",
+              "A schedule, an API call, or a GitHub event",
+              "Once, daily, weekly, every few hours, or around meetings"
+            ],
+            [
+              "Where it runs",
+              "Anthropic's cloud, or your computer when the task works in a local folder",
+              "Anthropic's cloud, or your organization's self-hosted environment",
+              "Your computer, OpenWork Cloud, or your own cluster"
+            ],
+            ["Models", "Claude", "Claude", "Any model you connect"]
+          ]
+        },
+        bullets: [
+          "Claude Code's scheduled tasks can start from an API call or a GitHub event. OpenWork Automations start on a schedule today, and event triggers are on the roadmap.",
+          "Claude Code's scheduled tasks belong to one person's account and are not shared with teammates."
+        ],
+        sources: [...claudeSchedulingSources, { label: "OpenWork roadmap", href: "/docs/roadmap" }]
+      },
+      {
+        id: "first-jobs",
+        heading: "Good first jobs",
+        bullets: [
+          "Triage your inbox every morning and list what needs a reply.",
+          "Send a sales digest every Monday.",
+          "Watch a bug channel and summarize new reports each weekday.",
+          "Prepare notes before each customer meeting, and draft the follow-up after it.",
+          "Start with jobs that read and report. Add tools that make changes once you trust the results."
+        ]
+      }
+    ],
+    cards: [
+      { icon: "route", title: "Schedule your first task", link: { label: "Automations docs", href: "/docs/start-here/do-work-with-it/automations" } },
+      { icon: "users", title: "How Agents work in the alpha", link: { label: "Agents overview", href: "/docs/agents/overview" } },
+      { icon: "cloud", title: "Run scheduled work on your own infrastructure", link: { label: "Self-hosted AI agent", href: "/guides/self-hosted-ai-agent" } },
+      { icon: "monitor", title: "Turn the results into a dashboard", link: { label: "Claude Artifacts alternative", href: "/guides/claude-artifacts-alternative" } }
+    ],
+    faq: [
+      {
+        question: "What is a persistent AI agent?",
+        answer:
+          "An AI agent that keeps working after the chat ends. It has a standing job, a schedule or trigger, somewhere to run while you are away, and memory between runs."
+      },
+      {
+        question: "Can an AI agent run on a schedule while my computer is off?",
+        answer:
+          "Yes. An OpenWork Cloud Automation runs in OpenWork Cloud, or on the headless runner of a self-hosted deployment. A Desktop Automation runs only while the desktop app is open and signed in."
+      },
+      {
+        question: "What is the difference between an Automation and an Agent in OpenWork?",
+        answer:
+          "An Automation is one prompt on a schedule, and it is live today. An Agent is a named helper with a brief, routines, memory, and its own tool permissions and budget. Agents are in private alpha."
+      },
+      {
+        question: "Do OpenWork agents have memory?",
+        answer:
+          "Yes, in the private alpha. An agent keeps notes between runs, every run reads them, and the owner and managers can edit them."
+      },
+      {
+        question: "How do I get access to Agents?",
+        answer: "Agents are turned on one organization at a time during the alpha. Ask your OpenWork contact, or write to the team from the contact page."
+      },
+      {
+        question: "Is there an open-source alternative to Claude scheduled tasks?",
+        answer:
+          "OpenWork Automations run a prompt on a schedule with any model. The desktop app is open source, and Cloud Automations can run on your own infrastructure."
+      },
+      {
+        question: "Which models can run scheduled work in OpenWork?",
+        answer: "You choose the model when you create an Automation. OpenWork works with any model you connect, including local ones on the desktop."
+      }
+    ],
+    cta: {
+      heading: "Give an agent a standing job.",
+      sub: "Schedule the first task today, and ask about the Agents alpha when you want more.",
+      primary: { label: "Download OpenWork free", href: "/download" },
+      secondary: { label: "Ask about the Agents alpha", href: "/contact" }
+    }
   }
 ];
 
@@ -1117,7 +1525,7 @@ ${guide.cards.map((card) => `- ${card.title}: [${card.link.label}](${absolute(ca
 export function guidesIndexMarkdown(): string {
   return `# OpenWork guides
 
-> Short answers about OpenWork with OpenCode, MCP clients, and local models, plus self-hosting, Claude Cowork pricing, and how to spend less on LLMs.
+> Short answers about OpenWork with OpenCode, MCP clients, and local models, plus self-hosting, artifacts, persistent agents, Claude Cowork pricing, and how to spend less on LLMs.
 
 ${guides.map((guide) => `- [${guide.heading}](${SITE_URL}${guidePath(guide)}) — ${guide.answer}`).join("\n")}
 `;
