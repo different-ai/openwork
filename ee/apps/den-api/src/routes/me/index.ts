@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { AGENT_PRIVATE_VALUES_CAPABILITY_HEADER, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, AGENT_SANDBOX_ONLY_CAPABILITY_HEADER, agentPermissionRulesForClient } from "@openwork/types/den/agent-permissions"
+import { AGENT_MCP_SKILLS_CAPABILITY_HEADER, AGENT_PRIVATE_VALUES_CAPABILITY_HEADER, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, AGENT_SANDBOX_ONLY_CAPABILITY_HEADER, agentPermissionRulesForClient } from "@openwork/types/den/agent-permissions"
 import { BILLING_PLAN_TIERS } from "@openwork/types/den/billing-plans"
 import { PRIVATE_VALUE_FILLS_ROUTE, privateValueFillReportResponseSchema, privateValueFillReportSchema } from "@openwork/types/den/private-value-fills"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
@@ -544,7 +544,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     describeRoute({
       tags: ["Users"],
       summary: "Get current user's desktop config",
-      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use. Computer use, Mac app scripting and outside-folder rules follow the organization's agent permission settings. X-OpenWork-Browser-Upload-Permissions: 1 clients receive browserUploadPermissions with the verified organization and member scope, and the organization's browser_upload rules. Older clients receive a conservative website block when an active managed upload rule cannot be enforced. X-OpenWork-Sandbox-Only: 1 clients receive the organization's host_execution rule (sandbox-only when it denies); other clients receive blocks for commands, file edits, outside folders, computer use, local MCP servers and websites while it is required, whether or not the sandbox rollout is on. Clients that send X-OpenWork-Sandbox-Modes: 1 also receive sandbox_opt_out rules for the Use OpenWork Sandbox requirement.",
+      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use. Computer use, Mac app scripting and outside-folder rules follow the organization's agent permission settings. X-OpenWork-Browser-Upload-Permissions: 1 clients receive browserUploadPermissions with the verified organization and member scope, and the organization's browser_upload rules. Older clients receive a conservative website block when an active managed upload rule cannot be enforced. X-OpenWork-Sandbox-Only: 1 clients receive the organization's host_execution rule (sandbox-only when it denies); other clients receive blocks for commands, file edits, outside folders, computer use, local MCP servers and websites while it is required, whether or not the sandbox rollout is on. Clients that send X-OpenWork-Sandbox-Modes: 1 also receive sandbox_opt_out rules for the Use OpenWork Sandbox requirement. Clients that send X-OpenWork-Mcp-Skill-Permissions: 1 also receive mcp_skill rules for skills from MCP servers.",
       responses: {
         200: jsonResponse("Current user desktop config returned successfully.", meDesktopConfigResponseSchema),
         401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
@@ -566,8 +566,9 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       const supportsSandboxOnly = c.req.header(AGENT_SANDBOX_ONLY_CAPABILITY_HEADER) === "1"
       const supportsSandboxModes = c.req.header(AGENT_SANDBOX_MODES_CAPABILITY_HEADER) === "1"
       const supportsPrivateValues = c.req.header(AGENT_PRIVATE_VALUES_CAPABILITY_HEADER) === "1" && features.privateValues === true
+      const supportsMcpSkills = c.req.header(AGENT_MCP_SKILLS_CAPABILITY_HEADER) === "1"
       const agentPermissions = {
-        rules: agentPermissionRulesForClient(rules, { browserUploads: supportsBrowserUploads, fileSends: supportsFileSends, sandboxOnly: supportsSandboxOnly, sandboxModes: supportsSandboxModes, privateValues: supportsPrivateValues }),
+        rules: agentPermissionRulesForClient(rules, { browserUploads: supportsBrowserUploads, fileSends: supportsFileSends, sandboxOnly: supportsSandboxOnly, sandboxModes: supportsSandboxModes, privateValues: supportsPrivateValues, mcpSkills: supportsMcpSkills }),
       }
       const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id })
       const automations = automationAvailabilityFor({

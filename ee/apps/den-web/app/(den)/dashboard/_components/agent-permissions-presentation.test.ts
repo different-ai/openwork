@@ -24,7 +24,7 @@ test("Force shows Use checked and locked without changing its stored decision", 
 });
 
 test("Force annotates dependent controls, and Use alone does not", () => {
-  for (const key of ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers"]) {
+  for (const key of ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers", "mcpServerSkills"]) {
     assert.equal(agentPermissionBlockedBy(key, force, null)?.reason, "Blocked while Force OpenWork Sandbox is on.");
     assert.equal(agentPermissionBlockedBy(key, {}, force)?.reason, "Blocked while Force OpenWork Sandbox is on.");
     assert.equal(agentPermissionBlockedBy(key, { hostExecution: { decision: "allow" } }, force), null, `${key} follows the team's own setting`);

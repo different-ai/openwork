@@ -20,7 +20,7 @@ import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 
 const requestSchema = z.object({
-  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_skill_folder", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ASK_FORM, ...DRIVE_FILE_ACTIONS]),
+  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_skill_folder", "openwork_mcp_skills", "openwork_mcp_skill_read", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ASK_FORM, ...DRIVE_FILE_ACTIONS]),
   input: z.unknown(),
   sessionId: z.string().max(256).optional(),
   caller: z.object({
@@ -234,6 +234,13 @@ export async function createV2ContextBridge(
       if (call.name === "openwork_skill_folder") {
         const input = z.object({ url: z.string().startsWith("skill://").endsWith("/SKILL.md").max(2_048) }).strict().parse(call.input);
         return Response.json(await read("/experimental/connect/skills/folder", { method: "POST", body: JSON.stringify(input) }));
+      }
+      if (call.name === "openwork_mcp_skills") {
+        return Response.json(await read("/experimental/mcp-skills"));
+      }
+      if (call.name === "openwork_mcp_skill_read") {
+        const input = z.object({ id: z.string().min(1).max(256) }).strict().parse(call.input);
+        return Response.json(await read("/experimental/mcp-skills/read", { method: "POST", body: JSON.stringify(input) }));
       }
       if (call.name === ASK_WITHOUT_WAITING || call.name === ASK_FORM) {
         const form = call.name === ASK_FORM ? askFormArgs.parse(call.input) : undefined;

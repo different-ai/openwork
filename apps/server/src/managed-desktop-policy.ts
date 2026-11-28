@@ -11,7 +11,7 @@ import { ApiError } from "./errors.js";
 import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
-import { AGENT_PRIVATE_VALUES_CAPABILITY_HEADER, AGENT_PRIVATE_VALUE_PERMISSION_ACTIONS, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, resolveSandboxRequirement, type AgentPermissionAction, type AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
+import { AGENT_MCP_SKILLS_CAPABILITY_HEADER, AGENT_PRIVATE_VALUES_CAPABILITY_HEADER, AGENT_PRIVATE_VALUE_PERMISSION_ACTIONS, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, resolveSandboxRequirement, type AgentPermissionAction, type AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
 import { readSandboxSettings, readAppliedSandboxSettings, readSandboxRequirement, sandboxSettingsRevision, writeSandboxRequirement, type SandboxSettings } from "./sandbox-settings-store.js";
 import { readActivatedEnterpriseDenOrigin } from "./enterprise-den-origin.js";
 import { sandboxHostRequest, sandboxPromptHasHostFiles } from "./sandbox-host-guards.js";
@@ -164,7 +164,7 @@ class ManagedDesktopPolicy {
         onSend?.();
         const response = await externalFetch(`${session.baseUrl}${path}`, {
           headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId,
-            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", "X-OpenWork-Sandbox-Only": "1", [AGENT_SANDBOX_MODES_CAPABILITY_HEADER]: "1", [AGENT_PRIVATE_VALUES_CAPABILITY_HEADER]: "1" } : {}),
+            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", "X-OpenWork-Sandbox-Only": "1", [AGENT_SANDBOX_MODES_CAPABILITY_HEADER]: "1", [AGENT_PRIVATE_VALUES_CAPABILITY_HEADER]: "1", [AGENT_MCP_SKILLS_CAPABILITY_HEADER]: "1" } : {}),
           },
           redirect: "error",
           signal: AbortSignal.timeout(Math.min(DEN_READ_ATTEMPT_TIMEOUT_MS, remainingMs)),
