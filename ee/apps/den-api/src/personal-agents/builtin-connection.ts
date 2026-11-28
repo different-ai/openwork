@@ -21,6 +21,12 @@ export function operationTool(operation: Operation) {
   }
 }
 
+export const SKILLS_TOOL = { name: "get_skill", title: "Read your skills", annotations: { readOnlyHint: true, destructiveHint: false } } as const
+
+export function openWorkConnectionTools(operations: readonly Operation[]) {
+  return [...operations.map(operationTool), SKILLS_TOOL]
+}
+
 const ORGANIZATION_AGENT_PATHS = ["/v1/org/personal-agent-policy", "/v1/org/personal-agents"]
 const AUTOMATION_PATHS = ["/v1/automations"]
 const AGENTS_PATH = "/v1/personal-agents"

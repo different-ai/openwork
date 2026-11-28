@@ -18,7 +18,7 @@ import { externalToolsSearchCacheKey } from "../mcp/external-capabilities.js"
 import { getExternalToolsSearchCache, setExternalToolsSearchCache } from "../mcp/external-tools-search-cache.js"
 import { nativeOperations } from "../mcp/native-capabilities.js"
 import { env } from "../env.js"
-import { OPENWORK_CONNECTION_ID, OPENWORK_CONNECTION_NAME, operationTool } from "./builtin-connection.js"
+import { OPENWORK_CONNECTION_ID, OPENWORK_CONNECTION_NAME, operationTool, SKILLS_TOOL } from "./builtin-connection.js"
 import { canManagePersonalAgent, type PersonalAgentAccess, type PersonalAgentCaller } from "./access.js"
 import { organizationToolRule, personalAgentOrganizationRules, personalAgentToolRule } from "./org-rules.js"
 import { personalAgentSharedLogins, sharedLoginPerson, supportsPersonalAgentSharedLogin } from "./shared-logins.js"
@@ -106,7 +106,7 @@ export async function personalAgentToolCatalog(caller: PersonalAgentCaller, poli
     ...connectionTools(connectionId, tools, () => false),
   })
   const catalog: PersonalAgentToolCatalog["connections"] = [
-    builtIn(OPENWORK_CONNECTION_ID, OPENWORK_CONNECTION_NAME, operationTools(openWork)),
+    builtIn(OPENWORK_CONNECTION_ID, OPENWORK_CONNECTION_NAME, [{ name: SKILLS_TOOL.name, title: SKILLS_TOOL.title, write: false }, ...operationTools(openWork)]),
     ...(computerOffered ? [builtIn(COMPUTER_CONNECTION_ID, COMPUTER_CONNECTION_NAME, COMPUTER_CONNECTION_TOOLS.map(({ name, title }) => ({ name, title, write: false })))] : []),
     ...native.filter((entry) => entry.connectedForMe).map((entry) => builtIn(entry.id, entry.name, operationTools(nativeOperations(available, entry.nativeProviderKey)))),
   ]
