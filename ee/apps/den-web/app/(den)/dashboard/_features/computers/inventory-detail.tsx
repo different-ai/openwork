@@ -17,7 +17,7 @@ import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { TimeAgo, hairline, secondaryText } from "./computer-parts";
 import { absoluteTime } from "./computers-format";
 import { InventoryDetailActions, InventoryMergedSignIns, useInventoryActions } from "./inventory-actions";
-import { saveWholeComputerChoice, useInventoryDetail, useRefreshInventory, type InventoryScope } from "./inventory-data";
+import { saveWholeComputerChoice, useChangeComputerSourceAccess, useInventoryDetail, useRefreshInventory, type InventoryScope } from "./inventory-data";
 import { computerRulesLine, inventoryOwnerName, onOff, runCodeLabel, runCodeReason } from "./inventory-format";
 import { InventoryError } from "./inventory-parts";
 import { InventoryLock, sessionLockReason } from "./inventory-rows";
@@ -58,35 +58,54 @@ function Installed({ installed, now, onRemove }: { installed: Detail["installed"
   </DetailCard>;
 }
 
-function SourceRow({ source, revokedBy, action }: { source: ComputerSourceAccess; revokedBy: string | null; action?: ReactNode }) {
+function SourceRow({ detail, scope, source }: { detail: Detail; scope: InventoryScope; source: ComputerSourceAccess }) {
+  const [confirming, setConfirming] = useState(false);
+  const sourceLabelId = useId();
+  const toast = useDenToast();
+  const mutation = useChangeComputerSourceAccess(scope, detail.computer.id, source.key);
   const whole = source.scope === "whole_computer";
-  return <li className={`flex min-h-10 flex-wrap items-start gap-2 border-t py-2 ${hairline}`}>
+  const computer = detail.computer.label;
+  const restore = source.revokedAt !== null;
+  const label = restore ? "Allow again" : "Revoke";
+  const canAct = restore ? detail.callerIsOwner && detail.runCode.canRestore : detail.runCode.canRevoke;
+  const action = restore ? "restore" : "revoke";
+
+  async function change(next: "restore" | "revoke") {
+    const changed = await mutation.mutateAsync(next);
+    toast({ title: next === "restore" ? "Allowed again" : "Revoked", description: changed.label });
+  }
+
+  return <li className={`flex min-h-10 flex-wrap items-start gap-2 border-t py-2 ${hairline}`} aria-busy={mutation.isPending}>
     <div className="min-w-0 flex-1">
-      <p className="font-medium wrap-anywhere">{source.label}</p>
+      <p id={sourceLabelId} className="font-medium wrap-anywhere">{source.label}</p>
       <p className={secondaryText}>{whole ? "Whole computer" : "In sandbox"}</p>
       {source.folders.length ? <div className={`mt-1 text-xs ${secondaryText}`}>
         <span>{whole ? "Working folder" : "Shared folders"}</span>
         <ul>{source.folders.map((folder) => <li key={folder}><code className="wrap-anywhere">{folder}</code></li>)}</ul>
       </div> : !whole ? <p className={`text-xs ${secondaryText}`}>No shared folders</p> : null}
-      {source.revokedAt ? <p className={`mt-1 text-xs ${secondaryText}`}>
-        {revokedBy ? `Revoked by ${revokedBy} on ` : "Revoked on "}<time dateTime={source.revokedAt}>{absoluteTime(source.revokedAt)}</time>
+      {source.revokedAt ? <p className={`mt-1 text-xs wrap-anywhere ${secondaryText}`}>
+        {source.revokedBy ? `Revoked by ${source.revokedBy} on ` : "Revoked on "}<time dateTime={source.revokedAt}>{absoluteTime(source.revokedAt)}</time>
       </p> : null}
+      {mutation.error && mutation.variables === "restore" ? <p className="mt-1 text-xs text-[var(--ow-danger)]" role="alert">{mutation.error.message}</p> : null}
     </div>
-    {action}
+    {canAct ? <DenButton variant="secondary" size="xs" aria-describedby={sourceLabelId} disabled={mutation.isPending}
+      onClick={() => {
+        if (action === "revoke") setConfirming(true);
+        else void change(action).catch(() => {});
+      }}>{label}</DenButton> : null}
+    <ConfirmDialog destructive confirm={confirming ? {
+      title: "Revoke access?",
+      description: `${source.label} will no longer be able to run code on ${computer}. Only its owner can allow it again.`,
+      action: "Revoke",
+    } : null} onConfirm={() => change("revoke")} onClose={() => setConfirming(false)} />
   </li>;
 }
 
-function Sources({ detail, memberId }: { detail: Detail; memberId: string }) {
+function Sources({ detail, scope }: { detail: Detail; scope: InventoryScope }) {
   const sources = detail.runCode.sources;
   if (!sources.length) return null;
   return <ul aria-label="Sources of access">
-    {sources.map((source) => {
-      const person = source.revokedBy;
-      const revokedBy = person === memberId ? "you"
-        : person && person === detail.computer.owner?.memberId ? inventoryOwnerName(detail.computer.owner) ?? "the owner"
-          : person ? "an organization member" : null;
-      return <SourceRow key={source.key} source={source} revokedBy={revokedBy} />;
-    })}
+    {sources.map((source) => <SourceRow key={source.key} source={source} detail={detail} scope={scope} />)}
   </ul>;
 }
 
@@ -166,7 +185,7 @@ function RunCode({ detail, scope }: { detail: Detail; scope: InventoryScope }) {
         {code.value === "no" && code.reason === "organization" ? <InventoryLock reason={reason} /> : null}{reason}
       </p> : null}
     </>}
-    <Sources detail={detail} memberId={scope.memberId} />
+    <Sources detail={detail} scope={scope} />
     {code.value !== "not_available" && detail.computer.kind === "cloud" && detail.callerIsOwner && detail.runCode.canChange ? <WholeComputerChoice detail={detail} scope={scope} /> : null}
   </DetailCard>;
 }
@@ -189,8 +208,9 @@ function Sessions({ detail }: { detail: Detail }) {
 
 function DetailActivity({ events, now }: { events: Detail["activity"]; now: number }) {
   const [open, setOpen] = useState(false);
+  const newestFirst = open ? [...events].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)) : [];
   return <DisclosureSection label="Activity" open={open} onToggle={() => setOpen(!open)}>
-    <MyComputerActivity events={events} now={now} />
+    <div className="min-w-0 [&_li>p]:wrap-anywhere"><MyComputerActivity events={newestFirst} now={now} /></div>
   </DisclosureSection>;
 }
 
@@ -215,7 +235,8 @@ export function InventoryDetail({ id, scope, onClose, onRemoved, canDisconnect =
   const detail = query.data;
   const row = detail?.computer;
   const owner = row && inventoryOwnerName(row.owner);
-  const ownerLine = owner ? `Only ${owner} can change these` : row?.shared ? "This computer is shared with the organization." : "Only the owner can change these";
+  const ownerLine = owner ? `Only ${owner} can change these.` : row?.shared ? "This computer is shared with the organization." : "Only the owner can change these.";
+  const adminCanRevoke = detail?.runCode.canRevoke && detail.runCode.sources.some((source) => !source.revokedAt);
   const disconnectLocked = scope.admin && !canDisconnect && row?.kind === "desktop" && !row.canDisconnect && !row.canRemove && !row.notes.some((note) => note.code === "disconnected");
   return <div data-testid={`computer-inventory-detail-${id}`} aria-busy={query.isFetching} className="@container space-y-3">
     {onClose ? <div className="flex min-h-10 items-center justify-between gap-2">
@@ -224,7 +245,9 @@ export function InventoryDetail({ id, scope, onClose, onRemoved, canDisconnect =
     {query.error ? <InventoryError message={query.error.message} stale={detail ? "Showing the last known details." : undefined} checkedAt={query.dataUpdatedAt} onRetry={() => void query.refetch()} /> : null}
     {detail && row ? <>
       {scope.admin && !detail.callerIsOwner ? <div className={`space-y-1 ${secondaryText}`}>
-        <p className="flex items-center gap-2"><InventoryLock reason={ownerLine} />{ownerLine}</p>
+        <p className="flex items-center gap-2"><InventoryLock reason={ownerLine} />
+          <span>{ownerLine}{adminCanRevoke ? " You can revoke access." : ""}</span>
+        </p>
         <p>{computerRulesLine(detail.rules)}</p>
       </div> : null}
       <div className={cardGrid}>
