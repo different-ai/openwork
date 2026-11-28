@@ -111,6 +111,44 @@ test("standing chat runs only the trusted Den tools and rejects forged local or 
   assert.equal(restored.getTurn(sessionId, "first")?.status, "interrupted")
 })
 
+test("standing chat gets its own computer only while the session says so", async (t) => {
+  const handler = mcpHandler([])
+  t.after(() => handler.close())
+  const origin = await listen(t, (incoming) => handler.fetch(incoming))
+  const store = new Store(nodeSqlite(":memory:"))
+  t.after(() => store.close())
+  const ran: string[] = []
+  const offered: string[][] = []
+  const bash = { name: "bash", description: "Run a command", inputSchema: { type: "object", properties: {} } }
+  const runner = new Runner({ ...basic, store, agentChatMcp: agentChatMcpConnector(`${origin}/mcp/agent`),
+    computer: { prompt: "", tools: [bash], toolNames: new Set(["bash"]), image: "test", known: () => false, prewarm: () => {}, release: () => {},
+      delete: async () => {}, previewSavedFile: async () => {},
+      run: async (_session, name) => { ran.push(name); return { output: "ok", isError: false } },
+    },
+    model: { complete: async (input) => {
+      offered.push(input.tools.map(tool => tool.name))
+      const first = offered.length % 2 === 1
+      return { text: "Finished", toolCalls: first ? [{ name: "bash", id: `bash-${offered.length}`, input: {} }] : [], usage }
+    } },
+  })
+  const app = createApp({ store, runner, apiToken })
+  const put = (body: object) => app.request(sessionPath, request("PUT", { profile: "agent_chat", owner: "member", ...body }))
+  const send = async (messageId: string) => {
+    assert.ok(runner.send({ sessionId, messageId, prompt: "Count the rows", credentials: { agentChatToken } }).ok)
+    await runner.idle()
+  }
+  assert.equal((await put({ computer: true })).status, 201)
+  await send("on")
+  assert.deepEqual(offered[0], [...tools.slice(0, 3), "bash"])
+  assert.deepEqual(ran, ["bash"])
+  assert.equal((await put({ computer: false })).status, 200)
+  await send("off")
+  assert.deepEqual([store.getTurn(sessionId, "off")?.status, store.getTurn(sessionId, "off")?.error, offered.length], ["completed", null, 4])
+  assert.deepEqual(offered[2], tools.slice(0, 3))
+  assert.deepEqual(ran, ["bash"])
+  assert.equal((await app.request(`${sessionPath}/computer`, request("DELETE"))).status, 403)
+})
+
 test("standing chat never follows a redirect from the scoped MCP path", async (t) => {
   const paths: string[] = []
   const origin = await listen(t, async (incoming) => {

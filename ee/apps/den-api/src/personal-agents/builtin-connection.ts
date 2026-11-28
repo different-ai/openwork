@@ -1,13 +1,13 @@
 import { NATIVE_OAUTH_PROVIDERS } from "../capability-sources/provider-registry.js"
 import { personalAgentExecution } from "../mcp/workbot-turn-limits.js"
 import { toolPermissionRefusal, type ToolPermissionRefusal } from "../tool-permissions/dispatch.js"
-import { OPENWORK_CONNECTION_ID, OPENWORK_CONNECTION_NAME } from "./connector-access.js"
+import { COMPUTER_CONNECTION_ID, OPENWORK_CONNECTION_ID, OPENWORK_CONNECTION_NAME } from "./connector-access.js"
 import { personalAgentExecutionContext, personalAgentPolicyRefusal } from "./permissions-dispatch.js"
 
 export { OPENWORK_CONNECTION_ID, OPENWORK_CONNECTION_NAME }
 
 export function isBuiltInAgentConnection(connectionId: string): boolean {
-  return connectionId === OPENWORK_CONNECTION_ID || Object.hasOwn(NATIVE_OAUTH_PROVIDERS, connectionId)
+  return connectionId === OPENWORK_CONNECTION_ID || connectionId === COMPUTER_CONNECTION_ID || Object.hasOwn(NATIVE_OAUTH_PROVIDERS, connectionId)
 }
 
 type Operation = { name: string; method: string; path: string; operation: { summary?: string } }

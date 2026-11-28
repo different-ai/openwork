@@ -6,6 +6,7 @@ import { gatewayFixtureEnv, grantGatewayModels, stubPublicModelCatalog } from ".
 
 const restoreCatalog = stubPublicModelCatalog()
 const owners = new Map<string, string>()
+const computers: unknown[] = []
 const sent: { session: string; id: string; token: string; status: "running" | "completed" }[] = []
 const runner = await startFakeHttpServer((request, raw, response) => {
   const url = new URL(request.url ?? "/", "http://runner")
@@ -15,6 +16,7 @@ const runner = await startFakeHttpServer((request, raw, response) => {
     const body: unknown = JSON.parse(raw)
     assert.equal(field(body, "profile"), "agent_chat")
     owners.set(session, text(field(body, "owner"), "chat owner"))
+    computers.push(field(body, "computer"))
     response.writeHead(201).end(JSON.stringify({ id: session, profile: "agent_chat" }))
     return
   }
@@ -246,4 +248,70 @@ test("OpenWork's own tools start off for an agent: its owner gives it one tool, 
   const another = await call(fifth.token, "execute_capability", { name: "createPersonalAgent", body: { name: "Second", brief: "Another agent." } })
   assert.match(errorText(another), /cannot make another agent/)
   assert.deepEqual(personalAgentDetailSchema.parse((await asOwner("GET", path)).body).routines.map(({ name }) => name), ["Morning pipeline"])
+})
+
+test("an agent's computer is a connector: offered only where the organization has computers, off until its owner turns it on, and an admin can block it", async () => {
+  const { orgId, owner } = await den.createOrg(await den.signUp("Computer Owner", "computer@acme.test"), "Agent computer fixture")
+  const asOwner = den.as(owner, orgId)
+  await grantGatewayModels(den, owner, orgId, [owner])
+  assert.equal((await den.setFeature(orgId, "personalAgents", true)).status, 200)
+  const created = await asOwner("POST", "/v1/personal-agents", { name: "Numbers helper", brief: "Work through spreadsheets." })
+  assert.equal(created.status, 201, summary(created))
+  const path = `/v1/personal-agents/${personalAgentDetailSchema.parse(created.body).agent.id}`
+  const listed = async () => {
+    const connections = field((await asOwner("GET", `${path}/tools`)).body, "connections")
+    return Array.isArray(connections) ? connections.find((connection) => field(connection, "connectionId") === "computer") : undefined
+  }
+  const turn = async (clientMessageId: string) => {
+    const before = sent.length
+    const response = await asOwner("POST", `${path}/standing-chat`, { clientMessageId, message: "Add up the totals in this sheet." })
+    assert.equal(response.status, 202, summary(response))
+    const entry = sent[before]
+    assert.ok(entry)
+    return { entry, computer: computers.at(-1) }
+  }
+  const finish = async (entry: (typeof sent)[number]) => {
+    entry.status = "completed"
+    assert.equal((await asOwner("GET", `${path}/standing-chat`)).status, 200)
+  }
+  const off = async (token: string) => {
+    const content = field(result(await call(token, "search_capabilities", { query: "computer" })), "content")
+    const names = field(JSON.parse(text(field(Array.isArray(content) ? content[0] : null, "text"), "search result")), "offConnectors")
+    return Array.isArray(names) ? names : []
+  }
+  const ask = (token: string) => call(token, "request_agent_connector_access", { connectionName: "Computer" })
+
+  assert.equal(await listed(), undefined)
+  const without = await turn("computer-not-offered")
+  assert.equal(without.computer, false)
+  assert.ok(!(await off(without.entry.token)).includes("Computer"))
+  assert.equal(field(result(await ask(without.entry.token)), "structuredContent", "status"), "unavailable")
+  await finish(without.entry)
+
+  assert.equal((await den.setFeature(orgId, "remoteComputers", true)).status, 200)
+  const start = await listed()
+  assert.equal(field(start, "name"), "Computer")
+  assert.equal(field(start, "blocked"), true)
+  const tools = field(start, "tools")
+  assert.deepEqual(Array.isArray(tools) ? tools.map((tool) => [field(tool, "name"), field(tool, "write")]) : null, [["bash", false], ["look", false]])
+  const first = await turn("computer-off")
+  assert.equal(first.computer, false)
+  assert.ok((await off(first.entry.token)).includes("Computer"))
+  const asked = await ask(first.entry.token)
+  const requestId = text(field(result(asked), "structuredContent", "requestId"), asked.text)
+  assert.equal((await asOwner("POST", `${path}/requests/${requestId}/decision`, { decision: "turn_on" })).status, 200)
+  assert.deepEqual(personalAgentDetailSchema.parse((await asOwner("GET", path)).body).revision.toolPolicy, { connections: { computer: "allow" }, tools: {} })
+  await finish(first.entry)
+
+  const second = await turn("computer-on")
+  assert.equal(second.computer, true)
+  assert.ok(!(await off(second.entry.token)).includes("Computer"))
+  await finish(second.entry)
+
+  assert.equal((await asOwner("PUT", "/v1/org/personal-agent-policy", { toolPolicy: { connections: { computer: "block" }, tools: {} } })).status, 200)
+  assert.equal(field(await listed(), "lockedByOrganization"), true)
+  const blocked = await turn("computer-admin-blocked")
+  assert.equal(blocked.computer, false)
+  assert.ok(!(await off(blocked.entry.token)).includes("Computer"))
+  assert.equal(field(result(await ask(blocked.entry.token)), "structuredContent", "status"), "unavailable")
 })

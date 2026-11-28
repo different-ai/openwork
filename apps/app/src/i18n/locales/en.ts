@@ -2860,6 +2860,7 @@ export default {
   "agents.workspace_disconnected": "This workspace isn’t connected. Reconnect it to start an agent chat.",
   "agents.connector_ask_title": "{agent} wants to use {connection}",
   "agents.connector_ask_tool_title": "{agent} wants to use {connection} ({tool})",
+  "agents.computer_ask_line": "A Linux computer of its own for work that needs real programs, files or code. It has none of your files or sign-ins, and once on it runs commands there without asking each time.",
   "agents.connector_ask_line": "Turning on {connection} gives it every tool; changes still ask first. Choose tools to give it only the ones you pick.",
   "agents.connector_ask_choose_tools": "Choose tools",
   "agents.connector_ask_tool_line": "Always allow gives it this one tool and keeps the rest of {connection} off. Turning on {connection} gives it every tool; changes still ask first.",

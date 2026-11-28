@@ -512,7 +512,7 @@ export class Store {
       instructions: value.instructions,
       repeats: options.repeats ?? null,
       files: !isolated && options.files === true,
-      computer: !isolated && options.computer === true,
+      computer: options.computer === true,
       desktop: !isolated && options.desktop === true,
       desktopViews: isolated ? null : options.desktopViews ?? null,
       reactions: !isolated && options.reactions === true,

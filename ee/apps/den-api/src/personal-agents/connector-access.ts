@@ -14,6 +14,23 @@ export function normalizedPersonalAgentConnectorName(name: string) {
 
 export const OPENWORK_CONNECTION_ID = "openwork"
 export const OPENWORK_CONNECTION_NAME = "OpenWork"
+export const COMPUTER_CONNECTION_ID = "computer"
+export const COMPUTER_CONNECTION_NAME = "Computer"
+export const COMPUTER_CONNECTION_TOOLS = [
+  { name: "bash", title: "Run commands on its own computer", annotations: { readOnlyHint: true } },
+  { name: "look", title: "Look at files on its own computer", annotations: { readOnlyHint: true } },
+] as const
+
+export function personalAgentComputerOffered(organizationId: string): Promise<boolean> {
+  return organizationFeatureEnabled(normalizeDenTypeId("organization", organizationId), "remoteComputers")
+}
+
+export async function personalAgentComputerOn(input: { scopes: ReadonlySet<string>; organizationId: string; memberId: string }): Promise<boolean> {
+  if (!await personalAgentComputerOffered(input.organizationId)) return false
+  const access = await personalAgentConnectorAccess(input)
+  const reachable = access && await personalAgentConnectionToolFilter(access, COMPUTER_CONNECTION_ID)
+  return Boolean(reachable && COMPUTER_CONNECTION_TOOLS.every(({ name }) => reachable(name)))
+}
 
 type ConnectorDefaults = { defaultConnectorsOff?: boolean; legacyConnectorAccess: boolean; neverConnectionIds: readonly string[] }
 

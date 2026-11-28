@@ -5,7 +5,7 @@ import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.j
 import { personalAgentPeople, personOrUnknown } from "../personal-agents/access.js"
 import { listNativeProviderUsableEntries } from "../capability-sources/native-provider-connections.js"
 import { OPENWORK_CONNECTION_ID, OPENWORK_CONNECTION_NAME, operationTool } from "../personal-agents/builtin-connection.js"
-import { listRequestablePersonalAgentConnections, normalizedPersonalAgentConnectorName, personalAgentConnectorAccess } from "../personal-agents/connector-access.js"
+import { COMPUTER_CONNECTION_ID, COMPUTER_CONNECTION_NAME, COMPUTER_CONNECTION_TOOLS, listRequestablePersonalAgentConnections, normalizedPersonalAgentConnectorName, personalAgentComputerOffered, personalAgentConnectorAccess } from "../personal-agents/connector-access.js"
 import { personalAgentRequestEventDetail, recordPersonalAgentEvent } from "../personal-agents/events.js"
 import { personalAgentExecutionContext } from "../personal-agents/permissions-dispatch.js"
 import { personalAgentToolTitle } from "../personal-agents/permissions-policy.js"
@@ -30,7 +30,8 @@ const outputSchema = z.object({
 })
 
 type ExternalConnection = Awaited<ReturnType<typeof listRequestablePersonalAgentConnections>>[number]
-type RequestableConnection = { id: string; name: string } & ({ external: ExternalConnection } | { operations: readonly McpToolOperation[] })
+type NamedTool = { name: string; title: string }
+type RequestableConnection = { id: string; name: string } & ({ external: ExternalConnection } | { operations: readonly McpToolOperation[] } | { tools: readonly NamedTool[] })
 
 export async function listRequestableAgentConnections(ctx: CapabilityRegistryContext): Promise<RequestableConnection[]> {
   const member = ctx.member
@@ -38,12 +39,14 @@ export async function listRequestableAgentConnections(ctx: CapabilityRegistryCon
   const scope = { organizationId: ctx.organizationId, memberId: member.orgMembershipId, scopes: ctx.principal.scopes }
   const access = await personalAgentConnectorAccess(scope)
   if (!access?.canRequest) return []
-  const [external, native] = await Promise.all([
+  const [computerOffered, external, native] = await Promise.all([
+    personalAgentComputerOffered(ctx.organizationId),
     listRequestablePersonalAgentConnections(scope),
     listNativeProviderUsableEntries({ organizationId: ctx.organizationId, orgMembershipId: member.orgMembershipId, teamIds: member.teamIds }),
   ])
   const all: RequestableConnection[] = [
     ...(access.state(OPENWORK_CONNECTION_ID) === "off" ? [{ id: OPENWORK_CONNECTION_ID, name: OPENWORK_CONNECTION_NAME, operations: openWorkOperations(ctx) }] : []),
+    ...(computerOffered && access.state(COMPUTER_CONNECTION_ID) === "off" ? [{ id: COMPUTER_CONNECTION_ID, name: COMPUTER_CONNECTION_NAME, tools: COMPUTER_CONNECTION_TOOLS }] : []),
     ...native.filter((entry) => entry.connectedForMe && access.state(entry.id) === "off")
       .map((entry) => ({ id: entry.id, name: entry.name, operations: nativeOperations(ctx.catalog, entry.nativeProviderKey) })),
     ...external.map((connection) => ({ id: connection.id, name: connection.name, external: connection })),
@@ -88,7 +91,8 @@ export function registerAgentConnectorRequestTool(server: McpServer, input: {
     let toolTitle = ""
     const external = "external" in connection ? connection.external : null
     if (action && !external?.toolPolicy?.allDisabled) {
-      const tools = "operations" in connection ? connection.operations.map(operationTool).map(({ name, title }) => ({ name, title }))
+      const tools: NamedTool[] = "tools" in connection ? [...connection.tools]
+        : "operations" in connection ? connection.operations.map(operationTool).map(({ name, title }) => ({ name, title }))
         : (cachedSearchTools(connection.external, input.member) ?? await listExternalMcpToolsThroughSearchCache({
           connection: connection.external, member: input.member, redirectUriBase,
           deadline: createExternalMcpLifecycleDeadline(3000),
