@@ -126,9 +126,11 @@ of a single Markdown block: headings become header blocks, Markdown tables
 become table blocks, and one fenced `slack` block of validated JSON adds a
 context line, fields, link buttons or a question with choice buttons. Slack's
 limits are enforced there, the top-level `text` carries the whole message, and
-blocks Slack refuses are posted again as plain sections. A choice button is
-handled by `choice.ts`: only the member it was addressed to can press it, the
-label becomes their next request in the thread, and the buttons are replaced.
+blocks Slack refuses are posted again as plain sections. A press on a choice
+button is queued by the interactions route and acknowledged; the worker settles
+it (`choice.ts`): only the member it was addressed to, with the feature still
+on, starts anything, the first press becomes their next request in the thread,
+and the buttons are replaced.
 The live stream is unchanged. See
 `docs/features/slack-rich-messages/README.md`.
 

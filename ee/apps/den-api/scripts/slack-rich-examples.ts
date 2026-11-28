@@ -14,7 +14,7 @@ process.env.DEN_DB_ENCRYPTION_KEY ??= "synthetic-slack-rich-examples-encryption-
 process.env.OPENWORK_DEV_MODE ??= "1"
 
 const { executeSlackSendAsBot } = await import("../src/mcp/slack-send-as-bot.js")
-const { answerSlackChoice, slackInteractionSchema } = await import("../src/slack-assistant/choice.js")
+const { settleSlackChoice, slackChoicePress, slackInteractionSchema } = await import("../src/slack-assistant/choice.js")
 const { postDesktopHandoffNotice } = await import("../src/slack-assistant/desktop-handoff-post.js")
 const { sendWorkbotDirectMessageTo } = await import("../src/slack-assistant/direct-message.js")
 const { slackClient } = await import("../src/slack-assistant/protocol.js")
@@ -35,6 +35,7 @@ type SlackCall = (method: string, body: Record<string, unknown>) => Promise<Reco
 type Place = { team: string; channel: string; userId: string; bot: SlackCall; person: SlackCall; botToken: string; apiBase: string }
 type Example = {
   slug: string
+  flag: "on" | "off"
   title: string
   surface: string
   through: string
@@ -99,9 +100,7 @@ async function pressChoice(place: Place, threadTs: string, label: string) {
   const replies = z.object({ messages: z.array(z.object({ ts: z.string(), blocks: z.array(z.unknown()).optional() })) }).parse(await place.bot("conversations.replies", { channel: place.channel, ts: threadTs }))
   const asked = replies.messages.find((message) => JSON.stringify(message.blocks ?? []).includes("openwork_choice:"))
   if (!asked) throw new Error("No question with choices was posted")
-  const queued: string[] = []
-  const result = await answerSlackChoice(
-    { connectionId: CONNECTION, enabled: true, botToken: place.botToken, teamId: place.team, channelIds: null },
+  const press = slackChoicePress(
     slackInteractionSchema.parse({
       team: { id: place.team },
       user: { id: place.userId },
@@ -110,10 +109,19 @@ async function pressChoice(place: Place, threadTs: string, label: string) {
       message: { ts: asked.ts, thread_ts: threadTs, blocks: asked.blocks },
       actions: [{ action_id: "openwork_choice:0", block_id: `openwork_choice:${place.userId}`, value: label }],
     }),
-    { slack: async () => place.bot, enqueue: async (_installation, _id, event) => { queued.push(event.text ?? ""); return "evt_examples" }, available: () => true },
   )
-  await result.settled
-  if (result.outcome !== "accepted" || queued[0] !== label) throw new Error(`The choice was not accepted: ${result.outcome}`)
+  if (!press) throw new Error("The press was not recognised as a choice")
+  const queued: string[] = []
+  const outcome = await settleSlackChoice({ connectionId: CONNECTION, enabled: true, botToken: place.botToken, teamId: place.team, channelIds: null }, press.event, {
+    slack: async () => place.bot,
+    record: async (_installation, _id, event) => {
+      queued.push(event.text ?? "")
+      return { created: true, event }
+    },
+    available: () => true,
+    enabled: async () => true,
+  })
+  if (outcome !== "accepted" || queued[0] !== label) throw new Error(`The choice was not accepted: ${outcome}`)
 }
 
 const statusReport = {
@@ -226,6 +234,7 @@ function handoff(place: Place, threadTs: string) {
 const EXAMPLES: Example[] = [
   {
     slug: "status-report",
+    flag: "on",
     title: "A status report with a table",
     surface: "A chat or Automation sending with `slack_send_as_bot`",
     through: "`executeSlackSendAsBot` and the DM sender, posting to the sample Slack. The proof sends the same call through Den's MCP endpoint.",
@@ -235,8 +244,9 @@ const EXAMPLES: Example[] = [
     run: (place) => sendAsBot(place, statusReport, true),
   },
   {
-    slug: "status-report-before",
-    title: "The same report with the feature off",
+    slug: "status-report-flag-off",
+    flag: "off",
+    title: "The same report",
     surface: "A chat or Automation sending with `slack_send_as_bot`",
     through: "`executeSlackSendAsBot` with the feature off: only `text` is accepted.",
     inputLabel: "Tool call",
@@ -246,6 +256,7 @@ const EXAMPLES: Example[] = [
   },
   {
     slug: "pipeline-answer",
+    flag: "on",
     title: "Pipeline by stage, answered in a thread",
     surface: "The Slack assistant's answer to a mention or DM",
     through: "`advanceSlackRun` posting the turn's last message. Markdown gives the header and the table; the fenced `slack` block adds the source line and the button.",
@@ -258,6 +269,7 @@ const EXAMPLES: Example[] = [
   },
   {
     slug: "meeting-follow-up",
+    flag: "on",
     title: "A meeting follow-up with action items and owners",
     surface: "A chat or Automation sending with `slack_send_as_bot`",
     through: "`executeSlackSendAsBot` and the DM sender. The proof sends the same call through Den's MCP endpoint.",
@@ -268,6 +280,7 @@ const EXAMPLES: Example[] = [
   },
   {
     slug: "daily-brief",
+    flag: "on",
     title: "A daily brief from Your agent",
     surface: "Your agent's first check of the day",
     through: "`agentBriefParts` and `deliverAgentMessage`. The agent writes only the paragraphs, as before; OpenWork adds the header, the dividers and the line saying what was read.",
@@ -285,6 +298,7 @@ const EXAMPLES: Example[] = [
   },
   {
     slug: "automation-result",
+    flag: "on",
     title: "An Automation result with a button to open it in OpenWork",
     surface: "An Automation run sending with `slack_send_as_bot`",
     through: "`executeSlackSendAsBot`. The agent names the place (`open: \"automations\"`) and OpenWork fills in the address.",
@@ -295,9 +309,10 @@ const EXAMPLES: Example[] = [
   },
   {
     slug: "approval-choice",
+    flag: "on",
     title: "An approval with buttons",
     surface: "The Slack assistant asking before it sends something",
-    through: "`advanceSlackRun` posts the question as its own message. The second picture is the same message after `answerSlackChoice` handled the member's click and replaced the buttons.",
+    through: "`advanceSlackRun` posts the question as its own message. The second picture is the same message after `settleSlackChoice` settled the member's press.",
     inputLabel: "The assistant's last message",
     input: approvalAnswer,
     inputLanguage: "markdown",
@@ -306,7 +321,7 @@ const EXAMPLES: Example[] = [
     },
     after: {
       slug: "approval-choice-chosen",
-      caption: "After the member presses **Send it**: the buttons are replaced, and \"Send it\" is queued as their next request in the thread.",
+      caption: "Flag on, after the member presses **Send it**. This picture shows the buttons being replaced and nothing more: \"Send it\" is queued as their next request, and no follow-up run happened here.",
       run: async (place) => {
         const history = z.object({ messages: z.array(z.object({ ts: z.string() })) }).parse(await place.bot("conversations.history", { channel: place.channel, oldest: "0" }))
         const root = history.messages.at(-1)
@@ -317,6 +332,7 @@ const EXAMPLES: Example[] = [
   },
   {
     slug: "needs-connection",
+    flag: "on",
     title: "An app needs reconnecting",
     surface: "Your agent, when a source it reads stops working",
     through: "`agentNoticeParts` and `deliverAgentMessage`: the sentence OpenWork already sends, with the fix as a button instead of a link in the text.",
@@ -333,6 +349,7 @@ const EXAMPLES: Example[] = [
   },
   {
     slug: "automation-blocked",
+    flag: "on",
     title: "An Automation that could not run",
     surface: "An Automation run sending with `slack_send_as_bot`",
     through: "`executeSlackSendAsBot`. One sentence, when it stopped, and a button to Your Connections.",
@@ -343,6 +360,7 @@ const EXAMPLES: Example[] = [
   },
   {
     slug: "desktop-handoff",
+    flag: "on",
     title: "A finished desktop task with a table",
     surface: "Work handed to the desktop from Slack, when it finishes",
     through: "`postDesktopHandoffNotice`. The desktop agent wrote ordinary Markdown; nothing about it is Slack-specific.",
@@ -355,8 +373,9 @@ const EXAMPLES: Example[] = [
     },
   },
   {
-    slug: "desktop-handoff-before",
-    title: "The same desktop result with the feature off",
+    slug: "desktop-handoff-flag-off",
+    flag: "off",
+    title: "The same desktop result",
     surface: "Work handed to the desktop from Slack, when it finishes",
     through: "`postDesktopHandoffNotice` with the feature off: the table is typed characters in a code block.",
     inputLabel: "The desktop session's final message",
@@ -484,13 +503,13 @@ try {
     const place = await newPlace()
     await example.run(place)
     await capture(place, example.slug)
-    const pictures = [`![${example.title}](./${example.slug}.png)`]
+    const pictures = [`![${example.title}, flag ${example.flag}, drawn by the sample renderer](./${example.slug}.png)`]
     if (example.after) {
       await example.after.run(place)
       await capture(place, example.after.slug)
-      pictures.push("", example.after.caption, "", `![${example.title}, answered](./${example.after.slug}.png)`)
+      pictures.push("", example.after.caption, "", `![${example.title}, answered, drawn by the sample renderer](./${example.after.slug}.png)`)
     }
-    sections.push([`## ${example.title}`, "", `**Where:** ${example.surface}`, "", `**Made with:** ${example.through}`, "", `**${example.inputLabel}:**`, "", `\`\`\`\`${example.inputLanguage}`, example.input, "````", "", ...pictures].join("\n"))
+    sections.push([`## ${example.title} (flag ${example.flag})`, "", `**Where:** ${example.surface}`, "", `**Made with:** ${example.through}`, "", `**${example.inputLabel}:**`, "", `\`\`\`\`${example.inputLanguage}`, example.input, "````", "", ...pictures].join("\n"))
     process.stdout.write(`rendered ${example.slug}\n`)
   }
 } finally {
@@ -501,10 +520,13 @@ try {
 const intro = [
   "# Slack components: example use cases",
   "",
-  "Each picture below is the message OpenWork's own code produced for the input shown, posted to the sample Slack that",
-  "ships with sandbox organizations (`evals/packages/open-workplace`, \"Open Slack\"). That sample Slack checks every block",
-  "against the limits Slack documents and draws it from the Block Kit reference. It is a stand-in, not Slack: spacing and",
-  "type differ in the real client.",
+  "Every picture here is drawn by the **sample renderer**, not by Slack. It is the sample Slack that ships with sandbox",
+  "organizations (`evals/packages/open-workplace`, \"Open Slack\"): it checks each block against the limits Slack documents",
+  "and draws it from the Block Kit reference. None of these messages was sent to a real Slack workspace, so spacing, type",
+  "and anything Slack decides for itself (wrapping, truncation, notifications) are not shown.",
+  "",
+  "Each picture is the message OpenWork's own code produced for the input above it. \"Flag on\" and \"flag off\" are the",
+  "same branch with `slackRichMessages` on or off for the member; they are not a comparison with another branch.",
   "",
   "Regenerate with `pnpm --filter @openwork-ee/den-api slack:examples`. This file and its pictures are written by",
   "`ee/apps/den-api/scripts/slack-rich-examples.ts`, so an input here is always the one that made its picture.",

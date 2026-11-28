@@ -17,7 +17,7 @@ process.env.OPENWORK_DEV_MODE ??= "1"
 
 const { executeSlackSendAsBot, searchSlackSendAsBotCapability } = await import("../src/mcp/slack-send-as-bot.js")
 const { postWorkbotChannelMessage } = await import("../src/slack-assistant/bot-post.js")
-const { answerSlackChoice, slackInteractionSchema } = await import("../src/slack-assistant/choice.js")
+const { settleSlackChoice, slackChoicePress, slackInteractionSchema } = await import("../src/slack-assistant/choice.js")
 const { sendWorkbotDirectMessageTo } = await import("../src/slack-assistant/direct-message.js")
 const { deliverAgentMessage } = await import("../src/workbot-proactive/deliver.js")
 
@@ -306,17 +306,20 @@ const installation = (extra: Partial<SlackChoiceInstallation> = {}): SlackChoice
 
 function choiceDeps(overrides: Partial<SlackChoiceDeps> = {}) {
   const slack = fakeSlack()
-  const queued: Array<{ id: string; event: SlackEvent }> = []
+  const recorded = new Map<string, SlackEvent>()
   const deps: SlackChoiceDeps = {
     slack: async () => slack.slack,
-    enqueue: async (_installation, id, event) => {
-      queued.push({ id, event })
-      return "evt_1"
+    record: async (_installation, id, event) => {
+      const existing = recorded.get(id)
+      if (existing) return { created: false, event: existing }
+      recorded.set(id, event)
+      return { created: true, event }
     },
     available: () => true,
+    enabled: async () => true,
     ...overrides,
   }
-  return { deps, slack, queued }
+  return { deps, slack, recorded }
 }
 
 const click = (extra: Record<string, unknown> = {}) =>
@@ -330,19 +333,41 @@ const click = (extra: Record<string, unknown> = {}) =>
       thread_ts: "10.1",
       blocks: [
         { type: "section", block_id: "x", text: { type: "mrkdwn", text: "Post this in #sales?", verbatim: false } },
-        { type: "actions", block_id: "openwork_choice:U0MEMBER", elements: [{ type: "button", action_id: "openwork_choice:0", value: "Post it" }, { type: "button", action_id: "openwork_choice:1", value: "Not now" }] },
+        {
+          type: "actions",
+          block_id: "openwork_choice:U0MEMBER",
+          elements: [
+            { type: "button", action_id: "openwork_choice:0", text: { type: "plain_text", text: "Post it" }, value: "Post it" },
+            { type: "button", action_id: "openwork_choice:1", text: { type: "plain_text", text: "Not now" }, value: "Not now" },
+          ],
+        },
       ],
     },
-    actions: [{ action_id: "openwork_choice:0", block_id: "openwork_choice:U0MEMBER", value: "Post it" }],
+    actions: [{ action_id: "openwork_choice:0", block_id: "openwork_choice:U0MEMBER", value: "Post it", action_ts: "21.0" }],
     ...extra,
   })
+const pressed = (extra: Record<string, unknown> = {}) => {
+  const press = slackChoicePress(click(extra))
+  assert.ok(press)
+  return press.event
+}
+
+test("a press is queued from the signed payload alone, so the click is acknowledged without waiting on Slack", () => {
+  const press = slackChoicePress(click())
+  assert.deepEqual(press, {
+    eventId: "press:C1:20.5:U0MEMBER:21.0",
+    event: { type: "choice_pressed", user: "U0MEMBER", channel: "C1", text: "Post it", ts: "20.5", thread_ts: "10.1", choice: { addressed: "U0MEMBER", prompt: "Post this in #sales?" } },
+  })
+  assert.equal(slackChoicePress(click({ actions: [{ action_id: "openwork_choice:0", block_id: "openwork_choice:U0MEMBER", value: "Delete everything" }] })), null, "a value that was not on a button")
+  assert.equal(slackChoicePress(click({ actions: [{ action_id: "openwork_choice:1", block_id: "openwork_choice:U0MEMBER", value: "Post it" }] })), null, "a value from another button")
+  for (const actions of [[{ action_id: "openwork_link:0", block_id: "openwork_link:1" }], [{ action_id: "slack_feedback:abc", value: "positive" }], [{ action_id: "connect_openwork" }]])
+    assert.equal(slackChoicePress(click({ actions })), null, "link buttons and feedback are acknowledged and start nothing")
+})
 
 test("the member a question was for presses a choice: it becomes their next request in that thread and the buttons are replaced", async () => {
-  const { deps, slack, queued } = choiceDeps()
-  const result = await answerSlackChoice(installation(), click(), deps)
-  await result.settled
-  assert.equal(result.outcome, "accepted")
-  assert.deepEqual(queued, [{ id: "choice:C1:20.5", event: { type: "app_mention", user: "U0MEMBER", channel: "C1", text: "Post it", ts: "20.5", thread_ts: "10.1" } }])
+  const { deps, slack, recorded } = choiceDeps()
+  assert.equal(await settleSlackChoice(installation(), pressed(), deps), "accepted")
+  assert.deepEqual([...recorded], [["choice:C1:20.5", { type: "app_mention", user: "U0MEMBER", channel: "C1", text: "Post it", ts: "20.5", thread_ts: "10.1" }]])
   const [update] = slack.calls
   assert.equal(update?.method, "chat.update")
   assert.deepEqual(update?.body, {
@@ -356,45 +381,50 @@ test("the member a question was for presses a choice: it becomes their next requ
   })
 
   const dm = choiceDeps()
-  const direct = await answerSlackChoice(installation(), click({ channel: { id: "D9" }, message: { ts: "30.1" } }), dm.deps)
-  assert.equal(direct.outcome, "accepted")
-  assert.deepEqual(dm.queued[0]?.event, { type: "message", channel_type: "im", user: "U0MEMBER", channel: "D9", text: "Post it", ts: "30.1", thread_ts: "30.1" })
+  assert.equal(await settleSlackChoice(installation(), pressed({ channel: { id: "D9" }, message: { ts: "30.1" } }), dm.deps), "accepted")
+  assert.deepEqual([...dm.recorded.values()], [{ type: "message", channel_type: "im", user: "U0MEMBER", channel: "D9", text: "Post it", ts: "30.1", thread_ts: "30.1" }])
+})
+
+test("when two different buttons are pressed, the first is what runs and what Slack shows", async () => {
+  const { deps, slack, recorded } = choiceDeps()
+  const second = { actions: [{ action_id: "openwork_choice:1", block_id: "openwork_choice:U0MEMBER", value: "Not now", action_ts: "21.5" }] }
+  assert.deepEqual(await Promise.all([settleSlackChoice(installation(), pressed(), deps), settleSlackChoice(installation(), pressed(second), deps)]), ["accepted", "already_answered"])
+  assert.deepEqual([...recorded.values()].map((event) => event.text), ["Post it"])
+  const updates = slack.calls.filter((call) => call.method === "chat.update").map((call) => call.body.text)
+  assert.deepEqual(updates, ['Post this in #sales?\n<@U0MEMBER> chose "Post it".', 'Post this in #sales?\n<@U0MEMBER> chose "Post it".'])
+  assert.deepEqual(slack.calls.filter((call) => call.method === "chat.postEphemeral").map((call) => call.body.text), ['You already chose "Post it", and that is what OpenWork is working on.'])
+  assert.equal(await settleSlackChoice(installation(), pressed(), deps), "already_answered", "the same press again changes nothing")
+  assert.equal(recorded.size, 1)
 })
 
 test("someone else pressing a choice starts nothing and is told privately", async () => {
-  const { deps, slack, queued } = choiceDeps()
-  const result = await answerSlackChoice(installation(), click({ user: { id: "U0OTHER" } }), deps)
-  assert.equal(result.outcome, "not_addressed")
-  assert.equal(queued.length, 0)
+  const { deps, slack, recorded } = choiceDeps()
+  assert.equal(await settleSlackChoice(installation(), pressed({ user: { id: "U0OTHER" } }), deps), "not_addressed")
+  assert.equal(recorded.size, 0)
   assert.deepEqual(slack.calls.map((entry) => [entry.method, entry.body.user, entry.body.text]), [["chat.postEphemeral", "U0OTHER", "Only <@U0MEMBER> can answer this."]])
 })
 
-test("a choice starts nothing when the assistant is off, the channel is not allowed, the limit is reached or the value was not offered", async () => {
+test("a question already in Slack starts nothing once the feature is turned off for the member, the assistant is off, the channel is not allowed or the limit is reached", async () => {
   for (const [row, overrides, outcome] of [
+    [installation(), { enabled: async () => false }, "unavailable"],
     [installation({ enabled: false }), {}, "unavailable"],
     [installation(), { available: () => false }, "unavailable"],
     [installation({ channelIds: ["C9"] }), {}, "unavailable"],
-    [installation(), { enqueue: async () => null }, "throttled"],
+    [installation(), { record: async () => null }, "throttled"],
   ] as const) {
-    const { deps, slack, queued } = choiceDeps(overrides)
-    const result = await answerSlackChoice(row, click(), deps)
-    assert.equal(result.outcome, outcome)
-    assert.equal(queued.length, 0)
-    assert.deepEqual(slack.methods(), ["chat.postEphemeral"])
+    const { deps, slack, recorded } = choiceDeps(overrides)
+    assert.equal(await settleSlackChoice(row, pressed(), deps), outcome)
+    assert.equal(recorded.size, 0)
+    assert.deepEqual(slack.methods(), ["chat.postEphemeral"], "the member is told privately and the buttons stay")
   }
-  const forged = choiceDeps()
-  const tampered = await answerSlackChoice(installation(), click({ actions: [{ action_id: "openwork_choice:0", block_id: "openwork_choice:U0MEMBER", value: "Delete everything" }] }), forged.deps)
-  assert.equal(tampered.outcome, "not_a_choice")
-  assert.equal(forged.queued.length + forged.slack.calls.length, 0)
 })
 
-test("link buttons and feedback are acknowledged without starting anything", async () => {
-  for (const actions of [[{ action_id: "openwork_link:0", block_id: "openwork_link:1", value: undefined }], [{ action_id: "slack_feedback:abc", value: "positive" }], [{ action_id: "connect_openwork" }]]) {
-    const { deps, slack, queued } = choiceDeps()
-    const result = await answerSlackChoice(installation(), click({ actions }), deps)
-    assert.equal(result.outcome, "not_a_choice")
-    assert.equal(queued.length + slack.calls.length, 0)
-  }
+test("only a queued press is settled, and the request it starts is an ordinary message from the member", async () => {
+  const event = pressed()
+  assert.equal(await settleSlackChoice(installation(), { ...event, type: "message" }, choiceDeps().deps), "not_a_choice")
+  const { deps, recorded } = choiceDeps()
+  assert.equal(await settleSlackChoice(installation(), event, deps), "accepted")
+  assert.deepEqual([...recorded.values()].map((entry) => [entry.type, entry.text, entry.choice]), [["app_mention", "Post it", undefined]])
 })
 
 test("a finished desktop task arrives with real tables when the feature is on and as sections when it is off", () => {

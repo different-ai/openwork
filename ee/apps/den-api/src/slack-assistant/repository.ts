@@ -21,7 +21,7 @@ import {
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
 import { listTeamsForMember } from "../orgs.js"
-import { canUseSlackAssistant, isSandboxSlackToken, scopeKey, slackClient, type SlackCall, type SlackEvent } from "./protocol.js"
+import { canUseSlackAssistant, isSandboxSlackToken, scopeKey, SLACK_CHOICE_PRESSED, slackClient, slackEventSchema, type SlackCall, type SlackEvent } from "./protocol.js"
 import { sandboxSlackApiBase } from "./sandbox-api.js"
 import { CLAIMABLE_STATUSES, THREAD_ACTIVE_STATUSES } from "./statuses.js"
 
@@ -225,6 +225,14 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
 export type SlackActor = NonNullable<Awaited<ReturnType<typeof resolveSlackActor>>>
 
 export async function enqueueSlackEvent(installation: Pick<InstallationRow, "connectionId" | "teamId">, eventId: string, event: SlackEvent) {
+  return (await recordSlackEventOnce(installation, eventId, event))?.id ?? null
+}
+
+export async function recordSlackEventOnce(
+  installation: Pick<InstallationRow, "connectionId" | "teamId">,
+  eventId: string,
+  event: SlackEvent,
+): Promise<{ id: string; created: boolean; event: SlackEvent } | null> {
   const id = scopeKey(installation.connectionId, eventId)
   return db.transaction(async (tx) => {
     await tx
@@ -232,8 +240,11 @@ export async function enqueueSlackEvent(installation: Pick<InstallationRow, "con
       .from(Installation)
       .where(eq(Installation.connectionId, installation.connectionId))
       .for("update")
-    const existing = (await tx.select({ id: Event.id }).from(Event).where(eq(Event.id, id)).limit(1))[0]
-    if (existing) return existing.id
+    const existing = (await tx.select({ id: Event.id, payload: Event.payload }).from(Event).where(eq(Event.id, id)).limit(1))[0]
+    if (existing) {
+      const stored = slackEventSchema.safeParse(JSON.parse(existing.payload))
+      return { id: existing.id, created: false, event: stored.success ? stored.data : event }
+    }
     const minute = new Date(Date.now() - 60_000)
     const [total] = await tx
       .select({ total: count() })
@@ -249,7 +260,7 @@ export async function enqueueSlackEvent(installation: Pick<InstallationRow, "con
           gt(Event.createdAt, minute),
         ),
       )
-    const invocation = event.type === "app_mention" || event.type === "message"
+    const invocation = event.type === "app_mention" || event.type === "message" || event.type === SLACK_CHOICE_PRESSED
     if (invocation && ((total?.total ?? 0) >= 120 || (member?.total ?? 0) >= 10)) return null
     await tx.insert(Event).values({
       id,
@@ -262,7 +273,7 @@ export async function enqueueSlackEvent(installation: Pick<InstallationRow, "con
       createdAt: new Date(),
       availableAt: new Date(),
     })
-    return id
+    return { id, created: true, event }
   })
 }
 

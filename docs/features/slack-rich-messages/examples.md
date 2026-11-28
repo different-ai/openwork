@@ -1,14 +1,17 @@
 # Slack components: example use cases
 
-Each picture below is the message OpenWork's own code produced for the input shown, posted to the sample Slack that
-ships with sandbox organizations (`evals/packages/open-workplace`, "Open Slack"). That sample Slack checks every block
-against the limits Slack documents and draws it from the Block Kit reference. It is a stand-in, not Slack: spacing and
-type differ in the real client.
+Every picture here is drawn by the **sample renderer**, not by Slack. It is the sample Slack that ships with sandbox
+organizations (`evals/packages/open-workplace`, "Open Slack"): it checks each block against the limits Slack documents
+and draws it from the Block Kit reference. None of these messages was sent to a real Slack workspace, so spacing, type
+and anything Slack decides for itself (wrapping, truncation, notifications) are not shown.
+
+Each picture is the message OpenWork's own code produced for the input above it. "Flag on" and "flag off" are the
+same branch with `slackRichMessages` on or off for the member; they are not a comparison with another branch.
 
 Regenerate with `pnpm --filter @openwork-ee/den-api slack:examples`. This file and its pictures are written by
 `ee/apps/den-api/scripts/slack-rich-examples.ts`, so an input here is always the one that made its picture.
 
-## A status report with a table
+## A status report with a table (flag on)
 
 **Where:** A chat or Automation sending with `slack_send_as_bot`
 
@@ -77,9 +80,9 @@ Regenerate with `pnpm --filter @openwork-ee/den-api slack:examples`. This file a
 }
 ````
 
-![A status report with a table](./status-report.png)
+![A status report with a table, flag on, drawn by the sample renderer](./status-report.png)
 
-## The same report with the feature off
+## The same report (flag off)
 
 **Where:** A chat or Automation sending with `slack_send_as_bot`
 
@@ -94,9 +97,9 @@ Regenerate with `pnpm --filter @openwork-ee/den-api slack:examples`. This file a
 }
 ````
 
-![The same report with the feature off](./status-report-before.png)
+![The same report, flag off, drawn by the sample renderer](./status-report-flag-off.png)
 
-## Pipeline by stage, answered in a thread
+## Pipeline by stage, answered in a thread (flag on)
 
 **Where:** The Slack assistant's answer to a mention or DM
 
@@ -134,9 +137,9 @@ Two deals moved forward this week and one slipped: **Northwind** is waiting on t
 ```
 ````
 
-![Pipeline by stage, answered in a thread](./pipeline-answer.png)
+![Pipeline by stage, answered in a thread, flag on, drawn by the sample renderer](./pipeline-answer.png)
 
-## A meeting follow-up with action items and owners
+## A meeting follow-up with action items and owners (flag on)
 
 **Where:** A chat or Automation sending with `slack_send_as_bot`
 
@@ -210,9 +213,9 @@ Two deals moved forward this week and one slipped: **Northwind** is waiting on t
 }
 ````
 
-![A meeting follow-up with action items and owners](./meeting-follow-up.png)
+![A meeting follow-up with action items and owners, flag on, drawn by the sample renderer](./meeting-follow-up.png)
 
-## A daily brief from Your agent
+## A daily brief from Your agent (flag on)
 
 **Where:** Your agent's first check of the day
 
@@ -234,9 +237,9 @@ Two deals moved forward this week and one slipped: **Northwind** is waiting on t
 }
 ````
 
-![A daily brief from Your agent](./daily-brief.png)
+![A daily brief from Your agent, flag on, drawn by the sample renderer](./daily-brief.png)
 
-## An Automation result with a button to open it in OpenWork
+## An Automation result with a button to open it in OpenWork (flag on)
 
 **Where:** An Automation run sending with `slack_send_as_bot`
 
@@ -287,13 +290,13 @@ Two deals moved forward this week and one slipped: **Northwind** is waiting on t
 }
 ````
 
-![An Automation result with a button to open it in OpenWork](./automation-result.png)
+![An Automation result with a button to open it in OpenWork, flag on, drawn by the sample renderer](./automation-result.png)
 
-## An approval with buttons
+## An approval with buttons (flag on)
 
 **Where:** The Slack assistant asking before it sends something
 
-**Made with:** `advanceSlackRun` posts the question as its own message. The second picture is the same message after `answerSlackChoice` handled the member's click and replaced the buttons.
+**Made with:** `advanceSlackRun` posts the question as its own message. The second picture is the same message after `settleSlackChoice` settled the member's press.
 
 **The assistant's last message:**
 
@@ -315,13 +318,13 @@ Here's the reply to Dana, ready to go:
 ```
 ````
 
-![An approval with buttons](./approval-choice.png)
+![An approval with buttons, flag on, drawn by the sample renderer](./approval-choice.png)
 
-After the member presses **Send it**: the buttons are replaced, and "Send it" is queued as their next request in the thread.
+Flag on, after the member presses **Send it**. This picture shows the buttons being replaced and nothing more: "Send it" is queued as their next request, and no follow-up run happened here.
 
-![An approval with buttons, answered](./approval-choice-chosen.png)
+![An approval with buttons, answered, drawn by the sample renderer](./approval-choice-chosen.png)
 
-## An app needs reconnecting
+## An app needs reconnecting (flag on)
 
 **Where:** Your agent, when a source it reads stops working
 
@@ -341,9 +344,9 @@ After the member presses **Send it**: the buttons are replaced, and "Send it" is
 }
 ````
 
-![An app needs reconnecting](./needs-connection.png)
+![An app needs reconnecting, flag on, drawn by the sample renderer](./needs-connection.png)
 
-## An Automation that could not run
+## An Automation that could not run (flag on)
 
 **Where:** An Automation run sending with `slack_send_as_bot`
 
@@ -373,9 +376,9 @@ After the member presses **Send it**: the buttons are replaced, and "Send it" is
 }
 ````
 
-![An Automation that could not run](./automation-blocked.png)
+![An Automation that could not run, flag on, drawn by the sample renderer](./automation-blocked.png)
 
-## A finished desktop task with a table
+## A finished desktop task with a table (flag on)
 
 **Where:** Work handed to the desktop from Slack, when it finishes
 
@@ -397,9 +400,9 @@ I went through the contracts folder and the CRM export. Three renew next month a
 Tailspin is the only one I couldn't finish: the 2027 price list isn't in the folder yet.
 ````
 
-![A finished desktop task with a table](./desktop-handoff.png)
+![A finished desktop task with a table, flag on, drawn by the sample renderer](./desktop-handoff.png)
 
-## The same desktop result with the feature off
+## The same desktop result (flag off)
 
 **Where:** Work handed to the desktop from Slack, when it finishes
 
@@ -421,4 +424,4 @@ I went through the contracts folder and the CRM export. Three renew next month a
 Tailspin is the only one I couldn't finish: the 2027 price list isn't in the folder yet.
 ````
 
-![The same desktop result with the feature off](./desktop-handoff-before.png)
+![The same desktop result, flag off, drawn by the sample renderer](./desktop-handoff-flag-off.png)

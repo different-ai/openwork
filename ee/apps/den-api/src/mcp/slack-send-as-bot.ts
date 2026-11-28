@@ -57,7 +57,7 @@ export const SLACK_SEND_AS_BOT_RICH_ARGUMENTS_SCHEMA = {
   type: "object",
   properties: {
     ...BASE_PROPERTIES,
-    text: { type: "string", maxLength: TEXT_MAX, description: "The message, in Slack mrkdwn. Notifications and screen readers get this first, so it must make sense without the components." },
+    text: { type: "string", maxLength: TEXT_MAX, description: "The message, in Slack mrkdwn. Notifications and screen readers get this first, so it must make sense without the components. With components, a <@…> user mention is shown as text and notifies no one." },
     components: { ...COMPONENTS_JSON_SCHEMA, description: SLACK_SEND_AS_BOT_COMPONENTS_DESCRIPTION },
   },
   required: ["target", "text"],

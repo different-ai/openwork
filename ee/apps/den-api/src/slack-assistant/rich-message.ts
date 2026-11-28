@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { SlackApiError, type SlackCall } from "./protocol.js"
-import { excerpt, markdownToMrkdwn, markdownToPlainText, slackSafeText, splitSlackText, withoutSlackBroadcasts } from "./slack-text.js"
+import { excerpt, markdownToMrkdwn, markdownToPlainText, slackSafeText, splitSlackText, withoutSlackBroadcasts, withoutSlackMentions } from "./slack-text.js"
 
 export const SLACK_LIMITS = {
   blocks: 50,
@@ -30,6 +30,8 @@ const MARKDOWN_BUDGET = 11_000
 const TABLE_BUDGET = 9_000
 const TABLE_CELL_BUDGET = 400
 const FALLBACK_BUDGET = 3_900
+const TEXT_ONLY_BUDGET = 39_000
+const REST_LINE = "_The rest didn't fit in one Slack message._"
 
 export const SLACK_CHOICE_PREFIX = "openwork_choice:"
 export const SLACK_LINK_PREFIX = "openwork_link:"
@@ -214,7 +216,7 @@ export const slackComponentsSchema = z
     }
   })
 
-export type SlackPart = SlackComponent | { type: "mrkdwn"; text: string }
+export type SlackPart = SlackComponent | { type: "mrkdwn"; text: string; trusted?: boolean }
 
 export type SlackComposeOptions = {
   choiceFor?: string | null
@@ -229,12 +231,20 @@ type SectionBlock = { type: "section"; text: { type: "mrkdwn"; text: string } }
 export type SlackOutgoingMessage = {
   text: string
   blocks: SlackBlock[]
-  plain: { text: string; blocks: SectionBlock[] }
+  plain: { text: string; blocks: SectionBlock[]; body: string }
   choice: boolean
 }
 
-function clean(text: string) {
+function trustedText(text: string) {
   return withoutSlackBroadcasts(text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ""))
+}
+
+function clean(text: string) {
+  return withoutSlackMentions(trustedText(text))
+}
+
+function sectionText(part: Extract<SlackPart, { type: "mrkdwn" }>) {
+  return part.trusted ? trustedText(part.text) : clean(part.text)
 }
 
 function plain(text: string, limit: number) {
@@ -262,7 +272,7 @@ function linkOf(component: Extract<SlackComponent, { type: "buttons" }>["buttons
 function partMrkdwn(part: SlackPart, options: SlackComposeOptions): string {
   switch (part.type) {
     case "mrkdwn":
-      return clean(part.text)
+      return sectionText(part)
     case "header":
       return `*${slackSafeText(plain(part.text, SLACK_LIMITS.headerText))}*`
     case "text":
@@ -274,7 +284,13 @@ function partMrkdwn(part: SlackPart, options: SlackComposeOptions): string {
     case "fields":
       return part.fields.map((field) => `*${slackSafeText(plain(field.label, 80))}:* ${inline(field.value, 1_000)}`).join("\n")
     case "table": {
-      const row = (cells: readonly string[]) => cells.map((cell) => slackSafeText(plain(cell, TABLE_CELL_BUDGET)) || "–").join(" · ")
+      const cell = (value: string) => {
+        const link = SINGLE_LINK.exec(value.trim())
+        const url = link?.[2] ? httpsUrl(link[2]) : null
+        const label = slackSafeText(plain(link?.[1] ?? value, TABLE_CELL_BUDGET))
+        return url && label ? `<${url.replaceAll("|", "%7C")}|${label}>` : label || "–"
+      }
+      const row = (cells: readonly string[]) => cells.map(cell).join(" · ")
       return [`*${row(part.columns)}*`, ...part.rows.map((cells) => `• ${row(cells)}`)].join("\n")
     }
     case "image": {
@@ -296,24 +312,31 @@ function partMrkdwn(part: SlackPart, options: SlackComposeOptions): string {
   }
 }
 
-function fallbackText(parts: readonly SlackPart[], options: SlackComposeOptions) {
-  const text = parts
+function joined(parts: readonly SlackPart[], options: SlackComposeOptions) {
+  return parts
     .map((part) => partMrkdwn(part, options))
     .filter(Boolean)
     .join("\n\n")
     .trim()
-  return text.length <= FALLBACK_BUDGET ? text : excerpt(text, FALLBACK_BUDGET)
 }
 
-function plainVersion(parts: readonly SlackPart[], options: SlackComposeOptions): SlackOutgoingMessage["plain"] {
-  const full = parts
-    .map((part) => partMrkdwn(part, options))
-    .filter(Boolean)
-    .join("\n\n")
-    .trim()
-  const pieces = splitSlackText(full || "…", SLACK_LIMITS.sectionText)
-  const shown = pieces.length > SLACK_LIMITS.blocks ? [...pieces.slice(0, SLACK_LIMITS.blocks - 1), "_The rest didn't fit in one Slack message._"] : pieces
-  return { text: fallbackText(parts, options), blocks: shown.map(section) }
+function fallbackText(parts: readonly SlackPart[], options: SlackComposeOptions) {
+  const text = joined(parts, options)
+  if (text.length <= FALLBACK_BUDGET) return text
+  const next = joined(parts.filter((part) => part.type === "buttons" || part.type === "choices"), options)
+  const lead = joined(parts.filter((part) => part.type !== "buttons" && part.type !== "choices"), options)
+  if (!next || next.length > FALLBACK_BUDGET / 2) return excerpt(text, FALLBACK_BUDGET)
+  return `${excerpt(lead, FALLBACK_BUDGET - next.length - 2)}\n\n${next}`
+}
+
+function fitSections(pieces: readonly string[], max: number): SectionBlock[] {
+  const room = Math.max(1, max)
+  return (pieces.length > room ? [...pieces.slice(0, room - 1), REST_LINE] : pieces).map(section)
+}
+
+function plainVersion(parts: readonly SlackPart[], options: SlackComposeOptions, maxBlocks: number): SlackOutgoingMessage["plain"] {
+  const body = joined(parts, options) || "…"
+  return { text: fallbackText(parts, options), blocks: fitSections(splitSlackText(body, SLACK_LIMITS.sectionText), maxBlocks), body }
 }
 
 function tableBlock(part: Extract<SlackComponent, { type: "table" }>): Extract<SlackBlock, { type: "table" }> {
@@ -364,7 +387,7 @@ function unitsOf(part: SlackPart, options: SlackComposeOptions): Unit[] {
   const unit = (block: SlackBlock, source: SlackPart = part): Unit => ({ part: source, block, markdown: block.type === "markdown" ? block.text.length : 0, table: block.type === "table" })
   switch (part.type) {
     case "mrkdwn":
-      return splitSlackText(clean(part.text), SLACK_LIMITS.sectionText).map((text) => unit(section(text), { type: "mrkdwn", text }))
+      return splitSlackText(sectionText(part), SLACK_LIMITS.sectionText).map((text) => unit(section(text), { type: "mrkdwn", text, trusted: true }))
     case "header": {
       const text = plain(part.text, SLACK_LIMITS.headerText)
       return text ? [unit({ type: "header", text: { type: "plain_text", text, emoji: true } })] : []
@@ -418,7 +441,7 @@ function unitsOf(part: SlackPart, options: SlackComposeOptions): Unit[] {
 }
 
 function outgoing(blocks: SlackBlock[], parts: readonly SlackPart[], options: SlackComposeOptions, choice: boolean): SlackOutgoingMessage {
-  const fallback = plainVersion(parts, options)
+  const fallback = plainVersion(parts, options, SLACK_LIMITS.blocks - (options.reservedBlocks ?? 0))
   const valid = slackBlockProblems(blocks).length === 0
   return { text: fallback.text, blocks: valid ? blocks : fallback.blocks, plain: fallback, choice: choice && valid }
 }
@@ -610,18 +633,28 @@ export async function postSlackMessage(
   message: SlackOutgoingMessage,
   options: { before?: readonly Record<string, unknown>[]; after?: readonly Record<string, unknown>[]; textPrefix?: string; onRejected?: (code: string) => void } = {},
 ) {
-  const body = (text: string, blocks: readonly Record<string, unknown>[]) => ({
-    ...target,
-    text: `${options.textPrefix ?? ""}${text}`,
-    blocks: [...(options.before ?? []), ...blocks, ...(options.after ?? [])],
-    unfurl_links: false,
-    unfurl_media: false,
-  })
-  try {
-    return await slack("chat.postMessage", body(message.text, message.blocks))
-  } catch (error) {
-    if (!slackRejectedBlocks(error)) throw error
-    options.onRejected?.(error.code)
-    return slack("chat.postMessage", body(message.plain.text, message.plain.blocks))
+  const before = options.before ?? []
+  const after = options.after ?? []
+  const room = SLACK_LIMITS.blocks - before.length - after.length
+  const prefix = options.textPrefix ?? ""
+  const base = { ...target, unfurl_links: false, unfurl_media: false }
+  const withBlocks = (text: string, blocks: readonly Record<string, unknown>[]) => ({ ...base, text: `${prefix}${text}`, blocks: [...before, ...blocks, ...after] })
+  const plainBlocks = message.plain.blocks.length <= room ? message.plain.blocks : fitSections(message.plain.blocks.map((block) => block.text.text), room)
+  const attempts: Record<string, unknown>[] = [
+    ...(message.blocks.length <= room ? [withBlocks(message.text, message.blocks)] : []),
+    ...(room >= 1 ? [withBlocks(message.plain.text, plainBlocks)] : []),
+  ]
+  if (message.blocks.length > room) options.onRejected?.("blocks_over_limit")
+  for (const body of attempts) {
+    try {
+      return await slack("chat.postMessage", body)
+    } catch (error) {
+      if (!slackRejectedBlocks(error)) throw error
+      options.onRejected?.(error.code)
+    }
   }
+  const [first, ...rest] = splitSlackText(`${prefix}${message.plain.body}`, TEXT_ONLY_BUDGET)
+  const posted = await slack("chat.postMessage", { ...base, text: first ?? `${prefix}${message.plain.text}` })
+  for (const text of rest) await slack("chat.postMessage", { ...base, text })
+  return posted
 }

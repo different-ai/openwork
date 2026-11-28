@@ -58,7 +58,7 @@ const needsConnection: Body = {
 };
 const unsafe: Body = {
   target: "me",
-  text: "Chart for the review.",
+  text: "Chart for the review, cc <@U0SOMEONE>.",
   components: [
     { type: "header", text: "Heads up @channel" },
     { type: "context", text: "cc <!here> and <@U0SOMEONE>" },
@@ -85,7 +85,7 @@ test("a member's agent sends a status table, a meeting follow-up and an Automati
     await alex.see({ role: "heading", label: "Workbot" }, { timeoutMs: 30_000 });
   });
 
-  await step("before: the agent can only send text, so a table arrives as typed characters", async () => {
+  await step("before: with the feature off the agent can only send text, so a table arrives as typed characters", async () => {
     const offered = await world.offeredArguments("alex");
     const refused = await send(statusReport);
     const sent = await send({ target: "me", text: `Open issues this week: 4 open, 2 need you before Friday.\n\`\`\`\n${TYPED_TABLE}\n\`\`\`` });
@@ -103,12 +103,12 @@ test("a member's agent sends a status table, a meeting follow-up and an Automati
     expect(offered).toContain("components");
   });
 
-  await step("after: the same status report arrives with a header, a real table, a source line and a button", async () => {
+  await step("after: with the feature on the same status report arrives with a header, a real table, a source line and a button", async () => {
     const sent = await send(statusReport);
     await shown("From Linear, read Nov 27 at 9:02 AM");
     const counts = { header: await dom(".bk-header"), table: await dom(".bk-table"), rows: await dom(".bk-table tbody tr"), links: await dom('.bk-table a[href^="https://linear.app/"]'), button: await dom('a.bk-button[href="https://linear.app/acme/team/ACME/active"]') };
     const ok = sent.sent === true && counts.header === 1 && counts.table === 1 && counts.rows === 4 && counts.links === 2 && counts.button === 1;
-    evidence.recordAssertionEvidence("Slack accepted the blocks and drew a four-row table with two linked issues", `input: ${input(statusReport)} -> sent=${String(sent.sent)}; ${JSON.stringify(counts)}`, ok);
+    evidence.recordAssertionEvidence("The sample Slack accepted the blocks and drew a four-row table with two linked issues", `input: ${input(statusReport)} -> sent=${String(sent.sent)}; ${JSON.stringify(counts)}`, ok);
     expect(ok).toBe(true);
     await alex.screenshot();
   });

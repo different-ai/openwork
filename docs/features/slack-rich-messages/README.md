@@ -20,9 +20,10 @@ surface. It accepts two inputs and nothing else:
   `table`, `image`, `buttons`, `choices`). An agent passes them to `slack_send_as_bot`, or writes them as JSON in one
   fenced block with the language `slack` in a Slack answer. Raw Block Kit is never accepted.
 
-Pictures and the exact input for each: [example use cases](./examples.md).
+Pictures and the exact input for each: [example use cases](./examples.md). Every picture is drawn by the sample
+renderer (the sandbox's sample Slack), not by Slack.
 
-![A status report with a table](./status-report.png)
+![A status report with a table, flag on, drawn by the sample renderer](./status-report.png)
 
 | Surface | Feature off (unchanged) | Feature on |
 | --- | --- | --- |
@@ -40,16 +41,21 @@ Internal webhooks to our own workspace (harness feedback, support triage) and CI
 ## Choices: buttons that answer a question
 
 `choices` is the only interactive component, because it is the only one with a handler. The question is posted as its
-own message. When the member it was addressed to presses a button, the interactions route (`slack-assistant/choice.ts`):
+own message. A press goes through two steps (`slack-assistant/choice.ts`):
 
-1. checks Slack's signature, workspace and app (as for feedback), and that the value pressed was one of the buttons;
-2. refuses anyone else with a private note ("Only @member can answer this.");
-3. queues the label as that member's next request in the same thread, through the same queue and limits as a mention;
-4. replaces the buttons with "✅ @member chose Send it", so it cannot be pressed twice.
+1. **The interactions route** checks Slack's signature, workspace and app (as for feedback) and that the value pressed
+   is the label of that button on that message. It queues the press in `slack_assistant_event` and answers 200. It
+   never calls Slack, so the acknowledgment does not wait on Slack.
+2. **The worker** settles the press on its next tick (`settleSlackChoice`). It tells anyone else privately "Only
+   @member can answer this." It starts nothing, and says so privately, when the assistant is off, the channel is not
+   allowed, the deployment has no cloud runner, or `slackRichMessages` is now off for that member. Otherwise it records
+   the label as that member's next request in the thread, in one transaction keyed by the message, so the first press
+   wins. Then it replaces the buttons with "✅ @member chose Send it", always showing the recorded answer. A later
+   press of another button is told which answer is already running.
 
-A second press of the same message queues nothing. `slack_send_as_bot` refuses `choices` when the assistant is off or
-the deployment has no cloud runner, because nothing would answer the click. Link buttons need no handler of their own:
-Slack still sends an interaction for them, and the route already acknowledges every signed interaction.
+`slack_send_as_bot` refuses `choices` when the deployment has no cloud runner, because nothing would answer the click.
+Link buttons need no handler of their own: Slack still sends an interaction for them, and the route already
+acknowledges every signed interaction.
 
 ## Limits enforced before anything is sent
 
@@ -65,22 +71,27 @@ From Slack's reference, checked 27 Nov 2026. The composer splits or degrades ins
 | Context | 10 elements | One element per line | [Context block](https://docs.slack.dev/reference/block-kit/blocks/context-block) |
 | Image | URL 3,000; alt text and title 2,000 | Clips text; alt text is required | [Image block](https://docs.slack.dev/reference/block-kit/blocks/image-block) |
 | Actions and buttons | 25 elements; text 75; `action_id` 255; URL 3,000; value 2,000 | At most five buttons, ids set by OpenWork | [Actions block](https://docs.slack.dev/reference/block-kit/blocks/actions-block), [Button](https://docs.slack.dev/reference/block-kit/block-elements/button-element) |
-| Top-level `text` | Aim for 4,000 | A full text version of the message, up to 3,900, for notifications and screen readers | [chat.postMessage](https://docs.slack.dev/reference/methods/chat.postMessage) |
+| Top-level `text` | Aim for 4,000 | A full text version of the message, up to 3,900, for notifications and screen readers. Table links are kept, and when it must be cut the buttons or the question stay at the end | [chat.postMessage](https://docs.slack.dev/reference/methods/chat.postMessage) |
 | Stream | 12,000 Markdown characters and 10 minutes | Starts a new stream at 11,000 characters or 4 minutes, and when Slack answers `msg_too_long` | [chat.startStream](https://docs.slack.dev/reference/methods/chat.startStream) |
-| Interactions | Acknowledge within 3 seconds, link buttons included | The route answers 200 before the message is updated | [Handling user interaction](https://docs.slack.dev/interactivity/handling-user-interaction) |
+| Interactions | Acknowledge within 3 seconds, link buttons included | The route queues a press and answers 200 without calling Slack; the worker does the rest | [Handling user interaction](https://docs.slack.dev/interactivity/handling-user-interaction) |
 
 The stream limit is a fix that ships without the flag: the code rotated at 30,000 characters, past Slack's limit.
 
 If Slack still refuses the blocks (`invalid_blocks`, `msg_blocks_too_long` and similar), the same content is posted once
-as plain mrkdwn sections and `slack_rich_message_rejected` is logged with the surface and Slack's error code.
+as plain mrkdwn sections, counted together with the caller's own blocks (attribution, mention, feedback) so the retry
+stays inside 50. If Slack refuses that too, it is posted as text alone. `slack_rich_message_rejected` is logged each
+time with the surface and Slack's error code.
 
 ## Safety
 
 - The model never writes Block Kit. Components are parsed with a strict schema; unknown types and extra keys are
   refused, and a `slack` block that does not parse stays visible as written and is counted in
   `slack_rich_component_invalid`.
-- `@channel`, `@here`, `@everyone` and group mentions are neutralized everywhere. Text in headers, context lines,
-  fields, table cells and button labels is escaped, so a model cannot mention a person from them.
+- `@channel`, `@here`, `@everyone` and group mentions are neutralized everywhere. So are user mentions a model
+  wrote: in the message text, in Markdown, in every component and in the text fallback, `<@U…>` is shown as text and
+  notifies no one. The only mentions that work are the ones OpenWork adds itself (the member a report or a desktop
+  result is for, the attribution line of a channel post). The text-only path of `slack_send_as_bot` is unchanged from
+  today: a user mention in `text` with no components still notifies.
 - Button and action ids are OpenWork's. A model cannot name one, so it cannot imitate feedback or a choice.
 - A choice button has no hidden value: what is queued as the member's request is the label they saw and pressed,
   and the handler checks it against the buttons on that message.
@@ -106,21 +117,25 @@ Unit tests: `ee/apps/den-api/test/slack-rich-message.test.ts`, `ee/apps/den-api/
 
 Off, or after the kill switch, every surface sends exactly what it sent before. Agents stop being told about
 components on their next message. A reply already in flight keeps its instructions but is delivered as text, so a
-`slack` block in it shows as a code block. Questions already posted keep working: the click handler does not depend on
-the flag.
+`slack` block in it shows as a code block. A question already posted stops working too: the worker rechecks the
+member's flag when a button is pressed, starts nothing, leaves the buttons, and tells the member privately to reply in
+the thread instead.
 
 ## What to watch
 
 - `slack_rich_message_rejected` (surface, code): Slack refused blocks the composer thought valid. The content still
   arrived as text. A steady stream of these means a limit or shape here is wrong.
 - `slack_rich_component_invalid`: models writing `slack` blocks that do not parse.
-- `slack_choice_accepted`, `slack_choice_update_failed`, `slack_choice_notice_failed`.
+- `slack_choice_settled` (outcome: accepted, already_answered, not_addressed, unavailable, throttled),
+  `slack_choice_update_failed`, `slack_choice_notice_failed`.
 
 ## Not verified in a real Slack workspace
 
-Everything above was run against the sample Slack, which is written from Slack's reference and is not Slack. Before
-turning this on for everyone, check in a real workspace: the table block next to other blocks, a multi-message answer,
-the choice click and its `chat.update`, and the fallback text in a notification.
+Everything above was run against the sample Slack, which is written from Slack's reference and is not Slack. The
+tests prove that a press is queued, settled once and the message replaced there. They do not prove that a real Slack
+client sends the press, or that the queued request then runs to an answer. Before turning this on for everyone, check
+in a real workspace: the table block next to other blocks, a multi-message answer, a choice press through to the
+assistant's reply, and the fallback text in a notification.
 
 ## What Slack still does not allow, or we chose not to use
 

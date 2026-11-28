@@ -21,6 +21,7 @@ const { MemberTable, SlackAssistantEventTable, SlackAssistantIdentityTable } = a
 const { normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
 const { getInstallation } = await import("../../src/slack-assistant/repository.js")
 const { slackClient } = await import("../../src/slack-assistant/protocol.js")
+const { processSlackEvent } = await import("../../src/slack-assistant/worker.js")
 
 async function freePort() {
   const server = createServer()
@@ -153,54 +154,88 @@ function signed(secret: string, payload: Record<string, unknown>, at = Math.floo
 
 const events = () => db.select().from(SlackAssistantEventTable).where(eq(SlackAssistantEventTable.connectionId, normalizeDenTypeId("externalMcpConnection", connectionId)))
 
-test("a choice the agent sent is answered only by the member it was for, once, and the buttons are replaced", async () => {
-  const asked = await send({ target: "me", text: "The reply to Dana is drafted.", components: [{ type: "choices", prompt: "Send it from your Gmail?", options: ["Send it", "Don't send"] }] })
-  assert.equal(field(asked.body, "sent"), true, asked.raw)
-  assert.match(await averyBrowser.slackPage(), /<button type="button" class="bk-button"[^>]*>Send it<\/button>/)
+/** What the worker does on its next tick: settle every press that is waiting, and nothing else. */
+async function settlePresses() {
+  const waiting = (await events()).filter((event) => event.status === "pending" && JSON.parse(event.payload).type === "choice_pressed")
+  for (const event of waiting) {
+    const leaseOwner = `test-${event.id.slice(0, 8)}`
+    await db.update(SlackAssistantEventTable).set({ leaseOwner, leaseUntil: new Date(Date.now() + 60_000) }).where(eq(SlackAssistantEventTable.id, event.id))
+    await processSlackEvent({ ...event, leaseOwner })
+  }
+  return waiting.length
+}
+const requests = async () => (await events()).filter((event) => ["message", "app_mention"].includes(JSON.parse(event.payload).type))
+const BUTTON = /<button type="button" class="bk-button"[^>]*>Send it<\/button>/
 
+async function ask(lead: string) {
+  const asked = await send({ target: "me", text: lead, components: [{ type: "choices", prompt: "Send it from your Gmail?", options: ["Send it", "Don't send"] }] })
+  assert.equal(field(asked.body, "sent"), true, asked.raw)
   const installation = await installed()
   const bot = slackClient(installation.botToken, fetch, `${workplace}/slack/teams/${installation.teamId}/api`)
   const channel = text(field(asked.body, "channelId"), "channel")
   const history = list(field(await bot("conversations.history", { channel, oldest: "0" }), "messages"))
   const question = history.find((message) => JSON.stringify(message.blocks ?? []).includes("openwork_choice:"))
   const blockId = text(list(question?.blocks).find((block) => block.type === "actions")?.block_id, "choice block id")
-  const averySlackId = blockId.slice("openwork_choice:".length)
-  const rileySlackId = await slackUserOf(riley)
-  const press = (user: string, value: string, extra: Record<string, unknown> = {}) => ({
+  let presses = 0
+  const press = (user: string, value: string, index = 0, extra: Record<string, unknown> = {}) => ({
     type: "block_actions", team: { id: installation.teamId }, user: { id: user }, api_app_id: installation.appId, channel: { id: channel },
-    message: { ts: question?.ts, blocks: question?.blocks }, actions: [{ action_id: "openwork_choice:0", block_id: blockId, value }], ...extra,
+    message: { ts: question?.ts, blocks: question?.blocks }, actions: [{ action_id: `openwork_choice:${index}`, block_id: blockId, value, action_ts: `${Date.now()}.${++presses}` }], ...extra,
   })
   const post = (payload: Record<string, unknown>, secret = installation.signingSecret) => den.request(null, "POST", `/v1/integrations/slack/${connectionId}/interactions`, signed(secret, payload))
-  const before = (await events()).length
+  return { channel, ts: text(question?.ts, "question ts"), averySlackId: blockId.slice("openwork_choice:".length), press, post }
+}
+
+test("a choice is acknowledged at once, then answered only by the member it was for, and the first answer wins", async () => {
+  const { channel, ts, averySlackId, press, post } = await ask("The reply to Dana is drafted.")
+  assert.match(await averyBrowser.slackPage(), BUTTON)
+  const rileySlackId = await slackUserOf(riley)
+  const before = (await requests()).length
 
   assert.equal((await post(press(averySlackId, "Send it"), "not-the-signing-secret")).status, 401)
-  assert.equal((await post(press(averySlackId, "Send it", { team: { id: "T0OTHER" } }))).status, 403)
-  const other = await post(press(rileySlackId, "Send it"))
-  assert.equal(other.status, 200, summary(other))
-  const forged = await post(press(averySlackId, "Delete everything"))
-  assert.equal(forged.status, 200, summary(forged))
+  assert.equal((await post(press(averySlackId, "Send it", 0, { team: { id: "T0OTHER" } }))).status, 403)
+  assert.equal((await post(press(rileySlackId, "Send it"))).status, 200)
+  assert.equal((await post(press(averySlackId, "Delete everything"))).status, 200)
   const link = await post({ ...press(averySlackId, "Send it"), actions: [{ action_id: "openwork_link:0", block_id: "openwork_link:1" }] })
   assert.equal(link.status, 200, "a link button's interaction is acknowledged")
-  assert.equal((await events()).length, before, "none of those started anything")
-  assert.match(await averyBrowser.slackPage(), /<button type="button" class="bk-button"[^>]*>Send it<\/button>/, "and the question is still open")
+  assert.equal(await settlePresses(), 1, "only the other member's press was queued; a forged value and a link button queue nothing")
+  assert.equal((await requests()).length, before, "and it started nothing")
+  assert.match(await averyBrowser.slackPage(), BUTTON, "the question is still open")
 
-  const pressed = await post(press(averySlackId, "Send it"))
-  assert.equal(pressed.status, 200, summary(pressed))
-  const again = await post(press(averySlackId, "Send it"))
-  assert.equal(again.status, 200, summary(again))
-  const queued = (await events()).slice(before)
-  assert.equal(queued.length, 1, "one press, one request, however often it is repeated")
-  assert.deepEqual([queued[0]?.slackUserId, queued[0]?.channelId, queued[0]?.threadTs, queued[0]?.status], [averySlackId, channel, question?.ts, "pending"])
-  assert.deepEqual(JSON.parse(queued[0]?.payload ?? "{}"), { type: "message", channel_type: "im", user: averySlackId, channel, text: "Send it", ts: question?.ts, thread_ts: question?.ts })
+  const first = await post(press(averySlackId, "Send it"))
+  const second = await post(press(averySlackId, "Don't send", 1))
+  assert.deepEqual([first.status, second.status], [200, 200], summary(first))
+  assert.equal((await requests()).length, before, "the route only queues the press: nothing has run and Slack has not been called")
+  assert.match(await averyBrowser.slackPage(), BUTTON)
 
-  let page = ""
-  for (let attempt = 0; attempt < 50 && !page.includes("chose <strong>Send it</strong>"); attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 100))
-    page = await averyBrowser.slackPage()
-  }
+  assert.equal(await settlePresses(), 2)
+  const queued = (await requests()).slice(before)
+  assert.equal(queued.length, 1, "two presses, one request")
+  assert.deepEqual([queued[0]?.slackUserId, queued[0]?.channelId, queued[0]?.threadTs, queued[0]?.status], [averySlackId, channel, ts, "pending"])
+  assert.deepEqual(JSON.parse(queued[0]?.payload ?? "{}"), { type: "message", channel_type: "im", user: averySlackId, channel, text: "Send it", ts, thread_ts: ts })
+  const page = await averyBrowser.slackPage()
   assert.match(page, /Send it from your Gmail\?/)
-  assert.match(page, /chose <strong>Send it<\/strong>/)
-  assert.doesNotMatch(page, /<button type="button" class="bk-button"/, "the buttons are gone")
+  assert.match(page, /chose <strong>Send it<\/strong>/, "Slack shows the answer that runs, not the later press")
+  assert.doesNotMatch(page, /chose <strong>Don&#39;t send<\/strong>/)
+  assert.doesNotMatch(page, BUTTON, "the buttons are gone")
+
+  await post(press(averySlackId, "Send it"))
+  assert.equal(await settlePresses(), 1)
+  assert.equal((await requests()).length, before + 1, "pressing again later starts nothing new")
+})
+
+test("a question already in Slack starts nothing after the feature is turned off, and works again when it is back on", async () => {
+  const { averySlackId, press, post } = await ask("The reply to Lee is drafted.")
+  const before = (await requests()).length
+  assert.equal((await den.setFeature(orgId, "slackRichMessages", false)).status, 200)
+  assert.equal((await post(press(averySlackId, "Send it"))).status, 200)
+  assert.equal(await settlePresses(), 1)
+  assert.equal((await requests()).length, before, "off: the press starts nothing")
+  assert.match(await averyBrowser.slackPage(), BUTTON, "and the question is left as it was")
+
+  assert.equal((await den.setFeature(orgId, "slackRichMessages", true)).status, 200)
+  assert.equal((await post(press(averySlackId, "Send it"))).status, 200)
+  assert.equal(await settlePresses(), 1)
+  assert.equal((await requests()).length, before + 1)
 })
 
 async function slackUserOf(person: Session) {

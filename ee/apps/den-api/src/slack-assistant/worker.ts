@@ -11,11 +11,13 @@ import { z } from "zod"
 import { markFeaturesUsed } from "../feature-usage.js"
 import { appLogger } from "../observability/logger.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
+import { settleSlackChoice } from "./choice.js"
 import {
   buildSlackEnvelope,
   buildSlackPrompt,
   isInvocation,
   slackWorkbotInstructions,
+  SLACK_CHOICE_PRESSED,
   SlackApiError,
   slackClient,
   slackEventSchema,
@@ -57,6 +59,7 @@ import { pruneSlackEvents, renewSlackLease, SlackLeaseLostError } from "./reposi
 type WorkerDeps = {
   model?: typeof slackTurnModel
   rich?: (actor: SlackActor) => Promise<boolean>
+  choice?: typeof settleSlackChoice
   slack: typeof slackClient
   runner: (actor: SlackActor) => SlackRunner
   live: LiveFeedSource
@@ -155,6 +158,11 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     return checkpointEvent(event, { status: "done" })
   }
   const slack = deps.slack(installation.botToken)
+  if (payload.type === SLACK_CHOICE_PRESSED) {
+    const outcome = await (suppliedDeps.choice ?? settleSlackChoice)(installation, payload)
+    appLogger.info("slack_choice_settled", { event_id: event.id, outcome })
+    return checkpointEvent(event, { status: "done" })
+  }
   if (payload.type === "app_uninstalled") {
     await revokeSlackInstallation(event.connectionId)
     return checkpointEvent(event, { status: "done" })

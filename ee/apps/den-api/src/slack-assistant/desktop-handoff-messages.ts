@@ -51,7 +51,7 @@ export function desktopHandoffRichMessages(
   options: Pick<SlackComposeOptions, "places" | "imageUrl">,
 ): { messages: SlackOutgoingMessage[]; cut: boolean } | null {
   if (notice.kind !== "finished" || !notice.finalText?.trim()) return null
-  const messages = composeSlackMessages([{ type: "mrkdwn", text: `${mention(recipientUserId)}Your desktop finished:` }, ...markdownToSlackParts(notice.finalText).parts], options)
+  const messages = composeSlackMessages([{ type: "mrkdwn", text: `${mention(recipientUserId)}Your desktop finished:`, trusted: true }, ...markdownToSlackParts(notice.finalText).parts], options)
   return { messages: messages.slice(0, MAX_RICH_MESSAGES), cut: messages.length > MAX_RICH_MESSAGES }
 }
 

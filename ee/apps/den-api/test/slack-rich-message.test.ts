@@ -114,6 +114,66 @@ test("mentions and broadcasts a model wrote never reach Slack as pings", () => {
   assert.equal(message?.text.includes("<@U123ABC>"), false)
 })
 
+test("a user mention the model wrote is shown as text everywhere, and a mention OpenWork adds still works", () => {
+  const [message] = composeSlackMessages([
+    { type: "mrkdwn", text: "<@U0TRUSTED> Your desktop finished:", trusted: true },
+    { type: "mrkdwn", text: "Heads up <@U0VICTIM> and <@W0OTHER|boss>" },
+    { type: "text", text: "Also <@U0VICTIM> in Markdown" },
+    { type: "table", columns: ["Who", "What"], rows: [["<@U0VICTIM>", "review"]] },
+  ])
+  const sent = `${JSON.stringify(message?.blocks)} ${message?.text} ${message?.plain.body} ${JSON.stringify(message?.plain.blocks)}`
+  assert.equal(sent.includes("<@U0VICTIM"), false, sent)
+  assert.equal(sent.includes("<@W0OTHER"), false, sent)
+  assert.ok(sent.includes("@\u200bboss") && sent.includes("@\u200bU0VICTIM"))
+  assert.equal(message?.blocks[0]?.type === "section" && message.blocks[0].text?.text, "<@U0TRUSTED> Your desktop finished:")
+  assert.ok(message?.text.startsWith("<@U0TRUSTED> Your desktop finished:"))
+})
+
+test("the text fallback keeps a table's links and, when it must be cut, still ends with the next step", () => {
+  const [linked] = composeSlackMessages([{ type: "table", columns: ["Issue", "Owner"], rows: [["[ACME-12](https://linear.app/acme/issue/ACME-12)", "Dana"]] }])
+  assert.equal(linked?.text, "*Issue · Owner*\n• <https://linear.app/acme/issue/ACME-12|ACME-12> · Dana")
+  const [long] = composeSlackMessages([
+    { type: "text", text: Array.from({ length: 80 }, (_, index) => `Sentence number ${index} of the long report body.`).join(" ") },
+    { type: "text", text: Array.from({ length: 80 }, (_, index) => `More detail ${index} that does not fit in a notification.`).join(" ") },
+    { type: "buttons", buttons: [{ text: "Open the report", url: "https://example.com/report" }] },
+  ])
+  assert.ok((long?.text.length ?? 0) <= SLACK_LIMITS.fallbackText)
+  assert.ok(long?.text.endsWith("<https://example.com/report|Open the report>"), long?.text.slice(-120))
+  assert.ok(long?.text.startsWith("Sentence number 0"))
+})
+
+test("the plain retry stays inside 50 blocks with the caller's own blocks, and text alone is the last resort", async () => {
+  const [message] = composeSlackMessages(
+    [
+      { type: "mrkdwn", text: Array.from({ length: 48 }, (_, index) => `Paragraph ${index} ${"word ".repeat(560)}`).join("\n\n") },
+      { type: "table", columns: ["A", "B"], rows: Array.from({ length: 40 }, (_, index) => [`Row ${index}`, "x".repeat(200)]) },
+    ],
+    { reservedBlocks: 1 },
+  )
+  assert.ok(message)
+  assert.equal(message.blocks.length, 49)
+  const calls: Record<string, unknown>[] = []
+  const refuseBlocks = async (_method: string, body: Record<string, unknown>) => {
+    calls.push(body)
+    if (body.blocks) throw new SlackApiError("invalid_blocks")
+    return { ok: true, ts: "1.1" }
+  }
+  const rejected: string[] = []
+  const posted = await postSlackMessage(refuseBlocks, { channel: "C1" }, message, { after: [{ type: "context_actions" }], textPrefix: "<@U0MEMBER> ", onRejected: (code) => rejected.push(code) })
+  assert.equal(posted.ts, "1.1")
+  assert.deepEqual(calls.slice(0, 2).map((body) => (Array.isArray(body.blocks) ? body.blocks.length : null)), [50, 50])
+  assert.deepEqual(rejected, ["invalid_blocks", "invalid_blocks"])
+  const textOnly = calls.slice(2)
+  assert.ok(textOnly.length >= 1 && textOnly.every((body) => body.blocks === undefined && String(body.text).length <= 39_000))
+  assert.ok(String(textOnly[0]?.text).startsWith("<@U0MEMBER> Paragraph 0"))
+  assert.ok(textOnly.map((body) => body.text).join("\n").includes("Row 39"), "the last resort carries the whole message as text")
+
+  const overCaller: Record<string, unknown>[] = []
+  await postSlackMessage(async (_method, body) => { overCaller.push(body); return { ok: true, ts: "1.2" } }, { channel: "C1" }, message, { before: [{ type: "divider" }], after: [{ type: "context_actions" }], onRejected: (code) => rejected.push(code) })
+  assert.deepEqual(overCaller.map((body) => (Array.isArray(body.blocks) ? body.blocks.length : null)), [50], "a caller that adds more blocks than it reserved gets the plain version, still within the limit")
+  assert.equal(rejected.at(-1), "blocks_over_limit")
+})
+
 test("an image shows only from an allowed host and is a link everywhere else", () => {
   const markdown = "![Signups this week](https://charts.example.com/a.png?secret=1)"
   assert.deepEqual(compose(markdown).map(types), [["section"]])

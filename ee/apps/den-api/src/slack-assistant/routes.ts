@@ -38,7 +38,7 @@ import { listHeadlessModels, slackRunnerAvailable } from "./headless.js"
 import { organizationDefaultModel } from "../workbot/model.js"
 import { publicRequestUrl } from "../request-url.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
-import { answerSlackChoice, slackInteractionSchema } from "./choice.js"
+import { slackChoicePress, slackInteractionSchema } from "./choice.js"
 import {
   BOT_SCOPES,
   REQUIRED_BOT_SCOPES,
@@ -490,7 +490,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         description:
           action === "commands"
             ? "Verify the signed Slack slash command and return an ephemeral link for the member to connect their own account in OpenWork."
-            : "Verify the signed Slack interaction and acknowledge it, including link buttons. Feedback is recorded only for the member who owns the referenced assistant event. A choice button starts the next request in that thread only for the member it was addressed to, then replaces the buttons with what they chose.",
+            : "Verify the signed Slack interaction and acknowledge it, including link buttons. Feedback is recorded only for the member who owns the referenced assistant event. A press on a choice button is queued and acknowledged at once; the worker then starts the next request in that thread only for the member it was addressed to and replaces the buttons.",
         security: [],
         responses: {
           ...webhookResponses,
@@ -551,8 +551,8 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
                 item.value,
               )
             }
-          const choice = await answerSlackChoice(installation, parsed.data)
-          void choice.settled
+          const press = slackChoicePress(parsed.data)
+          if (press) await enqueueSlackEvent(installation, press.eventId, press.event)
           return c.json({ ok: true })
         }
         return c.json({
