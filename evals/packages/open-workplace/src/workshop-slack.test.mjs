@@ -202,7 +202,7 @@ test("a bot's blocks are checked against Slack's limits and drawn on the person'
     { type: "header", text: { type: "plain_text", text: "Open issues <b>", emoji: true } },
     { type: "section", text: { type: "mrkdwn", text: "*Three* need you. <script>x</script>" } },
     { type: "section", fields: [{ type: "mrkdwn", text: "*Owner*\nDana" }, { type: "mrkdwn", text: "*Due*\nFriday" }] },
-    { type: "table", column_settings: [{ align: "left" }, { align: "right" }], rows: [[raw("Issue"), raw("Days")], [{ type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "link", url: "https://example.com/1", text: "ENG-1" }] }] }, raw("9")]] },
+    { type: "table", column_settings: [{ align: "left" }, { align: "right" }], rows: [[raw("Issue"), raw("Days")], [{ type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "link", url: "https://example.com/1", text: "ACME-1" }] }] }, raw("9")]] },
     { type: "divider" },
     { type: "markdown", text: "**Next**\n\n- one\n- [two](https://example.com/2)\n\n| A | B |\n| --- | --- |\n| 1 | 2 |" },
     { type: "image", image_url: "https://example.com/chart.png", alt_text: "Signups by week" },
@@ -219,7 +219,7 @@ test("a bot's blocks are checked against Slack's limits and drawn on the person'
   assert.match(html, /<strong>Three<\/strong> need you\. &lt;script&gt;x&lt;\/script&gt;/);
   assert.match(html, /<div class="bk-fields"><div><strong>Owner<\/strong><br>Dana<\/div><div><strong>Due<\/strong><br>Friday<\/div><\/div>/);
   assert.match(html, /<th style="text-align:right;white-space:nowrap">Days<\/th>/);
-  assert.match(html, /<td style="text-align:left;white-space:nowrap"><a href="https:\/\/example\.com\/1" target="_blank" rel="noreferrer noopener">ENG-1<\/a><\/td>/);
+  assert.match(html, /<td style="text-align:left;white-space:nowrap"><a href="https:\/\/example\.com\/1" target="_blank" rel="noreferrer noopener">ACME-1<\/a><\/td>/);
   assert.match(html, /<hr class="bk-divider">/);
   assert.match(html, /<ul><li>one<\/li><li><a href="https:\/\/example\.com\/2" target="_blank" rel="noreferrer noopener">two<\/a><\/li><\/ul>/);
   assert.match(html, /<thead><tr><th>A<\/th><th>B<\/th><\/tr><\/thead>/);

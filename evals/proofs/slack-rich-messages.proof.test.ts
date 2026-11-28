@@ -11,10 +11,10 @@ const test = spec.world(slackRichMessagesWorld, {
 type Body = Record<string, unknown>;
 
 const ISSUES = [
-  ["[ENG-214 Export times out](https://linear.app/acme/issue/ENG-214)", "Dana", "Urgent", "9"],
-  ["[ENG-221 Invoice totals round up](https://linear.app/acme/issue/ENG-221)", "Lee", "High", "6"],
-  ["ENG-230 Slow search on large workspaces", "Sam", "Medium", "4"],
-  ["ENG-233 Dark mode contrast", "Riley", "Low", "2"],
+  ["[ACME-214 Export times out](https://linear.app/acme/issue/ACME-214)", "Dana", "Urgent", "9"],
+  ["[ACME-221 Invoice totals round up](https://linear.app/acme/issue/ACME-221)", "Lee", "High", "6"],
+  ["ACME-230 Slow search on large workspaces", "Sam", "Medium", "4"],
+  ["ACME-233 Dark mode contrast", "Riley", "Low", "2"],
 ];
 const TYPED_TABLE = ["Issue | Owner | Priority | Days open", ...ISSUES.map((row) => row.join(" | ").replace(/\[([^\]]+)\]\([^)]+\)/, "$1"))].join("\n");
 
@@ -25,7 +25,7 @@ const statusReport: Body = {
     { type: "header", text: "Open issues" },
     { type: "table", columns: ["Issue", "Owner", "Priority", "Days open"], rows: ISSUES },
     { type: "context", text: "From Linear, read Nov 27 at 9:02 AM" },
-    { type: "buttons", buttons: [{ text: "Open the board", url: "https://linear.app/acme/team/ENG/active" }] },
+    { type: "buttons", buttons: [{ text: "Open the board", url: "https://linear.app/acme/team/ACME/active" }] },
   ],
 };
 const meetingFollowUp: Body = {
@@ -106,7 +106,7 @@ test("a member's agent sends a status table, a meeting follow-up and an Automati
   await step("after: the same status report arrives with a header, a real table, a source line and a button", async () => {
     const sent = await send(statusReport);
     await shown("From Linear, read Nov 27 at 9:02 AM");
-    const counts = { header: await dom(".bk-header"), table: await dom(".bk-table"), rows: await dom(".bk-table tbody tr"), links: await dom('.bk-table a[href^="https://linear.app/"]'), button: await dom('a.bk-button[href="https://linear.app/acme/team/ENG/active"]') };
+    const counts = { header: await dom(".bk-header"), table: await dom(".bk-table"), rows: await dom(".bk-table tbody tr"), links: await dom('.bk-table a[href^="https://linear.app/"]'), button: await dom('a.bk-button[href="https://linear.app/acme/team/ACME/active"]') };
     const ok = sent.sent === true && counts.header === 1 && counts.table === 1 && counts.rows === 4 && counts.links === 2 && counts.button === 1;
     evidence.recordAssertionEvidence("Slack accepted the blocks and drew a four-row table with two linked issues", `input: ${input(statusReport)} -> sent=${String(sent.sent)}; ${JSON.stringify(counts)}`, ok);
     expect(ok).toBe(true);

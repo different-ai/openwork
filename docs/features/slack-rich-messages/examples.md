@@ -35,25 +35,25 @@ Regenerate with `pnpm --filter @openwork-ee/den-api slack:examples`. This file a
       ],
       "rows": [
         [
-          "[ENG-214 Export times out](https://linear.app/acme/issue/ENG-214)",
+          "[ACME-214 Export times out](https://linear.app/acme/issue/ACME-214)",
           "Dana",
           "Urgent",
           "9"
         ],
         [
-          "[ENG-221 Invoice totals round up](https://linear.app/acme/issue/ENG-221)",
+          "[ACME-221 Invoice totals round up](https://linear.app/acme/issue/ACME-221)",
           "Lee",
           "High",
           "6"
         ],
         [
-          "ENG-230 Slow search on large workspaces",
+          "ACME-230 Slow search on large workspaces",
           "Sam",
           "Medium",
           "4"
         ],
         [
-          "ENG-233 Dark mode contrast",
+          "ACME-233 Dark mode contrast",
           "Riley",
           "Low",
           "2"
@@ -69,7 +69,7 @@ Regenerate with `pnpm --filter @openwork-ee/den-api slack:examples`. This file a
       "buttons": [
         {
           "text": "Open the board",
-          "url": "https://linear.app/acme/team/ENG/active"
+          "url": "https://linear.app/acme/team/ACME/active"
         }
       ]
     }
@@ -90,7 +90,7 @@ Regenerate with `pnpm --filter @openwork-ee/den-api slack:examples`. This file a
 ````json
 {
   "target": "me",
-  "text": "Open issues this week: 4 open, 2 need you before Friday.\n```\nIssue | Owner | Priority | Days open\nENG-214 Export times out | Dana | Urgent | 9\nENG-221 Invoice totals round up | Lee | High | 6\nENG-230 Slow search on large workspaces | Sam | Medium | 4\nENG-233 Dark mode contrast | Riley | Low | 2\n```"
+  "text": "Open issues this week: 4 open, 2 need you before Friday.\n```\nIssue | Owner | Priority | Days open\nACME-214 Export times out | Dana | Urgent | 9\nACME-221 Invoice totals round up | Lee | High | 6\nACME-230 Slow search on large workspaces | Sam | Medium | 4\nACME-233 Dark mode contrast | Riley | Low | 2\n```"
 }
 ````
 

@@ -125,14 +125,14 @@ const statusReport = {
       type: "table",
       columns: ["Issue", "Owner", "Priority", "Days open"],
       rows: [
-        ["[ENG-214 Export times out](https://linear.app/acme/issue/ENG-214)", "Dana", "Urgent", "9"],
-        ["[ENG-221 Invoice totals round up](https://linear.app/acme/issue/ENG-221)", "Lee", "High", "6"],
-        ["ENG-230 Slow search on large workspaces", "Sam", "Medium", "4"],
-        ["ENG-233 Dark mode contrast", "Riley", "Low", "2"],
+        ["[ACME-214 Export times out](https://linear.app/acme/issue/ACME-214)", "Dana", "Urgent", "9"],
+        ["[ACME-221 Invoice totals round up](https://linear.app/acme/issue/ACME-221)", "Lee", "High", "6"],
+        ["ACME-230 Slow search on large workspaces", "Sam", "Medium", "4"],
+        ["ACME-233 Dark mode contrast", "Riley", "Low", "2"],
       ],
     },
     { type: "context", text: "From Linear, read Nov 27 at 9:02 AM" },
-    { type: "buttons", buttons: [{ text: "Open the board", url: "https://linear.app/acme/team/ENG/active" }] },
+    { type: "buttons", buttons: [{ text: "Open the board", url: "https://linear.app/acme/team/ACME/active" }] },
   ],
 }
 
@@ -240,9 +240,9 @@ const EXAMPLES: Example[] = [
     surface: "A chat or Automation sending with `slack_send_as_bot`",
     through: "`executeSlackSendAsBot` with the feature off: only `text` is accepted.",
     inputLabel: "Tool call",
-    input: json({ target: "me", text: "Open issues this week: 4 open, 2 need you before Friday.\n```\nIssue | Owner | Priority | Days open\nENG-214 Export times out | Dana | Urgent | 9\nENG-221 Invoice totals round up | Lee | High | 6\nENG-230 Slow search on large workspaces | Sam | Medium | 4\nENG-233 Dark mode contrast | Riley | Low | 2\n```" }),
+    input: json({ target: "me", text: "Open issues this week: 4 open, 2 need you before Friday.\n```\nIssue | Owner | Priority | Days open\nACME-214 Export times out | Dana | Urgent | 9\nACME-221 Invoice totals round up | Lee | High | 6\nACME-230 Slow search on large workspaces | Sam | Medium | 4\nACME-233 Dark mode contrast | Riley | Low | 2\n```" }),
     inputLanguage: "json",
-    run: (place) => sendAsBot(place, { target: "me", text: "Open issues this week: 4 open, 2 need you before Friday.\n```\nIssue | Owner | Priority | Days open\nENG-214 Export times out | Dana | Urgent | 9\nENG-221 Invoice totals round up | Lee | High | 6\nENG-230 Slow search on large workspaces | Sam | Medium | 4\nENG-233 Dark mode contrast | Riley | Low | 2\n```" }, false),
+    run: (place) => sendAsBot(place, { target: "me", text: "Open issues this week: 4 open, 2 need you before Friday.\n```\nIssue | Owner | Priority | Days open\nACME-214 Export times out | Dana | Urgent | 9\nACME-221 Invoice totals round up | Lee | High | 6\nACME-230 Slow search on large workspaces | Sam | Medium | 4\nACME-233 Dark mode contrast | Riley | Low | 2\n```" }, false),
   },
   {
     slug: "pipeline-answer",

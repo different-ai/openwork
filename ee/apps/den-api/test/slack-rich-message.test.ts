@@ -31,8 +31,8 @@ test("a Markdown answer becomes a header, text, a real table, a divider and a co
       "",
       "| Issue | Owner | Days open |",
       "| --- | --- | ---: |",
-      "| [ENG-12](https://linear.app/acme/issue/ENG-12) | Dana | 9 |",
-      "| ENG-15 | Lee | 4 |",
+      "| [ACME-12](https://linear.app/acme/issue/ACME-12) | Dana | 9 |",
+      "| ACME-15 | Lee | 4 |",
       "",
       "---",
       "",
@@ -46,7 +46,7 @@ test("a Markdown answer becomes a header, text, a real table, a divider and a co
   const table = message?.blocks.find((block) => block.type === "table")
   assert.ok(table?.type === "table")
   assert.deepEqual(table.rows[0], [{ type: "raw_text", text: "Issue" }, { type: "raw_text", text: "Owner" }, { type: "raw_text", text: "Days open" }])
-  assert.deepEqual(table.rows[1]?.[0], { type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "link", url: "https://linear.app/acme/issue/ENG-12", text: "ENG-12" }] }] })
+  assert.deepEqual(table.rows[1]?.[0], { type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "link", url: "https://linear.app/acme/issue/ACME-12", text: "ACME-12" }] }] })
   assert.deepEqual(table.column_settings, [{ align: "left" }, { align: "left" }, { align: "right" }])
   assert.deepEqual(slackBlockProblems(message?.blocks ?? []), [])
 })

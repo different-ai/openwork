@@ -103,7 +103,7 @@ const REPORT = {
   text: "Open issues this week: 2 open.",
   components: [
     { type: "header", text: "Open issues" },
-    { type: "table", columns: ["Issue", "Owner", "Days open"], rows: [["[ENG-214](https://linear.app/acme/issue/ENG-214)", "Dana", "9"], ["ENG-221", "Lee", "6"]] },
+    { type: "table", columns: ["Issue", "Owner", "Days open"], rows: [["[ACME-214](https://linear.app/acme/issue/ACME-214)", "Dana", "9"], ["ACME-221", "Lee", "6"]] },
     { type: "context", text: "From Linear <!channel> <@U0SOMEONE>" },
     { type: "buttons", buttons: [{ text: "Open in OpenWork", open: "automations" }] },
   ],
@@ -127,7 +127,7 @@ test("with the feature on the same call arrives as a header, a real table, a con
   assert.equal(field(sent.body, "sent"), true, sent.raw)
   const page = await averyBrowser.slackPage()
   assert.match(page, /<div class="bk-header">Open issues<\/div>/)
-  assert.match(page, /<a href="https:\/\/linear\.app\/acme\/issue\/ENG-214" target="_blank" rel="noreferrer noopener">ENG-214<\/a>/)
+  assert.match(page, /<a href="https:\/\/linear\.app\/acme\/issue\/ACME-214" target="_blank" rel="noreferrer noopener">ACME-214<\/a>/)
   assert.match(page, /<th style="text-align:right;white-space:nowrap">Days open<\/th>/)
   assert.match(page, /<a class="bk-button" href="http:\/\/localhost:3005\/dashboard\/automations"[^>]*>Open in OpenWork<\/a>/)
   assert.doesNotMatch(page, /class="mention"/, "nobody is mentioned by text a model wrote in a component")
