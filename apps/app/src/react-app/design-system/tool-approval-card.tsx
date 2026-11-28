@@ -7,7 +7,7 @@ type Decision = "deny" | "allow_once" | "always_allow";
 
 const ORDER: readonly Decision[] = ["deny", "always_allow", "allow_once"];
 
-export function ToolApprovalCard({ title, line, decisions, busy, onDecide, children, turnOn, variant = "card", ...hooks }: {
+export function ToolApprovalCard({ title, line, decisions, busy, onDecide, children, turnOn, chooseTools, variant = "card", ...hooks }: {
   variant?: "card" | "inline" | "placeholder" | "dock";
   title: string;
   line?: string;
@@ -16,6 +16,7 @@ export function ToolApprovalCard({ title, line, decisions, busy, onDecide, child
   onDecide: (decision: Decision) => void;
   children?: ReactNode;
   turnOn?: { label: string; run: () => void };
+  chooseTools?: { label: string; run: () => void };
   "data-agent-ask"?: string;
   "data-tool-approval"?: string;
 }) {
@@ -39,6 +40,7 @@ export function ToolApprovalCard({ title, line, decisions, busy, onDecide, child
             {choice === "deny" ? t("agents.permission_ask_deny") : choice === "always_allow" ? t("agents.permission_ask_always") : t("agents.permission_ask_once")}
           </Button>
         ))}
+        {chooseTools && <Button type="button" size="sm" variant="default" data-agent-ask-choose-tools disabled={busy} onClick={chooseTools.run}>{chooseTools.label}</Button>}
         {turnOn && <Button type="button" size="sm" variant="outline" data-agent-ask-decision="turn_on" disabled={busy} onClick={turnOn.run}>{turnOn.label}</Button>}
       </div>
       {children}

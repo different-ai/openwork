@@ -65,10 +65,10 @@ export function registerAgentConnectorRequestTool(server: McpServer, input: {
   const scopes = input.capabilityContext.principal.scopes
   server.registerTool(AGENT_CONNECTOR_REQUEST_TOOL_NAME, {
     title: "Ask to use a connector",
-    description: "Ask a person to let this agent use a named connector that is off. Only ask when the current task needs that connector. If you already know the exact tool name or title, supply it as action; otherwise omit it. This never uses the connector. If a request is pending, finish what you can and say what is waiting. A person can approve in OpenWork for a later run.",
+    description: "Ask a person to let this agent use a named connector that is off. Only ask when the current task needs that connector. Name the one tool you need as action, by its exact name or title, so the person can allow just that tool; search for it first if you do not know it. Omit action only when the task needs the whole connector. This never uses the connector. If a request is pending, finish what you can and say what is waiting. A person can approve in OpenWork for a later run.",
     inputSchema: z.object({
       connectionName: z.string().trim().min(1).max(255).describe("Exact name of a connector that is off."),
-      action: z.string().trim().min(1).max(240).optional().describe("Exact tool name or title, if known."),
+      action: z.string().trim().min(1).max(240).optional().describe("Exact name or title of the tool you need. Leave out only to ask for the whole connector."),
     }).strict(),
     outputSchema,
   }, async ({ connectionName, action }) => {

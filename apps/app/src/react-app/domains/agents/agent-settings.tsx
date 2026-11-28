@@ -26,12 +26,11 @@ const NO_BUDGET = "none";
 type ToolRowProps = {
   tool: PersonalAgentTool;
   lockReason: string | null;
-  saving: boolean;
   sentMessage?: string;
   onChange: (access: PersonalAgentAccess) => void;
 };
 
-function ToolRow({ tool, lockReason, saving, sentMessage, onChange }: ToolRowProps) {
+function ToolRow({ tool, lockReason, sentMessage, onChange }: ToolRowProps) {
   const titleId = useId();
   const reasonId = useId();
   const control = toolControlState(tool);
@@ -48,10 +47,9 @@ function ToolRow({ tool, lockReason, saving, sentMessage, onChange }: ToolRowPro
           spacing={1}
           className="shrink-0"
           disabled={Boolean(lockReason)}
-          aria-disabled={saving || undefined}
           value={[control.access]}
           onValueChange={([value]) => {
-            if (saving || lockReason) return;
+            if (lockReason) return;
             if (value === "allow" && control.allowDisabled) return;
             if (value === "allow" || value === "ask" || value === "block") onChange(value);
             else if (tool.chosen === null && !control.hint) onChange(control.access);
@@ -115,8 +113,7 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnectio
           aria-describedby={collaboratorReason ? `${statusId} ${reasonId}` : statusId}
           checked={enabled}
           disabled={Boolean(collaboratorReason) || connection.lockedByOrganization}
-          aria-disabled={saving || undefined}
-          onCheckedChange={(checked) => { if (!saving) onConnectionChange(checked); }}
+          onCheckedChange={onConnectionChange}
         />
       </div>
       {collaboratorReason && <p id={reasonId} className="pb-1 text-xs text-dls-secondary">{collaboratorReason}</p>}
@@ -144,7 +141,6 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnectio
                     key={tool.name}
                     tool={tool}
                     lockReason={tool.lockedByOrganization ? t("agents.permissions_admin_blocked") : collaboratorReason}
-                    saving={saving}
                     sentMessage={sentTool?.name === tool.name ? sentTool.message : undefined}
                     onChange={(access) => onChange(tool.name, access)}
                   />
@@ -294,7 +290,7 @@ export function AgentSettings({ runtime, agent, onBack }: { runtime: AgentsRunti
               sentTool={sentTool?.connectionId === connection.connectionId ? { name: sentTool.toolName, message: pendingRoutineMessage(agent.owner) } : null}
               sentConnection={sentConnection?.connectionId === connection.connectionId ? pendingRoutineMessage(agent.owner) : null}
               onConnectionChange={(enabled) => save.mutate({ connection: { connectionId: connection.connectionId, enabled } })}
-              saving={save.isPending || share.isPending}
+              saving={share.isPending}
               memberId={memberId}
               onShare={(shared) => {
                 if (shared) setConfirm(connection);
