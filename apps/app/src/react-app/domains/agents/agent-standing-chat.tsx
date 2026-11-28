@@ -125,6 +125,7 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
       input: { message, clientMessageId: uncertain && submitted?.message === message ? submitted.clientMessageId : crypto.randomUUID() },
       createdAt: Date.now(),
     });
+    setText("");
   }
 
   return <div data-agent-thread className="flex h-full min-h-0 flex-col">
