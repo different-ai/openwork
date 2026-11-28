@@ -1,5 +1,6 @@
 import { useEffect } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import type { ComputerAccessSetting, ListedComputer } from "@openwork/types/den/computers"
 import type { RemoteDeviceRegisterRequest } from "@openwork/types/den/remote-devices"
 
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events"
@@ -53,6 +54,30 @@ export function useRemoteDevicesQuery(context: AutomationsDenContext) {
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
     retry: false,
+  })
+}
+
+const computersQueryKey = (context: AutomationsDenContext) => ["den", "computers", ...remoteDevicesContextQueryKey(context).slice(2)]
+
+export function useComputersQuery(context: AutomationsDenContext, enabled: boolean) {
+  return useQuery({
+    queryKey: computersQueryKey(context),
+    queryFn: () => { const { client, organizationId } = ready(context); return client.listComputers(organizationId) },
+    enabled: enabled && context.ready,
+    retry: false,
+  })
+}
+
+export function useSetComputerAccess(context: AutomationsDenContext) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ computerId, setting }: { computerId: string; setting: ComputerAccessSetting }) => {
+      const { client, organizationId } = ready(context)
+      return client.setComputerAccess(organizationId, computerId, setting)
+    },
+    onSuccess: (computer) => {
+      queryClient.setQueryData<ListedComputer[]>(computersQueryKey(context), current => current?.map(row => row.id === computer.id ? computer : row))
+    },
   })
 }
 

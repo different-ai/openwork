@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const MACHINE_ID_DOMAIN = "openwork-desktop-free-machine-v1";
+const COMPUTERS_MACHINE_KEY_DOMAIN = "openwork.computers.machine.v1";
 
 async function readOperatingSystemMachineId(platform, { exec = run, read = readFile, environment = process.env } = {}) {
   if (platform === "darwin") {
@@ -28,10 +29,20 @@ async function readOperatingSystemMachineId(platform, { exec = run, read = readF
   return undefined;
 }
 
-export async function readDesktopMachineId(platform = process.platform, dependencies) {
+async function readNormalizedMachineId(platform, dependencies) {
   const raw = (await readOperatingSystemMachineId(platform, dependencies))?.trim().toLowerCase();
-  if (!raw || raw.length < 8 || /^[0-]+$/.test(raw) || /^[f-]+$/.test(raw)) {
+  return !raw || raw.length < 8 || /^[0-]+$/.test(raw) || /^[f-]+$/.test(raw) ? null : raw;
+}
+
+export async function readDesktopMachineId(platform = process.platform, dependencies) {
+  const raw = await readNormalizedMachineId(platform, dependencies);
+  if (!raw) {
     throw new Error("Desktop free inference requires a stable machine identifier.");
   }
   return createHash("sha256").update(`${MACHINE_ID_DOMAIN}:${raw}`).digest("hex");
+}
+
+export async function readComputersMachineKey(platform = process.platform, dependencies) {
+  const raw = await readNormalizedMachineId(platform, dependencies).catch(() => null);
+  return raw ? createHash("sha256").update(`${COMPUTERS_MACHINE_KEY_DOMAIN}:${raw}`).digest("hex") : null;
 }

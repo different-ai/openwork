@@ -118,6 +118,7 @@ import { KeyboardShortcutsView } from "@/react-app/domains/settings/pages/keyboa
 import { ComputerUseView } from "@/react-app/domains/settings/pages/computer-use-view";
 import { RememberedFileSends, RememberedFileSharing } from "@/react-app/domains/settings/pages/computer-use-view";
 import { DevicesView } from "@/react-app/domains/settings/pages/devices-view";
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import { CloudAccountView } from "@/react-app/domains/settings/pages/cloud-account-view";
 import {
   connectPluginsForComposer,
@@ -478,6 +479,11 @@ function PermissionsRouteStart() {
     performance.mark("openwork:permissions:route-start");
   }, []);
   return <span hidden ref={markStart} />;
+}
+
+function DevicesSettingsPanel() {
+  const computersEnabled = useOrgFeature("computers");
+  return <DevicesView computersEnabled={computersEnabled} />;
 }
 
 function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
@@ -2725,7 +2731,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "computer":
         return <ComputerUseView />;
       case "devices":
-        return <DevicesView />;
+        return <DevicesSettingsPanel />;
       case "updates":
         return (
           <UpdatesView

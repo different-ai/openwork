@@ -126,12 +126,13 @@ export const REMOTE_DEVICE_EVENT_ACTORS = ["member", "device", "workbot", "syste
 export type RemoteDeviceEventActor = (typeof REMOTE_DEVICE_EVENT_ACTORS)[number]
 
 /** Stable event names; the message is the human sentence. */
+export const COMPUTER_ACTIVITY_EVENT_TYPES = ["computer_work_accepted", "computer_source_revoked", "computer_source_restored"] as const
 export const REMOTE_DEVICE_EVENT_TYPES = [
   "registered", "renamed", "removed", "restored", "disconnected",
   "state_changed", "app_updated", "computer_changed",
   "viewer_opened", "paused", "resumed", "rebuilt", "continued", "failed",
 ] as const
-export type RemoteDeviceEventType = (typeof REMOTE_DEVICE_EVENT_TYPES)[number]
+export type RemoteDeviceEventType = (typeof REMOTE_DEVICE_EVENT_TYPES)[number] | (typeof COMPUTER_ACTIVITY_EVENT_TYPES)[number]
 
 export const remoteDeviceEventSchema = z.object({
   id: z.string(),
@@ -141,7 +142,7 @@ export const remoteDeviceEventSchema = z.object({
   actor: z.enum(REMOTE_DEVICE_EVENT_ACTORS),
   createdAt: timestampSchema,
 }).meta({ ref: "RemoteDeviceEvent" })
-export type RemoteDeviceEvent = z.infer<typeof remoteDeviceEventSchema>
+export type RemoteDeviceEvent = Omit<z.infer<typeof remoteDeviceEventSchema>, "type"> & { type: RemoteDeviceEventType }
 
 export const remoteDeviceListResponseSchema = z.object({
   devices: z.array(remoteDeviceSchema),
@@ -192,6 +193,7 @@ export type RemoteDeviceReportedComputer = z.infer<typeof reportedComputerSchema
  */
 export const remoteDeviceDesktopReportSchema = z.object({
   installId: z.string().trim().min(8).max(160),
+  machineKey: z.string().length(64).regex(/^[a-f0-9]+$/).optional(),
   label: labelSchema,
   platform: z.enum(REMOTE_DEVICE_PLATFORMS),
   appVersion: z.string().trim().min(1).max(80),

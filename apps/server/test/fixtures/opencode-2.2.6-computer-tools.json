@@ -1,0 +1,157 @@
+{
+  "edit": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File to edit"
+      },
+      "oldString": {
+        "type": "string",
+        "description": "Exact text to find and replace"
+      },
+      "newString": {
+        "type": "string",
+        "description": "Text to replace oldString with (must differ from oldString)"
+      },
+      "replaceAll": {
+        "type": "boolean",
+        "description": "Whether to replace every occurrence of oldString. When false, oldString must match exactly once. Defaults to false."
+      }
+    },
+    "required": [
+      "path",
+      "oldString",
+      "newString"
+    ],
+    "additionalProperties": false
+  },
+  "glob": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string",
+        "description": "Glob pattern to match files against"
+      },
+      "path": {
+        "type": "string",
+        "description": "Directory to search. Defaults to the current working directory."
+      },
+      "hidden": {
+        "type": "boolean",
+        "description": "Include hidden files and directories (default: false)."
+      },
+      "limit": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "description": "Maximum number of matching files to return (default: 100)"
+      }
+    },
+    "required": [
+      "pattern"
+    ],
+    "additionalProperties": false
+  },
+  "grep": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Regular expression or literal text to match in file contents."
+      },
+      "path": {
+        "type": "string",
+        "description": "File or directory to search. Defaults to the current working directory."
+      },
+      "include": {
+        "type": "string",
+        "description": "Glob pattern to filter files (for example, \"*.js\" or \"*.{ts,tsx}\")"
+      },
+      "literal": {
+        "type": "boolean",
+        "description": "Treat `pattern` as exact text instead of a regular expression (default: false)."
+      },
+      "caseSensitive": {
+        "type": "boolean",
+        "description": "Use case-sensitive matching (default: true)."
+      },
+      "limit": {
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "description": "Maximum number of matching lines to return (default: 100)"
+      }
+    },
+    "required": [
+      "pattern"
+    ],
+    "additionalProperties": false
+  },
+  "read": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "File or directory to read"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "The line or directory entry to start reading from (1-based)"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "The maximum number of lines or directory entries to read (defaults to and capped at 2000)"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "additionalProperties": false
+  },
+  "shell": {
+    "type": "object",
+    "properties": {
+      "command": {
+        "type": "string",
+        "description": "Shell command string to execute"
+      },
+      "workdir": {
+        "type": "string",
+        "description": "Working directory to execute the command in. Defaults to the current working directory. When possible, avoid changing directories in the command and set the working directory here instead."
+      },
+      "timeout": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Timeout in milliseconds. Set to 0 to disable the timeout. Defaults to 120000 for foreground commands. Background commands have no timeout by default."
+      },
+      "background": {
+        "type": "boolean",
+        "description": "Run the command in the background and return immediately (useful for dev servers and long-running builds). You do not need to use '&' at the end of the command when using this parameter. You will be notified when it completes. DO NOT poll for completion."
+      }
+    },
+    "required": [
+      "command"
+    ],
+    "additionalProperties": false
+  },
+  "write": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the file to write to"
+      },
+      "content": {
+        "type": "string",
+        "description": "Content to write to the file"
+      }
+    },
+    "required": [
+      "path",
+      "content"
+    ],
+    "additionalProperties": false
+  }
+}

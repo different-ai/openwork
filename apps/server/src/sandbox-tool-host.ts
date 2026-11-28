@@ -36,6 +36,12 @@ export const sandboxToolSchemas = {
   glob: z.object({ path: path.optional(), pattern: text.min(1) }).strict(),
   grep: z.object({ path: path.optional(), pattern: text.min(1), literal: z.boolean().optional(), include: z.string().max(1024).optional() }).strict(),
 };
+const resultLimit = z.number().int().min(1).max(2000).optional();
+export const computerToolSchemas = {
+  ...sandboxToolSchemas,
+  glob: sandboxToolSchemas.glob.extend({ hidden: z.boolean().optional(), limit: resultLimit }),
+  grep: sandboxToolSchemas.grep.extend({ caseSensitive: z.boolean().optional(), limit: resultLimit }),
+};
 export const sandboxToolDescriptions: Record<SandboxToolName, string> = {
   shell: "Run a POSIX sh command in the local Linux sandbox, never the host. cwd must be an absolute guest path. Output is bounded; timeout does not prove a process was killed.",
   read: "Read a UTF-8 guest file (maximum 128 KB), with 1-based line offset and limit. Paths are absolute inside the sandbox, not host paths.",
@@ -50,7 +56,10 @@ export type SandboxToolHostDependencies = {
   provider: SandboxProvider;
   acquire(): Promise<SandboxHandle>;
   cwd: string;
+  computerTools?: boolean;
 };
+
+export class SandboxToolError extends Error {}
 
 function quote(value: string): string { return `'${value.replace(/'/g, `'"'"'`)}'`; }
 function bounded(output: string, exitCode?: number): SandboxToolResult {
@@ -66,7 +75,8 @@ function selectedPath(input: { path?: string; filePath?: string }): string {
 }
 
 export function createSandboxToolHost(dependencies: SandboxToolHostDependencies) {
-  const { provider } = dependencies;
+  const { provider, computerTools } = dependencies;
+  const schemas = computerTools ? computerToolSchemas : sandboxToolSchemas;
   const cwd = sandboxGuestPath(dependencies.cwd);
   return {
     async execute(toolName: string, input: unknown, call: SandboxToolCall = { sessionID: "", signal: new AbortController().signal }): Promise<SandboxToolResult> {
@@ -74,29 +84,38 @@ export function createSandboxToolHost(dependencies: SandboxToolHostDependencies)
       call.signal.throwIfAborted();
       const serialized = JSON.stringify(input);
       if (!serialized || encoder.encode(serialized).byteLength > MAX_INPUT_BYTES) throw new Error("Sandbox tool input is too large.");
-      const parsed = sandboxToolSchemas[name].parse(input);
+      const parsed = schemas[name].parse(input);
       const run = provider.blocks?.run;
       const files = provider.blocks?.files;
       const needsRun = name === "shell" || name === "glob" || name === "grep";
-      if (needsRun ? !run : !files) throw new Error(`The sandbox can't ${needsRun ? "run commands" : "open files"} right now. Nothing ran on this computer.`);
+      if (needsRun ? !run : !files) throw new SandboxToolError(`The sandbox can't ${needsRun ? "run commands" : "open files"} right now. Nothing ran on this computer.`);
       const handle = await dependencies.acquire();
       call.signal.throwIfAborted();
       if (handle.ref.providerId !== provider.id || handle.state !== "running") throw new Error("Sandbox handle must be running and belong to the configured provider.");
       const opts = { timeoutMs: 30_000 };
-      const read = async (guestPath: string) => {
+      const statPath = async (guestPath: string) => {
         if (!files) throw new Error("Sandbox files unavailable.");
-        const stat = await files.stat(handle, guestPath, opts);
+        return files.stat(handle, guestPath, opts);
+      };
+      const read = async (guestPath: string, stat: Awaited<ReturnType<typeof statPath>>) => {
+        if (!files) throw new Error("Sandbox files unavailable.");
+        if (computerTools && !stat) throw new SandboxToolError("That path does not exist on this computer.");
+        if (computerTools && stat?.kind === "directory") throw new SandboxToolError("That path is a directory, not a file.");
         if (!stat || stat.kind !== "file") throw new Error("Guest path is not a file.");
-        if (stat.size > MAX_FILE_BYTES) throw new Error("Guest file exceeds the 128 KB read/edit limit.");
+        if (stat.size > MAX_FILE_BYTES) throw new SandboxToolError("Guest file exceeds the 128 KB read/edit limit.");
         const bytes = await files.read(handle, guestPath, opts);
-        if (bytes.byteLength > MAX_FILE_BYTES) throw new Error("Guest file exceeds the 128 KB read/edit limit.");
-        if (bytes.includes(0)) throw new Error("Guest file is binary; only UTF-8 text is supported.");
-        return decoder.decode(bytes);
+        if (bytes.byteLength > MAX_FILE_BYTES) throw new SandboxToolError("Guest file exceeds the 128 KB read/edit limit.");
+        if (bytes.includes(0)) throw new SandboxToolError("Guest file is binary; only UTF-8 text is supported.");
+        try { return decoder.decode(bytes); }
+        catch (error) {
+          if (computerTools) throw new SandboxToolError("Guest file is not valid UTF-8 text.");
+          throw error;
+        }
       };
       const write = async (guestPath: string, content: string) => {
         if (!files) throw new Error("Sandbox files unavailable.");
         const bytes = encoder.encode(content);
-        if (bytes.byteLength > MAX_FILE_BYTES) throw new Error("Edited guest file exceeds the 128 KB limit.");
+        if (bytes.byteLength > MAX_FILE_BYTES) throw new SandboxToolError("Edited guest file exceeds the 128 KB limit.");
         call.signal.throwIfAborted();
         await files.write(handle, guestPath, bytes, opts);
       };
@@ -108,7 +127,22 @@ export function createSandboxToolHost(dependencies: SandboxToolHostDependencies)
         result = bounded(`${completed.stdout}${completed.stderr ? `\n[stderr]\n${completed.stderr}` : ""}`, completed.exitCode);
       } else if (name === "read") {
         const args = sandboxToolSchemas.read.parse(parsed);
-        const content = await read(selectedPath(args));
+        const guestPath = selectedPath(args);
+        const stat = await statPath(guestPath);
+        if (computerTools && stat?.kind === "directory") {
+          if (!run) throw new SandboxToolError("This computer cannot list directories.");
+          const start = args.offset ?? 1;
+          const limit = args.limit ?? 2000;
+          const target = quote(guestPath);
+          const command = `cd -P ${target} || exit 2
+[ "$(pwd -P)" = ${target} ] || exit 2
+LC_ALL=C ls -1Ab . | awk -v start=${start} -v limit=${limit} 'NR >= start { print; if (++count == limit) exit }' | head -c ${SANDBOX_OUTPUT_BYTES + 1}`;
+          const completed = await run(handle, { command, shell: "sh", cwd: "/", ...opts });
+          if (completed.exitCode !== 0 || completed.stderr) throw new SandboxToolError("Could not list that directory on this computer.");
+          call.signal.throwIfAborted();
+          return bounded(completed.stdout);
+        }
+        const content = await read(guestPath, stat);
         const lines = content.split("\n");
         const start = (args.offset ?? 1) - 1;
         const end = Math.min(lines.length, start + (args.limit ?? 2000));
@@ -119,31 +153,47 @@ export function createSandboxToolHost(dependencies: SandboxToolHostDependencies)
         result = bounded("Guest file written.");
       } else if (name === "edit") {
         const args = sandboxToolSchemas.edit.parse(parsed);
-        if (args.oldString === args.newString) throw new Error("oldString and newString must differ.");
+        if (args.oldString === args.newString) throw new SandboxToolError("oldString and newString must differ.");
         const guestPath = selectedPath(args);
-        const content = await read(guestPath);
+        const content = await read(guestPath, await statPath(guestPath));
         const parts = content.split(args.oldString);
         const matches = parts.length - 1;
-        if (!matches) throw new Error("oldString was not found in the guest file.");
-        if (matches > 1 && !args.replaceAll) throw new Error("oldString is ambiguous; provide more context or replaceAll.");
+        if (!matches) throw new SandboxToolError("oldString was not found in the guest file.");
+        if (matches > 1 && !args.replaceAll) throw new SandboxToolError("oldString is ambiguous; provide more context or replaceAll.");
         await write(guestPath, parts.join(args.newString));
         result = bounded(`Replaced ${matches} occurrence${matches === 1 ? "" : "s"} in the guest file.`);
       } else {
         if (!run) throw new Error("Sandbox run unavailable.");
         let command: string;
         if (name === "glob") {
-          const args = sandboxToolSchemas.glob.parse(parsed);
+          const args = computerToolSchemas.glob.parse(parsed);
           const root = args.path ?? "/";
-          if (args.pattern.startsWith("/") || args.pattern.split("/").some(part => part === ".." || part === ".") || /[\u0000-\u001f\u007f]/u.test(args.pattern)) throw new Error("Use a relative guest glob without dot segments or control characters.");
-          command = `test -d ${quote(root)} || exit 2\nfind ${quote(root)} -type f -path ${quote(`${root === "/" ? "" : root}/${args.pattern}`)} -print | head -c ${SANDBOX_OUTPUT_BYTES + 1}`;
+          if (args.pattern.startsWith("/") || args.pattern.split("/").some(part => part === ".." || part === ".") || /[\u0000-\u001f\u007f]/u.test(args.pattern)) throw new SandboxToolError("Use a relative guest glob without dot segments or control characters.");
+          if (computerTools) {
+            const prefix = root === "/" ? "" : root.replace(/[?*\[\]\\]/g, "\\$&");
+            const pattern = args.pattern.startsWith("**/")
+              ? `\\( -path ${quote(`${prefix}/${args.pattern}`)} -o -path ${quote(`${prefix}/${args.pattern.slice(3)}`)} \\)`
+              : `-path ${quote(`${prefix}/${args.pattern}`)}`;
+            const hidden = args.hidden ? "" : "-mindepth 1 -name '.*' -prune -o ";
+            command = `test -d ${quote(root)} || exit 2\nfind ${quote(root)} ${hidden}-type f ${pattern} -print | head -n ${args.limit || 100} | head -c ${SANDBOX_OUTPUT_BYTES + 1}`;
+          } else command = `test -d ${quote(root)} || exit 2\nfind ${quote(root)} -type f -path ${quote(`${root === "/" ? "" : root}/${args.pattern}`)} -print | head -c ${SANDBOX_OUTPUT_BYTES + 1}`;
         } else {
-          const args = sandboxToolSchemas.grep.parse(parsed);
+          const args = computerToolSchemas.grep.parse(parsed);
           const root = args.path ?? "/";
-          if (/[\u0000\r\n]/u.test(args.pattern) || (args.include && /[\u0000\r\n/]/u.test(args.include))) throw new Error("grep expects a single-line pattern and a basename include glob.");
+          if (/[\u0000\r\n]/u.test(args.pattern) || (args.include && /[\u0000\r\n/]/u.test(args.include))) throw new SandboxToolError("grep expects a single-line pattern and a basename include glob.");
           const flag = args.literal ? "-F" : "";
-          command = `test -d ${quote(root)} || exit 2\ngrep ${flag} -e ${quote(args.pattern)} /dev/null\nstatus=$?\n[ "$status" -le 1 ] || exit "$status"\nfind ${quote(root)} -type f${args.include ? ` -name ${quote(args.include)}` : ""} -exec grep ${flag} -nH -e ${quote(args.pattern)} '{}' + | head -c ${SANDBOX_OUTPUT_BYTES + 1}`;
+          if (computerTools) {
+            const options = `${args.literal ? "-F" : "-E"}${args.caseSensitive === false ? " -i" : ""}`;
+            const include = args.include ? ` -name ${quote(args.include)}` : "";
+            command = `test -d ${quote(root)} || exit 3\ngrep ${options} -e ${quote(args.pattern)} /dev/null\nstatus=$?\n[ "$status" -le 1 ] || exit 4\nfind ${quote(root)} -type f${include} -exec grep ${options} -nH -e ${quote(args.pattern)} '{}' + | head -n ${args.limit || 100} | head -c ${SANDBOX_OUTPUT_BYTES + 1}`;
+          } else command = `test -d ${quote(root)} || exit 2\ngrep ${flag} -e ${quote(args.pattern)} /dev/null\nstatus=$?\n[ "$status" -le 1 ] || exit "$status"\nfind ${quote(root)} -type f${args.include ? ` -name ${quote(args.include)}` : ""} -exec grep ${flag} -nH -e ${quote(args.pattern)} '{}' + | head -c ${SANDBOX_OUTPUT_BYTES + 1}`;
         }
         const completed = await run(handle, { command, shell: "sh", cwd: "/", ...opts });
+        if (computerTools && (completed.exitCode !== 0 || completed.stderr)) {
+          if (name === "grep" && completed.exitCode === 4) throw new SandboxToolError("Could not use that grep pattern. Check the regular expression or set literal to true.");
+          if (completed.exitCode === (name === "grep" ? 3 : 2)) throw new SandboxToolError("Search path is not a directory on this computer.");
+          throw new SandboxToolError("Could not complete the search on this computer.");
+        }
         result = bounded(`${completed.stdout}${completed.stderr ? `\n[stderr]\n${completed.stderr}` : ""}`, completed.exitCode);
       }
       call.signal.throwIfAborted();

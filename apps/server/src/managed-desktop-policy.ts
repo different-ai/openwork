@@ -5,6 +5,7 @@ import { PRIVATE_VALUE_FILLS_ROUTE, privateValueFillReportResponseSchema, type P
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
+import { createComputersDen } from "./computers/den.js";
 import { externalFetch } from "./server-fetch.js";
 import { createPersonalAgentsFeatureLookup } from "./personal-agents-feature.js";
 import { ApiError } from "./errors.js";
@@ -88,6 +89,7 @@ export function managedDesktopPolicy(config: ServerConfig, options?: { sandboxFr
 class ManagedDesktopPolicy {
   readonly evaluationToken = randomBytes(32).toString("base64url");
   private session: CloudProviderDenSession | null = null;
+  readonly computersDen = createComputersDen(() => this.session);
   private generation = 0;
   private readonly lookupPersonalAgentsFeature = createPersonalAgentsFeatureLookup(externalFetch);
   private installed: { generation: number; policy: DesktopConfig | null } | undefined;

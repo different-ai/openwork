@@ -4,8 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RemoteSessionAccessMode } from "@openwork/types/automations";
 import { organizationRemoteSessionSettingsResponseSchema, type OrganizationRemoteSessionSettingsResponse } from "@openwork/types/den/remote-sessions";
 import { getErrorMessage, requestJson } from "../../../_lib/den-flow";
+import { orgFeatureEnabled } from "../../../_lib/den-org";
+import { markFeatureUsed } from "../../../_lib/feature-usage";
 import { ORG_SCOPE_HEADER } from "../../../_lib/org-scope";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
+import { computerRulesQueryKey } from "./computer-rules-data";
+import { inventoryOrganizationKey } from "./inventory-data";
 
 const settingsPath = "/v1/org/remote-session-settings";
 const REQUEST_TIMEOUT_MS = 35_000;
@@ -73,7 +77,8 @@ export function useRemoteAccessSettings(orgId: string, enabled: boolean) {
 
 export function useSaveRemoteAccessSettings(orgId: string) {
   const queryClient = useQueryClient();
-  const { runReauthableAction } = useOrgDashboard();
+  const { orgContext, runReauthableAction } = useOrgDashboard();
+  const inventoryEnabled = orgContext?.organization.id === orgId && orgFeatureEnabled(orgContext, "computers");
   return useMutation({
     mutationKey: [...remoteAccessSettingsQueryKey(orgId), "save"], retry: false,
     mutationFn: async (access: RemoteSessionAccessMode): Promise<OrganizationRemoteSessionSettingsResponse> => {
@@ -88,6 +93,11 @@ export function useSaveRemoteAccessSettings(orgId: string) {
       queryClient.setQueryData(remoteAccessSettingsQueryKey(orgId), saved);
       void queryClient.invalidateQueries({ queryKey: ["organization-computers", orgId] });
       void queryClient.invalidateQueries({ queryKey: ["my-computers", orgId] });
+      if (inventoryEnabled) {
+        markFeatureUsed("computers");
+        void queryClient.invalidateQueries({ queryKey: computerRulesQueryKey(orgId) });
+        void queryClient.invalidateQueries({ queryKey: inventoryOrganizationKey(orgId) });
+      }
     },
   });
 }

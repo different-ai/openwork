@@ -5,6 +5,7 @@ import { dbSnapshotStore, defaultOwner } from "../admin-metrics/snapshots.js"
 import { db } from "../db.js"
 import { createHeadlessRunnerClient, defaultHeadlessRunnerDeps, type RunnerComputerFleet, type RunnerResult } from "../headless-runner/client.js"
 import { appLogger } from "../observability/logger.js"
+import { legacyRemoteDeviceEvent } from "../remote-device-events.js"
 import { foldFleet, historyFromHours, historyHourKeys, hourKey, mergeHours, storedHour } from "./history.js"
 import { readComputerDetail, readComputerFleet, type ComputerDetailRead, type ComputerFleetClient } from "./reader.js"
 import { computerKey, notConfiguredComputerFleet, type ComputerConversation, type ComputerOwner, type ComputerReports } from "./state.js"
@@ -88,7 +89,8 @@ async function loadKnownComputer(key: string): Promise<{ owner: ComputerOwner | 
       : Promise.resolve([]),
     device
       ? db.select({ at: RemoteDeviceEventTable.createdAt, type: RemoteDeviceEventTable.type, level: RemoteDeviceEventTable.level, message: RemoteDeviceEventTable.message }).from(RemoteDeviceEventTable)
-        .where(eq(RemoteDeviceEventTable.deviceId, device.id)).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(DETAIL_EVENTS)
+        .where(and(eq(RemoteDeviceEventTable.deviceId, device.id), legacyRemoteDeviceEvent))
+        .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(DETAIL_EVENTS)
       : Promise.resolve([]),
   ])
   return {

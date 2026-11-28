@@ -220,6 +220,22 @@
       "development": "./src/den/desktop-policies.ts",
       "default": "./src/den/desktop-policies.ts"
     },
+    "./den/computers": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/computers.d.ts",
+        "default": "./src/den/computers.ts"
+      },
+      "development": "./src/den/computers.ts",
+      "default": "./src/den/computers.ts"
+    },
+    "./den/computer-inventory": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/computer-inventory.d.ts",
+        "default": "./src/den/computer-inventory.ts"
+      },
+      "development": "./src/den/computer-inventory.ts",
+      "default": "./src/den/computer-inventory.ts"
+    },
     "./den/remote-devices": {
       "types": {
         "openwork-build": "./dist/types/src/den/remote-devices.d.ts",

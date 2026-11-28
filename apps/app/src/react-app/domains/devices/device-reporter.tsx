@@ -5,7 +5,6 @@ import { useQueryClient } from "@tanstack/react-query"
 import { readDenSettings } from "@/app/lib/den"
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events"
 import { desktopBridge } from "@/app/lib/desktop"
-import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { desktopRunnerId } from "@/react-app/domains/automations/automation-runner-identity"
 import { useAutomationsDenContext } from "@/react-app/domains/automations/use-automations"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
@@ -14,11 +13,7 @@ import { DEVICE_REPORT_POLL_MS, createDeviceReporter, deviceReportFailure, type 
 import { useThisDeviceStore } from "./this-device-store"
 import { remoteDevicesQueryKey } from "./use-remote-devices"
 
-export function DeviceReporter() {
-  return isElectronRuntime() ? <ActiveDeviceReporter /> : null
-}
-
-function ActiveDeviceReporter() {
+export function DeviceReporter({ computersEnabled }: { computersEnabled: boolean }) {
   const context = useAutomationsDenContext()
   const { refresh: checkSignIn } = useDenAuth()
   const disconnected = useThisComputerDisconnected()
@@ -39,6 +34,7 @@ function ActiveDeviceReporter() {
     if (!active || !client || !organizationId || disconnected) return
     const signIn = denSignInKey(readDenSettings())
     const reporter = createDeviceReporter({
+      computersEnabled,
       readIdentity: () => desktopBridge.desktopDeviceIdentity(),
       readSnapshot: () => desktopBridge.computerDevices(),
       fallbackInstallId: desktopRunnerId,
@@ -72,6 +68,6 @@ function ActiveDeviceReporter() {
       window.removeEventListener("focus", check)
       document.removeEventListener("visibilitychange", check)
     }
-  }, [active, checkSignIn, client, disconnected, organizationId, queryClient])
+  }, [active, checkSignIn, client, computersEnabled, disconnected, organizationId, queryClient])
   return null
 }

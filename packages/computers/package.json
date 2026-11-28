@@ -1,0 +1,26 @@
+{
+  "name": "@openwork/computers",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": {
+        "openwork-build": "./dist/index.d.ts",
+        "default": "./src/index.ts"
+      },
+      "bun": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --conditions=development --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@openwork/types": "workspace:*"
+  }
+}

@@ -1,6 +1,6 @@
 import { DASHBOARD_PAGE_CLASS } from "../../../_components/ui/dashboard-styles";
-import { ComputersScreen } from "../../_features/computers/computers-screen";
+import { ComputersInventoryRoute } from "../../_features/computers/inventory-admin-route";
 
 export default function ComputersPage() {
-  return <div className={DASHBOARD_PAGE_CLASS}><ComputersScreen /></div>;
+  return <div className={DASHBOARD_PAGE_CLASS}><ComputersInventoryRoute /></div>;
 }

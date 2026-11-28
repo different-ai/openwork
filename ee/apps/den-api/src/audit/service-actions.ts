@@ -94,6 +94,12 @@ export const auditServiceActionDeclarations = [
     notes: `Saved Workflow run and its workflow_run receipt; REST equivalent workflow.run. Route and Automation callers of executeMarketplaceCapability pass no audit hook (recorded by their route or not operation-audited). ${MCP_PRINCIPAL}`,
   },
   {
+    action: "computers.shell", kind: "computer.execution", class: "tenant_job", resource: { type: "remote_device", idFrom: "computerId argument" }, origin: "mcp",
+    tools: ["execute_capability computers:shell"], callSites: ["src/mcp/computer-capabilities.ts:computerSource.execute → runComputerShell"],
+    jobOutcome: "Runner callbacks POST /v1/computer-commands/:id/{claim,complete} (declared routes).",
+    notes: `Queues a sandbox command for a computer that allows work from Workbot. Never snapshots command text, shared paths or output. ${MCP_PRINCIPAL}`,
+  },
+  {
     action: "remote_session.create", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: null }, origin: "mcp",
     tools: ["execute_capability remote-session:create"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],
     jobOutcome: "Desktop: runner callbacks POST /v1/remote-session-commands/:id/{claim,complete,session} (declared routes). Cloud: not_recorded: the session runs on the member's OpenWork Web worker.",

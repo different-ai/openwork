@@ -365,6 +365,8 @@ export const REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY = "remote_session_access_v1
  * allowed.
  */
 export const REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY = "remote_session_choice_v1"
+/** The runner can claim shell commands scoped to its shared sandbox folders. */
+export const COMPUTER_SHELL_RUNNER_CAPABILITY = "computer_shell_v1"
 export const AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER = "x-openwork-automation-model-attention" as const
 export const automationDesktopRunnerCapabilitySchema = z.enum([
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
@@ -375,6 +377,7 @@ export const automationDesktopRunnerCapabilitySchema = z.enum([
   REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
   REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY,
   REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY,
+  COMPUTER_SHELL_RUNNER_CAPABILITY,
 ])
 /**
  * Released Dens accept at most five capabilities and answer 400 to more, so a

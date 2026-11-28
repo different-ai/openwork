@@ -453,7 +453,12 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
       });
       try { return await Promise.race([command, budget]); }
       catch (error) {
-        if (dispatched && sandboxErrorCode(error)) throw sandboxFailure(error, "start");
+        if (dispatched && sandboxErrorCode(error)) {
+          const outcome = call?.signal.aborted
+            ? "OpenWork stopped waiting for the sandbox, but the operation may have partly run or already finished."
+            : "OpenWork doesn't know how the sandbox operation ended. It may have finished.";
+          throw new Error(`${outcome} Check the file or folder in the sandbox before running it again.`, { cause: error });
+        }
         if (!dispatched && error instanceof Error && !/Nothing ran/.test(error.message)) throw new Error(`${error.message} Nothing ran.`, { cause: error });
         throw error;
       } finally { clearTimeout(timer); }

@@ -170,13 +170,14 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Devices"],
       summary: "Rename a computer I registered",
-      description: "Renames a virtual computer that was registered by hand. Desktops name themselves and Workbot's computers are named after their chat, so both answer 403. Requires active organization membership; device ownership and management permissions still apply.",
+      description: "Renames a virtual computer that was registered by hand. Desktops name themselves and Workbot's computers are named after their chat, so both answer 403. With Computers on, a name already used by another computer the caller owns answers 409, ignoring case. Requires active organization membership; device ownership and management permissions still apply.",
       responses: {
         200: jsonResponse("The renamed computer.", remoteDeviceResponseSchema),
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
         401: unauthorized,
         403: jsonResponse("This computer names itself, or it is shared and the caller cannot manage shared computers.", forbiddenSchema),
         404: deviceNotFound,
+        409: jsonResponse("The caller already has a computer with this name.", z.object({ error: z.literal("name_taken"), message: z.string() })),
       },
     }),
     orgMemberRoute(),
@@ -186,7 +187,7 @@ export function registerOrgRemoteDeviceRoutes<T extends { Variables: OrgRouteVar
       const actor = actorOf(c)
       if (!actor) return c.json({ error: "organization_not_found" }, 404)
       try {
-        return c.json({ device: await renameRemoteDevice(actor, c.req.valid("param").deviceId, c.req.valid("json").label, { canManageShared: await canManageShared(c) }) })
+        return c.json({ device: await renameRemoteDevice(actor, c.req.valid("param").deviceId, c.req.valid("json").label, { canManageShared: await canManageShared(c), uniqueName: c.get("organizationContext")?.features.computers }) })
       } catch (error) {
         const failed = remoteDeviceFailure(error)
         return c.json(failed.body, failed.status)
