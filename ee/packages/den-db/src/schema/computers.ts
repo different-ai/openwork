@@ -36,6 +36,8 @@ export const ComputerGrantTable = mysqlTable(
     targetDeviceId: denTypeIdColumn("remoteDevice", "target_device_id").notNull(),
     sourceKey: varchar("source_key", { length: 64 }).notNull(),
     folders: compatJsonColumn<ComputerFolder[]>("folders").notNull(),
+    revokedAt: timestamp("revoked_at", { fsp: 3 }),
+    revokedByMemberId: denTypeIdColumn("member", "revoked_by_member_id"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()

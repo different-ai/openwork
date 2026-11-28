@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { and, desc, eq, gte, inArray, isNull, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
@@ -58,7 +59,7 @@ import {
 } from "./remote-sessions/access.js"
 import { withDeadlockRetry } from "./utils/deadlock-retry.js"
 import { db } from "./db.js"
-import { getOrganizationFeatures } from "./features.js"
+import { getOrganizationFeatures, organizationFeatureEnabled } from "./features.js"
 import { listOrganizationComputerInstances, type OrganizationInstanceFilters } from "./organization-computer-instances.js"
 import { pruneRemoteDeviceEvents, recordRemoteDeviceEvent as recordEvent, type RemoteDeviceDatabase, type RemoteDeviceEventData } from "./remote-device-events.js"
 
@@ -75,7 +76,7 @@ type DeviceRow = typeof RemoteDeviceTable.$inferSelect
 type EventData = RemoteDeviceEventData
 
 const DESKTOP_PROVIDER: RemoteDeviceProvider = "openwork_desktop"
-const WORKBOT_COMPUTER_LABEL = "Workbot's computer"
+export const WORKBOT_COMPUTER_LABEL = "Workbot's computer"
 const SYNC_LIMIT = 500
 const VIEWER_EVENT_QUIET_MS = 10 * 60_000
 const TOUCH_QUIET_MS = 60_000
@@ -118,7 +119,7 @@ function platformLabel(platform: RemoteDevicePlatform | null) {
   return "Computer"
 }
 
-function latest(...values: Array<Date | null | undefined>): Date | null {
+export function latestDeviceContact(...values: Array<Date | null | undefined>): Date | null {
   let result: Date | null = null
   for (const value of values) if (value && (!result || value > result)) result = value
   return result
@@ -126,7 +127,7 @@ function latest(...values: Array<Date | null | undefined>): Date | null {
 
 type RunnerFacts = { lastSeenAt: Date; capabilities: readonly string[]; appVersion: string; sessionAccess: RemoteSessionAccessMode | null }
 
-function remoteAccessOf(
+export function remoteAccessOf(
   row: Pick<DeviceRow, "kind" | "provider">,
   runner: Pick<RunnerFacts, "capabilities" | "sessionAccess"> | null,
   disconnected: boolean,
@@ -153,6 +154,30 @@ function quietSince(lastSeenAt: Date | null, now: number, ms: number) {
   return lastSeenAt === null || now - lastSeenAt.getTime() > ms
 }
 
+export function memberRemoteDeviceActions(row: Pick<DeviceRow, "ownerMemberId" | "provider" | "source">, input: {
+  viewer: RemoteDeviceActor; canManageShared: boolean; disconnected: boolean; lastSeenAt: Date | null; now: number
+}) {
+  const mine = row.ownerMemberId === input.viewer.memberId
+  const manages = mine || (row.ownerMemberId === null && input.canManageShared)
+  const signedIn = row.provider === DESKTOP_PROVIDER
+  return {
+    canRename: manages && row.source === "manual",
+    canRemove: manages && (!signedIn || input.disconnected || quietSince(input.lastSeenAt, input.now, REMOTE_DEVICE_DESKTOP_RETENTION_MS)),
+    canDisconnect: mine && signedIn && !input.disconnected,
+  }
+}
+
+export function organizationRemoteDeviceActions(row: Pick<DeviceRow, "ownerMemberId" | "provider" | "source">, input: {
+  canDisconnect: boolean; former: boolean; disconnected: boolean; lastSeenAt: Date | null; now: number
+}) {
+  const signedIn = row.provider === DESKTOP_PROVIDER
+  return {
+    canRemove: input.canDisconnect && row.provider !== "workbot"
+      && (input.former || input.disconnected || row.source === "manual" || (signedIn && quietSince(input.lastSeenAt, input.now, ORGANIZATION_COMPUTER_STALE_MS))),
+    canDisconnect: input.canDisconnect && signedIn && row.ownerMemberId !== null && !input.former && !input.disconnected,
+  }
+}
+
 function workingSinceOf(row: Pick<DeviceRow, "provider">, activeTurnSince: Date | null | undefined, now: number): string | null {
   if (row.provider !== "workbot" || !activeTurnSince) return null
   return now - activeTurnSince.getTime() <= REMOTE_DEVICE_WORKING_MAX_MS ? activeTurnSince.toISOString() : null
@@ -167,10 +192,8 @@ function deviceView(row: DeviceRow, input: {
   policy: RemoteSessionAccessPolicy | null
   now: number
 }): RemoteDevice {
-  const lastSeenAt = latest(row.lastSeenAt, input.runner?.lastSeenAt)
+  const lastSeenAt = latestDeviceContact(row.lastSeenAt, input.runner?.lastSeenAt)
   const mine = row.ownerMemberId === input.viewer.memberId
-  const manages = mine || (row.ownerMemberId === null && input.canManageShared)
-  const signedIn = row.provider === DESKTOP_PROVIDER
   const disconnected = input.disconnectedAt !== null
   return {
     id: row.id,
@@ -189,10 +212,8 @@ function deviceView(row: DeviceRow, input: {
     computerId: row.kind === "desktop" && input.runner?.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY) ? row.externalId : null,
     workbotChat: row.workbotChat,
     workingSince: workingSinceOf(row, input.session?.activeTurnSince, input.now),
-    canRename: manages && row.source === "manual",
-    canRemove: manages && (!signedIn || disconnected || quietSince(lastSeenAt, input.now, REMOTE_DEVICE_DESKTOP_RETENTION_MS)),
+    ...memberRemoteDeviceActions(row, { ...input, disconnected, lastSeenAt }),
     disconnectedAt: iso(input.disconnectedAt),
-    canDisconnect: mine && signedIn && !disconnected,
     remoteAccess: mine ? remoteAccessOf(row, input.runner, disconnected, input.policy) : null,
   }
 }
@@ -202,7 +223,7 @@ function labelOf(row: Pick<DeviceRow, "label" | "provider" | "workbotChat">, tit
   return `${WORKBOT_COMPUTER_LABEL} for “${title.slice(0, 60)}”`
 }
 
-function eventView(row: typeof RemoteDeviceEventTable.$inferSelect): RemoteDeviceEvent {
+export function eventView(row: typeof RemoteDeviceEventTable.$inferSelect): RemoteDeviceEvent {
   return { id: row.id, type: row.type, level: row.level, message: row.message, actor: row.actor, createdAt: row.createdAt.toISOString() }
 }
 
@@ -490,6 +511,14 @@ function stateEvent(state: RemoteDeviceState, detail: string | null): { level: R
   return { level, message: detail ? `${STATE_SENTENCE[state]}: ${detail}` : STATE_SENTENCE[state] }
 }
 
+async function desktopMachineKey(tx: Database, actor: RemoteDeviceActor, machineKey: string) {
+  const [member] = await tx.select({ userId: MemberTable.userId }).from(MemberTable).where(and(
+    eq(MemberTable.organizationId, actor.organizationId), eq(MemberTable.id, actor.memberId), isNull(MemberTable.removedAt),
+  )).limit(1)
+  if (!member?.userId || !await organizationFeatureEnabled(actor.organizationId, "computers", { userId: member.userId, database: tx, lock: "share" })) return undefined
+  return createHash("sha256").update(`${actor.organizationId}\n${machineKey}`).digest("hex")
+}
+
 export async function reportDesktopDevice(
   actor: RemoteDeviceActor,
   report: RemoteDeviceDesktopReport,
@@ -507,7 +536,9 @@ export async function reportDesktopDevice(
     const [existing] = await tx.select().from(RemoteDeviceTable).where(identity).limit(1).for("update")
     const disconnection = await findDisconnection(actor.organizationId, actor.memberId, report.installId, tx)
     if (disconnection && await reconnectIfSignedInAgain(disconnection, options.session, { database: tx, now }) === "refused") throw new ComputerDisconnectedError()
+    const machineKey = report.machineKey ? await desktopMachineKey(tx, actor, report.machineKey) : undefined
     const values = {
+      ...(machineKey ? { machineKey } : {}),
       platform: report.platform,
       label: report.label,
       state,
@@ -711,7 +742,7 @@ function likePattern(search: string) {
   return `%${search.toLowerCase().replace(/[|%_]/g, (char) => `|${char}`)}%`
 }
 
-const runnerJoin = and(
+export const remoteDeviceRunnerJoin = and(
   eq(RemoteDeviceTable.kind, "desktop"),
   eq(AutomationRunnerTable.id, RemoteDeviceTable.externalId),
   eq(AutomationRunnerTable.organization_id, RemoteDeviceTable.organizationId),
@@ -768,7 +799,7 @@ const organizationComputerColumns = {
 
 function organizationComputerQuery(where: SQL | undefined) {
   return db.select(organizationComputerColumns).from(RemoteDeviceTable)
-    .leftJoin(AutomationRunnerTable, runnerJoin)
+    .leftJoin(AutomationRunnerTable, remoteDeviceRunnerJoin)
     .leftJoin(ComputerDisconnectionTable, deviceDisconnectionJoin)
     .leftJoin(OrganizationTable, eq(OrganizationTable.id, RemoteDeviceTable.organizationId))
     .leftJoin(MemberTable, and(eq(MemberTable.id, RemoteDeviceTable.ownerMemberId), eq(MemberTable.organizationId, RemoteDeviceTable.organizationId)))
@@ -798,9 +829,8 @@ async function organizationComputerViews(
   const problemCount = new Map(problems.map((row) => [row.deviceId, Number(row.total)]))
   return rows.map((row, index) => {
     const device = row.device
-    const lastSeenAt = latest(device.lastSeenAt, row.runnerSeenAt)
+    const lastSeenAt = latestDeviceContact(device.lastSeenAt, row.runnerSeenAt)
     const lastEvent = lastEvents[index]
-    const signedIn = device.provider === DESKTOP_PROVIDER
     const disconnected = row.disconnectedAt !== null
     const former = device.ownerMemberId !== null && (row.ownerMemberRowId === null || row.ownerRemovedAt !== null || row.ownerUserId === null)
     return {
@@ -826,10 +856,8 @@ async function organizationComputerViews(
       removedAt: iso(device.removedAt),
       recentProblems: problemCount.get(device.id) ?? 0,
       lastEvent: lastEvent ? organizationComputerEventView(lastEvent) : null,
-      canRemove: viewer.canDisconnect && device.provider !== "workbot"
-        && (former || disconnected || device.source === "manual" || (signedIn && quietSince(lastSeenAt, now.getTime(), ORGANIZATION_COMPUTER_STALE_MS))),
+      ...organizationRemoteDeviceActions(device, { ...viewer, former, disconnected, lastSeenAt, now: now.getTime() }),
       disconnectedAt: iso(row.disconnectedAt),
-      canDisconnect: viewer.canDisconnect && signedIn && device.ownerMemberId !== null && !former && !disconnected,
       remoteAccess: former ? null : remoteAccessOf(device, runnerOf(row), disconnected, device.ownerMemberId ? policies.get(device.ownerMemberId) : null),
     }
   })
@@ -856,7 +884,7 @@ export async function listOrganizationComputerRecords(filters: OrganizationCompu
   const where = filters.includeStale ? matching : and(matching, sql`not ${stale}`)
   const counted = async (condition: SQL | undefined) => {
     const [row] = await db.select({ total: sql<number>`count(*)` }).from(RemoteDeviceTable)
-      .leftJoin(AutomationRunnerTable, runnerJoin)
+      .leftJoin(AutomationRunnerTable, remoteDeviceRunnerJoin)
       .leftJoin(ComputerDisconnectionTable, deviceDisconnectionJoin)
       .leftJoin(OrganizationTable, eq(OrganizationTable.id, RemoteDeviceTable.organizationId))
       .leftJoin(MemberTable, and(eq(MemberTable.id, RemoteDeviceTable.ownerMemberId), eq(MemberTable.organizationId, RemoteDeviceTable.organizationId)))

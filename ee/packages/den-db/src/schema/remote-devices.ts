@@ -35,6 +35,7 @@ export const RemoteDeviceTable = mysqlTable(
     source: varchar("source", { length: 16 }).$type<RemoteDeviceSource>().notNull(),
     platform: varchar("platform", { length: 16 }).$type<RemoteDevicePlatform>(),
     externalId: varchar("external_id", { length: 191 }).notNull(),
+    machineKey: varchar("machine_key", { length: 64 }),
     label: varchar("label", { length: 120 }).notNull(),
     state: varchar("state", { length: 24 }).$type<RemoteDeviceState>().notNull().default("unknown"),
     statusDetail: varchar("status_detail", { length: 300 }),
@@ -51,6 +52,7 @@ export const RemoteDeviceTable = mysqlTable(
   (table) => [
     uniqueIndex("remote_device_identity").on(table.organizationId, table.provider, table.externalId),
     index("remote_device_owner").on(table.organizationId, table.ownerMemberId),
+    index("remote_device_owner_machine").on(table.organizationId, table.ownerMemberId, table.machineKey),
     index("remote_device_seen").on(table.lastSeenAt),
   ],
 )

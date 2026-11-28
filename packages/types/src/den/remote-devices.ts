@@ -192,6 +192,7 @@ export type RemoteDeviceReportedComputer = z.infer<typeof reportedComputerSchema
  */
 export const remoteDeviceDesktopReportSchema = z.object({
   installId: z.string().trim().min(8).max(160),
+  machineKey: z.string().length(64).regex(/^[a-f0-9]+$/).optional(),
   label: labelSchema,
   platform: z.enum(REMOTE_DEVICE_PLATFORMS),
   appVersion: z.string().trim().min(1).max(80),
