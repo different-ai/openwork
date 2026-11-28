@@ -17,7 +17,7 @@ These settings apply only to agents. New agents start with connections off unles
 
 ## Answer a tool request
 
-When a tool needs a yes, the run doesn't use it. A card in the chat names the tool and connection. The options depend on your role and your organization's rules:
+When a tool needs a yes, the run doesn't use it. A card in the chat names the tool and connection. An agent knows about the tools on connections that are off, so when your request needs one it asks for that single tool and the rest of the connection stays off. Your skills work the same way: reading them is one tool of the OpenWork connection, called **Read your skills**. The options depend on your role and your organization's rules:
 
 ![A request in the chat to let Bug watcher use Create issue in Linear, with Deny, Always allow and Allow once](/images/agents/tool-request.png)
 

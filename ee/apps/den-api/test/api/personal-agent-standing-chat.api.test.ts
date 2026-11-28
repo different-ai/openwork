@@ -180,10 +180,25 @@ test("OpenWork's own tools start off for an agent: its owner gives it one tool, 
   const startTools = field(start, "tools")
   assert.ok(Array.isArray(startTools) && startTools.some((tool) => field(tool, "name") === "listPersonalAgentRoutines" && field(tool, "access") === "block"), JSON.stringify(startTools).slice(0, 400))
 
+  const payloadOf = (response: Awaited<ReturnType<typeof call>>): unknown => {
+    const content = field(result(response), "content")
+    return JSON.parse(text(field(Array.isArray(content) ? content[0] : null, "text"), response.text))
+  }
+  const offTools = async (token: string, query: string) => {
+    const tools = field(payloadOf(await call(token, "search_capabilities", { query })), "offTools")
+    return Array.isArray(tools) ? tools.map((tool) => `${text(field(tool, "connector"), "connector")}:${text(field(tool, "tool"), "tool")}`) : []
+  }
+  const readSkill = (token: string) => call(token, "execute_capability", { name: "skill:create-skill" })
+
   const first = await turn("openwork-first")
   const closed = await search(first.token)
   assert.deepEqual(closed.matches, [])
   assert.ok(closed.off.includes("OpenWork"), JSON.stringify(closed))
+  assert.ok((await offTools(first.token, "list agent routines")).includes("OpenWork:listPersonalAgentRoutines"))
+  assert.deepEqual((await offTools(first.token, "do you have access to my skills?")).slice(0, 1), ["OpenWork:get_skill"])
+  assert.equal(field(payloadOf(await call(first.token, "search_capabilities", { query: "skills" })), "skills"), undefined)
+  assert.equal(field(result(await readSkill(first.token)), "isError"), true)
+  assert.equal((await decide(await ask(first.token, "get_skill"), "always_allow")).status, 200)
   assert.equal(field(result(await list(first.token)), "isError"), true)
   const listAsk = await ask(first.token, "listPersonalAgentRoutines")
   const items = field((await asOwner("GET", `${path}/requests`)).body, "items")
@@ -191,13 +206,21 @@ test("OpenWork's own tools start off for an agent: its owner gives it one tool, 
   assert.deepEqual(field(waiting, "canDecide"), ["deny", "allow_once", "always_allow", "turn_on"])
   assert.equal((await decide(listAsk, "always_allow")).status, 200)
   const picked = personalAgentDetailSchema.parse((await asOwner("GET", path)).body).revision.toolPolicy
-  assert.deepEqual(picked, { connections: { openwork: "ask" }, tools: { openwork: { listPersonalAgentRoutines: "allow" } } })
+  assert.deepEqual(picked, { connections: { openwork: "ask" }, tools: { openwork: { get_skill: "allow", listPersonalAgentRoutines: "allow" } } })
   const limited = await openWorkTools()
   assert.equal(field(limited, "blocked"), true)
   assert.equal(field(limited, "onlyChosenTools"), true)
   await finish(first)
 
   const second = await turn("openwork-second")
+  const listed = field(payloadOf(await call(second.token, "search_capabilities", { query: "skills" })), "skills")
+  assert.ok(Array.isArray(listed) && listed.some((skill) => field(skill, "name") === "skill:create-skill"), JSON.stringify(listed))
+  assert.ok(!(await offTools(second.token, "skills")).includes("OpenWork:get_skill"))
+  const skillRead = await readSkill(second.token)
+  assert.equal(field(result(skillRead), "isError"), false, skillRead.text)
+  assert.match(skillRead.text, /name: create-skill/)
+  assert.ok(!(await offTools(second.token, "list agent routines")).includes("OpenWork:listPersonalAgentRoutines"))
+  assert.ok((await offTools(second.token, "add agent routine")).includes("OpenWork:createPersonalAgentRoutine"))
   assert.deepEqual((await search(second.token, "list agent routines")).matches, ["listPersonalAgentRoutines"])
   assert.equal(field(result(await list(second.token)), "isError"), false)
   assert.equal(field(result(await call(second.token, "execute_capability", routine)), "isError"), true)
