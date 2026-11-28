@@ -415,7 +415,7 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     return (
       <FullScreen onExit={() => expand(false)}>
         <div className="flex h-full flex-col">
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 mac:pl-24 electron:titlebar-drag">
+          <header className="window-titlebar flex shrink-0 items-center gap-2 border-b border-border px-3 mac:mac-window-controls-inset electron:titlebar-drag">
             <Monitor size={16} className="text-muted-foreground" />
             <h2 className="min-w-0 truncate text-sm font-medium">{title}</h2>
             {liveStatus}
