@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-import { agentPermissionDenial, agentPermissionEngineMcpDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
+import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
 import { isRecord, openMcpResourceReader, type McpFetch } from "./connect-mcp-transport.js";
-import { isOrganizationMcpName } from "./organization-mcp-names.js";
-import { listRuntimeOpencodeConfigRows, readGlobalRuntimeOpencodeConfig, runtimeMcpMap } from "./runtime-opencode-config-store.js";
+import { memberMcpServerSlug, memberMcpServers, type MemberMcpServer, type MemberMcpServerOptions } from "./member-mcp-servers.js";
+import { readGlobalRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
 
@@ -43,27 +43,14 @@ export type McpServerSkill = {
 
 export type McpServerSkillCatalog = { skills: McpServerSkill[]; blocked?: string };
 
-export type McpServerSkillOptions = { fetcher?: McpFetch; hostAllowed?: () => Promise<boolean> };
+export type McpServerSkillOptions = MemberMcpServerOptions;
 
-type ServerEntry = { name: string; config: Record<string, unknown> };
+type ServerEntry = MemberMcpServer;
 
 const listed = new Map<string, { expiresAt: number; value: Promise<McpServerSkill[] | null> }>();
 
 function serverKey(server: ServerEntry): string {
   return createHash("sha256").update(JSON.stringify([server.name, server.config])).digest("hex");
-}
-
-function serverSlug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
-}
-
-function ownGateway(config: ServerConfig, url: string): boolean {
-  try {
-    const endpoint = new URL(url);
-    return ["127.0.0.1", "localhost", "[::1]"].includes(endpoint.hostname) && endpoint.port === String(config.port);
-  } catch {
-    return true;
-  }
 }
 
 function sha256Digest(text: string): string {
@@ -74,17 +61,7 @@ async function skillServers(config: ServerConfig, options: McpServerSkillOptions
   const rules = agentPermissionRulesOf((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy);
   const blocked = agentPermissionDenial(rules, "mcp_skill", ["*"]);
   if (blocked) return { servers: [], blocked };
-  if (options.hostAllowed && !(await options.hostAllowed())) return { servers: [] };
-  const servers = new Map<string, ServerEntry>();
-  for (const row of await listRuntimeOpencodeConfigRows(config)) {
-    for (const [name, server] of Object.entries(runtimeMcpMap(row.value))) {
-      if (servers.has(name) || isOrganizationMcpName(name) || !serverSlug(name)) continue;
-      if (server.type !== "remote" || typeof server.url !== "string" || server.enabled === false || server.disabled === true) continue;
-      if (ownGateway(config, server.url) || agentPermissionEngineMcpDenial(rules, name, server, {})) continue;
-      servers.set(name, { name, config: server });
-    }
-  }
-  return { servers: [...servers.values()].sort((a, b) => a.name.localeCompare(b.name)) };
+  return { servers: (await memberMcpServers(config, options)).servers };
 }
 
 async function openSkillsReader(server: ServerEntry, fetcher: McpFetch) {
@@ -110,7 +87,7 @@ async function listServerSkills(server: ServerEntry, fetcher: McpFetch): Promise
       const entry = entrySchema.safeParse(raw);
       if (!entry.success || skills.size >= MAX_SERVER_SKILLS) continue;
       const { uri, frontmatter, resources } = entry.data;
-      const id = `${MCP_SERVER_SKILL_ID_PREFIX}${serverSlug(server.name)}-${frontmatter.name}`;
+      const id = `${MCP_SERVER_SKILL_ID_PREFIX}${memberMcpServerSlug(server.name)}-${frontmatter.name}`;
       const digest = resources?.find((resource) => resource.uri === uri)?.digest;
       if (skills.has(id)) continue;
       skills.set(id, {

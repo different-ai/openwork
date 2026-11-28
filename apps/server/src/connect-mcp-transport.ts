@@ -83,7 +83,7 @@ export async function mcpPost(fetcher: McpFetch, url: string, headers: Record<st
 export type McpResourceReader = {
   read(uri: string, meta?: Record<string, unknown>): Promise<string | null>;
   readContents(uri: string, meta?: Record<string, unknown>): Promise<{ texts: Map<string, string>; blobs: Map<string, string>; meta: Record<string, unknown> } | null>;
-  request(method: string, params: Record<string, unknown>): Promise<Record<string, unknown> | null>;
+  request(method: string, params: Record<string, unknown>, headers?: Record<string, string>): Promise<Record<string, unknown> | null>;
   readonly serverCapabilities: Record<string, unknown>;
   readonly broken: boolean;
 };
@@ -147,8 +147,8 @@ export async function openMcpResourceReader(input: {
   return {
     readContents,
     serverCapabilities,
-    async request(method, params) {
-      const reply = await mcpPost(input.fetcher, url, sessionHeaders, { id: nextId++, jsonrpc: "2.0", method, params }).catch(() => null);
+    async request(method, params, headers) {
+      const reply = await mcpPost(input.fetcher, url, { ...sessionHeaders, ...headers }, { id: nextId++, jsonrpc: "2.0", method, params }).catch(() => null);
       if (!reply?.response.ok || reply.payload === null) {
         broken = true;
         return null;
