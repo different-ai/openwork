@@ -2,9 +2,12 @@ export const OPENWORK_CODE_HELPER_SOURCE = String.raw`import { spawnSync } from 
 import * as fs from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 
-const stateDir = path.join(homedir(), '.openwork', 'cloud-coding')
+const cleanupMessage = 'Removed the working folder and its credential from this computer.'
+const rootRefusal = 'Choose a private working folder for this task. Do not use the filesystem root, your home directory, or an existing repository or its parent.'
+const maxWaitMs = 280_000
+const pollDeadlineReached = Symbol()
 const prefix = '/v1/cloud-coding/gateway'
 const script = JSON.stringify(process.argv[1])
 const secrets = new Set()
@@ -13,11 +16,12 @@ const shaPattern = /^[0-9a-f]{40}$/
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const tooLarge = 'This change is too large to push at once. Split it into smaller changes.'
 const usage = {
-  setup: ['--api <url> --code <code> [--dir <path>]', 'setup --api https://den.example --code "$SETUP_CODE" --dir ./storefront'],
-  detect: ['[--dir <path>] [--json]', 'detect --dir ./storefront --json'],
-  'request-push': ['--branch <name> --title <title> --tests <passed|failed|not_run> [--test-command <cmd>] [--test-summary <text>] [--message <text> | --message-file <path>] [--body <text> | --body-file <path>] [--wait-seconds <n>] [--task <id>] [--dir <path>]', 'request-push --branch openwork/fix-rounding --title "Fix checkout rounding" --tests passed --test-command "pnpm test"'],
-  wait: ['[--task <id>] [--wait-seconds <n>]', 'wait --task cctask_example'],
-  status: ['[--task <id>] [--json]', 'status --task cctask_example --json'],
+  setup: ['--api <url> --code <code> --root <dir>', 'setup --api https://den.example --code "$SETUP_CODE" --root ./coding-task'],
+  detect: ['(--root <dir> | --dir <path>) [--json]', 'detect --root ./coding-task --json'],
+  'request-push': ['--root <dir> --branch <name> --title <title> --tests <passed|failed|not_run> [--test-command <cmd>] [--test-summary <text>] [--message <text> | --message-file <path>] [--body <text> | --body-file <path>] [--wait-seconds <n>]', 'request-push --root ./coding-task --branch openwork/fix-rounding --title "Fix checkout rounding" --tests passed --test-command "pnpm test" --body-file ./coding-task/pull-request.md'],
+  wait: ['--root <dir> [--wait-seconds <n>]', 'wait --root ./coding-task'],
+  status: ['--root <dir> [--json]', 'status --root ./coding-task --json'],
+  finish: ['--root <dir>', 'finish --root ./coding-task'],
 }
 
 class Refusal extends Error {
@@ -42,7 +46,7 @@ function help(command) {
     line('Usage: node ' + script + ' ' + name + ' ' + options)
     line('Example: node ' + script + ' ' + example)
   }
-  if (!command || command === 'wait' || command === 'request-push') line('The default approval wait is 540 seconds. Use --wait-seconds 0 to return immediately if still pending.')
+  if (!command || command === 'wait' || command === 'request-push') line('The default approval wait is 240 seconds (maximum 280). Use --wait-seconds 0 to return immediately if still pending.')
 }
 function optionsFor(command, args) {
   const options = Object.create(null)
@@ -72,10 +76,11 @@ function optionalText(options, key, max) {
   return value
 }
 function waitMs(options) {
-  const value = options['--wait-seconds'] ?? '540'
-  const ms = Number(value) * 1000
-  if (!/^\d+(?:\.\d{1,3})?$/.test(value) || !Number.isSafeInteger(ms)) fail('Provide a non-negative number for --wait-seconds, or leave it out to use the default.')
-  return ms
+  const value = options['--wait-seconds'] ?? '240'
+  if (!/^\d+(?:\.\d{1,3})?$/.test(value)) fail('Provide a non-negative number for --wait-seconds, or leave it out to use the default.')
+  const testCap = Number(process.env.OPENWORK_CODE_TEST_MAX_WAIT_MS)
+  const cap = Number.isSafeInteger(testCap) && testCap > 0 ? Math.min(maxWaitMs, testCap) : maxWaitMs
+  return Math.min(Math.round(Number(value) * 1000), cap)
 }
 
 function loopback(url) { return ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) }
@@ -85,7 +90,15 @@ function apiUrl(input) {
   if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback(url))) || url.username || url.password || url.search || url.hash) fail('Use Den’s HTTPS address without credentials, a query, or a fragment.')
   return url.href.replace(/\/+$/, '')
 }
-async function gateway(state, endpoint, { method = 'GET', body, pollMs, retryPost = false } = {}) {
+function credentialEnded(state, message) {
+  if (message) line(message)
+  fail('The credential for this task has ended. Call cloud-coding:start again with taskId ' + state.taskId + ' and run the new setup command.', 6)
+}
+function requireCredential(state) {
+  if (!state.token) credentialEnded(state)
+}
+async function gateway(state, endpoint, { method = 'GET', body, pollMs, deadline, retryPost = false } = {}) {
+  if (endpoint !== '/setup') requireCredential(state)
   const headers = { Accept: 'application/json' }
   if (state.token) headers.Authorization = 'Bearer ' + state.token
   if (body !== undefined) headers['Content-Type'] = 'application/json'
@@ -93,14 +106,20 @@ async function gateway(state, endpoint, { method = 'GET', body, pollMs, retryPos
   for (let attempt = 0; ; attempt++) {
     let response
     let text
+    const remaining = deadline === undefined ? Infinity : deadline - Date.now()
+    if (remaining <= 0) throw pollDeadlineReached
     try {
       response = await fetch(state.api + prefix + endpoint, {
         method, headers, body: payload, redirect: 'error',
-        signal: AbortSignal.timeout(pollMs === undefined ? 30000 : pollMs + 10000),
+        signal: AbortSignal.timeout(Math.min(remaining, pollMs === undefined ? 30000 : pollMs + 10000)),
       })
       text = await response.text()
     } catch {
-      if (attempt < 3 && (method === 'GET' || retryPost)) { await sleep(250 * 2 ** attempt); continue }
+      if (deadline !== undefined && Date.now() >= deadline) throw pollDeadlineReached
+      if (attempt < 3 && (method === 'GET' || retryPost)) {
+        await sleep(Math.min(deadline === undefined ? Infinity : Math.max(0, deadline - Date.now()), 250 * 2 ** attempt))
+        continue
+      }
       const hint = method === 'GET' || retryPost ? 'Check the connection to Den and run the command again.' : 'Check the connection to Den and confirm the last step in OpenWork before trying again.'
       fail('Could not reach the cloud coding gateway. ' + hint)
     }
@@ -109,43 +128,79 @@ async function gateway(state, endpoint, { method = 'GET', body, pollMs, retryPos
     try { result = JSON.parse(text) } catch { fail('Den did not return a cloud coding response. Check Den’s address and try again.') }
     if (!response.ok) {
       const message = typeof result?.message === 'string' && result.message.trim() ? result.message : 'Den refused the request. Check the task in OpenWork and try again.'
+      if (response.status === 401 && result?.error === 'task_closed' && state.taskId) credentialEnded(state, message)
       throw new Refusal(message, 1, result?.error)
     }
     return result
   }
 }
 
-function prepareStateDir() {
-  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 })
-  if (!fs.lstatSync(stateDir).isDirectory()) fail('The cloud coding state folder is not a directory. Restore it before trying again.')
-  fs.chmodSync(stateDir, 0o700)
+function contains(root, location) {
+  const relative = path.relative(root, location)
+  return relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)
 }
-function stateFile(id) {
-  if (!taskIdPattern.test(id)) fail('The task ID is not valid. Run status --help for usage.')
-  return path.join(stateDir, id + '.json')
+function protectRoot(root, checkout) {
+  const home = path.resolve(homedir())
+  if (root === path.parse(root).root || contains(root, home) || contains(root, fs.existsSync(home) ? fs.realpathSync(home) : home)) fail(rootRefusal)
+  if (fs.realpathSync(root) !== root || fs.existsSync(path.join(root, '.git'))) fail(rootRefusal)
+  for (let dir = fs.realpathSync(process.cwd()); ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, '.git'))) {
+      if (contains(root, dir) && dir !== checkout) fail(rootRefusal)
+      break
+    }
+    if (dir === path.dirname(dir)) break
+  }
 }
-function savePrivate(file, value) {
-  const tmp = path.join(stateDir, '.' + randomUUID())
+function workingRoot(options, create = false) {
+  const root = path.resolve(required(options, '--root', 4000))
+  if (create) fs.mkdirSync(root, { recursive: true, mode: 0o700 })
+  const stat = fs.lstatSync(root, { throwIfNoEntry: false })
+  if (!stat) fail('This task is not set up here. Run setup with the code from OpenWork.')
+  if (!stat.isDirectory()) fail('The working folder must be a directory, not a file or a symlink.')
+  return fs.realpathSync(root)
+}
+function stateFile(root) { return path.join(root, 'state.json') }
+function checkoutPath(root, repository) {
+  const name = repository?.fullName?.split('/').at(-1)
+  if (!name || !/^[a-zA-Z0-9_.-]+$/.test(name) || ['.', '..', '.git', 'state.json', 'openwork-code.mjs', 'pull-request.md'].includes(name.toLowerCase())) fail('Den returned an invalid repository name. Ask for a new setup command.')
+  return path.join(root, name)
+}
+function saveState(state) {
+  const tmp = path.join(state.root, '.' + randomUUID())
   try {
-    fs.writeFileSync(tmp, value, { flag: 'wx', mode: 0o600 })
-    fs.renameSync(tmp, file)
+    fs.writeFileSync(tmp, JSON.stringify(state) + '\n', { flag: 'wx', mode: 0o600 })
+    fs.renameSync(tmp, stateFile(state.root))
   } finally { fs.rmSync(tmp, { force: true }) }
 }
-function saveState(state) { savePrivate(stateFile(state.taskId), JSON.stringify(state) + '\n') }
-function loadState(id) {
-  prepareStateDir()
-  if (id === undefined) {
-    const ids = fs.readdirSync(stateDir, { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith('.json')).map((entry) => entry.name.slice(0, -5)).filter((value) => taskIdPattern.test(value)).sort()
-    if (ids.length > 1) fail('Several tasks are set up. Choose one with --task: ' + ids.join(', ') + '.')
-    if (ids.length === 0) fail('No cloud coding task is set up here. Run setup with the code from OpenWork.')
-    id = ids[0]
-  }
-  const file = stateFile(id)
-  if (!fs.existsSync(file)) fail('This task is not set up here. Run setup with the code from OpenWork.')
-  if (!fs.lstatSync(file).isFile()) fail('The task state is not a regular file. Restore it before trying again.')
+function loadState(root, optional = false) {
+  const file = stateFile(root)
+  const stat = fs.lstatSync(file, { throwIfNoEntry: false })
+  if (!stat && optional) return null
+  if (!stat) fail('This task is not set up here. Run setup with the code from OpenWork.')
+  if (!stat.isFile()) fail('The task state is not a regular file. Restore it before trying again.')
   const state = JSON.parse(fs.readFileSync(file, 'utf8'))
+  if (state.root !== root || typeof state.taskId !== 'string' || !taskIdPattern.test(state.taskId) || state.dir !== checkoutPath(root, state.repository)) fail('This is not a cloud coding working folder.')
   secrets.add(state.token)
   return state
+}
+async function cleanup(state) {
+  protectRoot(state.root, state.dir)
+  const saved = loadState(state.root)
+  if (saved.taskId !== state.taskId) fail('This folder belongs to another task.')
+  const before = fs.statSync(state.root)
+  if (saved.token) {
+    try {
+      const response = await fetch(apiUrl(saved.api) + prefix + '/release', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + saved.token }, redirect: 'error', signal: AbortSignal.timeout(3_000),
+      })
+      await response.body?.cancel()
+    } catch {}
+  }
+  protectRoot(state.root, state.dir)
+  const after = fs.statSync(state.root)
+  if (before.dev !== after.dev || before.ino !== after.ino || loadState(state.root).taskId !== state.taskId) fail('This folder belongs to another task.')
+  fs.rmSync(state.root, { recursive: true })
+  line(cleanupMessage)
 }
 
 const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))
@@ -236,9 +291,12 @@ function printDetection(result) {
   for (const note of result.notes) line('See ' + note + '.')
 }
 
-function assertEmpty(dir) {
-  if (fs.existsSync(dir) && (!fs.statSync(dir).isDirectory() || fs.readdirSync(dir).length !== 0)) fail('The clone destination is not an empty folder. Choose an empty folder with --dir and run setup again.')
+function assertEmptyCheckout(dir) {
+  const stat = fs.lstatSync(dir, { throwIfNoEntry: false })
+  if (stat && (!stat.isDirectory() || fs.readdirSync(dir).length !== 0)) fail('The clone destination is not an empty folder. Restore the working folder before running setup again.')
 }
+function shellQuote(value) { return '"' + value.replace(/["\\$\x60]/g, '\\$&') + '"' }
+function waitCommand(root) { return 'node ' + shellQuote(path.join(root, 'openwork-code.mjs')) + ' wait --root ' + shellQuote(root) }
 function setupSummary(state) {
   line('Work in: ' + state.dir)
   line('Base branch: ' + state.baseBranch)
@@ -249,40 +307,28 @@ async function setup(options) {
   const code = required(options, '--code', 200)
   secrets.add(code)
   const api = apiUrl(required(options, '--api', 4000))
-  prepareStateDir()
-  const hash = createHash('sha256').update(api + '\0' + code).digest('hex')
-  const receipt = path.join(stateDir, '.setup-' + hash)
-  let state
-  if (fs.existsSync(receipt)) {
-    state = loadState(fs.readFileSync(receipt, 'utf8'))
-    if (state.baseSha) {
-      line('This task is already set up.')
-      setupSummary(state)
-      return
-    }
-    if (options['--dir'] !== undefined) state.dir = path.resolve(options['--dir'])
-  } else {
-    if (options['--dir'] !== undefined) assertEmpty(path.resolve(options['--dir']))
-    const result = await gateway({ api }, '/setup', { method: 'POST', body: { code } })
-    const { taskId, token, tokenExpiresAt, repository, baseBranch, author } = result
-    secrets.add(token)
-    if (fs.existsSync(stateFile(taskId))) {
-      state = loadState(taskId)
-      if (state.baseSha) {
-        savePrivate(receipt, taskId)
-        line('This task is already set up.')
-        setupSummary(state)
-        return
-      }
-    }
-    const name = repository.fullName.split('/').at(-1)
-    if (!/^[a-zA-Z0-9_.-]+$/.test(name) || ['.', '..'].includes(name)) fail('Den returned an invalid repository name. Ask for a new setup command.')
-    state = { api, taskId, token, tokenExpiresAt, repository, baseBranch, author, dir: path.resolve(options['--dir'] ?? name), baseSha: null }
-    saveState(state)
-    savePrivate(receipt, taskId)
-  }
-  assertEmpty(state.dir)
+  const root = workingRoot(options, true)
+  const existing = loadState(root, true)
+  protectRoot(root, existing?.dir)
+  if (!existing && fs.readdirSync(root).some((name) => name !== 'openwork-code.mjs')) fail('The working folder is not empty. Choose a private folder for this task with --root.')
+  fs.chmodSync(root, 0o700)
+  const { taskId, token, tokenExpiresAt, repository, baseBranch, author } = await gateway({ api }, '/setup', { method: 'POST', body: { code } })
+  secrets.add(token)
+  const saved = loadState(root, true)
+  if (saved && (saved.taskId !== taskId || saved.api !== api)) fail('This folder belongs to another task.')
+  if (typeof taskId !== 'string' || !taskIdPattern.test(taskId)) fail('Den returned an invalid task ID. Ask for a new setup command.')
+  const state = saved ? { ...saved, token, tokenExpiresAt } : { root, api, taskId, token, tokenExpiresAt, repository, baseBranch, author, dir: checkoutPath(root, repository), baseSha: null }
   saveState(state)
+  if (state.baseSha) {
+    setupSummary(state)
+    if (state.approval) {
+      const { approval } = await gateway(state, approvalPath(state.approval.id))
+      line('Push approval: ' + approval.status)
+      line('Run: ' + waitCommand(root))
+    }
+    return
+  }
+  assertEmptyCheckout(state.dir)
   const readToken = await gateway(state, '/read-token', { method: 'POST' })
   secrets.add(readToken.token)
   const cloneUrl = new URL(readToken.cloneUrl)
@@ -334,19 +380,28 @@ function changeSet(state, branch, commit) {
   return { branch, baseSha: state.baseSha, commitMessage, files: changeFiles(state.dir, state.baseSha, commit) }
 }
 function approvalPath(id) { return '/push-approvals/' + encodeURIComponent(id) }
-async function finishApproval(state, deadline, approval) {
+async function finishApproval(state, duration, approval) {
   const { id, branch, commit } = state.approval
   const endpoint = approvalPath(id)
+  const deadline = Date.now() + duration
   while (!approval || (approval.status === 'pending' && Date.now() < deadline)) {
-    const remaining = Math.max(0, deadline - Date.now())
-    const pollMs = Math.min(25_000, remaining)
     const started = Date.now()
-    ;({ approval } = await gateway(state, endpoint + (pollMs > 0 ? '?waitMs=' + pollMs : ''), { pollMs: pollMs || undefined }))
+    const pollMs = Math.min(25_000, Math.max(0, deadline - started))
+    try {
+      ;({ approval } = await gateway(state, endpoint + (pollMs > 0 ? '?waitMs=' + pollMs : ''), { pollMs: pollMs || undefined, deadline: duration > 0 ? deadline : undefined }))
+    } catch (error) {
+      if (error === pollDeadlineReached) break
+      throw error
+    }
     if (approval.status === 'pending' && Date.now() < deadline) await sleep(Math.max(0, Math.min(deadline - Date.now(), 250 - (Date.now() - started))))
   }
-  switch (approval.status) {
-    case 'pending': fail('Still waiting for approval. Run: node ' + script + ' wait --task ' + state.taskId, 3); break
-    case 'denied': fail('The push was denied. Nothing was pushed. Ask what they would like changed.', 4); break
+  switch (approval?.status ?? 'pending') {
+    case 'pending': fail('Still waiting for approval. Run: ' + waitCommand(state.root), 3); break
+    case 'denied':
+      line('The push was denied. Nothing was pushed. Ask what they would like changed.')
+      await cleanup(state)
+      process.exitCode = 4
+      return
     case 'expired': case 'superseded': fail('This approval was ' + approval.status + '. Run request-push again to ask for approval.', 5); break
     case 'approved':
       try {
@@ -359,9 +414,10 @@ async function finishApproval(state, deadline, approval) {
     case 'pushed': break
     default: fail('Den returned an unknown approval status. Check the push in OpenWork before trying again.')
   }
-  const pr = await gateway(state, '/pull-requests', { method: 'POST', body: { approvalId: id }, retryPost: true })
+  const pr = approval.pullRequest ?? await gateway(state, '/pull-requests', { method: 'POST', body: { approvalId: id }, retryPost: true })
   line('Pull request opened: ' + pr.url)
-  line(pr.repositoryFullName + ' #' + pr.number + ' · branch ' + pr.branch)
+  line(state.repository.fullName + ' #' + pr.number + ' · branch ' + branch)
+  await cleanup(state)
 }
 async function requestPush(options) {
   const branch = required(options, '--branch', 200)
@@ -373,13 +429,11 @@ async function requestPush(options) {
   const body = optionalText(options, '--body', 20_000)
   const duration = waitMs(options)
   if (!message.trim()) fail('The commit message is empty. Run request-push again with a non-empty message.')
-  const state = loadState(options['--task'])
+  const state = loadState(workingRoot(options))
+  requireCredential(state)
   if (!shaPattern.test(state.baseSha)) fail('This task has not been cloned. Run setup again before requesting a push.')
-  const dir = path.resolve(options['--dir'] ?? state.dir)
-  const root = fs.realpathSync(gitText(dir, ['rev-parse', '--show-toplevel']))
-  if (fs.realpathSync(dir) !== root) fail('Choose the root of the repository with --dir before requesting a push.')
-  const stateLocation = path.relative(root, fs.realpathSync(stateDir))
-  if (stateLocation === '' || (!stateLocation.startsWith('..' + path.sep) && stateLocation !== '..')) fail('The task’s private state is inside this repository. Use a checkout outside the state folder’s parent repository.')
+  const dir = state.dir
+  if (fs.realpathSync(dir) !== dir || fs.realpathSync(gitText(dir, ['rev-parse', '--show-toplevel'])) !== dir) fail('Restore the checkout inside the working folder before requesting a push.')
   if (branch === state.repository.defaultBranch || branch === state.baseBranch) fail('OpenWork cannot push to the branch this work started from or to the default branch. Choose a new branch.')
   if (branch.startsWith('refs/') || branch.startsWith('-') || branch === 'HEAD' || branch === '@' || git(dir, ['check-ref-format', 'refs/heads/' + branch], { allowed: [0, 1] }).status !== 0) fail('That branch name cannot be used. Choose a name such as openwork/fix-rounding.')
   const diverged = git(dir, ['merge-base', '--is-ancestor', state.baseSha, 'HEAD'], { allowed: [0, 1, 128] }).status !== 0
@@ -396,14 +450,13 @@ async function requestPush(options) {
   git(dir, ['update-ref', 'refs/openwork/cloud-coding/' + state.taskId + '/' + commit, commit])
   const { approval } = await gateway(state, '/push-approvals', { method: 'POST', body: { changeSet: requested, title, body, tests } })
   const previous = state.approval
-  state.dir = dir
   state.approval = { id: approval.id, branch, commit }
-  saveState(state)
+  saveState({ ...loadState(state.root), approval: state.approval })
   if (previous && previous.commit !== commit && shaPattern.test(previous.commit)) {
     git(dir, ['update-ref', '-d', 'refs/openwork/cloud-coding/' + state.taskId + '/' + previous.commit], { allowed: [0, 1, 128] })
   }
   line('Asked ' + state.author.name + ' to approve pushing ' + requested.files.length + ' file(s) to a new branch ' + branch + ' on ' + state.repository.fullName + '. Waiting for their answer in OpenWork.')
-  await finishApproval(state, Date.now() + duration, approval)
+  await finishApproval(state, duration, approval)
 }
 
 async function main() {
@@ -415,23 +468,33 @@ async function main() {
   switch (command) {
     case 'setup': await setup(options); return
     case 'detect': {
-      const result = detect(path.resolve(options['--dir'] ?? '.'))
+      if (options['--dir'] && options['--root']) fail('Use either --root or --dir, not both.')
+      const dir = options['--dir'] ? path.resolve(options['--dir']) : loadState(workingRoot(options)).dir
+      const result = detect(dir)
       if (options['--json']) json(result)
       else printDetection(result)
       return
     }
     case 'request-push': await requestPush(options); return
     case 'wait': {
-      const deadline = Date.now() + waitMs(options)
-      const state = loadState(options['--task'])
+      const duration = waitMs(options)
+      const state = loadState(workingRoot(options))
+      requireCredential(state)
       if (!state.approval) fail('No push approval has been requested yet. Run request-push --help to get started.')
-      await finishApproval(state, deadline)
+      await finishApproval(state, duration)
+      return
+    }
+    case 'finish': {
+      const root = workingRoot(options)
+      await cleanup(loadState(root))
       return
     }
     case 'status': {
-      const state = loadState(options['--task'])
-      const { taskId, repository, baseBranch, author } = await gateway(state, '/task')
+      const state = loadState(workingRoot(options))
+      requireCredential(state)
       const { approval } = state.approval ? await gateway(state, approvalPath(state.approval.id)) : { approval: null }
+      const task = approval?.status === 'denied' || approval?.pullRequest ? state : await gateway(state, '/task')
+      const { taskId, repository, baseBranch, author } = task
       if (options['--json']) json({ taskId, repository, baseBranch, author, dir: state.dir, approval })
       else {
         line('Repository: ' + repository.fullName + ' · base branch ' + baseBranch)

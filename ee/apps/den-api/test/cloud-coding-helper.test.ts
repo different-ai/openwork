@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { execFile, execFileSync } from "node:child_process"
 import { once } from "node:events"
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -16,6 +16,10 @@ import { OPENWORK_CODE_HELPER_SOURCE } from "../src/cloud-coding/helper/openwork
 const prefix = "/v1/cloud-coding/gateway"
 const code = "fixture-setup-code-one-time"
 const token = "fixture-den-task-token"
+const resumeCode = "fixture-resume-code"
+const otherCode = "fixture-other-code"
+const resumedToken = "fixture-renewed-den-token"
+const cleanupLine = "Removed the working folder and its credential from this computer.\n"
 const readToken = "fixture-github-read-token"
 const basic = Buffer.from(`x-access-token:${readToken}`).toString("base64")
 const taskId = "cctask_storefront"
@@ -32,21 +36,27 @@ function write(dir: string, file: string, data: string | Buffer) {
 }
 
 function noSecrets(output: string) {
-  for (const secret of [code, token, readToken, basic]) assert.equal(output.includes(secret), false, "output contained a credential")
+  for (const secret of [code, resumeCode, otherCode, token, resumedToken, readToken, basic]) assert.equal(output.includes(secret), false, "output contained a credential")
 }
 
-function workspace(t: TestContext) {
+function workspace(t: TestContext, cap?: number) {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "openwork-code-test-")))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const home = path.join(root, "home")
   mkdirSync(home)
-  const script = path.join(root, "openwork-code.mjs")
+  const taskRoot = path.join(root, "coding task")
+  mkdirSync(taskRoot)
+  const script = path.join(taskRoot, "openwork-code.mjs")
   writeFileSync(script, OPENWORK_CODE_HELPER_SOURCE)
-  const env = { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" }
+  const env = { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", OPENWORK_CODE_TEST_MAX_WAIT_MS: cap?.toString() }
 
-  function run(...args: string[]) {
+  function run(...args: string[]) { return runFrom(root, ...args) }
+
+  function runFrom(cwd: string, ...args: string[]) {
+    const useRoot = !args.some((arg) => ["--root", "--dir", "--help"].includes(arg))
+    if (useRoot) args.push("--root", taskRoot)
     return new Promise<{ exit: number | string | null; output: string }>((resolve, reject) => {
-      execFile(process.execPath, [script, ...args], { cwd: root, env, timeout: 12_000 }, (error, stdout, stderr) => {
+      execFile(process.execPath, [script, ...args], { cwd, env, timeout: 12_000 }, (error, stdout, stderr) => {
         try {
           noSecrets(stdout + stderr)
           assert.equal(stderr, "")
@@ -57,7 +67,7 @@ function workspace(t: TestContext) {
   }
 
   const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
-  return { root, home, script, run, git }
+  return { root, home, taskRoot, script, run, runFrom, git }
 }
 
 function seed(root: string, git: ReturnType<typeof workspace>["git"]) {
@@ -82,11 +92,14 @@ function seed(root: string, git: ReturnType<typeof workspace>["git"]) {
 
 async function stubGateway(t: TestContext, cloneUrl: string) {
   const task = { taskId, repository: { fullName: repoName, cloneUrl, defaultBranch: "main" }, baseBranch: "main", author }
-  const recorded: { method: string; endpoint: string; query: string; raw: string }[] = []
+  const recorded: { method: string; endpoint: string; query: string; raw: string; authorization?: string }[] = []
   const requested = new Map<string, ReturnType<typeof cloudCodingPushRequestSchema.parse>>()
   const approvals = new Map<string, { id: string; status: CloudCodingPushApprovalStatus; branch: string; headSha: string; repositoryFullName: string; pullRequest: { number: number; url: string; state: "open" } | null }>()
   let approvalNumber = 0
-  let redeemed = false
+  const redeemed = new Set<string>()
+  let activeToken = token
+  let closed = false
+  let breakRelease = false
   let failPush = 0
   let failPr = 0
   let interruptedGet = 0
@@ -104,14 +117,29 @@ async function stubGateway(t: TestContext, cloneUrl: string) {
       let raw = ""
       for await (const chunk of req) raw += chunk
       const body: unknown = raw ? JSON.parse(raw) : undefined
-      recorded.push({ method, endpoint, query: url.search, raw })
+      recorded.push({ method, endpoint, query: url.search, raw, authorization: req.headers.authorization })
       if (method === "POST" && endpoint === "/setup") {
         assert.equal(req.headers.authorization, undefined)
-        if (redeemed || cloudCodingGatewaySetupInputSchema.parse(body).code !== code) return send(403, { error: "task_closed", message: "This setup code has already been used. Ask for a fresh one." })
-        redeemed = true
-        return send(200, { ...task, token, tokenExpiresAt: expires })
+        const setupCode = cloudCodingGatewaySetupInputSchema.parse(body).code
+        if (redeemed.has(setupCode)) return send(403, { error: "task_closed", message: "This setup code has already been used. Ask for a fresh one." })
+        redeemed.add(setupCode)
+        if (setupCode === otherCode) return send(200, { ...task, taskId: "cctask_other", token: resumedToken, tokenExpiresAt: expires })
+        assert.ok(setupCode === code || setupCode === resumeCode)
+        activeToken = setupCode === resumeCode ? resumedToken : token
+        closed = false
+        return send(200, { ...task, token: activeToken, tokenExpiresAt: setupCode === resumeCode ? "2030-01-02T00:00:00.000Z" : expires })
       }
-      assert.ok(req.headers.authorization === `Bearer ${token}`, "gateway request did not carry the task token")
+      assert.equal(req.headers.authorization, `Bearer ${activeToken}`, "gateway request did not carry the current task token")
+      const denied = [...approvals.values()].some((approval) => approval.status === "denied")
+      if (method === "POST" && endpoint === "/release") {
+        if (breakRelease) return req.socket.destroy()
+        if (denied || closed) return send(401, { error: "task_closed", message: "This task credential is not active." })
+        res.writeHead(204)
+        return res.end()
+      }
+      if (closed || (denied && !(method === "GET" && /^\/push-approvals\/[^/]+$/.test(endpoint)))) {
+        return send(401, { error: "task_closed", message: `This task credential is not active: ${activeToken}` })
+      }
       if (method === "GET" && endpoint === "/task") {
         if (interruptedGet-- > 0) return req.socket.destroy()
         return send(200, task)
@@ -169,19 +197,23 @@ async function stubGateway(t: TestContext, cloneUrl: string) {
       return approval.id
     },
     failOnce() { failPush = failPr = interruptedGet = 1 },
+    closeCredential() { closed = true },
+    failRelease() { breakRelease = true },
     mismatch() { mismatch = true },
   }
 }
 
-async function taskFixture(t: TestContext) {
-  const files = workspace(t)
+async function taskFixture(t: TestContext, cap?: number) {
+  const files = workspace(t, cap)
   const bare = seed(files.root, files.git)
   const stub = await stubGateway(t, bare.cloneUrl)
-  const dir = path.join(files.root, "storefront")
-  const setup = (...args: string[]) => files.run("setup", "--api", stub.api, "--code", code, ...args)
-  const request = (title = "Fix checkout rounding", ...args: string[]) => files.run("request-push", "--branch", "openwork/fix-rounding", "--title", title, "--tests", "not_run", "--wait-seconds", "0", ...args)
-  const stateDir = path.join(files.home, ".openwork", "cloud-coding")
-  return { ...files, ...bare, ...stub, dir, setup, request, stateDir }
+  const dir = path.join(files.taskRoot, "storefront")
+  const setup = (setupCode = code, ...args: string[]) => files.run("setup", "--api", stub.api, "--code", setupCode, ...args)
+  const request = (title = "Fix checkout rounding", ...args: string[]) => files.run("request-push", "--branch", "openwork/fix-rounding", "--title", title, "--tests", "not_run", ...(args.length ? args : ["--wait-seconds", "0"]))
+  const stateFile = path.join(files.taskRoot, "state.json")
+  const readState = () => JSON.parse(readFileSync(stateFile, "utf8"))
+  const waitCommand = `node ${JSON.stringify(files.script)} wait --root ${JSON.stringify(files.taskRoot)}`
+  return { ...files, ...bare, ...stub, dir, setup, request, stateFile, readState, waitCommand }
 }
 
 test("approval and push carry byte-identical Git changes from the embedded helper", async (t) => {
@@ -192,17 +224,15 @@ test("approval and push carry byte-identical Git changes from the embedded helpe
   assert.ok(setup.output.includes(`Work in: ${f.dir}\nBase branch: main`))
   assert.match(setup.output, /Never push with git yourself.*request-push --help/)
   assert.deepEqual(f.recorded.map(({ method, endpoint }) => [method, endpoint]), [["POST", "/setup"], ["POST", "/read-token"]])
-  const again = await f.setup("--dir", f.dir)
-  assert.equal(again.exit, 0, again.output)
-  assert.equal(again.output, "This task is already set up.\n" + setup.output)
-  assert.equal(f.recorded.length, 2)
-  const stateFile = path.join(f.stateDir, taskId + ".json")
-  const state = JSON.parse(readFileSync(stateFile, "utf8"))
+  const state = f.readState()
   assert.equal(state.baseSha, f.baseSha)
   assert.equal(state.token, token)
   assert.equal(state.dir, f.dir)
-  assert.equal(statSync(f.stateDir).mode & 0o777, 0o700)
-  assert.equal(statSync(stateFile).mode & 0o777, 0o600)
+  assert.equal(state.root, f.taskRoot)
+  assert.equal(statSync(f.taskRoot).mode & 0o777, 0o700)
+  assert.equal(statSync(f.stateFile).mode & 0o777, 0o600)
+  assert.deepEqual(readdirSync(f.taskRoot).sort(), ["openwork-code.mjs", "state.json", "storefront"])
+  assert.deepEqual(readdirSync(f.home), [])
   assert.equal(f.git(f.dir, "config", "--local", "user.name"), author.name)
   assert.equal(f.git(f.dir, "config", "--local", "user.email"), author.email)
   const config = readFileSync(path.join(f.dir, ".git", "config"), "utf8")
@@ -210,7 +240,7 @@ test("approval and push carry byte-identical Git changes from the embedded helpe
   assert.doesNotMatch(config, /extraHeader|credential/i)
   assert.equal(f.git(f.dir, "remote", "get-url", "origin"), f.cloneUrl)
   assert.equal(new URL(f.cloneUrl).username, "")
-  const result = await f.run("detect", "--dir", f.dir, "--json")
+  const result = await f.run("detect", "--json")
   assert.equal(result.exit, 0, result.output)
   const found = JSON.parse(result.output)
   assert.deepEqual(found.install[0], { command: "pnpm install --frozen-lockfile", source: "package.json packageManager" })
@@ -229,12 +259,12 @@ test("approval and push carry byte-identical Git changes from the embedded helpe
   write(f.dir, ".env", "IGNORED=1\n")
   rmSync(path.join(f.dir, "obsolete.txt"))
   const message = "Fix checkout rounding\n\nPreserve the total in whole cents.\n"
-  write(f.root, "commit.txt", message)
-  write(f.root, "body.txt", "Checkout totals should be whole cents.\n")
-  const ask = await f.run("request-push", "--task", taskId, "--branch", "openwork/fix-rounding", "--title", "Fix checkout rounding", "--tests", "passed", "--test-command", "pnpm test", "--test-summary", "Checkout tests passed.", "--message-file", "commit.txt", "--body-file", "body.txt", "--wait-seconds", "0.01")
+  write(f.taskRoot, "commit.txt", message)
+  write(f.taskRoot, "pull-request.md", "Checkout totals should be whole cents.\n")
+  const ask = await f.run("request-push", "--branch", "openwork/fix-rounding", "--title", "Fix checkout rounding", "--tests", "passed", "--test-command", "pnpm test", "--test-summary", "Checkout tests passed.", "--message-file", path.join(f.taskRoot, "commit.txt"), "--body-file", path.join(f.taskRoot, "pull-request.md"), "--wait-seconds", "0.25")
   assert.equal(ask.exit, 3, ask.output)
   assert.match(ask.output, /Asked Maya Chen to approve pushing 4 file\(s\) to a new branch openwork\/fix-rounding on acme\/storefront\./)
-  assert.ok(ask.output.includes(`Still waiting for approval. Run: node ${JSON.stringify(f.script)} wait --task ${taskId}`))
+  assert.ok(ask.output.includes(`Still waiting for approval. Run: ${f.waitCommand}`))
   const inputRecord = f.recorded.find((entry) => entry.method === "POST" && entry.endpoint === "/push-approvals")
   assert.ok(inputRecord)
   const input = cloudCodingPushRequestSchema.parse(JSON.parse(inputRecord.raw))
@@ -261,34 +291,36 @@ test("approval and push carry byte-identical Git changes from the embedded helpe
   write(f.dir, "src/checkout/total.ts", "export const total = 101\n")
   const id = f.decide("approved")
   f.failOnce()
-  const wait = await f.run("wait", "--task", taskId, "--wait-seconds", "0")
-  const expected = `Pull request opened: ${prUrl}\n${repoName} #17 · branch openwork/fix-rounding\n`
+  const status = await f.run("status", "--json")
+  assert.equal(status.exit, 0, status.output)
+  assert.equal(JSON.parse(status.output).approval.status, "approved")
+  assert.equal(f.recorded.filter((entry) => entry.endpoint === "/task").length, 2)
+  const wait = await f.run("wait", "--wait-seconds", "0")
+  const expected = `Pull request opened: ${prUrl}\n${repoName} #17 · branch openwork/fix-rounding\n${cleanupLine}`
   assert.deepEqual(wait, { exit: 0, output: expected })
   const pushes = f.recorded.filter((entry) => entry.endpoint === `/push-approvals/${id}/push`)
   assert.equal(pushes.length, 2)
   assert.ok(inputRecord.raw.startsWith(pushes[0].raw.slice(0, -1) + ","))
   assert.equal(pushes[1].raw, pushes[0].raw)
   assert.equal(f.recorded.filter((entry) => entry.endpoint === "/pull-requests").length, 2)
-  assert.deepEqual(await f.run("wait", "--wait-seconds", "0"), { exit: 0, output: expected })
-  assert.equal(f.recorded.filter((entry) => entry.endpoint.endsWith("/push")).length, 2)
-  const status = await f.run("status", "--json")
-  assert.equal(status.exit, 0, status.output)
-  assert.equal(JSON.parse(status.output).approval.pullRequest.url, prUrl)
-  assert.equal(f.recorded.filter((entry) => entry.endpoint === "/task").length, 2)
-  assert.ok((await f.run("status")).output.includes("Pull request: " + prUrl))
+  assert.equal(f.recorded.filter((entry) => entry.endpoint === "/release").length, 1)
+  assert.equal(existsSync(f.taskRoot), false)
+  assert.deepEqual(readdirSync(f.home), [])
   assert.equal(f.git(f.root, "--git-dir", path.join(f.root, "storefront.git"), "rev-parse", "main"), f.baseSha)
 })
 
-test("stops on denied, expired, superseded, mismatched, and refused approvals", async (t) => {
+test("stops on expired, superseded, mismatched, and refused approvals", async (t) => {
   const f = await taskFixture(t)
   assert.equal((await f.setup()).exit, 0)
   write(f.dir, "src/checkout/total.ts", "export const total = 10\n")
-  for (const [status, exit] of [["denied", 4], ["expired", 5], ["superseded", 5]] as const) {
+  for (const [status, exit] of [["expired", 5], ["superseded", 5]] as const) {
     assert.equal((await f.request()).exit, 3)
     f.decide(status)
     const result = await f.run("wait", "--wait-seconds", "0")
     assert.equal(result.exit, exit)
     assert.ok(result.output.includes(status))
+    assert.ok(existsSync(f.stateFile))
+    assert.equal(f.recorded.filter((entry) => entry.endpoint === "/release").length, 0)
     assert.equal(f.recorded.filter((entry) => entry.endpoint.endsWith("/push")).length, 0)
   }
   assert.equal((await f.request()).exit, 3)
@@ -304,9 +336,9 @@ test("stops on denied, expired, superseded, mismatched, and refused approvals", 
 test("refuses empty, workflow, symlink, and oversize changes locally", async (t) => {
   const f = await taskFixture(t)
   write(f.root, "occupied/keep.txt", "Keep\n")
-  const occupied = await f.setup("--dir", path.join(f.root, "occupied"))
+  const occupied = await f.setup(code, "--root", path.join(f.root, "occupied"))
   assert.equal(occupied.exit, 1)
-  assert.match(occupied.output, /not an empty folder/)
+  assert.match(occupied.output, /not empty/)
   assert.equal(f.recorded.length, 0)
   assert.equal((await f.setup()).exit, 0)
   let result = await f.request()
@@ -330,6 +362,108 @@ test("refuses empty, workflow, symlink, and oversize changes locally", async (t)
   assert.match(result.output, /too large to push at once/)
   assert.deepEqual(f.recorded.map(({ endpoint }) => endpoint), ["/setup", "/read-token"])
   assert.equal(f.git(f.dir, "rev-parse", "HEAD"), f.baseSha)
+})
+
+test("setup rotates a credential without replacing the checkout or pending approval", async (t) => {
+  const f = await taskFixture(t)
+  assert.equal((await f.setup()).exit, 0)
+  write(f.dir, "src/checkout/total.ts", "export const total = 10\n")
+  assert.equal((await f.request()).exit, 3)
+  write(f.dir, "later.txt", "Not part of the approved commit\n")
+  const saved = f.readState()
+  const resumed = await f.setup(resumeCode)
+  assert.equal(resumed.exit, 0, resumed.output)
+  assert.ok(resumed.output.includes(`Push approval: pending\nRun: ${f.waitCommand}\n`))
+  assert.deepEqual(f.readState(), { ...saved, token: resumedToken, tokenExpiresAt: "2030-01-02T00:00:00.000Z" })
+  assert.equal(f.git(f.dir, "rev-parse", "HEAD"), saved.approval.commit)
+  assert.equal(readFileSync(path.join(f.dir, "later.txt"), "utf8"), "Not part of the approved commit\n")
+  assert.equal(f.recorded.filter((entry) => entry.endpoint === "/read-token").length, 1)
+  f.decide("approved")
+  const wait = await f.run("wait", "--wait-seconds", "0")
+  assert.equal(wait.exit, 0, wait.output)
+  const renewal = f.recorded.findLastIndex((entry) => entry.endpoint === "/setup")
+  assert.deepEqual(f.recorded.slice(renewal + 1).map((entry) => entry.authorization), Array(5).fill(`Bearer ${resumedToken}`))
+  assert.equal(existsSync(f.taskRoot), false)
+})
+
+test("setup refuses a different task's code without changing local state", async (t) => {
+  const f = await taskFixture(t)
+  assert.equal((await f.setup()).exit, 0)
+  const saved = f.readState()
+  assert.deepEqual(await f.setup(otherCode), { exit: 1, output: "This folder belongs to another task.\n" })
+  assert.deepEqual(f.readState(), saved)
+  assert.equal(f.git(f.dir, "rev-parse", "HEAD"), f.baseSha)
+})
+
+test("an ended credential tells the caller to resume the task", async (t) => {
+  const f = await taskFixture(t)
+  assert.equal((await f.setup()).exit, 0)
+  const saved = f.readState()
+  const hint = `The credential for this task has ended. Call cloud-coding:start again with taskId ${taskId} and run the new setup command.\n`
+  writeFileSync(f.stateFile, JSON.stringify({ ...saved, token: null }))
+  const count = f.recorded.length
+  assert.deepEqual(await f.run("wait"), { exit: 6, output: hint })
+  assert.deepEqual(await f.request(), { exit: 6, output: hint })
+  assert.deepEqual(await f.run("status"), { exit: 6, output: hint })
+  assert.equal(f.recorded.length, count)
+  writeFileSync(f.stateFile, JSON.stringify(saved))
+  f.closeCredential()
+  assert.deepEqual(await f.run("status"), { exit: 6, output: "This task credential is not active: [redacted]\n" + hint })
+  assert.ok(existsSync(f.taskRoot))
+})
+
+test("denial releases the credential and deletes the whole root without pushing", async (t) => {
+  const f = await taskFixture(t)
+  assert.equal((await f.setup()).exit, 0)
+  write(f.dir, "src/checkout/total.ts", "export const total = 10\n")
+  assert.equal((await f.request()).exit, 3)
+  const id = f.decide("denied")
+  const result = await f.run("wait", "--wait-seconds", "0")
+  assert.deepEqual(result, { exit: 4, output: "The push was denied. Nothing was pushed. Ask what they would like changed.\n" + cleanupLine })
+  assert.equal(existsSync(f.taskRoot), false)
+  assert.deepEqual(f.recorded.slice(-2).map((entry) => entry.endpoint), [`/push-approvals/${id}`, "/release"])
+  assert.ok(f.recorded.every((entry) => !entry.endpoint.endsWith("/push")))
+})
+
+test("finish refuses unsafe roots and cleans its own root despite a failed release", async (t) => {
+  const f = await taskFixture(t)
+  const unsafe = await f.run("finish", "--root", "/")
+  assert.equal(unsafe.exit, 1)
+  const unrelated = path.join(f.root, "unrelated")
+  write(unrelated, "keep.txt", "keep\n")
+  const missing = await f.run("finish", "--root", unrelated)
+  assert.equal(missing.exit, 1)
+  assert.equal(readFileSync(path.join(unrelated, "keep.txt"), "utf8"), "keep\n")
+  assert.equal(f.recorded.length, 0)
+  assert.equal((await f.setup()).exit, 0)
+  const parent = path.join(f.root, "other-parent")
+  const otherRepo = path.join(parent, "other-repo")
+  mkdirSync(otherRepo, { recursive: true })
+  f.git(otherRepo, "init")
+  write(parent, "state.json", JSON.stringify({ ...f.readState(), root: parent, dir: path.join(parent, "storefront") }))
+  const inOtherRepo = await f.runFrom(otherRepo, "finish", "--root", parent)
+  assert.equal(inOtherRepo.exit, 1)
+  assert.match(inOtherRepo.output, /existing repository or its parent/)
+  assert.ok(existsSync(path.join(otherRepo, ".git")))
+  f.failRelease()
+  assert.deepEqual(await f.runFrom(f.dir, "finish"), { exit: 0, output: cleanupLine })
+  assert.equal(existsSync(f.taskRoot), false)
+  assert.equal(f.recorded.filter((entry) => entry.endpoint === "/release").length, 1)
+  assert.deepEqual(readdirSync(f.home), [])
+})
+
+test("pending waits take the capped duration even when a larger duration is requested", async (t) => {
+  const cap = 300
+  const f = await taskFixture(t, cap)
+  assert.equal((await f.setup()).exit, 0)
+  write(f.dir, "src/checkout/total.ts", "export const total = 10\n")
+  const request = await f.request("Wait too long", "--wait-seconds", "9999")
+  assert.equal(request.exit, 3, request.output)
+  const wait = await f.run("wait")
+  assert.equal(wait.exit, 3, wait.output)
+  const pollTimes = f.recorded.flatMap(({ query }) => query ? [Number(new URLSearchParams(query).get("waitMs"))] : [])
+  assert.ok(pollTimes.length >= 2)
+  assert.ok(pollTimes.every((ms) => ms > 0 && ms <= cap))
 })
 
 for (const fixture of [
