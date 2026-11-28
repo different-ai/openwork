@@ -1615,7 +1615,7 @@ export function SessionPage(props: SessionPageProps) {
             className={cn(
               "window-titlebar relative flex shrink-0 items-center justify-between gap-3 border-b border-border bg-dls-surface px-3 electron:titlebar-drag @container/titlebar lg:px-4 mac:bg-transparent",
               "[&_[data-session-centered-title]]:absolute [&_[data-session-centered-title]]:left-1/2 [&_[data-session-centered-title]]:max-w-[32%] [&_[data-session-centered-title]]:-translate-x-1/2 lg:[&_[data-session-title-panel-open=true]]:left-[calc(50%-9.375rem)]",
-              props.mainContentHeaderActionsRef ? "min-h-13" : "lg:pr-1",
+              props.mainContentHeaderActionsRef ? "min-h-13" : compactChrome && !props.developerMode ? "lg:pr-2" : "lg:pr-1",
               props.primarySurface !== "flat" && "lg:border-b-0",
               (!shellConfig.sidebar || !sidebarOpen || isMobile) && "mac:mac-window-controls-inset",
             )}
@@ -1847,7 +1847,7 @@ export function SessionPage(props: SessionPageProps) {
             </div>}
           </header>}
 
-          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2")}>
+          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2", props.primarySurface !== "flat" && compactChrome && !props.developerMode && "lg:pr-2")}>
           <ResizablePanelGroup
             orientation="horizontal"
             elementRef={panelGroupRef}
