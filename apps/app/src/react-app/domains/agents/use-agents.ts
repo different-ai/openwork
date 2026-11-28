@@ -15,6 +15,7 @@ const ACTIVE_RUN_STATUSES: readonly AutomationRun["status"][] = ["queued", "clai
 const ACTIVE_POLL_MS = 5_000;
 const IDLE_POLL_MS = 60_000;
 const OPEN_CHAT_POLL_MS = 10_000;
+const REPLYING_POLL_MS = 1_500;
 
 export function isActiveRun(run: Pick<AutomationRun, "status"> | null | undefined): boolean {
   return Boolean(run && ACTIVE_RUN_STATUSES.includes(run.status));
@@ -108,12 +109,12 @@ function agentRunsKey(scope: AgentScope | null, agentId: string | null) {
   return [...agentsQueryRoot(scope), "runs", agentId] as const;
 }
 
-export function useAgentRequestsQuery(runtime: AgentsRuntime | null, agentId: string | null, pending: boolean, enabled = true) {
+export function useAgentRequestsQuery(runtime: AgentsRuntime | null, agentId: string | null, pending: boolean, enabled = true, replying = false) {
   return useQuery({
     queryKey: agentRequestsKey(runtime, agentId),
     queryFn: async () => runtime && agentId ? (await runtime.client.listPersonalAgentRequests(runtime.organizationId, agentId)).items : [],
     enabled: enabled && runtime !== null && agentId !== null,
-    refetchInterval: (query) => !enabled ? false : pending || query.state.data?.some((request) => request.status === "pending") ? ACTIVE_POLL_MS : OPEN_CHAT_POLL_MS,
+    refetchInterval: (query) => !enabled ? false : replying ? REPLYING_POLL_MS : pending || query.state.data?.some((request) => request.status === "pending") ? ACTIVE_POLL_MS : OPEN_CHAT_POLL_MS,
   });
 }
 

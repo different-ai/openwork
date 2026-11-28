@@ -13,6 +13,7 @@ export function RemoteTranscriptView({
   running,
   showThinking,
   developerMode,
+  assistantBubbles = false,
   waiting = false,
   runStartedAt = null,
 }: {
@@ -21,6 +22,7 @@ export function RemoteTranscriptView({
   running: boolean
   showThinking: boolean
   developerMode: boolean
+  assistantBubbles?: boolean
   waiting?: boolean
   runStartedAt?: number | null
 }) {
@@ -33,6 +35,7 @@ export function RemoteTranscriptView({
   return (
     <MessageListProvider
       readOnly
+      assistantBubbles={assistantBubbles}
       workspaceId={scope}
       sessionId={scope}
       showThinking={showThinking}

@@ -35,7 +35,7 @@ export function AgentToolDecision({ runtime, agent, request, onAllowed, onChoose
 
   return (
     <ToolApprovalCard data-agent-ask={request.id}
-      variant="inline"
+      variant="composer"
       title={connectorAccess
         ? (request.toolName ? t("agents.connector_ask_tool_title", { agent: name, tool, connection }) : t("agents.connector_ask_title", { agent: name, connection }))
         : t("agents.permission_ask_title", { agent: name, tool, connection })}
@@ -77,12 +77,12 @@ export function AgentToolReceipt({ agent, request, answered = false }: { agent: 
     : request.requestedByCaller && (request.status === "allowed_once" || request.status === "always_allowed")
       ? t("agents.chat_permission_next") : null;
   return (
-    <div data-agent-ask={request.id} data-agent-ask-receipt={request.status} className="text-xs leading-relaxed text-dls-secondary">
-      <p className="flex items-baseline gap-1.5">
-        <Shield aria-hidden="true" className="relative top-0.5 size-3.5 shrink-0" />
-        {receipt}
+    <div data-agent-ask={request.id} data-agent-ask-receipt={request.status} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dls-secondary">
+      <p className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-dls-border bg-dls-surface px-2.5 py-1 text-dls-text">
+        <Shield aria-hidden="true" className="size-3.5 shrink-0 text-dls-secondary" />
+        <span className="wrap-anywhere">{receipt}</span>
       </p>
-      {next && <p className="ps-5">{next}</p>}
+      {next && <p>{next}</p>}
     </div>
   );
 }
