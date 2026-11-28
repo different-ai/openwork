@@ -1488,7 +1488,7 @@ export function SessionPage(props: SessionPageProps) {
           </Button>
         </div>
       ) : null}
-      <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto", flatPanes && "rounded-r-[14px] border border-border bg-dls-surface border border-border shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.45)]")}>{props.settingsSlot}</div>
+      <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto", flatPanes && "border-y border-l border-border bg-dls-surface shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.45)]")}>{props.settingsSlot}</div>
     </div>
   ) : activeSidePanel === "panel" ? (
     <SidePanel
@@ -1862,7 +1862,7 @@ export function SessionPage(props: SessionPageProps) {
           <FloatingSlotProvider>
           {flatPanes ? null : sessionHeader}
 
-          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2", props.primarySurface !== "flat" && compactChrome && !props.developerMode && "lg:pr-2")}>
+          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2", props.primarySurface !== "flat" && compactChrome && !props.developerMode && !(flatPanes && sidePanelOpen) && "lg:pr-2")}>
           <ResizablePanelGroup
             orientation="horizontal"
             elementRef={panelGroupRef}
