@@ -286,6 +286,16 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     sendBrowserState();
   }
   let browserSessionHooksInstalled = false;
+  // Session-wide request events can arrive after a tab's contents is destroyed
+  // but before its "destroyed" listener removes the tab, when the view no
+  // longer has webContents. Skip such tabs instead of crashing the main process.
+  function tabForWebContentsId(webContentsId) {
+    for (const item of browserTabs.values()) {
+      const contents = item.view?.webContents;
+      if (contents && !contents.isDestroyed() && contents.id === webContentsId) return item;
+    }
+    return undefined;
+  }
   function installBrowserSessionHooks() {
     if (browserSessionHooksInstalled) return;
     // The manager is constructed before app.whenReady(). Only acquire the
@@ -302,7 +312,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // scripted fetches and CDP navigation; window navigation events do not.
     browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
       if (["about:", "data:", "blob:"].some((scheme) => details.url.startsWith(scheme))) { callback({ cancel: false }); return; }
-      const tab = [...browserTabs.values()].find((item) => item.view.webContents.id === details.webContentsId);
+      const tab = tabForWebContentsId(details.webContentsId);
       const owner = registry.ownerOf(tab?.tabId);
       const documentGeneration = tab?.documentGeneration;
       const guard = details.resourceType === "mainFrame" ? taskHost.navigationGuard(tab?.tabId) : null;
@@ -359,7 +369,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           callback({ cancel: true });
         });
     });
-    const finished = (details) => { [...browserTabs.values()].find((item) => item.view.webContents.id === details.webContentsId)?.inFlight.delete(details.id); };
+    const finished = (details) => { tabForWebContentsId(details.webContentsId)?.inFlight.delete(details.id); };
     browserSession.webRequest.onCompleted({ urls: ["<all_urls>"] }, finished);
     browserSession.webRequest.onErrorOccurred({ urls: ["<all_urls>"] }, finished);
   }
