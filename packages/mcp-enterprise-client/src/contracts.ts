@@ -374,7 +374,7 @@ export type EnterpriseMcpClientOptions = {
 }
 
 export interface EnterpriseMcpClient {
-  requestEvents(input: EnterpriseMcpListResourcesInput & { method: "events/list" | "events/subscribe" | "events/unsubscribe"; params: Record<string, unknown> }): Promise<Record<string, unknown>>
+  requestEvents(input: EnterpriseMcpListResourcesInput & { method: "events/list" | "events/subscribe" | "events/unsubscribe" | "events/poll"; params: Record<string, unknown> }): Promise<Record<string, unknown>>
   connect(input: EnterpriseMcpConnectInput): Promise<EnterpriseMcpConnectResult>
   completeAuthorization(input: EnterpriseMcpCompleteAuthorizationInput): Promise<void>
   abandonAuthorization(input: EnterpriseMcpAbandonAuthorizationInput): Promise<void>

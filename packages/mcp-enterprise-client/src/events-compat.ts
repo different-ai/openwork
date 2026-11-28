@@ -7,7 +7,7 @@ const objectSchema = z.record(z.string(), z.unknown())
 const capabilitiesSchema = z.object({ events: objectSchema.optional(), extensions: z.record(z.string(), objectSchema).optional() })
 const initializeResponseSchema = z.object({ result: z.object({ protocolVersion: z.string(), capabilities: z.unknown() }) })
 const eventRequestSchema = z.object({
-  method: z.enum(["events/list", "events/subscribe", "events/unsubscribe"]),
+  method: z.enum(["events/list", "events/subscribe", "events/unsubscribe", "events/poll"]),
   params: z.object({ name: z.string().optional() }).optional(),
 })
 

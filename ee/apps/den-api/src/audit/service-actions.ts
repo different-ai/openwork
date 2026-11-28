@@ -41,9 +41,9 @@ export const auditServiceActionDeclarations = [
   },
   {
     action: "mcp_event.subscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_event_subscription", idFrom: null }, origin: "mcp",
-    external: "connected MCP server (events/subscribe)",
+    external: "connected MCP server (events/subscribe, or events/poll when the event is only polled)",
     tools: ["subscribe_mcp_event"], callSites: ["src/mcp-events/tools.ts:subscribe"],
-    notes: `Thread-bound finite webhook subscription; callback secret and filters are never audit fields. ${MCP_PRINCIPAL}`,
+    notes: `Thread-bound finite subscription, delivered by webhook or by polling; callback secret and filters are never audit fields. ${MCP_PRINCIPAL}`,
   },
   {
     action: "mcp_event.unsubscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_event_subscription", idFrom: null }, origin: "mcp",

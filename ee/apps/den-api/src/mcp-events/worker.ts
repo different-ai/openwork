@@ -2,6 +2,7 @@ import { NativeEventError } from "../native-mcp-events/protocol.js"
 import { appLogger } from "../observability/logger.js"
 import { eventAccess, EventAccessError, requireEventThread } from "./context.js"
 import { eventPrompt, deliverySchema } from "./protocol.js"
+import { pollMcpEvent } from "./poller.js"
 import { claimEvent, findSubscription, finishEvent, handOffEvent, pruneEvents, retryEvent, stopSubscription } from "./repository.js"
 
 export async function dispatchMcpEvent() {
@@ -49,6 +50,7 @@ export function startMcpEventWorker() {
     if (running || stopped) return
     running = (async () => {
       if (Date.now() - lastPrune > 60_000) { await pruneEvents(); lastPrune = Date.now() }
+      for (let i = 0; i < 10 && !stopped && await pollMcpEvent(); i++) {}
       for (let i = 0; i < 20 && !stopped && await dispatchMcpEvent(); i++) {}
     })().catch(() => { appLogger.warn("MCP event queue unavailable", { component: "mcp_events" }) }).finally(() => { running = null })
   }

@@ -30,6 +30,18 @@ export const eventListSchema = z.object({
   })).max(500),
   nextCursor: z.string().optional(),
 })
+export const POLL_LEASE_MS = 120_000
+export const MAX_POLL_FAILURES = 5
+const MIN_POLL_INTERVAL_MS = 30_000
+const MAX_POLL_INTERVAL_MS = 5 * 60_000
+export const polledSchema = z.object({
+  events: z.array(z.unknown()).max(1000).default([]),
+  cursor: z.string().max(8192).nullable().optional(),
+  truncated: z.boolean().optional(),
+  nextPollMs: z.number().nonnegative().optional(),
+})
+export const nextPollAt = (nextPollMs: number | undefined, now = Date.now()) =>
+  new Date(now + Math.min(MAX_POLL_INTERVAL_MS, Math.max(MIN_POLL_INTERVAL_MS, nextPollMs ?? MIN_POLL_INTERVAL_MS)))
 export const subscribedSchema = z.object({
   id: z.string().min(1).max(512),
   refreshBefore: z.iso.datetime({ offset: true }).nullable(),

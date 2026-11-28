@@ -33,9 +33,12 @@ export const McpEventSubscriptionTable = mysqlTable("mcp_event_subscription", {
   model: varchar("model", { length: 512 }).notNull(),
   scopes: compatJsonColumn<string[]>("scopes").notNull(),
   status: varchar("status", { length: 16 }).notNull(),
+  delivery: varchar("delivery", { length: 16 }).notNull().default("webhook"),
+  nextPollAt: timestamp("next_poll_at", { fsp: 3 }),
+  pollFailures: int("poll_failures").notNull().default(0),
   expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
   createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
-}, (t) => [index("mcp_event_subscription_thread").on(t.organizationId, t.memberId, t.sessionId), index("mcp_event_subscription_expiry").on(t.status, t.expiresAt)])
+}, (t) => [index("mcp_event_subscription_thread").on(t.organizationId, t.memberId, t.sessionId), index("mcp_event_subscription_expiry").on(t.status, t.expiresAt), index("mcp_event_subscription_poll").on(t.delivery, t.nextPollAt)])
 
 /** Receipt id is SHA-256(subscription id, event id); it is also the runner's idempotent message id. */
 export const McpEventReceiptTable = mysqlTable("mcp_event_receipt", {
