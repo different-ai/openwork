@@ -10,7 +10,7 @@ import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getMembersRoute, getTeamRoute, permissionLockReason } from "../../_lib/den-org";
+import { getMembersRolesRoute, getTeamRoute, permissionLockReason } from "../../_lib/den-org";
 import { useDenToast } from "./den-toast";
 import {
   PermissionsRequestError,
@@ -59,7 +59,7 @@ function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; 
   const update = useUpdatePermissionSet(ready.orgId, permissionSetId);
 
   const [chosenTab, setTab] = useState<SetTab | null>(null);
-  const rolesBack = { href: `${getMembersRoute(ready.orgSlug)}?tab=roles`, label: "Roles" };
+  const rolesBack = { href: getMembersRolesRoute(ready.orgSlug), label: "Roles" };
   const listBack = rolesBack;
   const loadingTitle = "Role";
 
@@ -354,7 +354,7 @@ function RemoveTeamPermissions({ ready, set }: { ready: ReadyAccess; set: Permis
       await remove.mutateAsync();
       setOpen(false);
       toast({ title: words.done });
-      router.push(`${getMembersRoute(ready.orgSlug)}?tab=roles`);
+      router.push(getMembersRolesRoute(ready.orgSlug));
     } catch {
       return;
     }

@@ -713,7 +713,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                     item.href !== "#" &&
                     (item.children
                       ? groupActive
-                      : isDashboardRoot
+                      : isDashboardRoot || item.exact
                         ? pathname === item.href
                         : pathname === item.href
                           || pathname.startsWith(`${item.href}/`)
@@ -726,6 +726,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                       <Link
                         href={item.href}
                         data-testid={item.testId}
+                        aria-current={selected ? "page" : undefined}
                         onClick={(event) => {
                           setSidebarOpen(false);
                           if (workbot.interceptNavigation(item.href)) event.preventDefault();

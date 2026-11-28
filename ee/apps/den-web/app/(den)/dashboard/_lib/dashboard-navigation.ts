@@ -15,7 +15,9 @@ import {
   Plug,
   SlidersHorizontal,
   Sparkles,
+  User,
   Users,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -37,7 +39,9 @@ import {
   getLibraryRoute,
   getMarketplacesRoute,
   getMcpConnectionsRoute,
+  getMembersRolesRoute,
   getMembersRoute,
+  getMembersTeamsRoute,
   getMyComputersRoute,
   getMyUsageRoute,
   getOrgDashboardRoute,
@@ -64,6 +68,7 @@ export type DashboardNavItem = {
   icon: LucideIcon;
   badge?: string;
   attention?: string;
+  exact?: boolean;
   locked?: string;
   testId?: string;
   matchHrefs?: string[];
@@ -184,7 +189,11 @@ export function buildDashboardNavSections({
     : null;
   const teamItems: DashboardNavItem[] = [
     ...(orgSlug && canOpen(getMembersRoute(orgSlug))
-      ? [{ href: getMembersRoute(orgSlug), label: "Members", icon: Users }]
+      ? [
+          { href: getMembersRoute(orgSlug), label: "Members", icon: User, exact: true },
+          { href: getMembersTeamsRoute(orgSlug), label: "Teams", icon: Users },
+          { href: getMembersRolesRoute(orgSlug), label: "Roles", icon: ShieldCheck },
+        ]
       : []),
     ...(settingsGroup ? [settingsGroup] : []),
   ];
@@ -193,7 +202,7 @@ export function buildDashboardNavSections({
     { label: "Work", items: workItems },
     ...(manageItems.length > 0 ? [{ label: "Manage", items: manageItems }] : []),
     ...(observabilityItems.length > 0 ? [{ label: "Observability", items: observabilityItems }] : []),
-    ...(teamItems.length > 0 ? [{ label: "Team", items: teamItems }] : []),
+    ...(teamItems.length > 0 ? [{ label: "Organization", items: teamItems }] : []),
   ];
 }
 

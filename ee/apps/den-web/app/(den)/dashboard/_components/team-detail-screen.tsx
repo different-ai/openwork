@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Laptop, Compass, KeyRound, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
 import type { TabItem } from "../../_components/ui/tabs";
-import { getMembersRoute, getMembersTeamsRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
+import { getMembersTeamsRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { DenButton } from "../../_components/ui/button";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { DesktopSuggestionsPanel } from "./desktop-suggestions-panel";
@@ -90,7 +90,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
   return (
     <TeamPageFrame title={team?.name ?? "Team"} memberCount={memberCount} backHref={getMembersTeamsRoute(orgSlug)}
       action={team ? canEditTeam
-        ? <LinkButton size="sm" variant="secondary" href={`${getMembersRoute(orgSlug)}?tab=teams&editTeam=${encodeURIComponent(teamId)}`} data-testid="team-edit">Edit team</LinkButton>
+        ? <LinkButton size="sm" variant="secondary" href={`${getMembersTeamsRoute(orgSlug)}?editTeam=${encodeURIComponent(teamId)}`} data-testid="team-edit">Edit team</LinkButton>
         : <span className="flex flex-col items-end gap-1"><DenButton size="sm" variant="secondary" disabled title={editTeamLockedReason} data-testid="team-edit-locked">Edit team</DenButton><span className="max-w-72 text-right text-[12px] text-[var(--dls-text-secondary)]">{editTeamLockedReason}</span></span>
         : undefined}>
       <TeamSections

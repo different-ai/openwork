@@ -724,7 +724,11 @@ export function getEveryoneBrowserRoute(orgSlug?: string | null): string {
 }
 
 export function getMembersTeamsRoute(orgSlug?: string | null): string {
-  return `${getMembersRoute(orgSlug)}?tab=teams`;
+  return `${getMembersRoute(orgSlug)}/teams`;
+}
+
+export function getMembersRolesRoute(orgSlug?: string | null): string {
+  return `${getMembersRoute(orgSlug)}/roles`;
 }
 
 export function getNewRoleRoute(orgSlug?: string | null): string {
