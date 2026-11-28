@@ -13,8 +13,14 @@ title bar.
 
 With the feature on:
 
-- The chat and the side panel share one rounded card, split by a thin line,
-  with no gap between them.
+- The chat and the side panel share one surface, split by a thin line, with
+  no gap between them. Together they read as one rounded card, with the same
+  margin around it as today.
+- The selected tab and the built-in browser's address bar share the card's
+  white surface, so the tab leads into the page. The web page sits slightly
+  inside the card so the card's rounded corners stay visible.
+- A short divider in the title bar separates the session title from the side
+  panel's tabs.
 - The side panel's tabs sit in the title bar above the panel, and the button
   that closes the panel is at the title bar's far right.
 - With the side panel closed, the chat card takes the full width and the
