@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState } from "react";
+import { useState, type ComponentType } from "react";
 import { computerState, projectComputer } from "@openwork/computers";
 import { COMPUTER_STATE_LABELS, computerFolderSchema, type ComputerAccessSetting, type ComputerOwnerChoice } from "@openwork/types/den/computers";
 import {
@@ -42,21 +42,26 @@ const dateLabel = (value: string) => new Date(value).toLocaleString();
 const isOwnRegisteredVm = (device: RemoteDevice) => device.kind === "vm" && device.source === "manual" && device.access === "mine";
 type DeviceAction = { kind: "register" } | { kind: "rename" | "disconnect" | "remove"; device: RemoteDevice };
 
-export function DevicesView({ computersEnabled }: { computersEnabled: boolean }) {
+type DevicesSharingSlot = ComponentType<{
+  scope: readonly unknown[]; devices: RemoteDevice[] | undefined; organizationId: string | null; thisDeviceId: string | null;
+}>;
+
+export function DevicesView({ computersEnabled, SharingSection }: { computersEnabled: boolean; SharingSection: DevicesSharingSlot }) {
   const context = useAutomationsDenContext();
   const { signOut } = useCloudWorkspaceStatus();
-  return <DevicesContent key={`${remoteDevicesContextQueryKey(context).join(":")}:${context.ready}`} context={context} computersEnabled={computersEnabled} organizationName={readDenSettings().activeOrgName?.trim() || null} onSignOut={signOut} />;
+  return <DevicesContent key={`${remoteDevicesContextQueryKey(context).join(":")}:${context.ready}`} context={context} computersEnabled={computersEnabled} SharingSection={SharingSection} organizationName={readDenSettings().activeOrgName?.trim() || null} onSignOut={signOut} />;
 }
 
-export function DevicesContent({ context, computersEnabled, organizationName = null, onSignOut }: { context: AutomationsDenContext; computersEnabled: boolean; organizationName?: string | null; onSignOut?: () => void }) {
+export function DevicesContent({ context, computersEnabled, SharingSection, organizationName = null, onSignOut }: { context: AutomationsDenContext; computersEnabled: boolean; SharingSection: DevicesSharingSlot; organizationName?: string | null; onSignOut?: () => void }) {
   const query = useRemoteDevicesQuery(context);
   const thisDeviceId = useThisDeviceId(context.organizationId);
   const disconnected = useThisComputerDisconnected();
   const [action, setAction] = useState<DeviceAction | null>(null);
   const [outcome, setOutcome] = useState<string | null>(null);
   const begin = (next: DeviceAction) => { setOutcome(null); setAction(next); };
+  const computerSharingSection = computersEnabled ? <SharingSection scope={remoteDevicesContextQueryKey(context)} devices={query.data} organizationId={context.organizationId} thisDeviceId={thisDeviceId} /> : null;
   const sessionAccessSection = <SessionAccessSection />;
-  if (!context.ready) return <LayoutStack><p role="status" className="text-sm text-muted-foreground">Sign in and select an organization in Cloud account to see your devices.</p>{sessionAccessSection}</LayoutStack>;
+  if (!context.ready) return <LayoutStack><p role="status" className="text-sm text-muted-foreground">Sign in and select an organization in Cloud account to see your devices.</p>{computerSharingSection}{sessionAccessSection}</LayoutStack>;
   const devices = query.data ?? [];
   return <LayoutStack>
     {disconnected ? <Alert role="status" data-testid="computer-disconnected" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -73,6 +78,7 @@ export function DevicesContent({ context, computersEnabled, organizationName = n
       {devices.filter(device => device.kind === kind).map(device => <DeviceRow key={device.id} device={device} context={context} thisDevice={isThisComputer(device, context.organizationId, thisDeviceId)} computersEnabled={computersEnabled} onAction={begin} />)}
       {!query.isPending && devices.length > 0 && !devices.some(device => device.kind === kind) ? <p className="text-sm text-muted-foreground">{kind === "desktop" ? "No desktops reported yet." : "No cloud VMs registered yet."}</p> : null}
     </LayoutSection>)}
+    {computerSharingSection}
     {sessionAccessSection}
     {action ? <DeviceDialog key={action.kind === "register" ? "register" : `${action.kind}:${action.device.id}`} action={action} context={context} computersEnabled={computersEnabled} onClose={result => { setAction(null); if (result) setOutcome(result); }} /> : null}
   </LayoutStack>;

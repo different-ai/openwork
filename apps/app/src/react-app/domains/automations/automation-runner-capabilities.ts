@@ -1,0 +1,47 @@
+import {
+  AUTOMATION_MODEL_ATTENTION_CAPABILITY,
+  COMPUTER_SHELL_RUNNER_CAPABILITY,
+  REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY,
+  REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
+  REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY,
+  REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+  REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
+  REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
+  REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
+  type AutomationDesktopRunnerCapability,
+} from "@openwork/types/automations"
+import type { ComputerSharingState } from "@openwork/types/computer-sharing"
+
+export function automationRunnerCapabilitySets(
+  deploymentEnabled: boolean, computersEnabled: boolean, availability?: ComputerSharingState["availability"],
+): AutomationDesktopRunnerCapability[][] {
+  const recovery: AutomationDesktopRunnerCapability[] = [
+    AUTOMATION_MODEL_ATTENTION_CAPABILITY,
+    REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
+    REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+    REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
+  ]
+  const answer: AutomationDesktopRunnerCapability[] = [...recovery, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY]
+  const sessionOnly: AutomationDesktopRunnerCapability[] = [
+    REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
+    REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+    REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
+    REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
+  ]
+  const base: AutomationDesktopRunnerCapability[][] = deploymentEnabled ? [
+    [...answer, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY],
+    [...answer, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY],
+    answer,
+    recovery,
+    [AUTOMATION_MODEL_ATTENTION_CAPABILITY, REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY, REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY],
+    [AUTOMATION_MODEL_ATTENTION_CAPABILITY, REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY],
+    [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
+  ] : [
+    [...sessionOnly, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY],
+    [...sessionOnly, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY],
+    [...sessionOnly, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY],
+    sessionOnly,
+  ]
+  if (!computersEnabled || availability?.state !== "available") return base
+  return [...base.map((set): AutomationDesktopRunnerCapability[] => [COMPUTER_SHELL_RUNNER_CAPABILITY, ...set]), ...base]
+}

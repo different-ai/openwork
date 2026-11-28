@@ -1,23 +1,11 @@
 /** @jsxImportSource react */
-import { useEffect } from "react"
-import {
-  AUTOMATION_MODEL_ATTENTION_CAPABILITY,
-  REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY,
-  REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
-  REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY,
-  REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
-  REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
-  REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
-  REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
-} from "@openwork/types/automations"
-import type {
-  AutomationDesktopRunnerCapability,
-  AutomationDesktopRunnerRegistration,
-} from "@openwork/types/automations"
+import { useEffect, useState } from "react"
+import type { AutomationDesktopRunnerCapability, AutomationDesktopRunnerRegistration } from "@openwork/types/automations"
+import type { ComputerSharingState } from "@openwork/types/computer-sharing"
 import { COMPUTER_DISCONNECTED_ERROR } from "@openwork/types/den/remote-devices"
 
 import { createDenClient, DenApiError, isDenSessionRevokedError, readDenSettings } from "@/app/lib/den"
-import { denSettingsChangedEvent } from "@/app/lib/den-session-events"
+import { denSettingsChangedEvent, denSessionUpdatedEvent } from "@/app/lib/den-session-events"
 import { observeDesktopAutomationLifecycle } from "@/app/lib/analytics"
 import { isDesktopRuntime } from "@/app/utils"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
@@ -27,28 +15,42 @@ import {
   markThisComputerConnected,
   markThisComputerDisconnected,
   thisComputerStillDisconnected,
+  useComputerConnectionStore,
 } from "@/react-app/domains/devices/computer-connection-store"
+import { readLocalComputerServer } from "@/react-app/infra/local-computer-server"
 import { useDesktopAutomationsEnabled } from "./automation-availability"
+import { automationRunnerCapabilitySets } from "./automation-runner-capabilities"
 import { createAutomationRunnerConnectCoordinator } from "./automation-runner-connect-coordinator"
 import { desktopRunnerId, organizationRunnerId } from "./automation-runner-identity"
+import { createComputerRunnerDelivery } from "./computer-runner-delivery"
 
 const RUNNER_TOKEN_REFRESH_MS = 30 * 60_000
 const RUNNER_DISCONNECTED_RETRY_MS = 5 * 60_000
+const LOCAL_COMPUTER_CHECK_MS = 5_000
 
-export function AutomationRunnerBridge() {
+export function AutomationRunnerBridge({ computersEnabled }: { computersEnabled: boolean }) {
   if (useEnterpriseActivationRequired()) return null
-  return <ActivatedAutomationRunnerBridge />
+  return <ActivatedAutomationRunnerBridge computersEnabled={computersEnabled} />
 }
 
-function ActivatedAutomationRunnerBridge() {
+function ActivatedAutomationRunnerBridge({ computersEnabled }: { computersEnabled: boolean }) {
   const { status, refresh } = useDenAuth()
   const deploymentEnabled = useDesktopAutomationsEnabled()
+  const [delivery] = useState(createComputerRunnerDelivery)
 
   useEffect(() => {
     if (!isDesktopRuntime() || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return
 
-    const disconnect = () => window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", null)
-      .catch(() => undefined)
+    let availability: ComputerSharingState["availability"] | undefined
+    let localServerIdentity: string | undefined
+    let disposed = false
+    let checkingLocal = false
+    let currentSignIn = denSignInKey(readDenSettings())
+    const clearCredential = () => { if (computersEnabled) void delivery.setCredential(null) }
+    const disconnect = () => {
+      clearCredential()
+      return window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", null).catch(() => undefined)
+    }
     const coordinator = createAutomationRunnerConnectCoordinator({
       refreshMs: RUNNER_TOKEN_REFRESH_MS,
       disconnectedRetryMs: RUNNER_DISCONNECTED_RETRY_MS,
@@ -85,46 +87,13 @@ function ActivatedAutomationRunnerBridge() {
               platform,
               concurrency: 1,
             })
-            const recoveryCapabilities: AutomationDesktopRunnerCapability[] = [
-              AUTOMATION_MODEL_ATTENTION_CAPABILITY,
-              REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
-              REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
-              REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
-            ]
-            const answerCapabilities: AutomationDesktopRunnerCapability[] = [
-              ...recoveryCapabilities,
-              REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
-            ]
-            const sessionOnlyCapabilities: AutomationDesktopRunnerCapability[] = [
-              REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
-              REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
-              REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
-              REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
-            ]
-            const capabilitySets: AutomationDesktopRunnerCapability[][] = deploymentEnabled ? [
-              [...answerCapabilities, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY],
-              [...answerCapabilities, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY],
-              answerCapabilities,
-              recoveryCapabilities,
-              [
-                AUTOMATION_MODEL_ATTENTION_CAPABILITY,
-                REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
-                REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
-              ],
-              [AUTOMATION_MODEL_ATTENTION_CAPABILITY, REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY],
-              [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
-            ] : [
-              [...sessionOnlyCapabilities, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY],
-              [...sessionOnlyCapabilities, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY],
-              [...sessionOnlyCapabilities, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY],
-              sessionOnlyCapabilities,
-            ]
+            const capabilitySets = automationRunnerCapabilitySets(deploymentEnabled, computersEnabled, availability)
             for (const [index, capabilities] of capabilitySets.entries()) {
               try {
                 return await mintToken(organizationId, registration(capabilities))
               } catch (error) {
                 const last = index === capabilitySets.length - 1
-                if (last || !(error instanceof DenApiError) || error.status !== 400) throw error
+                if (!isCurrent() || last || !(error instanceof DenApiError) || error.status !== 400) throw error
               }
             }
             throw new Error("automation_runner_registration_unreachable")
@@ -145,13 +114,11 @@ function ActivatedAutomationRunnerBridge() {
             runnerId = organizationRunnerId(runnerId, organizationId)
             runner = await mintRunner(runnerId)
           }
-          if (!isCurrent()) return
+          if (!isCurrent() || (computersEnabled && signIn !== denSignInKey(readDenSettings()))) return
           markThisComputerConnected()
-          await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", {
-            baseUrl: client.baseUrls.apiBaseUrl,
-            token: runner.token,
-            runnerId,
-          })
+          const credential = { baseUrl: client.baseUrls.apiBaseUrl, token: runner.token }
+          if (computersEnabled) void delivery.setCredential(credential)
+          await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", { ...credential, runnerId })
         } catch (error) {
           if (!isCurrent()) throw error
           if (error instanceof DenApiError && error.status === 403 && error.code === COMPUTER_DISCONNECTED_ERROR) {
@@ -160,21 +127,60 @@ function ActivatedAutomationRunnerBridge() {
             return "disconnected"
           }
           if (isDenSessionRevokedError(error)) {
+            clearCredential()
             void refresh()
             return
           }
-          console.warn("[automation-runner] registration failed", error)
+          if (computersEnabled) console.warn("[automation-runner] registration failed")
+          else console.warn("[automation-runner] registration failed", error)
           throw error
         }
       },
     })
 
     const requestConnect = () => void coordinator.request().catch(() => undefined)
-    const handleSettingsChanged = () => { if (!thisComputerStillDisconnected()) requestConnect() }
+    const checkLocalServer = async () => {
+      if (!computersEnabled || status !== "signed_in" || checkingLocal || thisComputerStillDisconnected()) return
+      checkingLocal = true
+      try {
+        const server = await readLocalComputerServer().catch(() => null)
+        if (disposed || thisComputerStillDisconnected()) return
+        await delivery.setServer(server)
+        if (disposed || thisComputerStillDisconnected()) return
+        const sharing = await server?.client.getComputerSharing().catch(() => undefined)
+        if (disposed || thisComputerStillDisconnected()) return
+        const nextAvailability = sharing?.availability ?? (server?.identity === localServerIdentity ? availability : undefined)
+        const capabilityChanged = (availability?.state === "available") !== (nextAvailability?.state === "available")
+        localServerIdentity = server?.identity
+        availability = nextAvailability
+        if (capabilityChanged) requestConnect()
+      } finally {
+        checkingLocal = false
+      }
+    }
+    const handleSettingsChanged = () => {
+      if (computersEnabled) {
+        const nextSignIn = denSignInKey(readDenSettings())
+        if (nextSignIn !== currentSignIn) {
+          currentSignIn = nextSignIn
+          clearCredential()
+        }
+        void checkLocalServer()
+      }
+      if (!thisComputerStillDisconnected()) requestConnect()
+    }
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged)
     window.addEventListener("online", handleSettingsChanged)
+    if (computersEnabled) {
+      window.addEventListener(denSessionUpdatedEvent, handleSettingsChanged)
+      window.addEventListener("openwork-server-settings-changed", checkLocalServer)
+    }
+    const unsubscribeComputer = computersEnabled ? useComputerConnectionStore.subscribe(state => {
+      if (state.disconnectedSignIn !== null) clearCredential()
+    }) : undefined
     const unsubscribeCredentialRejected = window.__OPENWORK_ELECTRON__.automationRunner
       ?.onCredentialRejected?.((rejection) => {
+        clearCredential()
         if (rejection?.reason !== COMPUTER_DISCONNECTED_ERROR) {
           coordinator.credentialRejected()
           return
@@ -187,15 +193,24 @@ function ActivatedAutomationRunnerBridge() {
       ?.onRunLifecycle?.(observeDesktopAutomationLifecycle)
     if (thisComputerStillDisconnected()) coordinator.computerDisconnected()
     else requestConnect()
+    const localTimer = computersEnabled && status === "signed_in" ? window.setInterval(checkLocalServer, LOCAL_COMPUTER_CHECK_MS) : undefined
+    if (localTimer !== undefined) void checkLocalServer()
     return () => {
+      disposed = true
       coordinator.dispose()
       unsubscribeCredentialRejected?.()
       unsubscribeRunLifecycle?.()
+      unsubscribeComputer?.()
       window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged)
       window.removeEventListener("online", handleSettingsChanged)
+      if (computersEnabled) {
+        window.removeEventListener(denSessionUpdatedEvent, handleSettingsChanged)
+        window.removeEventListener("openwork-server-settings-changed", checkLocalServer)
+      }
+      if (localTimer !== undefined) window.clearInterval(localTimer)
       void disconnect()
     }
-  }, [deploymentEnabled, refresh, status])
+  }, [computersEnabled, delivery, deploymentEnabled, refresh, status])
 
   return null
 }
