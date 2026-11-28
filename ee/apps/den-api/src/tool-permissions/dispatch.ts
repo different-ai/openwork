@@ -81,7 +81,8 @@ async function agentToolPermissionRefusal(input: ToolPermissionDispatchInput, ex
   if (state === "blocked" || access === "block") return personalAgentPolicyRefusal(`${tool.name} ${AGENT_TOOL_WITHHELD_MESSAGE}`)
   const key: AgentConnectorApprovalKey = { organizationId, memberId, context: agentApprovalContext(context, execution),
     connectionId: connection.id, toolName: tool.name }
-  if (state === "off") {
+  const chosen = wildcard === "ask" && rules.some(({ kind, toolName, rule }) => kind === "agent" && toolName !== "*" && rule !== "block")
+  if (state === "off" && !chosen) {
     if (await organizationFeatureEnabled(organizationId, "personalAgents", { userId: context.userId ?? undefined })
       && await claimAgentConnectorToolApproval(key)) return null
     return personalAgentPolicyRefusal(`${connection.name} is off for this agent. Ask for access to use it.`)

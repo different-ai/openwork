@@ -21,16 +21,28 @@ const usd = (microUsd: number) => new Intl.NumberFormat("en-US", { style: "curre
 test("any member sees their own spend limit, past 30 days and what each model would cost them", async ({ world, user, probe, step, evidence }) => {
   const text = async (selector: string) => (await probe.dom(selector)).elements.map((element) => element.text.replace(/\s+/g, " ").trim());
 
-  await step("a regular member opens Work › My Usage from the sidebar", async () => {
-    await user.see({ testId: "dashboard-nav-my-usage" }, { timeoutMs: 90_000 });
-    const links = await text('[data-sidebar-section="work"] [data-testid="dashboard-nav-my-usage"]');
-    const observability = await text('[data-sidebar-section="observability"]');
+  await step("a regular member lands on Home: ways in to OpenWork, their spend, and a sidebar with only Home", async () => {
+    await user.see({ testId: "member-home" }, { timeoutMs: 90_000 });
+    const used = `${usd(MEMBER_LIMIT_USED_MICRO_USD)} of ${usd(MEMBER_LIMIT_MICRO_USD)} used`;
+    await user.see({ text: used }, { timeoutMs: 60_000 });
+    const links = await text('[data-sidebar-section="work"] a, [data-sidebar-section="work"] button');
+    const tiles = await text('[data-testid="member-home-open"] [data-tile-link]');
+    const spend = await text('[data-testid="member-home-limits"] [data-testid="my-usage-limit-row"]');
+    const sections = await text('[data-sidebar-section]');
     await user.screenshot();
-    await user.click({ testId: "dashboard-nav-my-usage" });
+    const ok = links.length === 1 && links[0].includes("Home") && tiles.some((tile) => tile.includes("OpenWork Desktop"))
+      && spend.length === 1 && spend[0].includes(used) && sections.length === 1;
+    evidence.recordAssertionEvidence("A member's sidebar is Home; Home opens OpenWork and shows their own limit", `Work: ${links.join(", ") || "none"}; ways in: ${tiles.join(", ") || "none"}; spend row: ${spend.join(" | ") || "none"}; sidebar sections: ${sections.length}`, ok);
+    expect(ok).toBe(true);
+  });
+
+  await step("the member opens all their usage from Home's spend section", async () => {
+    await user.click({ testId: "member-home-usage-link" });
     await user.see({ text: "Spend limits" }, { timeoutMs: 60_000 });
     const api = await world.ownUsage();
-    const ok = links.some((link) => link.includes("My Usage")) && observability.length === 0 && api.status === 200;
-    evidence.recordAssertionEvidence("A member with no admin permissions gets Work › My Usage", `link under Work: ${links.join(", ") || "none"}; Observability section shown: ${observability.length > 0}; GET /v1/gateway/usage/me as the member: HTTP ${api.status}`, ok);
+    const titles = await text('[data-testid="my-usage"] h1');
+    const ok = titles.some((title) => title.includes("My Usage")) && api.status === 200;
+    evidence.recordAssertionEvidence("My Usage is one click from Home, with no sidebar entry", `page title: ${titles.join(", ") || "none"}; GET /v1/gateway/usage/me as the member: HTTP ${api.status}`, ok);
     expect(ok).toBe(true);
   });
 

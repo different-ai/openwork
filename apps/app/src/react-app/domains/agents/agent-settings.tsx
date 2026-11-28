@@ -1,18 +1,19 @@
 import type { PersonalAgentAccess, PersonalAgentConnectionTools, PersonalAgentDetail, PersonalAgentSpend, PersonalAgentTool } from "@openwork/types/den/personal-agents";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Lock } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { useId, useState } from "react";
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { currentLocale, t } from "@/i18n";
 
-import { agentOwnerFirstName, agentSpendLine, formatAgentMoney, toolAccessSummary, toolControlState } from "./agent-permission-words";
+import { agentOwnerFirstName, agentSpendLine, formatAgentMoney, parseBudgetDollars, toolAccessSummary, toolControlState } from "./agent-permission-words";
 import { firstName } from "./agent-words";
 import type { AgentsRuntime } from "./agents-runtime";
 import { useAgentToolsQuery, useSaveAgentSettings, useShareAgentLogin } from "./use-agent-permissions";
@@ -83,7 +84,7 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnectio
   const reasonId = useId();
   const sharedLabelId = useId();
   const enabled = !connection.blocked && !connection.lockedByOrganization;
-  const canExpand = enabled && connection.tools.length > 0;
+  const canExpand = !connection.lockedByOrganization && connection.tools.length > 0;
   const summary = (
     <span className="min-w-0 flex-1">
       <span id={titleId} className="block truncate text-[13px] font-medium text-dls-text">{connection.name}</span>
@@ -130,6 +131,7 @@ function ConnectionRow({ connection, collaboratorReason, sentTool, sentConnectio
         </div>
       )}
       {canExpand && <CollapsibleContent>
+        {!enabled && <p data-agent-connection-off-hint className="pb-1 pl-2.5 text-xs text-dls-secondary">{t("agents.permissions_off_pick_tools")}</p>}
         {[false, true].map((write) => {
           const tools = connection.tools.filter((tool) => tool.write === write);
           if (!tools.length) return null;
@@ -175,7 +177,7 @@ function Spend({ spend }: { spend: PersonalAgentSpend }) {
 }
 
 function budgetLabel(amount: number | null): string {
-  return amount === null ? t("agents.permissions_no_budget") : formatAgentMoney(amount, BUDGET_OPTIONS.includes(amount) ? 0 : 2);
+  return amount === null ? t("agents.permissions_no_budget") : formatAgentMoney(amount, amount % 1_000_000 === 0 ? 0 : 2);
 }
 
 function MonthlyBudget({ owner, budget, adminBudget, saving, onChange }: {
@@ -186,27 +188,53 @@ function MonthlyBudget({ owner, budget, adminBudget, saving, onChange }: {
   onChange: (amount: number | null) => void;
 }) {
   const labelId = useId();
+  const [open, setOpen] = useState(false);
+  const [custom, setCustom] = useState("");
   const capsBudget = adminBudget !== null && (budget === null || adminBudget < budget);
-  const options = budget !== null && !BUDGET_OPTIONS.includes(budget) ? [...BUDGET_OPTIONS, budget].sort((a, b) => a - b) : BUDGET_OPTIONS;
-  const items = [{ value: NO_BUDGET, label: budgetLabel(null) }, ...options.map((amount) => ({ value: String(amount), label: budgetLabel(amount) }))];
+  const customMicros = parseBudgetDollars(custom);
+  const choose = (amount: number | null) => {
+    setOpen(false);
+    setCustom("");
+    if (amount !== budget) onChange(amount);
+  };
   return (
     <section className="border-t border-dls-border pt-1.5">
       <div className="flex min-h-10 items-center justify-between gap-2">
         <h3 id={labelId} className="text-[13px] font-medium">{t("agents.permissions_budget")}</h3>
         {owner ? (
-          <Select
-            items={items}
-            value={budget === null ? NO_BUDGET : String(budget)}
-            disabled={saving}
-            onValueChange={(value) => {
-              if (value !== null) onChange(value === NO_BUDGET ? null : Number(value));
-            }}
-          >
-            <SelectTrigger aria-labelledby={labelId} size="sm" className="text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent align="end">
-              {items.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setCustom(""); }}>
+            <PopoverTrigger render={<Button variant="outline" size="sm" disabled={saving} aria-labelledby={labelId}
+              data-agent-budget className="gap-1 text-xs tabular-nums font-normal" />}>
+              {budgetLabel(budget)}
+              <ChevronDown aria-hidden="true" className="size-3.5 text-dls-secondary" />
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 gap-2 p-2" aria-labelledby={labelId}>
+              <div className="grid grid-cols-4 gap-1" data-agent-budget-presets>
+                {BUDGET_OPTIONS.map((amount) => (
+                  <Button key={amount} type="button" size="sm" variant={amount === budget ? "secondary" : "ghost"}
+                    aria-pressed={amount === budget} className="h-8 px-0 text-xs tabular-nums" onClick={() => choose(amount)}>
+                    {budgetLabel(amount)}
+                  </Button>
+                ))}
+              </div>
+              <form className="flex items-center gap-1.5" onSubmit={(event) => {
+                event.preventDefault();
+                if (customMicros !== null) choose(customMicros);
+              }}>
+                <InputGroup className="h-8 flex-1">
+                  <InputGroupAddon align="inline-start"><InputGroupText>$</InputGroupText></InputGroupAddon>
+                  <InputGroupInput inputMode="decimal" autoComplete="off" value={custom} onChange={(event) => setCustom(event.target.value)}
+                    placeholder={t("agents.permissions_budget_custom")} aria-label={t("agents.permissions_budget_custom")}
+                    aria-invalid={custom.trim() !== "" && customMicros === null} data-agent-budget-custom className="text-xs tabular-nums" />
+                </InputGroup>
+                <Button type="submit" size="sm" className="h-8 text-xs" disabled={customMicros === null}>{t("agents.permissions_budget_set")}</Button>
+              </form>
+              <Button type="button" size="sm" variant={budget === null ? "secondary" : "ghost"} aria-pressed={budget === null}
+                data-agent-budget-none className="h-8 justify-start px-2 text-xs" onClick={() => choose(null)}>
+                {budgetLabel(null)}
+              </Button>
+            </PopoverContent>
+          </Popover>
         ) : <p className="text-xs tabular-nums text-dls-secondary">{budgetLabel(budget)}</p>}
       </div>
       {capsBudget ? <p className="pt-1 text-xs text-dls-secondary">{t("agents.permissions_admin_budget", { amount: formatAgentMoney(adminBudget) })}</p> : null}
@@ -272,7 +300,7 @@ export function AgentSettings({ runtime, agent, onBack }: { runtime: AgentsRunti
                 if (shared) setConfirm(connection);
                 else share.mutate({ connectionId: connection.connectionId, shared });
               }}
-              onChange={(toolName, access) => save.mutate({ tool: { connectionId: connection.connectionId, toolName, access } })}
+              onChange={(toolName, access) => save.mutate({ tool: { connectionId: connection.connectionId, toolName, access, connectionOff: connection.blocked } })}
             />
           ))}
         </section>

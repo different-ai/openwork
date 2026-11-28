@@ -358,9 +358,11 @@ test("running the agent now is a manual Automation run whose instructions start 
 })
 
 test("a tool the agent's policy blocks is withheld from its next run, and only from that agent's runs", async () => {
-  const builtIn = await asDana("PATCH", `/v1/personal-agents/${agentId}`, { toolPolicy: { connections: { "google-workspace": "block" }, tools: {} } })
-  assert.equal(builtIn.status, 400, summary(builtIn))
-  assert.equal(field(builtIn.body, "error"), "personal_agent_tool_policy_connection_invalid")
+  const builtIn = await asDana("PATCH", `/v1/personal-agents/${agentId}`, { toolPolicy: { connections: { "google-workspace": "block", openwork: "allow" }, tools: {} } })
+  assert.equal(builtIn.status, 200, summary(builtIn))
+  const unknown = await asDana("PATCH", `/v1/personal-agents/${agentId}`, { toolPolicy: { connections: { "not-a-connection": "block" }, tools: {} } })
+  assert.equal(unknown.status, 400, summary(unknown))
+  assert.equal(field(unknown.body, "error"), "personal_agent_tool_policy_connection_invalid")
 
   const limited = await asDana("PATCH", `/v1/personal-agents/${agentId}`, {
     toolPolicy: { connections: { [trackerId]: "allow" }, tools: { [trackerId]: { delete_issue: "block", create_issue: "allow" } } },

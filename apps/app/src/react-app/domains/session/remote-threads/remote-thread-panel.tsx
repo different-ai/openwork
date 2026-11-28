@@ -11,7 +11,7 @@ import { RemoteThreadAnswerSlot } from "./remote-thread-answer-card"
 import { useFollowRemoteThread, useRemoteThread, type RemoteThreadEntry } from "./remote-thread-store"
 import { REMOTE_THREAD_PAGE_MAX, REMOTE_THREAD_PAGE_SIZE, useRemoteThreadConversation } from "./use-remote-thread-conversation"
 import { RemoteFollowUpComposer } from "./remote-follow-up-composer"
-import { RemoteTranscriptView } from "./remote-transcript-view"
+import { RemoteTranscriptView } from "@/react-app/design-system/readonly-transcript-view"
 
 export function RemoteThreadPanel({ tab, onClose, onExpand }: {
   tab: RemoteThreadPanelTab

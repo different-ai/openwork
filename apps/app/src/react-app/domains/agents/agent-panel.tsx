@@ -1,5 +1,6 @@
 import type { PersonalAgentDetail } from "@openwork/types/den/personal-agents";
-import { BookOpen, Clock, Play, SlidersHorizontal, X } from "lucide-react";
+import { BookOpen, ChevronRight, Clock, Play, SlidersHorizontal, X } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -13,10 +14,11 @@ import { AgentFace } from "./agent-face";
 import { AGENT_PANEL_ID } from "./agent-header";
 import { AgentMemoryView, useAgentMemory } from "./agent-memory";
 import { AgentSettings } from "./agent-settings";
+import { AgentRunResult } from "./agent-run-result";
 import { AgentShare } from "./agent-share";
 import { firstName, scheduleInWords, whenInWords } from "./agent-words";
 import { useAgentsRuntime, type AgentsRuntime } from "./agents-runtime";
-import { agentRunQueueMessage, useAgentActions, useAgentDetail } from "./use-agents";
+import { agentRunQueueMessage, isActiveRun, useAgentActions, useAgentDetail } from "./use-agents";
 
 export function AgentPanel(props: { sessionId: string | null; compact?: boolean }) {
   const runtime = useAgentsRuntime();
@@ -46,6 +48,7 @@ function AgentPanelBody({ runtime, agent, view, compact, setView }: {
   setView: (view: AgentPanelView) => void;
 }) {
   const actions = useAgentActions(runtime);
+  const [openRun, setOpenRun] = useState<string | null>(null);
   const { id: agentId, name, pausedAt } = agent.agent;
   const memoryQuery = useAgentMemory(runtime, agentId);
   const isOwner = agent.role === "owner";
@@ -75,7 +78,7 @@ function AgentPanelBody({ runtime, agent, view, compact, setView }: {
             role: agent.role === "manager" ? t("agents.share_manager") : t("agents.share_collaborator"),
           })}</p>}
         </div>
-        <AgentCanUse runtime={runtime} agentId={agentId} placement="panel" onOpen={() => setView("settings")} />
+        <AgentCanUse runtime={runtime} agentId={agentId} onOpen={() => setView("settings")} />
         <div className="flex min-h-12 items-center justify-between gap-3 border-y border-dls-border py-2">
           {paused ? <p className="text-sm font-medium">{t("agents.panel_admin_paused")}</p> : <>
             <span className="min-w-0">
@@ -103,13 +106,27 @@ function AgentPanelBody({ runtime, agent, view, compact, setView }: {
           {routines.map((routine) => {
             const state = states.get(routine.id);
             return (
-              <div key={routine.id} data-agent-routine={routine.id} className="flex min-h-11 items-center gap-3 border-b border-dls-border py-2 last:border-b-0">
+              <div key={routine.id} data-agent-routine={routine.id} className="border-b border-dls-border last:border-b-0">
+                <div className="flex min-h-11 items-center gap-3 py-2">
                 <Clock aria-hidden="true" className="size-4 shrink-0 text-dls-secondary" />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-dls-text">{routine.name}</span>
                   <span className="block truncate text-xs text-dls-secondary">{scheduleInWords(routine.schedule)}</span>
                   {state && <span className="block truncate text-xs text-dls-secondary" data-agent-routine-state={routine.name}>{t("agents.memory_last_time", { state: Array.from(state).slice(0, 140).join("") })}</span>}
                 </span>
+                </div>
+                {isOwner && routine.latestRun && (
+                  <details className="group pb-2" onToggle={(event) => {
+                    if (event.currentTarget.open) setOpenRun(routine.id);
+                    else setOpenRun((current) => current === routine.id ? null : current);
+                  }} open={openRun === routine.id}>
+                    <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-dls-secondary">
+                      <ChevronRight aria-hidden="true" className="size-3.5 group-open:rotate-90" />{t("agents.panel_latest_run")}
+                    </summary>
+                    {openRun === routine.id && <AgentRunResult runtime={runtime} agentId={agentId} runId={routine.latestRun.id}
+                      active={isActiveRun(routine.latestRun)} routineName={routine.name} />}
+                  </details>
+                )}
               </div>
             );
           })}

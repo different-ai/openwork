@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "54addc8f-6669-4675-ae5e-c713e7be6d05",
+  "id": "0bc2e44c-d253-4058-83e4-e74bc50b74bf",
   "prevId": "176785bf-7a89-4601-8db8-535025b11a0a",
   "tables": {
     "admin_metric_refresh_lease": {
@@ -27104,6 +27104,91 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
+    "mcp_app_storage": {
+      "name": "mcp_app_storage",
+      "columns": {
+        "config_object_id": {
+          "name": "config_object_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "backend": {
+          "name": "backend",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "row_count": {
+          "name": "row_count",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
+        }
+      },
+      "indexes": {
+        "mcp_app_storage_organization_id": {
+          "name": "mcp_app_storage_organization_id",
+          "columns": [
+            "organization_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "mcp_app_storage_config_object_id": {
+          "name": "mcp_app_storage_config_object_id",
+          "columns": [
+            "config_object_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
     "public_mcp_app_name": {
       "name": "public_mcp_app_name",
       "columns": {
@@ -27517,344 +27602,6 @@
       "compositePrimaryKeys": {
         "remote_device_id": {
           "name": "remote_device_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "computer_access": {
-      "name": "computer_access",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "device_id": {
-          "name": "device_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner_choice": {
-          "name": "owner_choice",
-          "type": "varchar(8)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "reported_by_runner_id": {
-          "name": "reported_by_runner_id",
-          "type": "varchar(160)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
-        }
-      },
-      "indexes": {
-        "computer_access_device": {
-          "name": "computer_access_device",
-          "columns": [
-            "device_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "computer_access_id": {
-          "name": "computer_access_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "computer_command": {
-      "name": "computer_command",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_device_id": {
-          "name": "source_device_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_device_id": {
-          "name": "target_device_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "action": {
-          "name": "action",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "scope": {
-          "name": "scope",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "varchar(16)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'pending'"
-        },
-        "exit_code": {
-          "name": "exit_code",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "output": {
-          "name": "output",
-          "type": "mediumtext",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "truncated": {
-          "name": "truncated",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "error_code": {
-          "name": "error_code",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "error_message": {
-          "name": "error_message",
-          "type": "varchar(300)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "refused_layer": {
-          "name": "refused_layer",
-          "type": "varchar(16)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "claimed_by_runner_id": {
-          "name": "claimed_by_runner_id",
-          "type": "varchar(160)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "claimed_at": {
-          "name": "claimed_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
-        }
-      },
-      "indexes": {
-        "computer_command_target_status_created": {
-          "name": "computer_command_target_status_created",
-          "columns": [
-            "target_device_id",
-            "status",
-            "created_at"
-          ],
-          "isUnique": false
-        },
-        "computer_command_organization_created": {
-          "name": "computer_command_organization_created",
-          "columns": [
-            "organization_id",
-            "created_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "computer_command_id": {
-          "name": "computer_command_id",
-          "columns": [
-            "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "computer_grant": {
-      "name": "computer_grant",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_device_id": {
-          "name": "target_device_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_key": {
-          "name": "source_key",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "folders": {
-          "name": "folders",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(now())"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
-        }
-      },
-      "indexes": {
-        "computer_grant_target_source": {
-          "name": "computer_grant_target_source",
-          "columns": [
-            "target_device_id",
-            "source_key"
-          ],
-          "isUnique": true
-        },
-        "computer_grant_organization": {
-          "name": "computer_grant_organization",
-          "columns": [
-            "organization_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "computer_grant_id": {
-          "name": "computer_grant_id",
           "columns": [
             "id"
           ]

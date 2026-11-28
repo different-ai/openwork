@@ -566,6 +566,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+export type DenBuiltMcpAppPublicSharing = {
+  revisionId: string;
+  publicUrl: string | null;
+  canPublish: boolean;
+  blockedBy: "tools" | "storage" | null;
+};
+
+function parseBuiltMcpAppPublicSharing(payload: unknown): DenBuiltMcpAppPublicSharing {
+  if (
+    !isRecord(payload) ||
+    typeof payload.revisionId !== "string" || !payload.revisionId ||
+    (payload.publicUrl !== null && (typeof payload.publicUrl !== "string" || !payload.publicUrl)) ||
+    typeof payload.canPublish !== "boolean"
+  ) throw new Error("Invalid public sharing response.");
+  const blockedBy = payload.blockedBy === "tools" || payload.blockedBy === "storage" ? payload.blockedBy : null;
+  return { revisionId: payload.revisionId, publicUrl: payload.publicUrl, canPublish: payload.canPublish, blockedBy };
+}
+
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
@@ -4187,6 +4205,28 @@ export function createDenClient(options: {
         `/v1/plugins/${encodeURIComponent(pluginId)}/access/${encodeURIComponent(grantId)}`,
         { method: "DELETE", token, organizationId: orgId },
       );
+    },
+
+    async getBuiltMcpAppPublicSharing(orgId: string, appId: string): Promise<DenBuiltMcpAppPublicSharing> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-apps/${encodeURIComponent(appId)}/public-sharing`,
+        { method: "GET", token, organizationId: orgId, cache: "no-store" },
+      );
+      return parseBuiltMcpAppPublicSharing(payload);
+    },
+
+    async setBuiltMcpAppPublicSharing(
+      orgId: string,
+      appId: string,
+      body: { public: boolean; expectedRevisionId: string },
+    ): Promise<DenBuiltMcpAppPublicSharing> {
+      const payload = await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-apps/${encodeURIComponent(appId)}/public-sharing`,
+        { method: "PUT", token, organizationId: orgId, body },
+      );
+      return parseBuiltMcpAppPublicSharing(payload);
     },
 
     async deleteBuiltMcpApp(orgId: string, appId: string): Promise<void> {

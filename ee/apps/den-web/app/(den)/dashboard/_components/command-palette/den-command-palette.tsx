@@ -24,6 +24,7 @@ import { myAgentAvailable } from "../my-agent-availability";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
 import {
   buildDashboardNavSections,
+  buildPersonalPagesSection,
   flattenNavigationForSearch,
 } from "../../_lib/dashboard-navigation";
 import { paletteFilter } from "../../_lib/palette-filter";
@@ -163,9 +164,14 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
       desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
       workbotSettingsInTeams: workbotSettingsInTeams(orgContext),
       canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
+    });
+    const personal = buildPersonalPagesSection({
+      orgSlug: activeOrg?.slug ?? null,
+      capabilities,
+      runtimeConfigLoaded,
       myBot: myAgentAvailable(orgContext),
     });
-    return flattenNavigationForSearch(sections)
+    return flattenNavigationForSearch([...sections, personal])
       .filter((entry) => entry.href !== "#")
       .map((entry) => ({ ...entry, hint: entry.section }));
   }, [

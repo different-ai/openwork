@@ -3,7 +3,6 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import type { CapabilityUsageSource } from "@openwork-ee/den-db/schema"
 import { Effect } from "effect"
-import type { Hono } from "hono"
 import { z } from "zod"
 import { connectionActionAppSchemaVersion } from "@openwork/types/connection-action-app"
 import { organizationFeatureEnabled, type FeatureMap } from "../features.js"
@@ -12,10 +11,12 @@ import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction,
 import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
-import { catalogOperationAvailableToCapabilities, filterGmailThreadRead, filterPersonalAgents } from "./catalog-availability.js"
-import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentMayUseBuiltInConnectors, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
-import { isLimitedAgentRun, LIMITED_AGENT_RUN_MESSAGE, personalAgentRunId } from "./workbot-turn-limits.js"
-import type { McpToolOperation } from "./catalog.js"
+import { catalogOperationAvailableToCapabilities, filterGmailThreadRead, filterMicrosoftGraphResources, filterPersonalAgents, filterTeamsMeetingTranscripts } from "./catalog-availability.js"
+import { OPENWORK_CONNECTION_ID } from "../personal-agents/builtin-connection.js"
+import { personalAgentConnectionToolFilter, personalAgentConnectorAccess } from "../personal-agents/connector-access.js"
+import { PERSONAL_AGENT_UNAPPROVABLE_WRITE, personalAgentPolicyRefusal, personalAgentRunDispatchRefusal } from "../personal-agents/permissions-dispatch.js"
+import { isLimitedAgentRun, LIMITED_AGENT_RUN_MESSAGE, personalAgentExecution } from "./workbot-turn-limits.js"
+import type { InternalApp, McpToolOperation } from "./catalog.js"
 import {
   executeAdminCapability,
   listAvailableAdminCapabilities,
@@ -138,7 +139,7 @@ export type CapabilityExecuteInput = {
 }
 
 export type CapabilityRegistryContext = {
-  app: Hono
+  app: InternalApp
   env: unknown
   catalog: readonly McpToolOperation[]
   principal: McpPrincipal
@@ -147,8 +148,12 @@ export type CapabilityRegistryContext = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   managedDeploymentsEnabled: boolean
+  artifactStorageEnabled?: boolean
   toolPermissionsEnabled?: boolean
   limitedAgentRun: boolean
+  agentExecution: boolean
+  agentToolFilter: (connectionId: string) => Promise<((toolName: string) => boolean) | null>
+  sourceKinds?: readonly CapabilitySourceKind[]
   remoteSessionAnswersAllowed: boolean
   remoteSessionAttachAllowed: boolean
   resolvePlatformAdmin: () => Promise<boolean>
@@ -158,7 +163,7 @@ export type CapabilityRegistryContext = {
 }
 
 export type CapabilityRegistryContextInput = {
-  app: Hono
+  app: InternalApp
   env: unknown
   catalog: readonly McpToolOperation[]
   principal: McpPrincipal
@@ -166,11 +171,14 @@ export type CapabilityRegistryContextInput = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "personalAgents">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "microsoft365ReadResources" | "personalAgents" | "artifactStorage" | "teamsMeetingTranscripts">>
   organizationToolPermissions?: boolean
   audit?: McpAuditPrincipal | null
   usageSource: CapabilityUsageSource
+  sourceKinds?: readonly CapabilitySourceKind[]
 }
+
+const everyTool = () => true
 
 export function createCapabilityRegistryContext(input: CapabilityRegistryContextInput): CapabilityRegistryContext {
   let platformAdmin: Promise<boolean> | undefined
@@ -186,11 +194,26 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     })
     return namespaceContext
   }
+  const agentExecution = personalAgentExecution(input.principal.scopes) !== undefined
+  let agentAccess: ReturnType<typeof personalAgentConnectorAccess> | undefined
+  const agentToolFilter = async (connectionId: string) => {
+    if (!agentExecution) return everyTool
+    if (!input.member) return null
+    agentAccess ??= personalAgentConnectorAccess({ scopes: input.principal.scopes, organizationId: input.organizationId, memberId: input.member.orgMembershipId })
+    const access = await agentAccess
+    return access ? personalAgentConnectionToolFilter(access, connectionId) : null
+  }
   return {
     app: input.app,
     env: input.env,
     catalog: filterPersonalAgents(
-      filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
+      filterMicrosoftGraphResources(
+        filterTeamsMeetingTranscripts(
+          filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
+          input.organizationFeatures.teamsMeetingTranscripts,
+        ),
+        input.organizationFeatures,
+      ),
       input.organizationFeatures.personalAgents,
     ),
     principal: input.principal,
@@ -199,8 +222,12 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
+    artifactStorageEnabled: input.organizationFeatures.artifactStorage === true,
     toolPermissionsEnabled: input.organizationToolPermissions,
     limitedAgentRun: isLimitedAgentRun(input.principal.scopes),
+    agentExecution,
+    agentToolFilter,
+    ...(input.sourceKinds ? { sourceKinds: input.sourceKinds } : {}),
     remoteSessionAnswersAllowed: input.usageSource === "agent",
     remoteSessionAttachAllowed: input.usageSource === "agent",
     resolvePlatformAdmin,
@@ -478,7 +505,7 @@ async function executeMarketplaceSource(
     validateScriptOutput: true,
     redirectUriBase: ctx.redirectUriBase,
     auditWorkflowExecution: workflowExecutionAudit(ctx),
-    readOnly: personalAgentRunId(ctx.principal.scopes) !== undefined,
+    readOnly: ctx.agentExecution,
     usageSource: ctx.usageSource,
     describeUnavailable: (missing) => liveArtifactConnectionFailure(ctx, missing),
   })
@@ -488,31 +515,38 @@ function parsedForKind<K extends CapabilitySourceKind>(parsed: ParsedCapability,
   return parsed.kind === kind
 }
 
+function askFirstAvailability(ctx: CapabilityRegistryContext): CapabilityRegistryContext {
+  return ctx.agentExecution && ctx.limitedAgentRun ? { ...ctx, limitedAgentRun: false } : ctx
+}
+
+export function openWorkOperations(ctx: CapabilityRegistryContext): readonly McpToolOperation[] {
+  const availability = askFirstAvailability(ctx)
+  return ctx.catalog.filter((operation) => !isCredentialBoundNativeOperation(operation) && catalogOperationAvailableToCapabilities(availability, operation))
+}
+
 const catalogSource: CapabilitySource = {
   kind: "catalog",
   parseName: (name) => name.includes(":") || isSlackSendAsBotCapabilityName(name) ? null : { kind: "catalog", name },
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.api) return []
+    const visible = await ctx.agentToolFilter(OPENWORK_CONNECTION_ID)
+    if (!visible) return []
     return searchCapabilities(
-      ctx.catalog.filter((operation) => (
-        !isCredentialBoundNativeOperation(operation)
-        && catalogOperationAvailableToCapabilities(ctx, operation)
-      )),
+      openWorkOperations(ctx).filter((operation) => visible(operation.name)),
       query,
       limit,
     ).map((match) => ({ ...match, scriptPath: codemodeScriptPath("den", match.name) }))
   },
-  enumerate: (ctx) => Promise.resolve(leavesFromBuilt(buildDenCatalogToolTree({
-    ...ctx,
-    catalog: ctx.catalog.filter((operation) => catalogOperationAvailableToCapabilities(ctx, operation)),
-  }))),
+  enumerate: async (ctx) => {
+    const visible = await ctx.agentToolFilter(OPENWORK_CONNECTION_ID)
+    return visible ? leavesFromBuilt(buildDenCatalogToolTree({
+      ...ctx,
+      catalog: ctx.catalog.filter((operation) => catalogOperationAvailableToCapabilities(ctx, operation) && visible(operation.name)),
+    })) : []
+  },
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "catalog")) return unknownCapabilityResult(input.name)
-    const operation = ctx.catalog.find((candidate) => (
-      candidate.name === parsed.name
-      && !isCredentialBoundNativeOperation(candidate)
-      && catalogOperationAvailableToCapabilities(ctx, candidate)
-    ))
+    const operation = openWorkOperations(ctx).find((candidate) => candidate.name === parsed.name)
     if (!operation) return unknownCapabilityResult(input.name)
     const path = normalizeToolRecord(input.path)
     const body = normalizeToolBody(input.body)
@@ -544,7 +578,7 @@ const nativeSource: CapabilitySource = {
     return parsed ? { kind: "native", name, ...parsed } : null
   },
   search: async (ctx, query, limit) => {
-    if (!ctx.sourceFilter.api || !await personalAgentMayUseBuiltInConnectors(ctx.principal.scopes, ctx.organizationId)) return []
+    if (!ctx.sourceFilter.api) return []
     return searchNativeCapabilities({
       organizationId: ctx.organizationId,
       member: ctx.member,
@@ -553,10 +587,19 @@ const nativeSource: CapabilitySource = {
       limit,
       namespaceContext: await ctx.resolveNamespaceContext(),
       scopes: ctx.principal.scopes,
+      ...(ctx.agentExecution ? { agentToolFilter: ctx.agentToolFilter } : {}),
     })
   },
-  enumerate: async (ctx) => await personalAgentMayUseBuiltInConnectors(ctx.principal.scopes, ctx.organizationId)
-    ? leavesFromBuilt(await buildNativeProviderToolTree({ ...ctx, namespaceContext: await ctx.resolveNamespaceContext() })) : [],
+  enumerate: async (ctx) => {
+    const leaves = leavesFromBuilt(await buildNativeProviderToolTree({ ...ctx, namespaceContext: await ctx.resolveNamespaceContext() }))
+    if (!ctx.agentExecution) return leaves
+    const visible = await Promise.all(leaves.map(async (leaf) => {
+      const parsed = parseNativeCapabilityName(leaf.capabilityName)
+      const filter = parsed && await ctx.agentToolFilter(parsed.connectionId)
+      return Boolean(parsed && filter && filter(parsed.toolName))
+    }))
+    return leaves.filter((_, index) => visible[index])
+  },
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "native")) return unknownCapabilityResult(input.name)
     const result = await executeNativeCapability({
@@ -729,11 +772,11 @@ const builtinSkillSource: CapabilitySource = {
     description: skill.description,
     readOnly: true,
     authority: "den",
-    run: async () => (await executeBuiltinSkillCapability(skill.capability, ctx.organizationId))?.content ?? "",
+    run: async () => (await executeBuiltinSkillCapability(skill.capability, ctx.organizationId, { storage: ctx.artifactStorageEnabled === true }))?.content ?? "",
   }))),
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "builtinSkill")) return unknownCapabilityResult(input.name)
-    const result = await executeBuiltinSkillCapability(parsed.name, ctx.organizationId)
+    const result = await executeBuiltinSkillCapability(parsed.name, ctx.organizationId, { storage: ctx.artifactStorageEnabled === true })
     return result
       ? { content: textContent(JSON.stringify(result, null, 2)) }
       : unknownCapabilityResult(input.name)
@@ -872,6 +915,11 @@ export const CAPABILITY_SOURCES: Record<CapabilitySourceKind, CapabilitySource> 
   admin: adminSource,
 }
 
+function offeredKinds(ctx: Pick<CapabilityRegistryContext, "sourceKinds">, kinds: readonly CapabilitySourceKind[]): readonly CapabilitySourceKind[] {
+  const offered = ctx.sourceKinds
+  return offered ? kinds.filter((kind) => offered.includes(kind)) : kinds
+}
+
 export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, CapabilitySource>) {
   return {
     search: async (
@@ -892,7 +940,7 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
           externalCoverageHint = hint
         },
       }
-      const matches = (await Promise.all(CAPABILITY_SOURCE_KINDS.map((kind) => (
+      const matches = (await Promise.all(offeredKinds(ctx, CAPABILITY_SOURCE_KINDS).map((kind) => (
         sources[kind].search(searchContext, input.query, input.limit)
       )))).flat()
         .sort(compareCapabilityMatches)
@@ -906,7 +954,7 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
       ctx: CapabilityRegistryContext,
       input: CapabilityExecuteInput,
     ): Promise<ExecuteCapabilityToolResult> => {
-      for (const kind of CAPABILITY_SOURCE_KINDS) {
+      for (const kind of offeredKinds(ctx, CAPABILITY_SOURCE_KINDS)) {
         const source = sources[kind]
         const parsed = source.parseName(input.name)
         if (!parsed) continue
@@ -915,7 +963,7 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
         }
         const refusal = await personalAgentRunDispatchRefusal(ctx.principal.scopes, ctx.organizationId)
         if (refusal) return capabilityErrorResult(refusal)
-        if (personalAgentRunId(ctx.principal.scopes) !== undefined && capabilityHasNoApprovalPath(parsed)) {
+        if (ctx.agentExecution && capabilityHasNoApprovalPath(parsed)) {
           return capabilityErrorResult(personalAgentPolicyRefusal(PERSONAL_AGENT_UNAPPROVABLE_WRITE))
         }
         const call = capabilityCallInput(
@@ -927,11 +975,11 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
       return unknownCapabilityResult(input.name)
     },
     buildToolTree: async (ctx: CapabilityRegistryContext, required?: readonly RequiredCapability[]): Promise<BuiltCodemodeTools> => {
-      const enumerated = await Promise.all(SCRIPT_SOURCE_KINDS.map(async (kind) => {
+      const enumerated = await Promise.all(offeredKinds(ctx, SCRIPT_SOURCE_KINDS).map(async (kind) => {
         const result = await sources[kind].enumerate(ctx, required)
         return "excluded" in result ? [] : result
       }))
-      const leaves = enumerated.flat().filter((leaf) => personalAgentRunId(ctx.principal.scopes) === undefined || !leaf.capabilityName.startsWith("admin:"))
+      const leaves = enumerated.flat().filter((leaf) => !ctx.agentExecution || !leaf.capabilityName.startsWith("admin:"))
       const namespaceTools = new Map<string, Map<string, Tool.Definition>>()
       for (const leaf of leaves) {
         const tools = namespaceTools.get(leaf.namespace) ?? new Map<string, Tool.Definition>()

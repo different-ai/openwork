@@ -1,0 +1,19 @@
+{
+  "name": "@openwork-ee/artifact-storage-cell",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:celld": "bash scripts/celld-contract.sh",
+    "preflight:celld": "bash scripts/celld-preflight.sh",
+    "deploy:celld": "bash scripts/celld-deploy.sh"
+  },
+  "dependencies": {
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "0.25.12",
+    "typescript": "^5.5.4"
+  }
+}

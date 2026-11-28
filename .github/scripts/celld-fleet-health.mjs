@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * Checks the production runner fleet (celld nodes on Render) for what ends in refused work, per node.
+ * Checks one production celld fleet (celld nodes on Render) for what ends in refused work, per node. FLEET names
+ * which: the runner's (the default) or artifact storage's.
  *
  * celld closes a node to new cells once its memory passes a ceiling (80% of the machine by default) and reopens it
- * only below 80% of that ceiling. A hibernated cell wakes only on the node that owns it, so every conversation a
- * closed node owns stops answering while the rest of the fleet sits idle. Render's autoscaling reads the fleet
- * average and does not see this. See ee/apps/headless-runner/OWNER-CELLS.md, "When a node is full".
+ * only below 80% of that ceiling. A hibernated cell wakes only on the node that owns it, so every conversation (or
+ * artifact database) a closed node owns stops answering while the rest of the fleet sits idle. Render's autoscaling
+ * reads the fleet average and does not see this. See ee/apps/headless-runner/OWNER-CELLS.md, "When a node is full".
  *
  * Reads only: Render's service settings, memory metrics and log counts, and (when given) celld's own fleet sample
  * from the bucket. Exits 1 when something needs action now.
@@ -23,6 +24,12 @@ export const REOPEN_RATIO = CLOSE_RATIO * 0.8
 export const ALERT_RATIO = 0.75
 export const WARN_RATIO = 0.65
 const HEALTH_PATH = "/.well-known/celld/health"
+
+/** The fleets this check knows: what to call each, and what stops answering when one of its nodes closes. */
+export const FLEETS = {
+  runner: { title: "Runner fleet", slackTitle: "Cloud runner fleet", owned: "conversations" },
+  "artifact-storage": { title: "Artifact storage fleet", slackTitle: "Artifact storage fleet", owned: "artifact databases" },
+}
 const SAMPLE_MAX_AGE_MS = 5 * 60_000
 
 const MB = 1024 * 1024
@@ -44,9 +51,9 @@ export function liveLeases(sample, now) {
 /**
  * `instances`: each node's highest memory in the window. `leases`: celld's own view (optional). `logs`: counts of
  * refused requests and of nodes that stopped themselves in the window. `settings`: what the service is configured with.
- * Returns findings, most serious first; `level` is the most serious one.
+ * `fleet`: which fleet this is, for the wording. Returns findings, most serious first; `level` is the most serious one.
  */
-export function assessFleet({ instances, memoryLimitBytes, leases = null, logs = {}, settings = null }) {
+export function assessFleet({ instances, memoryLimitBytes, leases = null, logs = {}, settings = null, fleet = FLEETS.runner }) {
   const findings = []
   const add = (level, code, text) => findings.push({ level, code, text })
 
@@ -54,7 +61,7 @@ export function assessFleet({ instances, memoryLimitBytes, leases = null, logs =
     if (!memoryLimitBytes) break
     const ratio = instance.memoryBytes / memoryLimitBytes
     const size = `${percent(ratio)} of its memory (${mb(instance.memoryBytes)} of ${mb(memoryLimitBytes)} MB)`
-    if (ratio >= CLOSE_RATIO) add("alert", "node_closed", `Node ${instance.id} is at ${size}. celld closes a node at ${percent(CLOSE_RATIO)}: the conversations it owns stop answering until it is back under ${percent(REOPEN_RATIO)}. Restart that instance; a normal shutdown hands its cells to the other nodes.`)
+    if (ratio >= CLOSE_RATIO) add("alert", "node_closed", `Node ${instance.id} is at ${size}. celld closes a node at ${percent(CLOSE_RATIO)}: the ${fleet.owned} it owns stop answering until it is back under ${percent(REOPEN_RATIO)}. Restart that instance; a normal shutdown hands its cells to the other nodes.`)
     else if (ratio >= ALERT_RATIO) add("alert", "node_memory_high", `Node ${instance.id} is at ${size} and closes to new work at ${percent(CLOSE_RATIO)}.`)
     else if (ratio >= WARN_RATIO) add("warn", "node_memory_rising", `Node ${instance.id} is at ${size}. Above ${percent(REOPEN_RATIO)} a closed node cannot reopen.`)
   }
@@ -103,8 +110,8 @@ export function assessFleet({ instances, memoryLimitBytes, leases = null, logs =
 }
 
 /** The summary as Markdown: findings, then each node's memory. */
-export function renderSummary({ level, findings }, { instances, memoryLimitBytes }) {
-  const title = level === "alert" ? "Runner fleet needs attention" : level === "warn" ? "Runner fleet: warnings" : "Runner fleet is healthy"
+export function renderSummary({ level, findings }, { instances, memoryLimitBytes }, fleet = FLEETS.runner) {
+  const title = level === "alert" ? `${fleet.title} needs attention` : level === "warn" ? `${fleet.title}: warnings` : `${fleet.title} is healthy`
   const lines = [`### ${title}`, ""]
   for (const finding of findings) lines.push(`- ${finding.level === "alert" ? "**Alert:**" : "Warning:"} ${finding.text}`)
   if (findings.length > 0) lines.push("")
@@ -116,25 +123,25 @@ export function renderSummary({ level, findings }, { instances, memoryLimitBytes
 }
 
 /** What a public run log may say: how many findings, never which node or setting. */
-export function publicSummary({ level, findings }) {
+export function publicSummary({ level, findings }, fleet = FLEETS.runner) {
   const alerts = findings.filter((finding) => finding.level === "alert").length
   const warnings = findings.length - alerts
   const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`
-  if (level === "ok") return "Runner fleet check: healthy."
+  if (level === "ok") return `${fleet.title} check: healthy.`
   const counts = [alerts > 0 ? plural(alerts, "alert") : "", warnings > 0 ? plural(warnings, "warning") : ""].filter(Boolean).join(", ")
-  return `Runner fleet check: ${counts}. The detail is in Slack; for a fresh reading run .github/scripts/celld-fleet-health.mjs by hand.`
+  return `${fleet.title} check: ${counts}. The detail is in Slack; for a fresh reading run .github/scripts/celld-fleet-health.mjs by hand.`
 }
 
 /** The standing warnings as one Slack message, sent once a day. */
-export function slackWarningsText({ findings }) {
+export function slackWarningsText({ findings }, fleet = FLEETS.runner) {
   const warnings = findings.filter((finding) => finding.level === "warn").map((finding) => `• ${finding.text}`)
-  return [":warning: *Cloud runner fleet: warnings*", ...warnings].join("\n")
+  return [`:warning: *${fleet.slackTitle}: warnings*`, ...warnings].join("\n")
 }
 
 /** The alert as one Slack message: only what needs action. */
-export function slackText({ findings }, runUrl) {
+export function slackText({ findings }, runUrl, fleet = FLEETS.runner) {
   const alerts = findings.filter((finding) => finding.level === "alert").map((finding) => `• ${finding.text}`)
-  return [":rotating_light: *Cloud runner fleet needs attention*", ...alerts, runUrl ? `<${runUrl}|Details>` : ""].filter(Boolean).join("\n")
+  return [`:rotating_light: *${fleet.slackTitle} needs attention*`, ...alerts, runUrl ? `<${runUrl}|Details>` : ""].filter(Boolean).join("\n")
 }
 
 /** Each instance's highest value across a Render metric's series. */
@@ -156,6 +163,9 @@ const SETTING_NAMES = ["CELLD_DURABILITY", "CELLD_TTL_MS", "CELLD_IDLE_EVICT_S",
 async function main() {
   const { RENDER_API_KEY: key, RENDER_SERVICE_ID: service, EXPECTED_CELLD_VERSION, FLEET_SAMPLE_FILE, SLACK_WEBHOOK_URL, RUN_URL, GITHUB_ACTIONS, GITHUB_STEP_SUMMARY, GITHUB_OUTPUT } = process.env
   if (!key || !service) throw new Error("RENDER_API_KEY and RENDER_SERVICE_ID are required")
+  const fleetKey = process.env.FLEET || "runner"
+  if (!Object.hasOwn(FLEETS, fleetKey)) throw new Error(`FLEET must be one of ${Object.keys(FLEETS).join(", ")}`)
+  const fleet = FLEETS[fleetKey]
   const windowMinutes = Number(process.env.WINDOW_MINUTES ?? 20)
   const now = Date.now()
   const start = new Date(now - windowMinutes * 60_000).toISOString()
@@ -196,6 +206,7 @@ async function main() {
   }
 
   const input = {
+    fleet,
     instances,
     memoryLimitBytes,
     leases,
@@ -212,7 +223,7 @@ async function main() {
   if (instances.length === 0) throw new Error("Render returned no memory series for the fleet")
   const result = assessFleet(input)
   // Actions logs and summaries of this repository are public: counts there, the detail to Slack or a local terminal.
-  const summary = GITHUB_ACTIONS === "true" ? publicSummary(result) : renderSummary(result, input)
+  const summary = GITHUB_ACTIONS === "true" ? publicSummary(result, fleet) : renderSummary(result, input, fleet)
   console.log(summary)
   if (GITHUB_STEP_SUMMARY) appendFileSync(GITHUB_STEP_SUMMARY, `${summary}\n`)
   if (GITHUB_OUTPUT) appendFileSync(GITHUB_OUTPUT, `level=${result.level}\n`)
@@ -220,9 +231,9 @@ async function main() {
     const posted = await fetch(SLACK_WEBHOOK_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }), signal: AbortSignal.timeout(15_000) }).catch(() => null)
     if (!posted?.ok) console.log("::warning::The Slack message could not be posted.")
   }
-  if (result.level === "alert" && SLACK_WEBHOOK_URL && process.env.NOTIFY !== "false") await post(slackText(result, RUN_URL))
+  if (result.level === "alert" && SLACK_WEBHOOK_URL && process.env.NOTIFY !== "false") await post(slackText(result, RUN_URL, fleet))
   const warned = result.findings.some((finding) => finding.level === "warn")
-  if (warned && SLACK_WEBHOOK_URL && process.env.NOTIFY_WARNINGS === "true") await post(slackWarningsText(result))
+  if (warned && SLACK_WEBHOOK_URL && process.env.NOTIFY_WARNINGS === "true") await post(slackWarningsText(result, fleet))
   if (result.level !== "ok" && !SLACK_WEBHOOK_URL && GITHUB_ACTIONS === "true") {
     console.log("::notice title=Fleet findings not delivered::no Slack webhook is set on the celld-production environment, so this run's detail went nowhere.")
   }

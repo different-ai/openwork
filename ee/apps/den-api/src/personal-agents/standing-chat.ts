@@ -11,6 +11,7 @@ import { personalAgentChatTurnScope } from "../mcp/workbot-turn-limits.js"
 import { organizationCloudModelSelection } from "../workbot/model.js"
 import type { PersonalAgentAccess, PersonalAgentCaller } from "./access.js"
 import { PERSONAL_AGENT_CHAT_TIMEOUT_MS, personalAgentChatDispatchContext } from "./permissions-dispatch.js"
+import { standingChatParts } from "./standing-chat-parts.js"
 
 const conversations = PersonalAgentConversationTable
 const turns = PersonalAgentChatTurnTable
@@ -82,7 +83,13 @@ export async function listStandingChat(actor: Actor, agent: PersonalAgentAccess)
   const rows = await db.$primary.select({ turn: turns }).from(conversations)
     .innerJoin(turns, eq(turns.conversation_id, conversations.id))
     .where(conversationScope(actor, agent)).orderBy(desc(turns.created_at), desc(turns.id)).limit(HISTORY_LIMIT)
-  return { turns: rows.reverse().map(({ turn }) => view(turn)) }
+  const latest = rows[0]?.turn
+  if (!latest) return { turns: [] }
+  const snapshot = await runner(actor)?.readSession(sessionId(latest.conversation_id), {
+    turns: HISTORY_LIMIT, limit: 500, outputs: "none", expectedOwner: runnerOwner(actor),
+  }).catch(() => null)
+  const parts = snapshot?.ok ? standingChatParts(new Set(rows.map(({ turn }) => turn.id)), snapshot.value.messages) : null
+  return { turns: rows.reverse().map(({ turn }) => ({ ...view(turn), parts: parts?.get(turn.id) })) }
 }
 
 export async function sendStandingChat(actor: Actor, agent: PersonalAgentAccess, input: SendPersonalAgentChatMessage) {
@@ -127,7 +134,7 @@ export async function sendStandingChat(actor: Actor, agent: PersonalAgentAccess,
     if (!definition || !model) return { turn: view(await settle(turn, { status: "failed", reply: null, error: unavailable })) }
     const prepared = await client.putSession(session, {
       title: definition.name,
-      instructions: `You are ${definition.name}. You are speaking privately with the current member. Follow the organization rules and then the agent brief below. Never claim a connector action completed unless the tool confirms it. If a connector needs approval, explain what is waiting and let the member ask you to continue in a later message.\n\nOrganization rules:\n${organizationRules}\n\nAgent brief:\n${definition.brief}`,
+      instructions: `You are ${definition.name}. You are speaking privately with the current member. Follow the organization rules and then the agent brief below. Never claim a connector action completed unless the tool confirms it. If a connector needs approval, explain what is waiting and let the member ask you to continue in a later message.\n\nYour agent id is ${agent.agentId}. Your routines, memory and requests are OpenWork tools that take it as the path id: a routine is what you do on a schedule, so when the member asks you to do something regularly, add or change a routine with those tools rather than describing one. You can have several routines. Before you add one, list the routines you already have so you do not repeat one, and search for the connected apps it needs; ask for access to any that are off, so the routine can do its work.\n\nOrganization rules:\n${organizationRules}\n\nAgent brief:\n${definition.brief}`,
       profile: "agent_chat",
       owner: runnerOwner(actor),
       strict: true,

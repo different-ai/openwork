@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 
-import { createDenClient } from "../src/app/lib/den";
+import { createDenClient, DenApiError } from "../src/app/lib/den";
 import { PersonalAgentsProvider, type AgentsRuntime } from "../src/react-app/domains/agents/agents-runtime";
 
 function connection(name: string, overrides: Partial<PersonalAgentConnectionTools> = {}): PersonalAgentConnectionTools {
@@ -49,24 +49,34 @@ test("names apps that are usable, including those that ask first, and keeps the 
   expect(summary).toBe("Slack, Linear +1");
 });
 
+test("names an app that is off apart from the tools its owner picked", () => {
+  expect(agentCanUseSummary({ connections: [connection("Turned off", { blocked: true }), connection("Notion", { blocked: true, onlyChosenTools: true })] })).toBe("Notion");
+});
+
 test("does not confuse an empty catalog with loading or an unavailable catalog", () => {
   expect(agentCanUseSummary({ connections: unavailable })).toBe("No apps yet. It’ll ask when it needs one.");
   expect(agentCanUseSummary(undefined)).toBeNull();
   expect(agentCanUseSummary(undefined, true)).toBe("Couldn’t check apps");
 });
 
-test.each([false, true])("both summaries open What it can use (compact: %s)", async (compact) => {
+test.each([false, true])("only the panel says what the agent can use, and it opens What it can use (compact: %s)", async (compact) => {
   const timestamp = "2026-11-26T12:00:00.000Z";
   const agent = personalAgentDetailSchema.parse({
     agent: { id: "agent", organizationId: "org", ownerMemberId: "member", name: "Inbox helper", state: "active", currentRevisionId: "revision", createdAt: timestamp, updatedAt: timestamp, archivedAt: null },
     revision: { id: "revision", agentId: "agent", version: 1, brief: "Triage messages", toolPolicy: { tools: {}, connections: {} }, defaultExecutionTarget: "cloud", monthlyBudgetMicros: null, digest: "0123456789abcdef", createdAt: timestamp },
-    routineCount: 0,
+    routineCount: 1,
+    routines: [{ id: "routine", name: "Check messages", state: "active", schedule: { kind: "daily", timezone: "UTC", hour: 9, minute: 0 }, nextDueAt: null, latestRun: null }],
   });
+  const runCalls: Array<{ organizationId: string; agentId: string; routineId: string | undefined }> = [];
   const baseUrl = "https://den.example.test";
   const runtime: AgentsRuntime = {
     denBaseUrl: baseUrl, organizationId: "org", principal: "member", workspaceId: "workspace", selectedSessionId: "agent-chat",
     client: { ...createDenClient({ baseUrl }), getPersonalAgentTools: async () => ({ connections: [] }),
-      getPersonalAgentMemory: async () => ({ notes: "", version: 0, updatedAt: null, updatedBy: null, canEdit: true, routines: [] }) },
+      getPersonalAgentMemory: async () => ({ notes: "", version: 0, updatedAt: null, updatedBy: null, canEdit: true, routines: [] }),
+      runPersonalAgentNow: async (organizationId, agentId, input) => {
+        runCalls.push({ organizationId, agentId, routineId: input.routineId });
+        throw new DenApiError(409, "personal_agent_run_queue_full", "Queue full");
+      } },
     createSession: async () => null, openSession: () => {}, sessionState: async () => "open", renameSession: () => {},
   };
   const cache = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity } } });
@@ -90,17 +100,17 @@ test.each([false, true])("both summaries open What it can use (compact: %s)", as
     return found;
   };
   const click = async (selector: string) => { await act(async () => element(selector).click()); };
-  const headerSummary = '[data-agent-can-use="header"]';
   const panelSummary = '[data-agent-can-use="panel"]';
-  expect(element(headerSummary).textContent).toBe("No apps yet. It’ll ask when it needs one.");
-  expect(element(headerSummary).getAttribute("aria-label")).toBe("What it can use");
+  expect(container.querySelector("[data-agent-can-use]")).toBeNull();
   expect(container.querySelector("[data-agent-panel]")).toBeNull();
-  await click(headerSummary);
-  expect(element("[data-agent-settings] h3").textContent).toBe("What it can use");
+  await click('[data-agent-header="agent"]');
   expect(element("[data-agent-panel]").getAttribute("role")).toBe(compact ? "dialog" : null);
-  expect(document.body.querySelector(panelSummary) ?? container.querySelector(panelSummary)).toBeNull();
-  await click("[data-agent-settings-back]");
   expect(element(panelSummary).textContent).toContain("It’ll ask when it needs one.");
+  expect(element(panelSummary).getAttribute("aria-label")).toBe("What it can use");
+  await click("[data-agent-run-now]");
+  await act(async () => { await Bun.sleep(20); });
+  expect(runCalls).toEqual([{ organizationId: "org", agentId: "agent", routineId: "routine" }]);
+  expect(element("[data-agent-panel] [role='status']").textContent).toContain("several runs waiting");
   await click(panelSummary);
   expect(element("[data-agent-settings] h3").textContent).toBe("What it can use");
 });

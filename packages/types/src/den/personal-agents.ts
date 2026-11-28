@@ -7,6 +7,8 @@ import {
   automationRunStatusSchema,
   automationScheduleSchema,
   automationStateSchema,
+  remoteSessionTranscriptPartSchema,
+  REMOTE_SESSION_TRANSCRIPT_PARTS_MAX,
 } from "@openwork/types/automations"
 
 const idSchema = z.string().trim().min(1).max(160)
@@ -341,12 +343,19 @@ export const sendPersonalAgentChatMessageSchema = z.object({
 }).strict()
 export type SendPersonalAgentChatMessage = z.infer<typeof sendPersonalAgentChatMessageSchema>
 
+export const personalAgentChatPartSchema = z.discriminatedUnion("type", [
+  remoteSessionTranscriptPartSchema.options[0],
+  remoteSessionTranscriptPartSchema.options[1],
+  remoteSessionTranscriptPartSchema.options[2].omit({ startedAt: true, endedAt: true }),
+])
+
 export const personalAgentChatTurnSchema = z.object({
   id: z.string(),
   clientMessageId: z.string(),
   message: z.string(),
   status: z.enum(["running", "succeeded", "failed"]),
   reply: z.string().nullable(),
+  parts: z.array(personalAgentChatPartSchema).max(REMOTE_SESSION_TRANSCRIPT_PARTS_MAX).optional(),
   error: z.string().nullable(),
   createdAt: z.iso.datetime(),
   finishedAt: z.iso.datetime().nullable(),
@@ -457,6 +466,8 @@ export const personalAgentConnectionToolsSchema = z.object({
   name: z.string().max(160),
   available: z.boolean().describe("Whether the caller is connected to it. Tools are listed only then."),
   blocked: z.boolean().describe("The agent's policy blocks the whole connection."),
+  onlyChosenTools: z.boolean().default(false)
+    .describe("The connection is off apart from the tools picked for the agent: those are the tools whose chosen value is allow or ask."),
   lockedByOrganization: z.boolean(),
   sharedLogin: personalAgentPersonSchema.nullable().default(null)
     .describe("Set when someone lent their own account on this connection to the agent: everyone's runs of the agent act through that person's account here."),

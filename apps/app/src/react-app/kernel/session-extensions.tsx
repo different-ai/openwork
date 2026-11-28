@@ -15,12 +15,17 @@ export type SessionGreetingProps = {
   setPrompt: (text: string) => void;
 };
 
+export type SessionHeaderTitleProps = {
+  sessionId: string | null;
+  layout?: "compact";
+  children: ReactNode;
+};
+
 export type SessionExtensions = {
   SidebarSection: ComponentType;
-  HeaderTitle: ComponentType<{ sessionId: string | null; children: ReactNode }>;
+  HeaderTitle: ComponentType<SessionHeaderTitleProps>;
   Greeting: ComponentType<SessionGreetingProps>;
   ProposalCard: ComponentType<SessionProposalCardProps>;
-  TranscriptFrame: ComponentType<{ sessionId: string; children: ReactNode }>;
   TranscriptFooter: ComponentType<{ sessionId: string }>;
   renderStandingChat?: (sessionId: string) => ReactNode;
   renderChatApprovalDock?: (completedAt: number) => ReactNode;
@@ -47,7 +52,6 @@ const NO_SESSION_EXTENSIONS: SessionExtensions = {
   HeaderTitle: Passthrough,
   Greeting: Nothing,
   ProposalCard: Nothing,
-  TranscriptFrame: Passthrough,
   TranscriptFooter: Nothing,
   Panel: Nothing,
   proposalCards: false,

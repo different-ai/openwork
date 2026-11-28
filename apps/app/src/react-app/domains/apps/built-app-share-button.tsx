@@ -8,36 +8,33 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { BuiltAppPublicSharing } from "./built-app-public-sharing";
 import { useLibraryCloud } from "../settings/use-library-cloud";
 import { LibrarySharePage } from "../settings/pages/library-share-page";
 import { useAppsClient } from "./use-apps";
 
-export function BuiltAppShareButton({
-  pluginId,
-  title,
-}: {
-  pluginId: string;
-  title: string;
-}) {
+type BuiltAppShareTarget = { appId: string; pluginId: string; title: string };
+
+export function BuiltAppShareButton({ appId, pluginId, title }: BuiltAppShareTarget) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
         Share
       </Button>
-      <BuiltAppShareDialog pluginId={pluginId} title={title} open={open} onOpenChange={setOpen} />
+      <BuiltAppShareDialog appId={appId} pluginId={pluginId} title={title} open={open} onOpenChange={setOpen} />
     </>
   );
 }
 
 export function BuiltAppShareDialog({
+  appId,
   pluginId,
   title,
   open,
   onOpenChange,
-}: {
-  pluginId: string;
-  title: string;
+}: BuiltAppShareTarget & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -45,22 +42,27 @@ export function BuiltAppShareDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
-        <DialogHeader className="sr-only">
+        <DialogHeader>
           <DialogTitle>Share {title}</DialogTitle>
         </DialogHeader>
-        {context.client && context.orgId && context.identityVerified ? (
-          <AppSharing
-            key={JSON.stringify(context.scope)}
-            context={context}
-            pluginId={pluginId}
-            title={title}
-            onClose={() => onOpenChange(false)}
-          />
+        {open && (context.client && context.orgId && context.identityVerified ? (
+          <Tabs key={JSON.stringify([...context.scope, appId, pluginId])} defaultValue="organization">
+            <TabsList aria-label="Sharing audience" variant="line">
+              <TabsTrigger value="organization">Within your organization</TabsTrigger>
+              <TabsTrigger value="public">Public link</TabsTrigger>
+            </TabsList>
+            <TabsContent value="organization" keepMounted className="pt-2">
+              <AppSharing context={context} pluginId={pluginId} title={title} onClose={() => onOpenChange(false)} />
+            </TabsContent>
+            <TabsContent value="public" keepMounted className="pt-2">
+              <BuiltAppPublicSharing client={context.client} orgId={context.orgId} appId={appId} />
+            </TabsContent>
+          </Tabs>
         ) : (
           <p role="status" className="text-sm">
             Sign in to share this artifact.
           </p>
-        )}
+        ))}
       </DialogContent>
     </Dialog>
   );

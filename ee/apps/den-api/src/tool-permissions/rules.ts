@@ -25,7 +25,7 @@ export async function readSubjectToolPolicies(organizationId: string, kind: Tool
     let policy = policies.get(row.subject_id)
     if (!policy) policies.set(row.subject_id, policy = { connections: {}, tools: {} })
     if (row.tool_name === TOOL_PERMISSION_EVERY_TOOL) {
-      if (row.rule === "block" || (kind === "agent" && row.rule === "allow")) {
+      if (row.rule === "block" || kind === "agent") {
         Object.defineProperty(policy.connections, row.connection_id, { value: row.rule, enumerable: true, configurable: true })
       }
     } else {
@@ -86,7 +86,7 @@ async function insertRules(tx: ToolPermissionTransaction, subject: ToolPermissio
 export async function replaceSubjectToolPolicy(subject: ToolPermissionSubject, policy: PersonalAgentToolPolicy, updatedByMemberId: string, tx?: ToolPermissionTransaction): Promise<void> {
   const tools = Object.entries(policy.tools).flatMap(([connectionId, entries]) => Object.entries(entries)
     .filter(([name]) => name !== TOOL_PERMISSION_EVERY_TOOL).map(([toolName, rule]) => ({ connectionId, toolName, rule })))
-  const connections = Object.entries(policy.connections).filter(([, rule]) => rule === "block" || (subject.kind === "agent" && rule === "allow"))
+  const connections = Object.entries(policy.connections).filter(([, rule]) => rule === "block" || subject.kind === "agent")
     .map(([connectionId, rule]) => ({ connectionId, toolName: TOOL_PERMISSION_EVERY_TOOL, rule }))
   const write = async (transaction: ToolPermissionTransaction) => {
     await lockSubject(transaction, subject)
@@ -98,7 +98,7 @@ export async function replaceSubjectToolPolicy(subject: ToolPermissionSubject, p
 
 export async function setSubjectToolRule(subject: ToolPermissionSubject, target: RuleTarget, updatedByMemberId: string, tx?: ToolPermissionTransaction): Promise<void> {
   if (target.toolName === TOOL_PERMISSION_EVERY_TOOL && target.rule !== null && target.rule !== "block"
-    && !(subject.kind === "agent" && target.rule === "allow")) throw new Error("tool_permission_invalid_wildcard")
+    && subject.kind !== "agent") throw new Error("tool_permission_invalid_wildcard")
   const write = async (transaction: ToolPermissionTransaction) => {
     await lockSubject(transaction, subject)
     await transaction.delete(table).where(and(subjectFilter(subject), eq(table.connection_id, target.connectionId), sql`binary ${table.tool_name} = ${target.toolName}`))
@@ -111,6 +111,13 @@ export async function setSubjectToolRule(subject: ToolPermissionSubject, target:
     if (target.rule !== null) await insertRules(transaction, subject, updatedByMemberId, [{ ...target, rule: target.rule }])
   }
   await (tx ? write(tx) : db.transaction(write))
+}
+
+export async function limitAgentConnectionToChosenTools(tx: ToolPermissionTransaction, subject: ToolPermissionSubject & { kind: "agent" }, connectionId: string, updatedByMemberId: string): Promise<void> {
+  await lockSubject(tx, subject)
+  await tx.delete(table).where(and(subjectFilter(subject), eq(table.connection_id, connectionId), ne(table.rule, "block")))
+  await tx.delete(table).where(and(subjectFilter(subject), eq(table.connection_id, connectionId), eq(table.tool_name, TOOL_PERMISSION_EVERY_TOOL)))
+  await insertRules(tx, subject, updatedByMemberId, [{ connectionId, toolName: TOOL_PERMISSION_EVERY_TOOL, rule: "ask" }])
 }
 
 export async function listOrganizationToolRules(organizationId: string, connectionId?: string): Promise<ToolPermissionRule[]> {

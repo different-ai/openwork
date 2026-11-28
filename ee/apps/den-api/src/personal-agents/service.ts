@@ -22,6 +22,7 @@ import { agentToolLimitScopes } from "../mcp/workbot-turn-limits.js"
 import type { PersonalAgentTransaction } from "./access.js"
 import { recordPersonalAgentEvent } from "./events.js"
 import { personalAgentUsableConnections } from "./permissions-catalog.js"
+import { isBuiltInAgentConnection } from "./builtin-connection.js"
 import { normalizedPersonalAgentConnectorName } from "./connector-access.js"
 import { personalAgentNeverBlocks } from "./never.js"
 import { personalAgentRepository } from "./repository.js"
@@ -31,12 +32,13 @@ type OwnerScope = Parameters<AutomationService["create"]>[0]
 async function toolPolicyOverOrganizationConnectors(organizationId: string, policy: PersonalAgentToolPolicy): Promise<PersonalAgentToolPolicy> {
   const canonicalIds = new Map<string, string>()
   for (const connectionId of new Set([...Object.keys(policy.connections), ...Object.keys(policy.tools)])) {
+    if (isBuiltInAgentConnection(connectionId)) continue
     if (!isDenTypeId("externalMcpConnection", connectionId)) throw new Error("personal_agent_tool_policy_connection_invalid")
     const connection = await getExternalMcpConnection({
       organizationId: normalizeDenTypeId("organization", organizationId),
       connectionId: normalizeDenTypeId("externalMcpConnection", connectionId),
     })
-    if (!connection || connection.kind !== "external_mcp") throw new Error("personal_agent_tool_policy_connection_invalid")
+    if (!connection) throw new Error("personal_agent_tool_policy_connection_invalid")
     canonicalIds.set(connectionId, connection.id)
   }
   const canonical = (connectionId: string) => canonicalIds.get(connectionId) ?? connectionId

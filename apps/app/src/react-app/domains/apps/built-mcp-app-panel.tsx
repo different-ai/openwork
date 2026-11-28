@@ -34,6 +34,7 @@ export function BuiltMcpAppPanel({
           <BuiltAppPinButton appId={tab.appId} />
           {!tab.origin.readOnly && summary ? (
             <BuiltAppShareButton
+              appId={tab.appId}
               pluginId={summary.pluginId}
               title={summary.title}
             />

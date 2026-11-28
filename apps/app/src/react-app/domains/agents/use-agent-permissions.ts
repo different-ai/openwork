@@ -14,7 +14,7 @@ import { t } from "@/i18n";
 import type { AgentScope, AgentsRuntime } from "./agents-runtime";
 import { agentListKey, agentRequestsKey, agentsQueryRoot } from "./use-agents";
 
-type ToolChoice = { connectionId: string; toolName: string; access: PersonalAgentAccess };
+type ToolChoice = { connectionId: string; toolName: string; access: PersonalAgentAccess; connectionOff?: boolean };
 type ConnectionChoice = { connectionId: string; enabled: boolean };
 type SettingsChange = { tool: ToolChoice } | { connection: ConnectionChoice } | { monthlyBudgetMicros: number | null };
 
@@ -25,7 +25,16 @@ export function nextAgentConnectionPolicy(policy: PersonalAgentToolPolicy, { con
   };
 }
 
-export function nextAgentToolPolicy(policy: PersonalAgentToolPolicy, { connectionId, toolName, access }: ToolChoice): PersonalAgentToolPolicy {
+export function nextAgentToolPolicy(policy: PersonalAgentToolPolicy, { connectionId, toolName, access, connectionOff }: ToolChoice): PersonalAgentToolPolicy {
+  const onlyChosen = policy.connections[connectionId] === "ask";
+  if (connectionOff && (onlyChosen || access !== "block")) {
+    const kept = Object.entries(policy.tools[connectionId] ?? {}).filter(([name, rule]) => name !== toolName && (onlyChosen || rule === "block"));
+    const tools = Object.fromEntries([...kept, [toolName, access]]);
+    return {
+      connections: { ...policy.connections, [connectionId]: Object.values(tools).some((rule) => rule !== "block") ? "ask" : "block" },
+      tools: { ...policy.tools, [connectionId]: tools },
+    };
+  }
   return {
     ...policy,
     tools: {
@@ -88,7 +97,10 @@ export function useSaveAgentSettings(runtime: AgentsRuntime, agent: PersonalAgen
       queryClient.setQueryData<PersonalAgentToolCatalog>(toolsKey, (catalog) => catalog && ({
         connections: catalog.connections.map((connection) => connection.connectionId !== connectionId ? connection : {
           ...connection,
-          tools: connection.tools.map((tool) => tool.name === toolName ? { ...tool, access, chosen: access } : tool),
+          onlyChosenTools: connection.blocked ? connection.tools.some((tool) => tool.name === toolName ? access !== "block"
+            : connection.onlyChosenTools && tool.chosen !== null && tool.chosen !== "block") : connection.onlyChosenTools,
+          tools: connection.tools.map((tool) => tool.name === toolName ? { ...tool, access, chosen: access }
+            : connection.blocked && !connection.onlyChosenTools && access !== "block" && tool.chosen !== "block" ? { ...tool, chosen: null } : tool),
         }),
       }));
       return previous;
@@ -110,16 +122,17 @@ export function useSaveAgentSettings(runtime: AgentsRuntime, agent: PersonalAgen
 
 type ToolDecision = Exclude<PersonalAgentRequestDecision, "approve">;
 
-export function useDecideAgentToolRequest(runtime: AgentsRuntime, agentId: string, requestId: string) {
+export function useDecideAgentToolRequest(runtime: AgentsRuntime, agentId: string, requestId: string, onDecision?: (request: PersonalAgentRequest, choice: ToolDecision) => void) {
   const { client, organizationId } = runtime;
   const queryClient = useQueryClient();
   const requestsKey = agentRequestsKey(runtime, agentId);
   return useMutation({
     mutationKey: [...requestsKey, "decide-tool", requestId],
     mutationFn: (decision: ToolDecision) => client.decidePersonalAgentRequest(organizationId, agentId, requestId, decision),
-    onSuccess: async (updated) => {
+    onSuccess: async (updated, choice) => {
       await queryClient.cancelQueries({ queryKey: requestsKey });
       queryClient.setQueryData<PersonalAgentRequest[]>(requestsKey, (items) => items?.map((item) => item.id === updated.id ? updated : item));
+      onDecision?.(updated, choice);
     },
     onError: () => toast.error(t("agents.permission_ask_save_failed")),
     onSettled: () => { void queryClient.invalidateQueries({ queryKey: agentsQueryRoot(runtime) }); },

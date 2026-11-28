@@ -15,8 +15,11 @@ export function toolControlState(tool: Pick<PersonalAgentTool, "access" | "chose
   return { access: tool.access, allowDisabled: false, hint: null };
 }
 
-export function toolAccessSummary(connection: Pick<PersonalAgentConnectionTools, "available" | "blocked" | "lockedByOrganization" | "tools">): string {
+export function toolAccessSummary(connection: Pick<PersonalAgentConnectionTools, "available" | "blocked" | "lockedByOrganization" | "tools"> & { onlyChosenTools?: boolean }): string {
   if (connection.lockedByOrganization) return t("agents.permissions_admin_blocked");
+  if (connection.blocked && connection.onlyChosenTools) {
+    return t("agents.permissions_only_chosen", { count: connection.tools.filter((tool) => tool.chosen !== null && tool.chosen !== "block").length });
+  }
   if (connection.blocked) return t("agents.permissions_connection_off");
   if (!connection.available) return t("agents.permissions_not_connected");
   const counts = { allow: 0, ask: 0, block: 0 };
@@ -29,7 +32,11 @@ export function agentOwnerFirstName(owner: PersonalAgentPerson | null): string {
 }
 
 export function requestToolTitle(request: Pick<PersonalAgentRequest, "toolTitle" | "toolName">): string {
-  return request.toolTitle?.trim() || request.toolName?.trim() || t("agents.permission_ask_tool");
+  const title = request.toolTitle?.trim();
+  const name = request.toolName?.trim();
+  if (title && title !== name) return title;
+  const words = name?.split(/[:./]/u).at(-1)?.replace(/([a-z])([A-Z])/gu, "$1 $2").replace(/[_-]+/gu, " ").trim();
+  return words ? words[0]?.toUpperCase() + words.slice(1) : t("agents.permission_ask_tool");
 }
 
 export function requestConnectionName(request: Pick<PersonalAgentRequest, "connectionName">): string {
@@ -92,4 +99,11 @@ export function agentSpendLine(spend: Pick<PersonalAgentSpend, "monthMicros" | "
   return spend.budgetMicros === null
     ? t("agents.permissions_spend_month", { amount })
     : t("agents.permissions_spend_limit", { amount, limit: formatAgentMoney(spend.budgetMicros) });
+}
+
+export function parseBudgetDollars(text: string): number | null {
+  const match = /^\$?\s*(\d{1,7})(?:\.(\d{1,2}))?$/.exec(text.trim().replace(/,/g, ""));
+  if (!match) return null;
+  const micros = Number(match[1]) * 1_000_000 + Number((match[2] ?? "").padEnd(2, "0")) * 10_000;
+  return micros > 0 && micros <= 1_000_000_000_000 ? micros : null;
 }

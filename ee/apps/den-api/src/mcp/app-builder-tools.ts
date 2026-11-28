@@ -3,6 +3,7 @@ import {
   createMcpAppInputSchema,
   mcpAppPublicPath,
   MCP_APP_LAUNCH_TOOL_NAME,
+  MCP_APP_STORAGE_META,
   mcpAppResourceUri,
   mcpAppSummarySchema,
   prepareMcpAppInputSchema,
@@ -11,6 +12,7 @@ import {
   readMcpAppOutputSchema,
   updateMcpAppInputSchema,
   type CreateMcpAppInput,
+  type McpAppStorageStatus,
   type McpAppSummary,
   type PrepareMcpAppInput,
   type PrepareMcpAppOutput,
@@ -43,20 +45,23 @@ const authoringShape = {
   reactSource: createMcpAppInputSchema.shape.reactSource.describe("Complete React source default-exporting a component receiving { app, input, result, hostContext }. React is injected; import only the built-in libraries prepare_app lists, if any. Follow skill:build-an-app's source and tool-call rules."),
   cssSource: createMcpAppInputSchema.shape.cssSource.describe("Complete CSS source using host theme variables and responsive container rules. Omit on creation for empty CSS; omit on update to keep existing CSS."),
   textFallback: createMcpAppInputSchema.shape.textFallback.describe("Readable plain-text alternative describing what the artifact shows, for hosts that cannot render it; usually one or two sentences."),
-  public: createMcpAppInputSchema.shape.public.describe("true to serve the artifact to anyone at its public MCP URL with no OpenWork sign-in; only when the person asks for a public artifact. Requires the public artifacts feature and an artifact with no tools. Omit on update to keep the current choice, or pass false to make it private again."),
+  public: createMcpAppInputSchema.shape.public.describe("true to serve the artifact to anyone at its public MCP URL with no OpenWork sign-in; only when the person asks for a public artifact. Requires an artifact with no tools. Omit on update to keep the current choice, or pass false to make it private again."),
   site: createMcpAppInputSchema.shape.site.describe("true when the person wants the artifact to also open as a web page: a browser opening its MCP URL then shows the artifact full page, with no chat beside it, so write it to stand alone. Requires the feature for opening artifacts as sites. Omit on update to keep the current choice, or pass false to turn it off."),
   publicName: createMcpAppInputSchema.shape.publicName.describe("Friendly name for a public artifact's URL, such as coffee-with-the-team: 3 to 48 lowercase letters, digits and hyphens, unique across OpenWork. Use the one the person asks for, or suggest one from the title. Omit to keep the current name; a new name stops the old URL."),
   tools: documentedTools.optional().describe("Complete set of tools the artifact may call. Omit or use [] for a self-contained new artifact; omit on update to keep existing tools, or use [] to remove them."),
 }
+const STORAGE_DESCRIPTION = "What the artifact saves in its own database, for an intake form, tracker, approval queue, or checklist people come back to: collections of rows with typed fields. scope shared (default) is everyone who can use the artifact, personal is only the person who added the row; edit creator lets only that person change or remove a shared row. The artifact then gets storage_read and storage_write without declaring them. Rows belong to the artifact, so updates keep them. Not for public artifacts. Follow skill:build-an-app."
 const prepareAppInputSchema = prepareMcpAppInputSchema.extend({
   title: authoringShape.title,
   description: authoringShape.description,
   tools: authoringShape.tools,
+  storage: prepareMcpAppInputSchema.shape.storage.describe(STORAGE_DESCRIPTION),
 })
 const createAppInputSchema = createMcpAppInputSchema.extend({
   ...authoringShape,
   pluginId: createMcpAppInputSchema.shape.pluginId.describe("Existing Plugin ID (plg_...) to contain the artifact; omit to create a new private Plugin named after the artifact. Sharing that Plugin shares the artifact and its bound Workflows."),
   preparationId: createMcpAppInputSchema.shape.preparationId.describe("UUID returned by prepare_app, correlating this build with its preparation in chat. It grants no access and does not skip validation; older clients may omit it."),
+  storage: createMcpAppInputSchema.shape.storage.describe(STORAGE_DESCRIPTION),
 })
 const appId = readMcpAppInputSchema.shape.appId.describe("Artifact ID (cob_...) from search_capabilities or an artifact result's app.appId; not its Plugin ID, revision ID, or capability name.")
 const updateAppInputSchema = updateMcpAppInputSchema.extend({
@@ -64,6 +69,7 @@ const updateAppInputSchema = updateMcpAppInputSchema.extend({
   description: updateMcpAppInputSchema.shape.description.describe("Replacement description of what the person sees and does; omit to keep the current description, or pass an empty string to clear it."),
   appId,
   expectedRevisionId: updateMcpAppInputSchema.shape.expectedRevisionId.describe("Latest revision ID (cov_...) from read_app's app.revisionId. The update fails if someone has published another revision since that read."),
+  storage: updateMcpAppInputSchema.shape.storage.describe(`${STORAGE_DESCRIPTION} Omit to keep what the artifact saves now, with its rows. Pass the complete declaration to add collections or fields; a field you leave out is hidden but its values are kept. null stops the artifact using saved data, which is kept until the artifact is deleted.`),
 })
 const readAppInputSchema = readMcpAppInputSchema.extend({ appId })
 
@@ -95,7 +101,7 @@ function mcpUrl(publicOrigin: string, serverPath: string) {
   return `${publicOrigin}${serverPath}`
 }
 
-export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: string; message: string; launchInput?: unknown; canOpen?: boolean; built?: boolean }) {
+export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: string; message: string; launchInput?: unknown; canOpen?: boolean; built?: boolean; storage?: McpAppStorageStatus }) {
   const launchInput = mcpAppLaunchInput(input.launchInput)
   const url = mcpUrl(input.publicOrigin, input.app.serverPath)
   const launch = { connectionId: input.app.appId, toolName: MCP_APP_LAUNCH_TOOL_NAME, resourceUri: input.app.resourceUri, arguments: { input: launchInput } }
@@ -116,6 +122,7 @@ export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: st
         resourceUri: input.app.resourceUri,
         arguments: { input: launchInput },
       },
+      ...(input.storage ? { [MCP_APP_STORAGE_META]: input.storage } : {}),
     },
   }
 }
@@ -152,16 +159,20 @@ export function registerAppBuilderTools(input: {
   scopes: ReadonlySet<string>
   service: AppBuilderService
   publicOrigin: string
+  storage?: boolean
   canOpen?: (appId: string) => Promise<boolean>
+  storageStatus?: (appId: string) => Promise<McpAppStorageStatus | undefined>
   notifyCatalogChanged: () => void
 }) {
   const requireScope = (scope: string) => {
     if (!input.scopes.has(scope)) throw new AppBuilderError("insufficient_mcp_scope", `This artifact operation requires the ${scope} scope.`)
   }
+  const storage = input.storage === true
+  const storageNote = (text: string) => storage ? ` ${text}` : ""
   input.server.registerTool("prepare_app", {
     title: "Prepare an artifact",
-    description: "Prepare an artifact before writing its source, using a title naming its outcome, a description of what the person sees and does, and exact tools from search_capabilities (none for a self-contained artifact). Returns preparationId for create_app, title, verified tools with inputSchema/readOnly/kind/mode, starter { reactSource, cssSource }, and nextSteps. The starter pattern is lookup when all tools read, action when one changes data, or standalone with no tools; nextSteps identifies tools not yet wired. Does not run tools, create a Plugin, or publish an artifact. Requires mcp:write. Follow skill:build-an-app for authoring rules.",
-    inputSchema: prepareAppInputSchema,
+    description: `Prepare an artifact before writing its source, using a title naming its outcome, a description of what the person sees and does, and exact tools from search_capabilities (none for a self-contained artifact). Returns preparationId for create_app, title, verified tools with inputSchema/readOnly/kind/mode, starter { reactSource, cssSource }, and nextSteps. The starter pattern is lookup when all tools read, action when one changes data, or standalone with no tools; nextSteps identifies tools not yet wired.${storageNote("Pass storage for an artifact that saves its own rows; the starter is then records, a list with add, change, and remove wired to storage_read and storage_write.")} Does not run tools, create a Plugin, or publish an artifact. Requires mcp:write. Follow skill:build-an-app for authoring rules.`,
+    inputSchema: storage ? prepareAppInputSchema : prepareAppInputSchema.omit({ storage: true }),
     outputSchema: prepareMcpAppOutputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (request) => {
@@ -181,10 +192,11 @@ export function registerAppBuilderTools(input: {
     description: [
       "Create and publish an artifact as its own MCP server from complete React/CSS source, textFallback, and declared tools. Read skill:build-an-app for required source, host, approval, caching, and tool-call rules before writing source; start with prepare_app and pass its preparationId (optional for older clients). This call rechecks bindings, compiles source, and saves the artifact; no Workflow, output schema, or Automation is required.",
       "Bind exact capabilities from search_capabilities: saved Workflows, connection tools, or read-only OpenWork GET actions. To change OpenWork data, bind a saved Workflow. Tools run as the person using the artifact. Load read-only data on open after the launch result arrives; changes and approval-required calls need their own button, one call per click.",
+      ...(storage ? ["Declare storage when the artifact keeps its own rows (an intake form, tracker, or approval queue): it gets storage_read and storage_write, and its saved rows stay through every update."] : []),
       "Creates a new private Plugin unless pluginId selects an existing one. Bound Workflows join that Plugin; sharing it shares the artifact and those Workflows. Requires mcp:write.",
       "Returns app (summary including appId, pluginId, revisionId and tools, not source), input (empty launch input), mcpUrl, and usually launch { connectionId, toolName, resourceUri, arguments }. launch is omitted when the artifact is beyond OpenWork's connection limit; mcpUrl still works in MCP clients. OpenWork opens an available artifact in a sidebar tab; other hosts receive its MCP URL and text fallback. Reply briefly.",
     ].join(" "),
-    inputSchema: createAppInputSchema,
+    inputSchema: storage ? createAppInputSchema : createAppInputSchema.omit({ storage: true }),
     outputSchema: appResultSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (request) => {
@@ -198,6 +210,7 @@ export function registerAppBuilderTools(input: {
         publicOrigin: input.publicOrigin,
         message: `Created ${app.title} as its own MCP server with ${app.tools.length} ${app.tools.length === 1 ? "tool" : "tools"} plus ${MCP_APP_LAUNCH_TOOL_NAME}. MCP URL: ${mcpUrl(input.publicOrigin, app.serverPath)}${publicNote(request.public, app.appId, request.publicName)}`,
         canOpen: await input.canOpen?.(app.appId) ?? true,
+        storage: await input.storageStatus?.(app.appId),
       })
     } catch (error) {
       return errorResult(error)
@@ -211,7 +224,7 @@ export function registerAppBuilderTools(input: {
       "Publishes an immutable revision in the same Plugin and MCP server; newly bound Workflows join that Plugin, so everyone it is shared with can run them. Requires editor access and the mcp:write scope.",
       "Returns app (updated summary, not source), input (empty launch input), mcpUrl, and launch { connectionId, toolName, resourceUri, arguments } unless OpenWork's connection limit prevents opening it. The MCP URL remains usable. OpenWork opens an available artifact in a sidebar tab.",
     ].join(" "),
-    inputSchema: updateAppInputSchema,
+    inputSchema: storage ? updateAppInputSchema : updateAppInputSchema.omit({ storage: true }),
     outputSchema: appResultSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (request) => {
@@ -219,16 +232,16 @@ export function registerAppBuilderTools(input: {
       requireScope(DEN_MCP_WRITE_SCOPE)
       const app = await input.service.update(request)
       input.notifyCatalogChanged()
-      return mcpAppLaunchResult({ app, built: true, publicOrigin: input.publicOrigin, message: `Updated ${app.title} to a new revision.${publicNote(request.public, app.appId, request.publicName)}`, canOpen: await input.canOpen?.(app.appId) ?? true })
+      return mcpAppLaunchResult({ app, built: true, publicOrigin: input.publicOrigin, message: `Updated ${app.title} to a new revision.${publicNote(request.public, app.appId, request.publicName)}`, canOpen: await input.canOpen?.(app.appId) ?? true, storage: await input.storageStatus?.(app.appId) })
     } catch (error) {
       return errorResult(error)
     }
   })
   input.server.registerTool("read_app", {
     title: "Read an artifact",
-    description: "Read an artifact before editing. Returns app (latest summary including appId, pluginId, revisionId, title, description, textFallback, tools and launch resource/server identifiers), reactSource, and cssSource. Use app.revisionId as update_app's expectedRevisionId; tools are summaries, not input schemas. Requires mcp:read and editor access, not merely permission to open the artifact. Does not open or run the artifact.",
+    description: `Read an artifact before editing. Returns app (latest summary including appId, pluginId, revisionId, title, description, textFallback, tools and launch resource/server identifiers), reactSource, and cssSource${storage ? ", and storage when it saves data" : ""}. Use app.revisionId as update_app's expectedRevisionId; tools are summaries, not input schemas. Requires mcp:read and editor access, not merely permission to open the artifact. Does not open or run the artifact.`,
     inputSchema: readAppInputSchema,
-    outputSchema: readMcpAppOutputSchema,
+    outputSchema: storage ? readMcpAppOutputSchema : readMcpAppOutputSchema.omit({ storage: true }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (request) => {
     try {

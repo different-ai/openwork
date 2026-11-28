@@ -189,6 +189,7 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "invitations.ts": bridged(["organization.invitation.created", "organization.invitation.refreshed", "organization.invitation.canceled"], ["invitation", "member", "api_key"], ["member.removed", "api_key.revoked"]),
   "llm-provider-access.ts": support("Legacy LLM provider authorization helpers, not operation capture."),
   "llm-providers.ts": routes("Legacy LLM provider management; not the inference-provider emitter."),
+  "mcp-app-storage.ts": routes("Organization admin storage summaries and downloads; exports include every member’s personal rows."),
   "mcp-app-catalog.ts": routes("Reads of the Apps built in OpenWork a member can use."),
   "mcp-connections.ts": routes("MCP connection administration and OAuth."),
   "members.ts": bridged(["organization.member.role_updated", "organization.member.ownership_transferred", "organization.member.removed"], ["member", "api_key"], ["api_key.revoked"]),

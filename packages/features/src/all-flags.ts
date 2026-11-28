@@ -2,6 +2,7 @@
 // On a merge conflict here, keep either side and run `pnpm features:sync`.
 export { default as activationLocalSetup } from "@openwork/features/flags/activation-local-setup"
 export { default as administratorRecovery } from "@openwork/features/flags/administrator-recovery"
+export { default as artifactStorage } from "@openwork/features/flags/artifact-storage"
 export { default as automationArchiveRestore } from "@openwork/features/flags/automation-archive-restore"
 export { default as automationFailureNotifications } from "@openwork/features/flags/automation-failure-notifications"
 export { default as automationSharing } from "@openwork/features/flags/automation-sharing"
@@ -26,6 +27,7 @@ export { default as managedDeploymentConfigUpdates } from "@openwork/features/fl
 export { default as managedDeployments } from "@openwork/features/flags/managed-deployments"
 export { default as managedGoogleCloudDeployments } from "@openwork/features/flags/managed-google-cloud-deployments"
 export { default as mcpThreads } from "@openwork/features/flags/mcp-threads"
+export { default as microsoft365ReadResources } from "@openwork/features/flags/microsoft365-read-resources"
 export { default as officeOutlinePreview } from "@openwork/features/flags/office-outline-preview"
 export { default as opencodeV2Only } from "@openwork/features/flags/opencode-v2-only"
 export { default as personalAgents } from "@openwork/features/flags/personal-agents"
@@ -40,6 +42,7 @@ export { default as remoteTasksOptIn } from "@openwork/features/flags/remote-tas
 export { default as sessionTree } from "@openwork/features/flags/session-tree"
 export { default as sideChatFromSelection } from "@openwork/features/flags/side-chat-from-selection"
 export { default as sideQuestions } from "@openwork/features/flags/side-questions"
+export { default as teamsMeetingTranscripts } from "@openwork/features/flags/teams-meeting-transcripts"
 export { default as toolPermissions } from "@openwork/features/flags/tool-permissions"
 export { default as workbotAgentCheckGate } from "@openwork/features/flags/workbot-agent-check-gate"
 export { default as workbotAgentSendCheck } from "@openwork/features/flags/workbot-agent-send-check"
