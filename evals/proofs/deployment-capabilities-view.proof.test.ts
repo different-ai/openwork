@@ -35,7 +35,7 @@ test("a workspace admin sees what is installed next to which members may use it"
     const nav = await text('a[href$="/dashboard/capabilities"]');
     await user.screenshot();
     const ok = rows.workbot === "Installed: Set up on this deployment. | Off"
-      && notice === "Workbot and Slack assistant are installed, but no member can use them yet."
+      && notice === "Workbot, Slack assistant and Cloud computers are installed, but no member can use them yet."
       && nav.includes("Capabilities");
     evidence.recordAssertionEvidence("Workbot is installed while no member may use it, and the page names every capability in that state", `${JSON.stringify(rows)}; notice: ${notice}`, ok);
     expect(ok).toBe(true);
@@ -47,7 +47,7 @@ test("a workspace admin sees what is installed next to which members may use it"
     const ok = rows.automations === "Installed: Set up on this deployment. | Everyone"
       && rows.aiGateway === "Needs installation: Its service is not installed in this deployment yet. | —"
       && rows.slackAssistant === "Installed: Set up on this deployment. | Off, Slack is not connected"
-      && rows.cloudComputers === "Off: Installed, and waiting for a feature that is off for this workspace. | Off"
+      && rows.cloudComputers === "Installed: The runner is installed. Its computer provider is set on the runner and is not reported here. | Off"
       && (manage[0] ?? "").endsWith("/dashboard/members/teams/everyone?tab=workbot");
     evidence.recordAssertionEvidence("Automations, the AI Gateway, the Slack assistant and cloud computers each report both answers; Manage access opens Workbot's setting", `${JSON.stringify(rows)}; Workbot manage link: ${manage[0] ?? "none"}`, ok);
     expect(ok).toBe(true);

@@ -79,7 +79,7 @@ test("an installation administrator sees that the server and the Helm chart disa
   await step("a workspace member who is not an installation administrator gets no configuration, even when asking for it", async () => {
     const response = await memberProbe.api(world.den.members.member, "/v1/org/diagnostics?include=config");
     const report = orgDiagnosticsSchema.parse(response.body);
-    await member.see({ testId: "member-dashboard" }, { timeoutMs: 90_000 });
+    await member.see({ testId: "member-home" }, { timeoutMs: 90_000 });
     const rows = (await memberProbe.dom('[data-testid="installation-config"]')).elements.length;
     await member.screenshot();
     const ok = rows === 0 && JSON.stringify(report.installation) === JSON.stringify({ access: "locked", reason: "installation_admin_required" });
