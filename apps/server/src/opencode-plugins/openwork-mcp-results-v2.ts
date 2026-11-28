@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { mcpToolId } from "../opencode-v2-mcp-readiness.js";
 import { nativeDiscoveryCode } from "./openwork-codemode-discovery-v2.js";
+import { createCloudCodingTurnRelease } from "./cloud-coding-turn-release.js";
+
+const TURN_END_EVENTS = ["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"] as const;
+const releaseCloudCodingTurn = createCloudCodingTurnRelease();
 
 type Registration = { dispose(): Promise<void> };
 type CallEvent = { readonly tool: string; readonly messageID: string; readonly id: string };
@@ -24,6 +28,7 @@ type ExecuteAfter = CallEvent & { readonly input: unknown } & (
 type Context = {
   location?: { directory?: string };
   session?: { get?(input: { sessionID: string }): Promise<{ readonly parentID?: string } | undefined> };
+  event?: { subscribe(options: { types: (typeof TURN_END_EVENTS)[number][]; signal: AbortSignal }): AsyncIterable<unknown> };
   tool: {
     transform(callback: (editor: {
       get(id: string): unknown;
@@ -247,6 +252,21 @@ export function createMcpResultsCollector() {
   };
 }
 
+export async function releaseCloudCodingTurns(
+  events: AsyncIterable<unknown>,
+  resolveRootSessionId: (sessionID: string) => Promise<string | null>,
+  release = releaseCloudCodingTurn,
+) {
+  for await (const event of events) {
+    if (!isRecord(event) || !TURN_END_EVENTS.some(type => type === event.type)) continue;
+    const data = isRecord(event.data) ? event.data : isRecord(event.properties) ? event.properties : event;
+    const sessionID = data.sessionID ?? data.sessionId;
+    if (typeof sessionID === "string" && sessionID && await resolveRootSessionId(sessionID) === sessionID) {
+      void release(sessionID);
+    }
+  }
+}
+
 export default {
   id: "openwork.mcp-results",
   async setup(context: Context) {
@@ -277,6 +297,16 @@ export default {
         || normalized === "openwork-cloud_remote_session_send"
         || normalized === "openwork-cloud_remote_session_answer";
       if (!isExecCapability && !isDirectRemote) return input;
+      if (isExecCapability && input.name === "cloud-coding:start") {
+        const originSessionId = await resolveRootSessionId(call.sessionID);
+        if (!originSessionId) return input;
+        if (input.arguments !== undefined) {
+          const args = typeof input.arguments === "string" ? parseRecord(input.arguments) : input.arguments;
+          return isRecord(args) ? { ...input, arguments: { ...args, originSessionId } } : input;
+        }
+        const body = typeof input.body === "string" ? parseRecord(input.body) : input.body;
+        return { ...input, body: { ...(isRecord(body) ? body : {}), originSessionId } };
+      }
       if (isExecCapability
         && input.name !== "remote-session:create"
         && input.name !== "remote-session:attach"
@@ -334,7 +364,13 @@ export default {
       collector.before(event);
     });
     const after = await context.tool.hook("execute.after", event => collector.after(event));
+    const turnEvents = new AbortController();
+    if (process.env.OPENWORK_RUNTIME_SURFACE === "web" && context.event) {
+      const events = context.event.subscribe({ types: [...TURN_END_EVENTS], signal: turnEvents.signal });
+      void releaseCloudCodingTurns(events, resolveRootSessionId).catch(() => undefined);
+    }
     return async () => {
+      turnEvents.abort();
       await before.dispose();
       await after.dispose();
       await catalog.dispose();

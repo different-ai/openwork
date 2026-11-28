@@ -26,17 +26,18 @@ export type PushApprovalPanelProps = {
   phase: "pending" | "pushing" | "opened" | "denied" | "unfinished";
   count?: number;
   busy?: boolean;
+  settledElsewhere?: boolean;
   retryDecision?: Choice;
   decide: (choice: Choice) => void;
   dismiss: () => void;
   onOpenPullRequest: (url: string) => Promise<unknown>;
 };
 
-export function PushApprovalPanel({ approval, phase, count = 1, busy, retryDecision, decide, dismiss, onOpenPullRequest }: PushApprovalPanelProps) {
+export function PushApprovalPanel({ approval, phase, count = 1, busy, settledElsewhere, retryDecision, decide, dismiss, onOpenPullRequest }: PushApprovalPanelProps) {
   const [openFailed, setOpenFailed] = useState(false);
   const { repositoryFullName: repository, branch, files, fileCount, tests, pullRequest } = approval;
   const title = t("cloud_coding.title", { repository });
-  const line = phase === "denied" ? t("cloud_coding.denied")
+  const line = phase === "denied" ? t(settledElsewhere ? "cloud_coding.denied_elsewhere" : "cloud_coding.denied")
     : phase === "opened" && pullRequest ? t("cloud_coding.opened", { repository, number: pullRequest.number })
     : t("cloud_coding.unfinished");
   const final = phase !== "pending" && phase !== "pushing";
@@ -55,7 +56,7 @@ export function PushApprovalPanel({ approval, phase, count = 1, busy, retryDecis
       <ComposerApprovalHeader title={title} icon={<ServiceMark name="GitHub" iconUrl={GITHUB_SERVICE_MARK} />} actions={phase === "pending"
         ? <ComposerApprovalActions disabled={busy} onDeny={() => decide("deny")} onAllowOnce={() => decide("allow_once")} /> : null}>
         {phase === "pushing" ? <span role="status" className="animate-text-shimmer motion-reduce:animate-none">
-          {t("cloud_coding.pushing", { branch })}
+          {t(settledElsewhere ? "cloud_coding.pushing_elsewhere" : "cloud_coding.pushing", { branch })}
         </span> : <>
           <div className="wrap-anywhere">
             {t("cloud_coding.new_branch")} <code className="font-mono">{branch}</code>{" · "}

@@ -15,8 +15,9 @@ const { QueryClient, QueryClientProvider, notifyManager, timeoutManager } = awai
 const { CloudCodingApprovalDock, useCloudCodingApprovals } = await import("../src/react-app/domains/cloud-coding/cloud-coding-approval-dock");
 const { CloudCodingConnectionCard } = await import("../src/react-app/domains/cloud-coding/cloud-coding-connection-card");
 const { ConnectionCard, ConnectionCardResolverProvider } = await import("../src/components/chat/connection-card");
-const { cloudCodingSessionConnections } = await import("../src/react-app/shell/cloud-coding-session");
-const { createDenClient } = await import("../src/app/lib/den");
+const { cloudCodingSessionConnections, cloudCodingSessionSlots } = await import("../src/react-app/shell/cloud-coding-session");
+const { createDenClient, DenApiError } = await import("../src/app/lib/den");
+const deployment = await import("../src/app/lib/openwork-deployment");
 const { PushApprovalPanel } = await import("../src/react-app/domains/cloud-coding/push-approval-panel");
 const { connectionFromChatToolPart } = await import("../src/components/tools/error-attribution");
 const { nativeChatConnectionDecision } = await import("../src/react-app/domains/session/surface/mcp-chat-reconnect");
@@ -192,14 +193,48 @@ test("failed decision keeps the request and retries the same choice", async () =
   expect(host.textContent).toBe("Denied. Nothing was pushed.");
 });
 
-test("a vanished approval disappears on the next list poll without deciding", async () => {
+test("approval allowed elsewhere continues to the pull request", async () => {
   const f = denFixture();
-  await render(<CloudCodingApprovalDock scope={f.scope} active completedAt={0} />);
+  await render(<f.Harness />);
   expect(host.textContent).toContain("Push to acme/storefront?");
   f.setPending([]);
   await tick(5_000);
-  expect(host.textContent).toBe("");
+  expect(host.textContent).toContain("Allowed elsewhere. Pushing improve-checkout…");
+  expect(f.scope.client.getCloudCodingApproval).toHaveBeenCalledTimes(1);
+  expect(f.scope.client.getCloudCodingApproval).toHaveBeenCalledWith("acme", first.id);
+  f.setStatus(opened);
+  await tick(3_000);
+  expect(host.textContent).toContain("Pull request opened · acme/storefront #42");
   expect(f.choices).toHaveLength(0);
+});
+
+test.each([
+  ["denied", "Denied elsewhere. Nothing was pushed."],
+  ["expired", ""],
+  ["superseded", ""],
+] as const)("a disappeared approval that is %s is read by ID only once", async (status, text) => {
+  const f = denFixture();
+  await render(<f.Harness />);
+  f.setPending([]);
+  f.setStatus({ ...first, status });
+  await tick(5_000);
+  expect(host.textContent).toBe(text);
+  await tick(10_000);
+  expect(f.scope.client.getCloudCodingApproval).toHaveBeenCalledTimes(1);
+  expect(f.choices).toHaveLength(0);
+});
+
+test("a local 409 reads the true decision rather than showing a save error", async () => {
+  const f = denFixture();
+  f.scope.client.decideCloudCodingApproval.mockImplementation(async () => {
+    throw new DenApiError(409, "approval_not_pending", "The approval was already decided");
+  });
+  f.setStatus({ ...first, status: "denied" });
+  await render(<f.Harness />);
+  await click("Allow once");
+  expect(host.textContent).toBe("Denied elsewhere. Nothing was pushed.");
+  expect(f.scope.client.getCloudCodingApproval).toHaveBeenCalledTimes(1);
+  expect(f.scope.client.getCloudCodingApproval).toHaveBeenCalledWith("acme", first.id);
 });
 
 test("a completed turn refreshes approvals without waiting for the next poll", async () => {
@@ -258,6 +293,41 @@ function roleFixture(canManage: boolean) {
   return { ask, openUrl, scope, card: <CloudCodingConnectionCard scope={scope} dismiss={() => {}} fallback={null} openUrl={openUrl} /> };
 }
 
+test.each([false, true])("the feature-on session slots honor the desktop runtime: %s", async (desktop) => {
+  const f = denFixture();
+  const role = roleFixture(false);
+  const scope = { ...f.scope, client: { ...f.scope.client, ...role.scope.client } };
+  const part: DynamicToolUIPart = { type: "dynamic-tool", toolName: "openwork-cloud_execute_capability", toolCallId: "call-admin", input: {}, state: "output-available", output: {
+    version: 1, kind: "connection_action", source: "openwork-cloud", connectionId: "github-cloud-coding", connectionName: "GitHub", actor: "organization_admin", authType: "oauth",
+    credentialMode: "shared", state: "needs_connection", action: { type: "connect", surface: "openwork_organization_connections", retry: "search_capabilities" },
+  } };
+  const deploymentCheck = spyOn(deployment, "isWebDeployment").mockReturnValue(true);
+  const previousElectron = Reflect.get(window, "__OPENWORK_ELECTRON__");
+  Reflect.set(window, "__OPENWORK_ELECTRON__", desktop ? {} : undefined);
+  try {
+    const slots = cloudCodingSessionSlots(scope, true);
+    await render(<ConnectionCardResolverProvider value={slots.resolveCard}>
+      {slots.renderChatApprovalDock?.(0, true)}
+      <ConnectionCard part={part} />
+    </ConnectionCardResolverProvider>);
+    if (desktop) {
+      expect(slots.renderChatApprovalDock).toBeUndefined();
+      expect(slots.authentication).toBeUndefined();
+      expect(f.scope.client.listCloudCodingApprovals).not.toHaveBeenCalled();
+      expect(host.textContent).toContain("Your organization admin must configure GitHub");
+      expect(host.textContent).not.toContain("Ask an admin");
+    } else {
+      expect(slots.authentication?.get("github-cloud-coding")?.enabled).toBe(true);
+      expect(f.scope.client.listCloudCodingApprovals).toHaveBeenCalledTimes(1);
+      expect(host.textContent).toContain("Push to acme/storefront?");
+      expect(host.textContent).toContain("Ask an admin");
+    }
+  } finally {
+    Reflect.set(window, "__OPENWORK_ELECTRON__", previousElectron);
+    deploymentCheck.mockRestore();
+  }
+});
+
 test("a connection manager opens the configured Cloud coding dashboard", async () => {
   const f = roleFixture(true);
   await render(f.card);
@@ -274,7 +344,7 @@ test("the session shell gives the legacy card the member's ask-an-admin action",
     credentialMode: "shared", state: "needs_connection", action: { type: "connect", surface: "openwork_organization_connections", retry: "search_capabilities" },
   } };
   const renderCard = (scope: typeof f.scope | null, enabled: boolean | undefined) => render(
-    <ConnectionCardResolverProvider value={cloudCodingSessionConnections(scope, enabled).resolveCard}>
+    <ConnectionCardResolverProvider value={cloudCodingSessionConnections(scope, enabled, true).resolveCard}>
       <ConnectionCard part={part} />
     </ConnectionCardResolverProvider>,
   );
@@ -298,9 +368,9 @@ test("the shell registers GitHub authentication for the current organization onl
   const client = { ...createDenClient({ baseUrl: scope.denBaseUrl }), getCloudCodingOverview };
   const input = { client, baseUrl: scope.denBaseUrl, organizationId: scope.organizationId,
     isCurrent: () => true, onProgress: () => {}, openUrl: async () => {} };
-  const disabled = cloudCodingSessionConnections(null, false).authentication.get("github-cloud-coding");
+  const disabled = cloudCodingSessionConnections(null, false, true).authentication?.get("github-cloud-coding");
   expect(disabled?.enabled).toBe(false);
-  const registered = cloudCodingSessionConnections(scope, true).authentication.get("github-cloud-coding");
+  const registered = cloudCodingSessionConnections(scope, true, true).authentication?.get("github-cloud-coding");
   if (!registered) throw new Error("GitHub authentication was not registered");
   expect(registered.enabled).toBe(true);
   await expect(registered.authenticate({ ...input, organizationId: "another-org" })).rejects.toThrow("connection request changed");

@@ -11,7 +11,7 @@ export function ServiceMark({ name, iconUrl }: { name: string; iconUrl: string |
       aria-hidden="true"
       className={cn("flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md", !showImage && "bg-muted text-xs font-medium text-foreground")}
     >
-      {showImage && iconUrl ? <img src={iconUrl} alt="" className="size-4 object-contain" onError={() => setFailedIcon(iconUrl)} /> : name.charAt(0).toUpperCase()}
+      {showImage && iconUrl ? <img src={iconUrl} alt="" className={cn("size-4 object-contain", iconUrl === GITHUB_SERVICE_MARK && "dark:invert")} onError={() => setFailedIcon(iconUrl)} /> : name.charAt(0).toUpperCase()}
     </span>
   )
 }

@@ -126,11 +126,10 @@ import { agentFeatureSnapshotKey, usePersonalAgentSessionExtensions, useStanding
 import { PersonalAgentsProvider, type AgentScope, type AgentsRuntime } from "@/react-app/domains/agents/agents-runtime";
 import { useAgentNames } from "@/react-app/domains/agents/use-agents";
 import { SessionExtensionsProvider } from "@/react-app/kernel/session-extensions";
-import { CloudCodingApprovalDock } from "@/react-app/domains/cloud-coding/cloud-coding-approval-dock";
 import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import { ApprovalLoadError } from "@/react-app/design-system/composer-approval-panel";
 import { ConnectionCardResolverProvider } from "@/components/chat/connection-card";
-import { cloudCodingSessionConnections } from "./cloud-coding-session";
+import { cloudCodingSessionSlots, isCloudCodingWebRuntime } from "./cloud-coding-session";
 import { ApprovalRefresh, ChatApprovalDock } from "@/react-app/domains/tool-approvals/tool-approvals-stack";
 import { RunApprovalSlot, useAutomationApprovals } from "@/react-app/domains/tool-approvals/run-approval-slot";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
@@ -2825,19 +2824,21 @@ export function SessionRoute() {
   const approvalsScope = useMemo(() => toolPermissionsEnabled && agentsDen.ready && agentsDen.client && personalAgentsScope
     ? { ...personalAgentsScope, client: agentsDen.client } : null, [agentsDen.client, agentsDen.ready, personalAgentsScope, toolPermissionsEnabled]);
   const automationApprovals = useAutomationApprovals(automationsRouteActive ? approvalsScope : null);
-  const cloudCodingEnabled = useOrgFeature("cloudCoding", { active: !automationsRouteRequested && !dashboardRouteRequested && !appsRouteActive && !activityRouteRequested });
-  const cloudCodingScope = useMemo(() => cloudCodingEnabled && agentsDen.ready && agentsDen.client && personalAgentsScope
-    ? { ...personalAgentsScope, client: agentsDen.client } : null, [agentsDen.client, agentsDen.ready, cloudCodingEnabled, personalAgentsScope]);
-  const cloudCodingConnections = useMemo(() => cloudCodingSessionConnections(cloudCodingScope, personalAgentsScope ? cloudCodingEnabled : undefined),
-    [cloudCodingScope, cloudCodingEnabled, personalAgentsScope]);
+  const cloudCodingWeb = isCloudCodingWebRuntime();
+  const cloudCodingEnabled = useOrgFeature("cloudCoding", { active: cloudCodingWeb && !automationsRouteRequested && !dashboardRouteRequested && !appsRouteActive && !activityRouteRequested });
+  const cloudCodingSlots = useMemo(() => cloudCodingSessionSlots(
+    cloudCodingWeb && cloudCodingEnabled && agentsDen.ready && agentsDen.client && personalAgentsScope
+      ? { ...personalAgentsScope, client: agentsDen.client } : null,
+    personalAgentsScope ? cloudCodingEnabled : undefined,
+  ), [agentsDen.client, agentsDen.ready, cloudCodingEnabled, cloudCodingWeb, personalAgentsScope]);
   const sessionExtensions = useMemo(() => ({
     ...agentExtensions,
-    connectionAuthentication: cloudCodingConnections.authentication,
-    renderChatApprovalDock: approvalsScope || cloudCodingScope ? (completedAt: number, active: boolean) => <>
-      {approvalsScope && <ChatApprovalDock scope={approvalsScope} completedAt={completedAt} />}
-      <CloudCodingApprovalDock scope={cloudCodingScope} completedAt={completedAt} active={active} />
-    </> : undefined,
-  }), [agentExtensions, approvalsScope, cloudCodingConnections.authentication, cloudCodingScope]);
+    connectionAuthentication: cloudCodingSlots.authentication,
+    renderChatApprovalDock: approvalsScope ? (completedAt: number, active: boolean) => <>
+      <ChatApprovalDock scope={approvalsScope} completedAt={completedAt} />
+      {cloudCodingSlots.renderChatApprovalDock?.(completedAt, active)}
+    </> : cloudCodingSlots.renderChatApprovalDock,
+  }), [agentExtensions, approvalsScope, cloudCodingSlots]);
   const agentNames = useAgentNames(agentsRuntime);
 
   const createNewSessionInSelectedWorkspace = useCallback(() => {
@@ -3949,7 +3950,7 @@ export function SessionRoute() {
       />
     ) : null}
     <PersonalAgentsProvider value={agentsRuntime}>
-    <ConnectionCardResolverProvider value={cloudCodingConnections.resolveCard}>
+    <ConnectionCardResolverProvider value={cloudCodingSlots.resolveCard}>
     <SessionExtensionsProvider value={sessionExtensions}>
     <SessionPage
       sandboxTrialNotice={<SandboxTrialNotice />}

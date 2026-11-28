@@ -208,6 +208,7 @@ async function startManagedOpencodeServer(
     { OPENCODE_SERVER_USERNAME: username, OPENCODE_SERVER_PASSWORD: password },
   ]);
   deleteEnv(env, "OPENWORK_ENCRYPTION_KEY");
+  deleteEnv(env, "DEN_ACTIVITY_HEARTBEAT_TOKEN");
   const injectedEnv = Object.entries({
     ...engineEnvDefaults,
     ...(options.env ?? {}),

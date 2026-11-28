@@ -21,6 +21,7 @@ import { MCP_READINESS_RPC_ID } from "./opencode-v2-mcp-readiness.js";
 import { captureServerException } from "./telemetry.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { withCloudCodingWorkerProof } from "./cloud-coding-worker-proof.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -596,7 +597,7 @@ export function mapRuntimeMcpToV2(value: unknown, name?: string): Record<string,
   } : value.oauth === false ? false : undefined;
   const headers = strings(value.headers);
   return { type: "remote", url: value.url,
-    headers: name === "openwork-cloud" ? withClientCapability(headers, CONNECT_NATIVE_SKILLS_CAPABILITY) : headers,
+    headers: name === "openwork-cloud" ? withCloudCodingWorkerProof(withClientCapability(headers, CONNECT_NATIVE_SKILLS_CAPABILITY)) : headers,
     ...(name === "openwork-cloud" ? { protocol: "auto" } : {}),
     ...(oauth === undefined ? {} : { oauth }), ...shared };
 }

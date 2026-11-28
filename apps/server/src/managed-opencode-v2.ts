@@ -336,7 +336,7 @@ const ENGINE_INHERITED_ENV = [
   "SystemDrive", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
   "ALLUSERSPROFILE", "PUBLIC", "CommonProgramFiles", "CommonProgramFiles(x86)",
   "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
-  "OPENCODE_CLAUDE_PATH",
+  "OPENCODE_CLAUDE_PATH", "OPENWORK_RUNTIME_SURFACE",
 ];
 
 const ENGINE_PROXY_ENV = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
