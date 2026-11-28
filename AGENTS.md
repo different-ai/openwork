@@ -16,9 +16,11 @@ own files, built on OpenCode. This repo is public.
 * **Product controls.** Use a Capability for what an installation can run
   (`packages/managed-deployments/src/capabilities.ts`), Org Config for how an
   organization uses it (`ee/apps/den-api/src/config-blobs/areas/*.ts`), and a
-  Preview for temporary user-visible rollouts (planned `previews.ts`, with an
-  `owner` and `expiresOn`; use the existing flag registry until then). See
-  `add-a-feature`. Do not add or document raw `DEN_*` product switches.
+  Preview for temporary user-visible rollouts
+  (`packages/features/src/previews.ts`, with an `owner` and `expiresOn`). Any
+  change to product behavior that users can see goes behind a Preview; when
+  unsure, flag. See `add-a-feature`. Do not add or document raw `DEN_*` product
+  switches.
 * **UI follows `DESIGN.md`.** Cite its rule ids in the PR and attach
   screenshots.
 * **Generated contracts.** Never commit or hand-edit OpenAPI or

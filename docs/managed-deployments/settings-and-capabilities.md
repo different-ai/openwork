@@ -16,8 +16,8 @@ unfinished work, use short-lived `preview_flags` with an owner and expiry, and
 retire the flag at general availability. A platform admin can opt an organization
 in through `acme.config.json` (`settings.features` on releases with the old name,
 `settings.preview_flags` on releases with the new name) or through `/admin`.
-Previews are not part of the required install steps. The gaps below document
-exceptions in the current implementations, not patterns for new capabilities.
+Previews are not part of the required install steps, and no capability depends
+on one today.
 
 ## The catalog
 
@@ -32,7 +32,7 @@ capability is supported and which controls implement it:
 | --- | --- | --- |
 | `managed-aws` | Installed from OpenWork Cloud into the customer's AWS account | Deployment settings and the Terraform root's variables |
 | `managed-gcp` | Installed from OpenWork Cloud into the customer's Google Cloud project | Deployment settings and the Terraform root's variables |
-| `helm` | The `openwork-ee` Helm chart | Values and `denApi.env` |
+| `helm` | The `openwork-ee` Helm chart | Values, and `denApi.env` for the Slack assistant's switch |
 | `aws-ecs-module` | The `openwork-aws-ecs` Terraform module | Module variables |
 | `gcp-cloud-run-module` | The `openwork-gcp-cloud-run` Terraform module | Module variables |
 
@@ -80,8 +80,7 @@ and a test pins them. Fixing one means removing it from the catalog.
 | Automations | The Cloud Run module fixes `DEN_AUTOMATIONS_RUNTIME_ENABLED` to false, so `automations_enabled = true` turns nothing on. A managed Google Cloud deployment inherits that and has no input to change it |
 | Slack assistant | With a runner installed, Helm leaves it on because nobody sets `DEN_SLACK_ASSISTANT_WORKER_ENABLED`. The AWS ECS module and a legacy managed AWS deployment set it to false until `slack_assistant_enabled` is turned on |
 | AI Gateway | The Cloud Run module can install it, but the managed Google Cloud root never passes `ai_gateway_enabled` |
-| Cloud computers | Choosing a provider is not enough. Members see no computer until the `remoteComputers` flag is on in the installed Den. `sandboxGateway` and `workbotProfileComputers` change where computers run and where they are listed. All three are off by default and no installer sets them |
-| Runner, Workbot, Slack assistant, cloud computers | The Helm chart installs neither the runner nor Workbot. The operator runs them separately and passes their addresses to Den through `denApi.env` |
+| Cloud computers | The Helm chart has no value for computers: the runner it installs is fixed to `HEADLESS_COMPUTER=off`. A provider can only be set on a runner the operator installs separately |
 
 Managed Google Cloud supports none of the five capabilities yet, and its
 settings cannot change after installation.
@@ -98,13 +97,12 @@ Den reports one state per capability.
 | `unsupported` | This kind of deployment cannot have it |
 
 Each state comes with a fixed reason code, such as `switched_off`,
-`service_not_installed`, `dependency_not_installed` or `rollout_flag_off`.
+`service_not_installed` or `dependency_not_installed`.
 
 - **An installed Den** adds `deploymentCapabilities.capabilities` to
   `GET /v1/org`. It derives the states from settings it already has: whether
-  the runner, Workbot and the gateway are configured, its own Automations and
-  Slack switches, and the organization's features. It makes no network call
-  for this. A Den does not know which installer made it, so it never reports
+  the runner, Workbot and the gateway are configured, and its own Automations
+  and Slack switches. It makes no network call for this. A Den does not know which installer made it, so it never reports
   `unsupported`. The existing `aiGateway` boolean is unchanged.
 - **OpenWork Cloud** answers
   `GET /v1/managed-deployments/{deploymentId}/capabilities` for a managed
@@ -116,10 +114,9 @@ Capability state says whether something is set up. Whether its service answers
 is the job of the service checks in [Diagnostics](../diagnostics.md) and of a
 managed deployment's health report.
 
-Two reasons deserve a note. A Den cannot see the runner's computer provider, so
+One reason deserves a note. A Den cannot see the runner's computer provider, so
 cloud computers report `on` with `configured_on_runner` once the runner is
-installed and `remoteComputers` is on. OpenWork Cloud cannot see an installed
-Den's flags, so a managed deployment with a provider chosen reports `on` with
-`needs_rollout_flag`.
+installed.
 
-No screen shows these states yet.
+Settings › Capabilities shows these states next to member access, behind the
+`deploymentCapabilitiesView` preview flag.

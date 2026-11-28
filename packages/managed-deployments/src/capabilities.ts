@@ -83,6 +83,8 @@ const FILES = {
   helmConfigMap: "packaging/helm/openwork-ee/templates/configmap.yaml",
   helmDenApi: "packaging/helm/openwork-ee/templates/den-api.yaml",
   helmGateway: "packaging/helm/openwork-ee/templates/_gateway.tpl",
+  helmCompanions: "packaging/helm/openwork-ee/templates/companions.yaml",
+  helmCompanionValues: "packaging/helm/openwork-ee/templates/_companions.tpl",
   denEnv: "ee/apps/den-api/src/env.ts",
   denReadiness: "ee/apps/den-api/src/service-readiness.ts",
   denSlackWorker: "ee/apps/den-api/src/slack-assistant/worker.ts",
@@ -95,13 +97,12 @@ const FILES = {
 export const DEPLOYMENT_TARGET_FILES: Record<DeploymentTarget, readonly string[]> = {
   "managed-aws": [FILES.managedAwsMain, FILES.managedAwsAssistants, FILES.managedAwsProfile],
   "managed-gcp": [FILES.managedGcpMain],
-  helm: [FILES.helmValues, FILES.helmConfigMap, FILES.helmDenApi, FILES.helmGateway],
+  helm: [FILES.helmValues, FILES.helmConfigMap, FILES.helmDenApi, FILES.helmGateway, FILES.helmCompanions, FILES.helmCompanionValues],
   "aws-ecs-module": [FILES.awsEcsVariables, FILES.awsEcsMain, FILES.awsEcsHeadless, FILES.awsEcsGateway],
   "gcp-cloud-run-module": [FILES.gcpRunVariables, FILES.gcpRunMain, FILES.gcpRunServices, FILES.gcpRunGateway],
 }
 
 const TRUE: ControlOn = { is: true }
-const SET: ControlOn = { isNot: null }
 const GATEWAY: ControlOn = { is: "gateway" }
 
 const unsupported = (absent: readonly string[]): CapabilityTarget => ({ support: "unsupported", default: "off", controls: [], absent })
@@ -116,17 +117,7 @@ const helmEnv = (env: string, readIn: string, behavior?: Switch): CapabilityCont
   const control = { kind: "helm-env", file: FILES.helmValues, name: "denApi.env", env, readIn } as const
   return behavior ? { ...control, ...behavior } : control
 }
-const flag = (name: string, file: string, effect: "required" | "optional", summary: string): CapabilityControl => ({
-  kind: "rollout-flag", file: `packages/features/src/flags/${file}.ts`, name, default: false, on: TRUE, effect, summary,
-})
-
-const COMPUTER_FLAGS: readonly CapabilityControl[] = [
-  flag("remoteComputers", "remote-computers", "required", "Workbot shows no computer, browser or live view until this is on."),
-  flag("sandboxGateway", "sandbox-gateway", "optional", "Runs computers through the runner's sandbox gateway instead of the runner's own Daytona or Freestyle account."),
-  flag("workbotProfileComputers", "workbot-profile-computers", "optional", "Lists a member's computers in Workbot's profile."),
-]
-
-const NOT_IN_CHART = "The Helm chart does not install the headless runner or Workbot. The operator runs them separately and passes their addresses to Den as raw environment variables through denApi.env."
+const helmCompanion = (name: "headlessRunner" | "workbot"): CapabilityControl => ({ kind: "helm-value", file: FILES.helmValues, name: `${name}.enabled`, default: null, on: TRUE })
 
 const headlessRunner: Capability = {
   id: "headlessRunner",
@@ -146,13 +137,7 @@ const headlessRunner: Capability = {
       ],
     },
     "managed-gcp": unsupported(["headless_runner", "DEN_HEADLESS_RUNNER_URL"]),
-    helm: {
-      support: "supported", default: "off",
-      controls: [
-        helmEnv("DEN_HEADLESS_RUNNER_URL", FILES.runnerClient, { default: null, on: SET }),
-        helmEnv("DEN_HEADLESS_RUNNER_TOKEN", FILES.runnerClient),
-      ],
-    },
+    helm: { support: "supported", default: "off", controls: [helmCompanion("headlessRunner")] },
     "aws-ecs-module": {
       support: "supported", default: "off",
       controls: [
@@ -162,7 +147,7 @@ const headlessRunner: Capability = {
     },
     "gcp-cloud-run-module": unsupported(["headless_runner", "DEN_HEADLESS_RUNNER_URL"]),
   },
-  gaps: [{ kind: "not_installed", targets: ["helm"], summary: NOT_IN_CHART }],
+  gaps: [],
 }
 
 const workbot: Capability = {
@@ -183,7 +168,7 @@ const workbot: Capability = {
       ],
     },
     "managed-gcp": unsupported(["workbot", "DEN_WORKBOT_URL"]),
-    helm: { support: "supported", default: "off", controls: [helmEnv("DEN_WORKBOT_URL", FILES.denReadiness, { default: null, on: SET })] },
+    helm: { support: "supported", default: "off", controls: [helmCompanion("workbot")] },
     "aws-ecs-module": {
       support: "supported", default: "off",
       controls: [
@@ -193,7 +178,7 @@ const workbot: Capability = {
     },
     "gcp-cloud-run-module": unsupported(["workbot", "DEN_WORKBOT_URL"]),
   },
-  gaps: [{ kind: "not_installed", targets: ["helm"], summary: NOT_IN_CHART }],
+  gaps: [],
 }
 
 const slackAssistant: Capability = {
@@ -229,7 +214,6 @@ const slackAssistant: Capability = {
       kind: "default_mismatch", targets: ["aws-ecs-module", "managed-aws"],
       summary: "With a runner installed, Helm leaves the Slack assistant on because nobody sets DEN_SLACK_ASSISTANT_WORKER_ENABLED, while the AWS ECS module and a legacy managed AWS deployment set it to false until slack_assistant_enabled is turned on.",
     },
-    { kind: "not_installed", targets: ["helm"], summary: NOT_IN_CHART },
   ],
 }
 
@@ -355,13 +339,12 @@ const cloudComputers: Capability = {
         { kind: "terraform-variable", file: FILES.managedAwsAssistants, name: "headless_computer", attribute: "provider", default: "off", on: { isNot: "off" } },
         { kind: "terraform-variable", file: FILES.managedAwsAssistants, name: "headless_computer_secret_arn" },
         { kind: "terraform-variable", file: FILES.managedAwsAssistants, name: "daytona" },
-        ...COMPUTER_FLAGS,
       ],
     },
     "managed-gcp": unsupported(["headless_computer", "HEADLESS_COMPUTER"]),
     helm: {
       support: "supported", default: "off",
-      controls: [{ kind: "runner-env", file: FILES.runnerConfig, name: "HEADLESS_COMPUTER", default: "off", on: { isNot: "off" } }, ...COMPUTER_FLAGS],
+      controls: [{ kind: "runner-env", file: FILES.runnerConfig, name: "HEADLESS_COMPUTER", default: "off", on: { isNot: "off" } }],
     },
     "aws-ecs-module": {
       support: "supported", default: "off",
@@ -369,17 +352,12 @@ const cloudComputers: Capability = {
         { kind: "terraform-variable", file: FILES.awsEcsVariables, name: "headless_computer", attribute: "provider", default: "off", on: { isNot: "off" } },
         { kind: "terraform-variable", file: FILES.awsEcsVariables, name: "headless_computer_secret_arn" },
         { kind: "terraform-variable", file: FILES.awsEcsVariables, name: "daytona" },
-        ...COMPUTER_FLAGS,
       ],
     },
     "gcp-cloud-run-module": unsupported(["headless_computer", "HEADLESS_COMPUTER"]),
   },
   gaps: [
-    {
-      kind: "rollout_flag", targets: ["aws-ecs-module", "helm", "managed-aws"], flags: ["remoteComputers", "sandboxGateway", "workbotProfileComputers"],
-      summary: "Choosing a computer provider is not enough: members see no computer until remoteComputers is turned on in the installed Den, and sandboxGateway and workbotProfileComputers change where computers run and where they are listed. All three are off by default and no installer sets them.",
-    },
-    { kind: "not_installed", targets: ["helm"], summary: "The Helm chart has no value for computers. The provider is the HEADLESS_COMPUTER environment variable of a runner the operator installs separately." },
+    { kind: "not_installed", targets: ["helm"], summary: "The Helm chart has no value for computers: the runner it installs is fixed to HEADLESS_COMPUTER=off. A provider can only be set on a runner the operator installs separately." },
   ],
 }
 

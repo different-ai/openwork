@@ -41,17 +41,10 @@ test("the organization context reports each capability from Den's own settings a
     slackAssistant: "off:switched_off",
     automations: "on:configured",
     aiGateway: "needs_infrastructure:service_not_installed",
-    cloudComputers: "off:rollout_flag_off",
+    cloudComputers: "on:configured_on_runner",
   })
   assert.deepEqual(states(await den.as(member, org.orgId)("GET", "/v1/org")).byId, byId, "members read the same report")
-})
-
-test("cloud computers turn on with the organization's remote computers feature, and only for that organization", async () => {
-  assert.equal((await den.setFeature(org.orgId, "remoteComputers", true)).status, 200)
-  assert.equal(states(await owner("GET", "/v1/org")).byId.cloudComputers, "on:configured_on_runner")
-  assert.equal(states(await den.as(foreign.owner, foreign.orgId)("GET", "/v1/org")).byId.cloudComputers, "off:rollout_flag_off")
-  assert.equal((await den.setFeature(org.orgId, "remoteComputers", false)).status, 200)
-  assert.equal(states(await owner("GET", "/v1/org")).byId.cloudComputers, "off:rollout_flag_off")
+  assert.deepEqual(states(await den.as(foreign.owner, foreign.orgId)("GET", "/v1/org")).byId, byId, "every organization on the deployment reads the same report")
 })
 
 const aws = { provider: "aws", name: "Capability deployment", domainName: "openwork.example.test", ownerEmail: "admin@example.test", target: { accountId: "123456789012", region: "us-east-1", route53ZoneId: "ZTEST" } }
@@ -98,7 +91,7 @@ test("a managed AWS deployment reports its recorded target: legacy, then the gat
     cloudComputers: "needs_infrastructure:service_not_installed",
   })
   const withComputers = await create({ assistants: { computerProvider: "daytona", computerSnapshot: "computer-snapshot", computerSecretArn } })
-  assert.equal((await capabilities(withComputers)).byId.cloudComputers, "on:needs_rollout_flag")
+  assert.equal((await capabilities(withComputers)).byId.cloudComputers, "on:configured")
 
   const outsider = await den.as(foreign.owner, foreign.orgId)("GET", `/v1/managed-deployments/${withComputers}/capabilities`)
   assert.equal(outsider.status, 404, "another organization cannot read it")

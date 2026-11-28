@@ -41,7 +41,6 @@ async function diagnosticsCaller(c: DiagnosticsContext): Promise<DiagnosticsCall
       operator ??= isLocalDeploymentOperator({ user: c.get("user"), session: c.get("session"), apiKey: c.get("apiKey") })
       return operator
     },
-    features: payload.features,
   }
 }
 

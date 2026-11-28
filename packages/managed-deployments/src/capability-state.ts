@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { capability, CUSTOMER_CAPABILITY_IDS, requiredRolloutFlags, type CustomerCapabilityId, type ManagedDeploymentTarget } from "@openwork/managed-deployments/capabilities"
+import { capability, CUSTOMER_CAPABILITY_IDS, type CustomerCapabilityId, type ManagedDeploymentTarget } from "@openwork/managed-deployments/capabilities"
 import type { AwsTarget } from "@openwork/managed-deployments/schema"
 
 /**
@@ -12,8 +12,8 @@ export type CapabilityState = z.infer<typeof capabilityStateSchema>
 
 /** Fixed codes, never values. */
 export const capabilityStateReasonSchema = z.enum([
-  "configured", "configured_on_runner", "needs_rollout_flag",
-  "switched_off", "rollout_flag_off",
+  "configured", "configured_on_runner",
+  "switched_off",
   "service_not_installed", "dependency_not_installed",
   "not_offered",
 ])
@@ -41,9 +41,7 @@ export const CAPABILITY_STATE_LABELS: Record<CapabilityState, string> = {
 export const CAPABILITY_STATE_REASON_LABELS: Record<CapabilityStateReason, string> = {
   configured: "Set up on this deployment.",
   configured_on_runner: "The runner is installed. Its computer provider is set on the runner and is not reported here.",
-  needs_rollout_flag: "A computer provider is chosen. Members see computers only once the remote computers feature is on in the installed OpenWork.",
   switched_off: "Installed, and turned off in the deployment's settings.",
-  rollout_flag_off: "Installed, and waiting for a feature that is off for this workspace.",
   service_not_installed: "Its service is not installed in this deployment yet.",
   dependency_not_installed: "It needs the headless runner, which is not installed in this deployment yet.",
   not_offered: "This kind of deployment cannot have it yet.",
@@ -56,7 +54,7 @@ const NOT_OFFERED: Status = { state: "unsupported", reason: "not_offered" }
 const NO_SERVICE: Status = { state: "needs_infrastructure", reason: "service_not_installed" }
 const NO_RUNNER: Status = { state: "needs_infrastructure", reason: "dependency_not_installed" }
 
-/** The signals a running Den already has about itself: service settings, its own switches and its features. */
+/** The signals a running Den already has about itself: service settings and its own switches. */
 export type InstalledDeploymentSignals = {
   headlessRunnerConfigured: boolean
   workbotConfigured: boolean
@@ -64,7 +62,6 @@ export type InstalledDeploymentSignals = {
   gatewayAddressConfigured: boolean
   automationsEnabled: boolean
   slackAssistantWorkerEnabled: boolean
-  requiredComputerFlagsOn: boolean
 }
 
 function installedStatus(id: CustomerCapabilityId, signals: InstalledDeploymentSignals): Status {
@@ -73,9 +70,7 @@ function installedStatus(id: CustomerCapabilityId, signals: InstalledDeploymentS
     case "automations": return signals.automationsEnabled ? ON : OFF
     case "workbot": return !signals.headlessRunnerConfigured ? NO_RUNNER : signals.workbotConfigured ? ON : NO_SERVICE
     case "slackAssistant": return !signals.headlessRunnerConfigured ? NO_RUNNER : signals.slackAssistantWorkerEnabled ? ON : OFF
-    case "cloudComputers":
-      if (!signals.headlessRunnerConfigured) return NO_RUNNER
-      return signals.requiredComputerFlagsOn ? { state: "on", reason: "configured_on_runner" } : { state: "off", reason: "rollout_flag_off" }
+    case "cloudComputers": return signals.headlessRunnerConfigured ? { state: "on", reason: "configured_on_runner" } : NO_RUNNER
   }
 }
 
@@ -93,10 +88,7 @@ function managedAwsStatus(id: CustomerCapabilityId, target: AwsTarget): Status {
     case "aiGateway": return gateway ? ON : NO_SERVICE
     case "workbot": return !runner ? NO_RUNNER : gateway || assistants.workbotEnabled ? ON : NO_SERVICE
     case "slackAssistant": return !runner ? NO_RUNNER : gateway || assistants.slackAssistantEnabled ? ON : OFF
-    case "cloudComputers":
-      if (!runner) return NO_RUNNER
-      if (assistants.computerProvider === "off") return NO_SERVICE
-      return requiredRolloutFlags(id, "managed-aws").length ? { state: "on", reason: "needs_rollout_flag" } : ON
+    case "cloudComputers": return !runner ? NO_RUNNER : assistants.computerProvider === "off" ? NO_SERVICE : ON
   }
 }
 

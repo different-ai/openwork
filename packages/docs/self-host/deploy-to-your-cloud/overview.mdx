@@ -24,10 +24,10 @@ Use your chart, Terraform module, or managed installer to choose what the instal
 | Capability | What it enables | What to check before deploying |
 | --- | --- | --- |
 | [AI Gateway](/self-host/gateway) | Shared access to models through organization-managed providers | Off by default on Helm and the direct Terraform modules. Supply a matching image, HTTPS endpoint, and shared database and encryption configuration. |
-| Workbot | Browser chat with an agent | Needs Workbot and the headless runner. The AWS ECS module can deploy both; Helm does not install them. |
-| Slack assistant | Agent replies in Slack threads | Needs the headless runner and a configured Slack integration. The AWS ECS module has a separate opt-in; Helm does not include the runner. |
+| Workbot | Browser chat with an agent | Needs Workbot and the headless runner. The AWS ECS module can deploy both. The Helm chart installs each as an opt-in (`headlessRunner.enabled`, `workbot.enabled`), off by default. |
+| Slack assistant | Agent replies in Slack threads | Needs the headless runner and a configured Slack integration. The AWS ECS module has a separate opt-in; on Helm it is on once a runner is installed. |
 | Automations | Scheduled work on desktops or, with a runner, in the cloud | Enabled by default on Helm and AWS ECS. The direct Cloud Run module does not support the runtime even if you set its Automations input. |
-| Cloud computers | Agent access to a cloud browser and desktop | Needs the headless runner, a Daytona or Freestyle provider, and the separate computer rollout on the installed deployment. Provider setup alone does not expose computers. |
+| Cloud computers | Agent access to a cloud browser and desktop | Needs the headless runner and a Daytona or Freestyle provider set on it. The runner the Helm chart installs has no computer provider. |
 
 The Azure Container Apps and Google Cloud Run modules do not deploy Workbot or the headless runner. Managed installers have their own limits: the managed Google Cloud installer does not offer these capabilities; managed AWS optional services depend on the selected runtime profile and installer availability.
 

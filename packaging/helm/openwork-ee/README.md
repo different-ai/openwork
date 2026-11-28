@@ -437,8 +437,8 @@ you can also lock a feature for the whole install under `config.features`:
 ```yaml
 config:
   features:
-    remoteComputers: "true"   # on for everyone on this install
-    sessionTree: "false"      # off for everyone on this install
+    automationSharing: "true"   # on for everyone on this install
+    sessionTree: "false"        # off for everyone on this install
 ```
 
 - `""` (the default) follows `/admin`, which starts from the default listed
@@ -463,8 +463,7 @@ this install can do: Workbot, the Slack assistant, Automations, the AI Gateway
 and cloud computers are capabilities, set with the values and environment
 variables listed in
 [Deployment settings and capabilities](../../../docs/managed-deployments/settings-and-capabilities.md).
-Cloud computers are the one capability that still needs a feature
-(`remoteComputers`) turned on; that page records it as a known gap.
+No capability needs a feature turned on.
 
 For supported keys, defaults and descriptions, run
 `helm show values oci://ghcr.io/different-ai/charts/openwork-ee` and read

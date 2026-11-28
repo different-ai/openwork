@@ -28,8 +28,8 @@ test("a managed AWS deployment on the gateway runtime has everything but compute
     workbot: "on:configured", slackAssistant: "on:configured", automations: "on:configured", aiGateway: "on:configured",
     cloudComputers: "needs_infrastructure:service_not_installed",
   })
-  assert.equal(aws({ runtimeProfile: "gateway", assistants: { computerProvider: "daytona", computerSecretArn, computerSnapshot: "snapshot" } }).cloudComputers, "on:needs_rollout_flag")
-  assert.equal(aws({ runtimeProfile: "gateway", assistants: { computerProvider: "freestyle", computerSecretArn } }).cloudComputers, "on:needs_rollout_flag")
+  assert.equal(aws({ runtimeProfile: "gateway", assistants: { computerProvider: "daytona", computerSecretArn, computerSnapshot: "snapshot" } }).cloudComputers, "on:configured")
+  assert.equal(aws({ runtimeProfile: "gateway", assistants: { computerProvider: "freestyle", computerSecretArn } }).cloudComputers, "on:configured")
 })
 
 test("a legacy managed AWS deployment reports each assistant from its own settings", () => {
@@ -45,7 +45,7 @@ test("a legacy managed AWS deployment reports each assistant from its own settin
   })
   assert.deepEqual(aws({ assistants: { ...ownRunner, workbotEnabled: true, slackAssistantEnabled: true, computerProvider: "freestyle", computerSecretArn } }), {
     workbot: "on:configured", slackAssistant: "on:configured", automations: "on:configured",
-    aiGateway: "needs_infrastructure:service_not_installed", cloudComputers: "on:needs_rollout_flag",
+    aiGateway: "needs_infrastructure:service_not_installed", cloudComputers: "on:configured",
   })
 })
 
@@ -57,7 +57,7 @@ test("a managed Google Cloud deployment offers none of the capabilities yet", ()
 
 const bare: InstalledDeploymentSignals = {
   headlessRunnerConfigured: false, workbotConfigured: false, gatewayEnabled: false, gatewayAddressConfigured: false,
-  automationsEnabled: true, slackAssistantWorkerEnabled: true, requiredComputerFlagsOn: false,
+  automationsEnabled: true, slackAssistantWorkerEnabled: true,
 }
 const installed = (signals: Partial<InstalledDeploymentSignals>) => summary(installedDeploymentCapabilityStates({ ...bare, ...signals }))
 
@@ -67,13 +67,13 @@ test("a running Den derives each state from its own settings and never says unsu
     automations: "on:configured", aiGateway: "needs_infrastructure:service_not_installed",
     cloudComputers: "needs_infrastructure:dependency_not_installed",
   })
-  assert.deepEqual(installed({ headlessRunnerConfigured: true, workbotConfigured: true, gatewayEnabled: true, gatewayAddressConfigured: true, requiredComputerFlagsOn: true }), {
+  assert.deepEqual(installed({ headlessRunnerConfigured: true, workbotConfigured: true, gatewayEnabled: true, gatewayAddressConfigured: true }), {
     workbot: "on:configured", slackAssistant: "on:configured", automations: "on:configured", aiGateway: "on:configured",
     cloudComputers: "on:configured_on_runner",
   })
   assert.deepEqual(installed({ headlessRunnerConfigured: true, gatewayAddressConfigured: true, automationsEnabled: false, slackAssistantWorkerEnabled: false }), {
     workbot: "needs_infrastructure:service_not_installed", slackAssistant: "off:switched_off", automations: "off:switched_off",
-    aiGateway: "off:switched_off", cloudComputers: "off:rollout_flag_off",
+    aiGateway: "off:switched_off", cloudComputers: "on:configured_on_runner",
   })
   assert.equal(installed({ workbotConfigured: true }).workbot, "needs_infrastructure:dependency_not_installed", "Workbot without a runner cannot answer")
 })

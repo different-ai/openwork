@@ -7,7 +7,7 @@ The recommended Azure path is Helm on Azure Kubernetes Service with Azure Databa
 
 ## Choose capabilities, then import Org Config
 
-Before deploying, review the [five installation capabilities](/self-host/deploy-to-your-cloud/overview#choose-your-installation-capabilities). AKS uses the Helm chart's AI Gateway and Automations settings. Azure Container Apps has an optional AI Gateway and an `automations_enabled` input (off by default), but does not deploy Workbot or the headless runner for Workbot, the Slack assistant, cloud Automations or Cloud computers. Helm also does not install Workbot or the runner.
+Before deploying, review the [five installation capabilities](/self-host/deploy-to-your-cloud/overview#choose-your-installation-capabilities). AKS uses the Helm chart's AI Gateway and Automations settings. Azure Container Apps has an optional AI Gateway and an `automations_enabled` input (off by default), but does not deploy Workbot or the headless runner for Workbot, the Slack assistant, cloud Automations or Cloud computers. On AKS the Helm chart installs Workbot and the runner only when you opt in with `workbot.enabled` and `headlessRunner.enabled`.
 
 After verifying migrations and HTTPS, complete [`/setup`](/self-host/deploy-to-your-cloud/first-administrator). Sign in to the organization and [import `<org>.config.json`](/self-host/export-import-configuration) in **Settings › Config › Import**, or configure settings in the dashboard.
 

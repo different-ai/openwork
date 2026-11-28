@@ -7,7 +7,7 @@ The recommended AWS path is Helm on Amazon EKS with Amazon RDS for MySQL. For th
 
 ## Choose capabilities, then import Org Config
 
-Before deploying, review the [five installation capabilities](/self-host/deploy-to-your-cloud/overview#choose-your-installation-capabilities). EKS uses the Helm chart's AI Gateway and Automations settings; the chart does not install Workbot or the headless runner used by Workbot, the Slack assistant, cloud Automations and Cloud computers. For ECS, the direct module has separate inputs for those services and the computer provider, as described below.
+Before deploying, review the [five installation capabilities](/self-host/deploy-to-your-cloud/overview#choose-your-installation-capabilities). EKS uses the Helm chart's AI Gateway and Automations settings; the chart installs Workbot and the headless runner used by Workbot, the Slack assistant and cloud Automations only when you opt in with `workbot.enabled` and `headlessRunner.enabled`, and its runner has no computer provider. For ECS, the direct module has separate inputs for those services and the computer provider, as described below.
 
 After verifying migrations and HTTPS, complete [`/setup`](/self-host/deploy-to-your-cloud/first-administrator). Sign in to the organization and [import `<org>.config.json`](/self-host/export-import-configuration) in **Settings › Config › Import**, or configure settings in the dashboard.
 

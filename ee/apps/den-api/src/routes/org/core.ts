@@ -778,7 +778,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         deploymentCapabilities: {
           ...deploymentCapabilities(),
           ...(serviceReadiness ? { serviceReadiness } : {}),
-          capabilities: deploymentCapabilityStates(features),
+          capabilities: deploymentCapabilityStates(),
         },
         plan: parseOrganizationPlan(currentOrganization.metadata),
         entitlements: getOrganizationEntitlements(currentOrganization.metadata),

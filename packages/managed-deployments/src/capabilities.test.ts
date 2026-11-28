@@ -66,8 +66,11 @@ function yamlValue(text: string, wanted: string): string | undefined {
   return undefined
 }
 
-function kebab(key: string) {
-  return key.replace(/[A-Z0-9]+/g, (part) => `-${part.toLowerCase()}`)
+const PREVIEWS = "packages/features/src/previews.ts"
+
+/** One preview's declaration in the registry, or null when the key is not a preview. */
+function previewDeclaration(text: string, key: string): string | null {
+  return new RegExp(`^export const ${escape(key)} = definePreview\\(\\{\\n[\\s\\S]*?\\n\\}\\)$`, "m").exec(text)?.[0] ?? null
 }
 
 function isOn(value: ControlValue, on: ControlOn) {
@@ -125,8 +128,9 @@ function controlProblems(control: CapabilityControl, read: Read): string[] {
       return line.includes(`.default(${JSON.stringify(control.default)})`) ? [] : [`${where}: the runner's default is no longer ${JSON.stringify(control.default)}`]
     }
     case "rollout-flag": {
-      if (path.basename(control.file) !== `${kebab(control.name)}.ts`) return [`${where}: the file does not declare ${control.name}`]
-      return /^\s*default:\s*false,?$/m.test(text) === (control.default === false) ? [] : [`${where}: the registry default changed`]
+      const declared = previewDeclaration(text, control.name)
+      if (declared === null) return [`${where}: the registry does not declare ${control.name}`]
+      return /^\s*default:\s*false,?$/m.test(declared) === (control.default === false) ? [] : [`${where}: the registry default changed`]
     }
   }
 }
@@ -195,9 +199,17 @@ test("the drift check reports a changed default, a removed control and a target 
   const worker = "ee/apps/den-api/src/slack-assistant/worker.ts"
   assert.match(catalogProblems(edited(worker, (text) => text.replace('WORKER_ENABLED === "false"', 'WORKER_ENABLED !== "true"'))).join("\n"), /slackAssistant: .* no longer decides DEN_SLACK_ASSISTANT_WORKER_ENABLED/)
 
-  const flagFile = "packages/features/src/flags/remote-computers.ts"
-  assert.equal(catalogProblems(edited(flagFile, (text) => text.replace("default: false", "default: true"))).filter((problem) => problem.includes("the registry default changed")).length, 3)
-  assert.equal(catalogProblems((name) => name === flagFile ? null : fromDisk(name)).filter((problem) => problem.includes("the file does not exist")).length, 3)
+  assert.match(catalogProblems(edited(values, (text) => text.replace("headlessRunner: {}", "headlessRunner:\n  enabled: true"))).join("\n"), /headlessRunner on helm: helm-value headlessRunner\.enabled .* records default null, the file says true/)
+  assert.match(catalogProblems(edited(values, (text) => text.replace("workbot: {}\n", ""))).join("\n"), /workbot on helm: helm-value workbot\.enabled .* workbot does not exist/)
+})
+
+test("a rollout flag the catalog names is checked against the preview registry", () => {
+  const preview: CapabilityControl = { kind: "rollout-flag", file: PREVIEWS, name: "managedDeploymentAssistants", default: false, on: { is: true }, effect: "required", summary: "A preview." }
+  assert.deepEqual(controlProblems(preview, fromDisk), [])
+  const turnedOn: Read = (file) => fromDisk(file)?.replace(/(export const managedDeploymentAssistants = definePreview\(\{[\s\S]*?default: )false/, "$1true") ?? null
+  assert.deepEqual(controlProblems(preview, turnedOn), [`rollout-flag managedDeploymentAssistants (${PREVIEWS}): the registry default changed`])
+  assert.deepEqual(controlProblems({ ...preview, name: "remoteComputers" }, fromDisk), [`rollout-flag remoteComputers (${PREVIEWS}): the registry does not declare remoteComputers`])
+  assert.deepEqual(controlProblems(preview, () => null), [`rollout-flag managedDeploymentAssistants (${PREVIEWS}): the file does not exist`])
 })
 
 test("each target's recorded default is what its switches give", () => {
@@ -241,8 +253,8 @@ test("no capability needs a rollout flag in the customer's deployment, except th
         assert.ok(gap, `${entry.id} on ${target} depends on rollout flag ${control.name}. A released installer must work with defaults: remove the dependency, or record it under gaps.`)
       }
       for (const key of recorded.hostedRollout ?? []) {
-        const declared = fromDisk(`packages/features/src/flags/${kebab(key)}.ts`)
-        assert.ok(declared, `${key} is not in the feature registry`)
+        const declared = previewDeclaration(fromDisk(PREVIEWS) ?? "", key)
+        assert.ok(declared, `${key} is not in the preview registry`)
         assert.match(declared, /deployments:\s*\["cloud"\]/, `${key} can exist in a customer's deployment, so it is a customer step: record it as a rollout-flag control and a gap`)
       }
     }
@@ -253,10 +265,8 @@ test("no capability needs a rollout flag in the customer's deployment, except th
       }
     }
   }
-  const computerFlags = ["remoteComputers", "sandboxGateway", "workbotProfileComputers"]
-  assert.deepEqual(flagged.sort(), ["aws-ecs-module", "helm", "managed-aws"].flatMap((target) => computerFlags.map((name) => `cloudComputers:${target}:${name}`)).sort())
-  assert.deepEqual(requiredRolloutFlags("cloudComputers"), ["remoteComputers"])
-  for (const id of CAPABILITY_IDS.filter((entry) => entry !== "cloudComputers")) assert.deepEqual(requiredRolloutFlags(id), [])
+  assert.deepEqual(flagged, [])
+  for (const id of CAPABILITY_IDS) assert.deepEqual(requiredRolloutFlags(id), [])
 })
 
 test("the Helm README's feature example uses keys the registry still has", () => {
@@ -264,7 +274,7 @@ test("the Helm README's feature example uses keys the registry still has", () =>
   const example = /under `config\.features`:\n\n```yaml\nconfig:\n {2}features:\n((?: {4}.+\n)+)```/.exec(readme)?.[1] ?? ""
   const keys = [...example.matchAll(/^ {4}([A-Za-z0-9]+):/gm)].flatMap((match) => match[1] === undefined ? [] : [match[1]])
   assert.ok(keys.length >= 2, "the README shows a config.features example")
-  for (const key of keys) assert.ok(fromDisk(`packages/features/src/flags/${kebab(key)}.ts`), `${key} is not a feature any more: replace it in the Helm README example`)
+  for (const key of keys) assert.ok(previewDeclaration(fromDisk(PREVIEWS) ?? "", key), `${key} is not a preview any more: replace it in the Helm README example`)
 })
 
 test("today's known gaps are pinned, each with a sentence", () => {
@@ -278,11 +288,7 @@ test("today's known gaps are pinned, each with a sentence", () => {
     "automations default_mismatch gcp-cloud-run-module",
     "automations not_offered managed-gcp",
     "cloudComputers not_installed helm",
-    "cloudComputers rollout_flag aws-ecs-module,helm,managed-aws",
-    "headlessRunner not_installed helm",
     "slackAssistant default_mismatch aws-ecs-module,managed-aws",
-    "slackAssistant not_installed helm",
-    "workbot not_installed helm",
   ])
   const support = (target: DeploymentTarget) => CUSTOMER_CAPABILITY_IDS.filter((id) => capability(id).targets[target].support === "supported")
   assert.deepEqual(support("managed-gcp"), [])

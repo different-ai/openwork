@@ -1,4 +1,3 @@
-import type { FeatureMap } from "@openwork/features"
 import {
   DIAGNOSTICS_SECTION_PERMISSIONS,
   type InstallationConfig,
@@ -28,7 +27,6 @@ export type DiagnosticsCaller = {
   orgMembershipId: DenTypeId<"member">
   has: (key: PermissionKey) => boolean
   isInstallationOperator: () => Promise<boolean>
-  features: FeatureMap
 }
 
 export type DiagnosticsReadOptions = { refresh: boolean; includeConfig: boolean }
@@ -65,13 +63,13 @@ function providerAccess(caller: DiagnosticsCaller): ProviderAccess {
   return { granted: true, include: (check) => check.source === "gateway" ? gateway : check.source === "legacy" ? legacy : true }
 }
 
-function operatorInstallationConfig(features: FeatureMap): InstallationConfig | undefined {
+function operatorInstallationConfig(): InstallationConfig | undefined {
   try {
     return installationConfig({
       serviceVersion: env.serviceVersion,
       helmChartVersion: env.helm.chartVersion,
       helmAppVersion: env.helm.appVersion,
-      capabilities: deploymentCapabilityStates(features),
+      capabilities: deploymentCapabilityStates(),
       locks: env.features.locks,
     })
   } catch (error) {
@@ -84,7 +82,7 @@ async function installationSection(caller: DiagnosticsCaller, options: Diagnosti
   if (env.features.deployment === "cloud") return { access: "managed" }
   const operator = await caller.isInstallationOperator().catch(() => false)
   if (!operator) return { access: "locked", reason: "installation_admin_required" }
-  const config = options.includeConfig ? operatorInstallationConfig(caller.features) : undefined
+  const config = options.includeConfig ? operatorInstallationConfig() : undefined
   return {
     access: "operator",
     server: denServerFacts(),

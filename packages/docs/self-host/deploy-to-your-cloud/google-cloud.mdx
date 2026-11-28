@@ -16,7 +16,7 @@ OpenWork supports two Google Cloud deployment shapes. Use GKE Autopilot and Helm
 
 ## Choose capabilities, then import Org Config
 
-Before deploying, review the [five installation capabilities](/self-host/deploy-to-your-cloud/overview#choose-your-installation-capabilities). GKE uses the Helm chart's AI Gateway and Automations settings. The direct Cloud Run Terraform module supports optional AI Gateway, but not Automations: the module keeps the runtime off even if its Automations input is on. Cloud Run does not install Workbot or the headless runner for Workbot, the Slack assistant, cloud Automations or Cloud computers. Helm also does not install Workbot or the runner. The managed Google Cloud installer does not offer the optional AI Gateway.
+Before deploying, review the [five installation capabilities](/self-host/deploy-to-your-cloud/overview#choose-your-installation-capabilities). GKE uses the Helm chart's AI Gateway and Automations settings. The direct Cloud Run Terraform module supports optional AI Gateway, but not Automations: the module keeps the runtime off even if its Automations input is on. Cloud Run does not install Workbot or the headless runner for Workbot, the Slack assistant, cloud Automations or Cloud computers. On GKE the Helm chart installs Workbot and the runner only when you opt in with `workbot.enabled` and `headlessRunner.enabled`. The managed Google Cloud installer does not offer the optional AI Gateway.
 
 After verifying migrations and HTTPS, complete [`/setup`](/self-host/deploy-to-your-cloud/first-administrator). Sign in to the organization and [import `<org>.config.json`](/self-host/export-import-configuration) in **Settings › Config › Import**, or configure settings in the dashboard.
 
