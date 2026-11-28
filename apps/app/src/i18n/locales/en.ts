@@ -2776,6 +2776,7 @@ export default {
   "agents.section": "Agents",
   "agents.new": "New agent",
   "agents.new_label": "Start a new agent",
+  "agents.new_brief": "This agent has no job yet. The person will say what they want in the chat.",
   "agents.greeting": "Hi. What should I do for you? Tell me the way you would tell a new teammate.",
   "agents.starter_watch": "Watch a Slack channel and file what's missing",
   "agents.starter_watch_prompt": "Watch #bugs in Slack. For each new bug, check Linear and file it if it's missing.",

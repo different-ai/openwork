@@ -77,6 +77,11 @@ export type WorkbotWorldOptions = {
    * so Workbot has exactly one inbox and one calendar per person. Local only.
    */
   openWorkplace?: boolean;
+  /**
+   * What agent chats run on: the organization's AI Gateway in front of the model, and the runner reaching Den's MCP
+   * directly (agent chats use Den's own /mcp/agent-chat, which the demo read bridge does not serve).
+   */
+  agentChat?: boolean;
 };
 
 /** The people in `--open-workplace`: the seeded owner and one teammate, each with their own workplace. */
@@ -262,7 +267,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   // really call Den's Microsoft 365 tools; with --live it is the real model.
   const agent = signIn && !options.live && !options.upstream ? await startWorkplaceAgent(stack) : null;
   const runner = await runnerModel(stack, options.live, options.upstream ?? agent ?? undefined);
-  const upstream = signIn ? runner.upstream : null;
+  const upstream = signIn || options.agentChat ? runner.upstream : null;
   const gateway = upstream ? await gatewayEnvironment(new URL(upstream.baseUrl).origin) : null;
   const [runnerPort, workbotPort] = await allocateFreePorts(2);
   const runnerUrl = `http://127.0.0.1:${runnerPort}`;
@@ -297,7 +302,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   // Keep the greeting read-only and expose only this world's allowlisted fixture reads alongside Den's tools.
   const demo = await bootDemoWorkspace(stack, den);
   // --open-workplace: the runner reaches Den's MCP directly; its mail and calendar are the person's Microsoft 365.
-  const runnerMcp = signIn ? `${den.ref.apiUrl}/mcp/agent` : await startWorkbotDemoReads(stack, { denUrl: `${den.ref.apiUrl}/mcp/agent`, demoUrl: demo.baseUrl });
+  const runnerMcp = signIn || options.agentChat ? `${den.ref.apiUrl}/mcp/agent` : await startWorkbotDemoReads(stack, { denUrl: `${den.ref.apiUrl}/mcp/agent`, demoUrl: demo.baseUrl });
   await startService(stack, {
     label: "workbot-runner", match: "src/server.ts",
     cwd: join(REPO_ROOT, "ee/apps/headless-runner"),
@@ -354,7 +359,7 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   const app = options.live ? await seedOrderCalculator(stack, den) : null;
   return {
     den, orgId, workbotUrl, workbotInternal, denWebPublic: preview?.den ?? den.ref.webUrl, runnerUrl, secrets,
-    live: options.live, model: runner.model, computer: runner.computer, demo, app, ...(signIn ? {} : { demoReadsUrl: runnerMcp }),
+    live: options.live, model: runner.model, computer: runner.computer, demo, app, ...(signIn || options.agentChat ? {} : { demoReadsUrl: runnerMcp }),
     ...(workplace ? { workplace } : {}), ...(teammate ? { teammate } : {}),
   };
 }
