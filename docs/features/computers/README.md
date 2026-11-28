@@ -2,11 +2,11 @@
 
 `computers` is off by default on cloud and self-hosted deployments. Owner: `benjaminshafii`.
 
-A computer runs work: a personal machine, registered VM, or Workbot cloud computer. Registered VMs require the owner to allow access to the entire virtual computer. Personal machine access still uses sandbox grants.
+Den lists personal computers, registered cloud computers, and Workbot computers. A desktop chat can use its file and shell tools on the owner's own registered cloud computer after the owner allows access to the entire computer. Personal computers can't take work from another computer yet.
 
 ## Two doors, one core
 
-Both use `packages/computers`. Native: name a computer in a desktop prompt. The agent calls `runs_on` to send that chat's normal file and shell tools there. MCP: `computers:list` and `computers:shell`.
+Both use `packages/computers`. In a desktop prompt, name your registered cloud computer. The agent calls `runs_on` to send that chat's file and shell tools there. In Workbot, `computers:list` shows computers and whether they can take work from the chat. `computers:shell` can check a queued command's result, but no shipping desktop can pick up commands, and Workbot can't send commands to a registered cloud computer.
 
 ## Three checks
 
@@ -14,9 +14,13 @@ The narrowest permission wins:
 
 1. **Organization:** The existing "tasks from other devices" setting must allow it.
 2. **Computer:** The owner opts in. For a registered VM, use its edit dialog under **Settings > Devices**.
-3. **Source:** For a registered VM, only the owner's signed-in OpenWork apps can use the whole-computer grant. It has one working folder, which is a starting point, not an access limit. Old folder grants never count as whole-computer consent. Personal sandbox grants still restrict explicit paths to shared folders.
+3. **Source:** For a registered VM, only the owner's signed-in OpenWork apps can use the whole-computer grant. It has one working folder, which is a starting point, not an access limit. Old folder grants never count as whole-computer consent.
 
-A permission refusal says which check stopped it and who can change it.
+A refusal says which check stopped it and who can change it, if anyone.
+
+## Shared folders on personal computers
+
+A runner advertising `computer_shell_v1` must run each assignment inside its sandbox and mount only the host folders in the assignment's `scope.folders`. Den checks an explicit working directory or file path to refuse requests early. It can't tell which files a command will use, so this check isn't a security boundary. No shipping desktop reports these access choices or runs these assignments yet.
 
 ## Native routing today
 
@@ -26,14 +30,17 @@ OpenCode 2.2.6 has a per-session file and process seam only in its embedded host
 
 Cloud computers show **Ready**, **Starts when needed**, or **Has a problem**, never **Offline**. Personal machines keep **Online** and **Offline**. Names are unique per person; rename reports taken names. If two computers match, the agent asks which one.
 
+## Command retention in Den
+
+For queued commands, Den keeps the command text, assignment details and status, and the result, including up to 32,000 bytes of output. The result is available for 15 minutes after completion, or the command can be followed for 15 minutes after its deadline if it hasn't completed. Every 15 minutes, Den deletes up to 100 rows past that window across all organizations. A new command also triggers cleanup for its organization, a runner listing its queue triggers cleanup for that computer, and a caller checking a command triggers cleanup for their own commands in that organization. Each request deletes up to 100 eligible rows. A runner that picked up a command can report a late result while its row still exists. Commands sent directly to a registered cloud computer by a desktop chat don't use this queue.
+
 ## What is not built yet
 
 - A composer picker. Name the computer instead.
-- Providers other than Daytona.
-- An on-computer runner. Den verifies the member, not the calling desktop.
-- Workbot or other computers reaching a personal desktop's sandbox. The queue has no desktop executor.
-- MCP read, write, or search.
-- List cleanup: one row per physical machine, older entries behind "Show older", and one Workbot computer per person.
+- Running desktop chat tools on cloud computers from providers other than Daytona.
+- A desktop runner that reports folder access and picks up work from another computer. Den tests the queue with a simulated runner.
+- MCP read, write, or search on another computer.
+- Combining sign-ins across reinstalls into one row per physical machine, or combining Workbot conversations into one row per person.
 - Remote background commands.
 
 ## Try it

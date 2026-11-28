@@ -1,8 +1,8 @@
-import { and, asc, eq, gt, inArray, isNull, lt, or } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, gt, isNull, lte, or, type SQL } from "@openwork-ee/den-db/drizzle"
 import { AutomationRunnerTable, ComputerAccessTable, ComputerCommandTable, ComputerGrantTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { decide, projectComputer } from "@openwork/computers"
-import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, type ComputerAccessSetting, type ComputerAccessReport, type ComputerAction, type ComputerCommandAssignment, type ComputerCommandCompleteRequest, type ComputerGrantScope } from "@openwork/types/den/computers"
+import { COMPUTER_COMMAND_RETENTION_MS, COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, type ComputerAccessSetting, type ComputerAccessReport, type ComputerAction, type ComputerCommandAssignment, type ComputerCommandCompleteRequest, type ComputerGrantScope } from "@openwork/types/den/computers"
 import { remoteDeviceAvailability } from "@openwork/types/den/remote-devices"
 import { db } from "../db.js"
 import { syncDesktopsFromRunners, type RemoteDeviceActor } from "../remote-devices.js"
@@ -63,6 +63,14 @@ async function storeComputerAccess(device: DeviceRow, reportedByRunnerId: string
   })
 }
 
+export async function pruneComputerCommands(scope?: SQL, now = Date.now()) {
+  const cutoff = new Date(now - COMPUTER_COMMAND_RETENTION_MS)
+  await db.delete(ComputerCommandTable).where(and(scope, or(
+    lte(ComputerCommandTable.completedAt, cutoff),
+    and(isNull(ComputerCommandTable.completedAt), lte(ComputerCommandTable.expiresAt, cutoff)),
+  ))).limit(100)
+}
+
 export async function enqueueComputerCommand(input: {
   organizationId: DenTypeId<"organization">
   createdByUserId: DenTypeId<"user">
@@ -72,29 +80,35 @@ export async function enqueueComputerCommand(input: {
   scope: ComputerGrantScope
 }) {
   const now = Date.now()
-  const cutoff = new Date(now - 24 * 60 * 60_000)
   const timeoutMs = input.action.type === "shell" ? input.action.timeoutMs : undefined
   const command = { ...input, id: createDenTypeId("computerCommand"), expiresAt: new Date(now + 120_000 + (timeoutMs ?? 30_000)) }
-  await db.delete(ComputerCommandTable).where(and(
-    eq(ComputerCommandTable.organizationId, input.organizationId),
-    or(lt(ComputerCommandTable.completedAt, cutoff), and(
-      inArray(ComputerCommandTable.status, ["pending", "claimed", "expired"]), lt(ComputerCommandTable.expiresAt, cutoff),
-    )),
-  )).limit(100)
+  await pruneComputerCommands(eq(ComputerCommandTable.organizationId, input.organizationId), now)
   await db.insert(ComputerCommandTable).values(command)
   return command
 }
 
+function commandsForCaller(organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) {
+  return and(eq(ComputerCommandTable.organizationId, organizationId), eq(ComputerCommandTable.createdByUserId, userId))
+}
+
+export async function pruneCallerComputerCommands(organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) {
+  await pruneComputerCommands(commandsForCaller(organizationId, userId))
+}
+
 export async function readComputerCommand(organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">, id: DenTypeId<"computerCommand">) {
+  const cutoff = new Date(Date.now() - COMPUTER_COMMAND_RETENTION_MS)
   const [command] = await db.$primary.select().from(ComputerCommandTable).where(and(
-    eq(ComputerCommandTable.id, id), eq(ComputerCommandTable.organizationId, organizationId), eq(ComputerCommandTable.createdByUserId, userId),
+    eq(ComputerCommandTable.id, id), commandsForCaller(organizationId, userId),
+    or(gt(ComputerCommandTable.completedAt, cutoff), and(isNull(ComputerCommandTable.completedAt), gt(ComputerCommandTable.expiresAt, cutoff))),
   )).limit(1)
   return command ?? null
 }
 
 export async function pendingComputerCommands(organizationId: DenTypeId<"organization">, deviceId: DenTypeId<"remoteDevice">) {
+  const target = and(eq(ComputerCommandTable.organizationId, organizationId), eq(ComputerCommandTable.targetDeviceId, deviceId))
+  await pruneComputerCommands(target)
   const rows = await db.$primary.select({ id: ComputerCommandTable.id, expiresAt: ComputerCommandTable.expiresAt }).from(ComputerCommandTable).where(and(
-    eq(ComputerCommandTable.organizationId, organizationId), eq(ComputerCommandTable.targetDeviceId, deviceId),
+    target,
     eq(ComputerCommandTable.status, "pending"), gt(ComputerCommandTable.expiresAt, new Date()),
   )).orderBy(asc(ComputerCommandTable.createdAt), asc(ComputerCommandTable.id)).limit(20)
   return rows.map(({ id, expiresAt }) => ({ id, expiresAt: expiresAt.toISOString() }))
@@ -161,9 +175,7 @@ export async function completeComputerCommand(runner: ComputerRunner, device: De
     if (!command) return "command_not_found"
     if (command.claimedByRunnerId !== runner.runnerId) return "command_conflict"
     if (command.status !== "claimed") return sameCompletion(command, body) ? body.status : "command_conflict"
-    const now = new Date()
-    if (command.expiresAt <= now) return "command_conflict"
-    await tx.update(ComputerCommandTable).set({ ...completionFields(body), completedAt: now }).where(eq(ComputerCommandTable.id, id))
+    await tx.update(ComputerCommandTable).set({ ...completionFields(body), completedAt: new Date() }).where(eq(ComputerCommandTable.id, id))
     return body.status
   })
 }

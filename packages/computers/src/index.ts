@@ -77,7 +77,7 @@ function directDecision(): ComputerDecision {
   return { outcome: "allow", route: "direct", scope: null }
 }
 
-export function refusal(code: ComputerRefusalCode, target: Pick<Computer, "label"> & Partial<Pick<Computer, "kind">>, action: ComputerAction): ComputerRefusal {
+export function refusal(code: ComputerRefusalCode, target: Pick<Computer, "label"> & Partial<Pick<Computer, "kind">>): ComputerRefusal {
   switch (code) {
     case "organization_off": return {
       outcome: "refuse", layer: "organization", code, changeableBy: "organization_admin",
@@ -87,21 +87,23 @@ export function refusal(code: ComputerRefusalCode, target: Pick<Computer, "label
       outcome: "refuse", layer: "computer", code, changeableBy: "computer_owner",
       message: target.kind === "registered_vm"
         ? `I can't use ${target.label}. Its owner can allow access to the entire computer in Settings > Devices.`
-        : `I can't do that. ${target.label} doesn't take work from other computers. Its owner can allow it in Settings > Devices on that computer.`,
+        : `${target.label} isn't set to take work from other computers. Its owner decides whether to allow it.`,
+    }
+    case "not_available_yet": return {
+      outcome: "refuse", layer: "computer", code, changeableBy: "no_one",
+      message: `${target.label} can't take work from other computers yet.`,
+    }
+    case "owner_app_only": return {
+      outcome: "refuse", layer: "source", code, changeableBy: "no_one",
+      message: `${target.label} only takes work from its owner's own OpenWork apps.`,
     }
     case "nothing_shared": return {
       outcome: "refuse", layer: "source", code, changeableBy: "computer_owner",
-      message: `I can't use ${target.label}. Nothing on it is shared with me. Its owner can share its sandbox and folders in Settings > Devices on that computer.`,
+      message: `Nothing on ${target.label} is shared with me. Its owner decides what to share.`,
     }
-    case "folder_not_shared": {
-      const name = actionPath(action)?.split("/").at(-1) || "requested"
-      const isFileAction = action.type === "read" || action.type === "write"
-      const subject = isFileAction ? `the path ${name}` : `the ${name} folder`
-      const share = isFileAction ? "the folder you need" : "it"
-      return {
-        outcome: "refuse", layer: "source", code, changeableBy: "computer_owner",
-        message: `I can't see ${subject} on ${target.label}. It isn't shared with me. Its owner can share ${share} in Settings > Devices on that computer.`,
-      }
+    case "folder_not_shared": return {
+      outcome: "refuse", layer: "source", code, changeableBy: "computer_owner",
+      message: `The folder I need on ${target.label} isn't shared with me. Its owner decides which folders to share.`,
     }
   }
 }
@@ -117,13 +119,16 @@ export function ownerWholeVmScope(targetId: string, policy: ComputerPolicy): Com
 
 export function decide(source: Computer, target: Computer, action: ComputerAction, policy: ComputerPolicy): ComputerDecision {
   if (source.id === target.id) return directDecision()
-  if (!policy.organization.allowed) return refusal("organization_off", target, action)
-  if (policy.owner.choice !== "allow") return refusal("computer_not_allowed", target, action)
-
   const sameOwner = source.ownerMemberId !== null && source.ownerMemberId === target.ownerMemberId
+  if (target.kind === "registered_vm" && (!sameOwner || source.kind !== "member_machine")) {
+    return refusal("owner_app_only", target)
+  }
+  if (!policy.organization.allowed) return refusal("organization_off", target)
+  if (policy.owner.choice !== "allow") return refusal("computer_not_allowed", target)
+
   if (target.kind === "registered_vm") {
-    const scope = sameOwner && source.kind === "member_machine" ? ownerWholeVmScope(target.id, policy) : null
-    return scope ? { outcome: "allow", route: "checked", scope } : refusal("computer_not_allowed", target, action)
+    const scope = ownerWholeVmScope(target.id, policy)
+    return scope ? { outcome: "allow", route: "checked", scope } : refusal("computer_not_allowed", target)
   }
 
   const grants = policy.grants.filter((grant) => grant.scope.surface === "sandbox")
@@ -135,11 +140,11 @@ export function decide(source: Computer, target: Computer, action: ComputerActio
   ) ?? grants.find((entry) =>
     entry.targetId === target.id && entry.source.kind === "workbot" && sameOwner && source.provider === "workbot",
   )
-  if (!grant) return refusal("nothing_shared", target, action)
+  if (!grant) return refusal("nothing_shared", target)
 
   const path = actionPath(action)
   if (path !== undefined && !insideSharedFolder(path, grant.scope.folders)) {
-    return refusal("folder_not_shared", target, action)
+    return refusal("folder_not_shared", target)
   }
   return { outcome: "allow", route: "checked", scope: grant.scope }
 }
@@ -169,7 +174,7 @@ export function createComputers(input: {
         return { state: "refused", layer, code, message, changeableBy }
       }
       if (decision.route === "direct") {
-        return { state: "unsupported", message: "A computer runs work in its own sandbox directly, not through another computer." }
+        return { state: "unsupported", message: "Use this chat's own tools to work on this computer." }
       }
       if (target.kind === "member_machine" && target.availability !== "online") {
         return { state: "offline", message: `${target.label} is offline. Try again when it is back online.`, retryable: true }

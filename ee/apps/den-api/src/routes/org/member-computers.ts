@@ -15,8 +15,8 @@ const featureOffSchema = z.object({ error: z.literal("feature_disabled"), featur
 const organizationNotFoundSchema = z.object({ error: z.literal("organization_not_found") })
 const computerNotFoundSchema = z.object({ error: z.literal("computer_not_found") })
 const conflicts = {
-  choose_on_that_computer: "That computer's owner chooses this on the computer itself.",
-  not_configurable: "That computer's access can't be set here.",
+  choose_on_that_computer: "You can't change access to a personal computer here.",
+  not_configurable: "You can't change access to this computer here.",
 }
 const unauthorized = jsonResponse("Sign in required.", unauthorizedSchema)
 const notFound = jsonResponse("No such computer for this member or Computers is off.", z.union([computerNotFoundSchema, featureOffSchema, organizationNotFoundSchema]))
@@ -41,7 +41,7 @@ export function registerOrgMemberComputerRoutes<T extends { Variables: OrgRouteV
   app.put(`${base}/:computerId/access`, describeComputerRoute({
     tags: ["Devices"], operationId: "setMemberComputerAccess", "x-mcp": false,
     summary: "Choose whether my OpenWork apps can access my entire virtual computer",
-    description: "Only the owner can allow their OpenWork apps to access the entire registered virtual computer. Allow requires explicit whole_vm consent and one working folder, which is a starting point, not an access limit. Turning access off revokes the grant. The organization can still turn access off. Desktops choose on that computer, and Workbot computers cannot be configured here. Requires active organization membership and Computers.",
+    description: "Only the owner can allow their OpenWork apps to access the entire registered virtual computer. Allowing access requires agreeing to let those apps use the entire computer and choosing one working folder, which is a starting point, not an access limit. Turning access off revokes permission. The organization can still turn access off. This setting isn't available for personal or Workbot computers. Requires active organization membership and Computers.",
     responses: {
       200: jsonResponse("The computer with its saved access choice and working folder, if allowed.", z.object({ computer: listedComputerSchema })),
       400: invalid,
@@ -61,7 +61,7 @@ export function registerOrgMemberComputerRoutes<T extends { Variables: OrgRouteV
   app.post(`${base}/:computerId/authorize`, describeComputerRoute({
     tags: ["Devices"], operationId: "authorizeMemberComputer", "x-mcp": false,
     summary: "Check whether my OpenWork app can do work on a computer",
-    description: "Checks the requested action on one of the caller's computers or a computer shared with the organization. The organization limit and the owner's access choice apply. Registered virtual computers also require explicit whole-computer consent; personal sandbox grants retain their folder limits. Both allow and refuse are decisions returned with HTTP 200. Only an allowed action on a registered virtual computer includes its provider and provider id. Den never runs the action or supplies provider credentials. Requires active organization membership and Computers.",
+    description: "Checks the requested action on one of the caller's computers or a computer shared with the organization. Registered virtual computers require the owner's own OpenWork app and explicit permission to use the entire computer. The organization can turn access off. Personal computers don't take work yet. Both allowed and refused decisions return HTTP 200. Only an allowed action on a registered virtual computer includes its provider and provider id. Den never runs the action or supplies provider credentials. Requires active organization membership and Computers.",
     responses: {
       200: jsonResponse("The decision, computer and connection if available.", computerAuthorizeResponseSchema),
       400: invalid,

@@ -13,27 +13,26 @@ const target: Computer = {
 const action: ComputerAction = { type: "shell", command: "true" }
 
 test("stored refusal codes reproduce the layer, owner and exact sentence", () => {
-  assert.deepEqual(refusal("organization_off", target, action), {
+  assert.deepEqual(refusal("organization_off", target), {
     outcome: "refuse", layer: "organization", code: "organization_off", changeableBy: "organization_admin",
     message: "I can't do that. Your admin has turned this off for the organization.",
   })
-  assert.deepEqual(refusal("computer_not_allowed", target, action), {
+  assert.deepEqual(refusal("computer_not_allowed", target), {
     outcome: "refuse", layer: "computer", code: "computer_not_allowed", changeableBy: "computer_owner",
-    message: "I can't do that. Ada's MacBook doesn't take work from other computers. Its owner can allow it in Settings > Devices on that computer.",
+    message: "Ada's MacBook isn't set to take work from other computers. Its owner decides whether to allow it.",
   })
-  assert.deepEqual(refusal("nothing_shared", target, action), {
+  assert.deepEqual(refusal("nothing_shared", target), {
     outcome: "refuse", layer: "source", code: "nothing_shared", changeableBy: "computer_owner",
-    message: "I can't use Ada's MacBook. Nothing on it is shared with me. Its owner can share its sandbox and folders in Settings > Devices on that computer.",
+    message: "Nothing on Ada's MacBook is shared with me. Its owner decides what to share.",
   })
-  assert.deepEqual(refusal("folder_not_shared", target, { ...action, cwd: "/home/ada/logs" }), {
+  assert.deepEqual(refusal("folder_not_shared", target), {
     outcome: "refuse", layer: "source", code: "folder_not_shared", changeableBy: "computer_owner",
-    message: "I can't see the logs folder on Ada's MacBook. It isn't shared with me. Its owner can share it in Settings > Devices on that computer.",
+    message: "The folder I need on Ada's MacBook isn't shared with me. Its owner decides which folders to share.",
   })
-})
-
-test("a folder refusal without a stored working directory still describes the requested folder", () => {
-  assert.equal(refusal("folder_not_shared", target, action).message,
-    "I can't see the requested folder on Ada's MacBook. It isn't shared with me. Its owner can share it in Settings > Devices on that computer.")
+  assert.deepEqual(refusal("not_available_yet", target), {
+    outcome: "refuse", layer: "computer", code: "not_available_yet", changeableBy: "no_one",
+    message: "Ada's MacBook can't take work from other computers yet.",
+  })
 })
 const workbot: ComputerGrant = { source: { kind: "workbot" }, targetId: target.id, scope: { surface: "sandbox", folders: ["/a/logs"] } }
 const exact: ComputerGrant = { source: { kind: "computer", id: source.id }, targetId: target.id, scope: { surface: "sandbox", folders: ["/exact"] } }
@@ -52,11 +51,11 @@ const organizationRefusal = {
 }
 const computerRefusal = {
   outcome: "refuse", layer: "computer", code: "computer_not_allowed", changeableBy: "computer_owner",
-  message: "I can't do that. Ada's MacBook doesn't take work from other computers. Its owner can allow it in Settings > Devices on that computer.",
+  message: "Ada's MacBook isn't set to take work from other computers. Its owner decides whether to allow it.",
 }
 const sourceRefusal = {
   outcome: "refuse", layer: "source", code: "nothing_shared", changeableBy: "computer_owner",
-  message: "I can't use Ada's MacBook. Nothing on it is shared with me. Its owner can share its sandbox and folders in Settings > Devices on that computer.",
+  message: "Nothing on Ada's MacBook is shared with me. Its owner decides what to share.",
 }
 
 for (const allowed of [false, true]) {
@@ -86,7 +85,7 @@ test("exact source grants win regardless of order, without falling back for anot
     assert.deepEqual(decide(source, target, { ...action, cwd: "/exact" }, policy(grants)), checked(exact))
     assert.deepEqual(decide(source, target, { ...action, cwd: "/a/logs" }, policy(grants)), {
       outcome: "refuse", layer: "source", code: "folder_not_shared", changeableBy: "computer_owner",
-      message: "I can't see the logs folder on Ada's MacBook. It isn't shared with me. Its owner can share it in Settings > Devices on that computer.",
+      message: "The folder I need on Ada's MacBook isn't shared with me. Its owner decides which folders to share.",
     })
   }
 })
@@ -136,13 +135,21 @@ test("registered VMs require a whole-VM grant for the owning member's app", () =
   const inside = { type: "read", path: "/workspace/notes.txt" } satisfies ComputerAction
   const outside = { type: "read", path: "/project/notes.txt" } satisfies ComputerAction
   const app = signedInApp("ada")
-  const refused = refusal("computer_not_allowed", vm, inside)
+  const refused = {
+    outcome: "refuse", layer: "computer", code: "computer_not_allowed", changeableBy: "computer_owner",
+    message: "I can't use Ada's MacBook. Its owner can allow access to the entire computer in Settings > Devices.",
+  }
+  const ownerAppOnly = {
+    outcome: "refuse", layer: "source", code: "owner_app_only", changeableBy: "no_one",
+    message: "Ada's MacBook only takes work from its owner's own OpenWork apps.",
+  }
   assert.deepEqual(decide(app, vm, inside, policy([owner])), refused)
   assert.deepEqual(decide(app, vm, inside, policy([{ ...wholeVm, source: { kind: "computer", id: app.id } }])), refused)
   assert.deepEqual(decide(app, vm, inside, policy([wholeVm])), checked(wholeVm))
   assert.deepEqual(decide(app, vm, outside, policy([wholeVm])), checked(wholeVm))
-  assert.deepEqual(decide(signedInApp("sam"), vm, inside, policy([wholeVm])), refused)
-  assert.deepEqual(decide(source, vm, inside, policy([wholeVm])), refused)
+  assert.deepEqual(decide(signedInApp("sam"), vm, inside, policy([wholeVm])), ownerAppOnly)
+  assert.deepEqual(decide(source, vm, inside, policy([wholeVm])), ownerAppOnly)
+  assert.deepEqual(decide(source, vm, inside, { ...policy(), owner: { choice: "off" } }), ownerAppOnly)
   assert.deepEqual(decide(app, target, inside, policy([wholeVm])), sourceRefusal)
   assert.deepEqual(decide(app, target, inside, policy([wholeVm, owner])), checked(owner))
 })
@@ -155,22 +162,20 @@ test("when all grants match, exact wins over owner and owner wins over Workbot w
   for (const grants of [[owner, workbot], [workbot, owner]]) {
     assert.deepEqual(decide(desktop, target, action, policy(grants)), checked(owner))
     const read: ComputerAction = { type: "read", path: "/a/logs" }
-    assert.deepEqual(decide(desktop, target, read, policy(grants)), refusal("folder_not_shared", target, read))
+    assert.deepEqual(decide(desktop, target, read, policy(grants)), refusal("folder_not_shared", target))
   }
 })
 
-test("reads, writes, lists and searches enforce the same path check and name the refused path", () => {
+test("reads, writes, lists and searches use the same early path check without repeating a raw path in refusals", () => {
   const pathTypes: Exclude<ComputerAction["type"], "shell">[] = ["read", "write", "list", "search"]
   for (const type of pathTypes) {
     for (const path of ["/workspace", "/workspace/artifacts"]) {
       assert.deepEqual(decide(signedInApp("ada"), target, { type, path }, policy([owner])), checked(owner))
     }
-    const decision = decide(signedInApp("ada"), target, { type, path: "/workspace-other/artifacts" }, policy([owner]))
+    const decision = decide(signedInApp("ada"), target, { type, path: "/workspace-other/member-computer" }, policy([owner]))
     assert.deepEqual(decision, {
       outcome: "refuse", layer: "source", code: "folder_not_shared", changeableBy: "computer_owner",
-      message: type === "read" || type === "write"
-        ? "I can't see the path artifacts on Ada's MacBook. It isn't shared with me. Its owner can share the folder you need in Settings > Devices on that computer."
-        : "I can't see the artifacts folder on Ada's MacBook. It isn't shared with me. Its owner can share it in Settings > Devices on that computer.",
+      message: "The folder I need on Ada's MacBook isn't shared with me. Its owner decides which folders to share.",
     })
   }
   assert.deepEqual(decide(signedInApp("ada"), target, { type: "list" }, policy([owner])), checked(owner))
@@ -228,10 +233,10 @@ test("cwd matches equal folders or descendants, never parents, siblings or parti
   for (const cwd of ["/a/logs", "/a/logs/current", "/a/logs/runs/today", "/a/logs/.hidden", "/alt/run"]) {
     assert.deepEqual(decide(source, target, { ...action, cwd }, policy([secondFolder])), checked(secondFolder), cwd)
   }
-  for (const [cwd, folder] of [["/a", "a"], ["/a/logs2", "logs2"], ["/a/Logs", "Logs"], ["/other/reports", "reports"], ["/a/logs2/today", "today"]]) {
+  for (const cwd of ["/a", "/a/logs2", "/a/Logs", "/other/reports", "/a/logs2/today"]) {
     assert.deepEqual(decide(source, target, { ...action, cwd }, policy()), {
       outcome: "refuse", layer: "source", code: "folder_not_shared", changeableBy: "computer_owner",
-      message: `I can't see the ${folder} folder on Ada's MacBook. It isn't shared with me. Its owner can share it in Settings > Devices on that computer.`,
+      message: "The folder I need on Ada's MacBook isn't shared with me. Its owner decides which folders to share.",
     }, cwd)
   }
 })
@@ -311,7 +316,7 @@ test("execute reports same-computer execution unsupported without loading policy
   const policyFor = mock.fn(() => assert.fail("direct work needs no policy"))
   const computers = createComputers({ self: source, computers: [source], policyFor, run })
   assert.deepEqual(await computers.execute(source, action), {
-    state: "unsupported", message: "A computer runs work in its own sandbox directly, not through another computer.",
+    state: "unsupported", message: "Use this chat's own tools to work on this computer.",
   })
   assert.equal(run.mock.callCount(), 0)
   assert.equal(policyFor.mock.callCount(), 0)

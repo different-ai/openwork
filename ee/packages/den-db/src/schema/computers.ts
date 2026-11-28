@@ -48,8 +48,10 @@ export const ComputerGrantTable = mysqlTable(
 )
 
 /**
- * A queued command and its result for the caller. Holds command text and output
- * until the command is pruned, a day after it settled or expired.
+ * A queued command and its result for the caller, including command text and up
+ * to 32,000 bytes of output. The row is eligible for pruning 15 minutes after
+ * completion, or 15 minutes after its deadline if not completed. Den prunes
+ * eligible rows every 15 minutes and when queue requests arrive.
  */
 export const ComputerCommandTable = mysqlTable(
   "computer_command",

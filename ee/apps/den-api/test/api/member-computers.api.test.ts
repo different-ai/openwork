@@ -77,6 +77,10 @@ const computerRefusal = {
   layer: "computer", code: "computer_not_allowed", changeableBy: "computer_owner",
   message: "I can't use Build box. Its owner can allow access to the entire computer in Settings > Devices.",
 } satisfies Omit<ComputerRefusal, "outcome">
+const unavailableDesktop = {
+  layer: "computer", code: "not_available_yet", changeableBy: "no_one",
+  message: "Ada's desktop can't take work from other computers yet.",
+} satisfies Omit<ComputerRefusal, "outcome">
 
 async function reportDesktop() {
   const call = await asAda("PUT", "/v1/remote-devices/this-computer", {
@@ -122,6 +126,7 @@ test("A VM that has never reported starts when needed and the desktop is online"
   const desktop = computers.find((computer) => computer.id === desktopId)
   assert.ok(desktop?.lastSeenAt)
   assert.deepEqual([desktop.kind, desktop.state, desktop.access], ["member_machine", "online", null])
+  assert.deepEqual(desktop.reach, { outcome: "refuse", ...unavailableDesktop })
   assert.doesNotMatch(call.text, /"externalId"/)
 })
 
@@ -220,14 +225,27 @@ test("A shared VM is visible but has no member access settings or owner grant", 
     assert.ok(shared)
     assert.deepEqual([shared.ownerMemberId, shared.access], [null, null])
     assertError(await request("PUT", accessPath(id), wholeVmAccess), 404, notFound)
-    await assertRefusal(id, computerRefusal, shell, request)
+    const ownerAppOnly = {
+      layer: "source", code: "owner_app_only", changeableBy: "no_one",
+      message: "Build box only takes work from its owner's own OpenWork apps.",
+    } satisfies Omit<ComputerRefusal, "outcome">
+    assert.deepEqual(shared.reach, { outcome: "refuse", ...ownerAppOnly })
+    await assertRefusal(id, ownerAppOnly, shell, request)
   }
 })
 
-test("A desktop owner has to choose access on the desktop itself", async () => {
+test("A personal computer without a shell runner can't take work even with a stored grant", async () => {
   const id = await reportDesktop()
+  const organizationId = normalizeDenTypeId("organization", orgId)
+  const deviceId = normalizeDenTypeId("remoteDevice", id)
+  await db.insert(ComputerAccessTable).values({ id: createDenTypeId("computerAccess"), organizationId, deviceId, ownerChoice: "allow", reportedByRunnerId: ada.memberId })
+  await db.insert(ComputerGrantTable).values({ id: createDenTypeId("computerGrant"), organizationId, targetDeviceId: deviceId, sourceKey: "owner", folders: ["/workspace"] })
+  const expected = { outcome: "refuse", ...unavailableDesktop }
+  assert.deepEqual((await listed()).find((computer) => computer.id === id)?.reach, expected)
+  const { decision, computer, connection } = await authorize(id)
+  assert.deepEqual({ decision, reach: computer.reach, connection }, { decision: expected, reach: expected, connection: null })
   assertError(await asAda("PUT", accessPath(id), wholeVmAccess), 409, {
-    error: "choose_on_that_computer", message: "That computer's owner chooses this on the computer itself.",
+    error: "choose_on_that_computer", message: "You can't change access to a personal computer here.",
   })
 })
 
@@ -240,7 +258,7 @@ test("Workbot computer access cannot be configured here", async () => {
   assert.ok(workbot)
   assert.equal(workbot.access, null)
   assertError(await asAda("PUT", accessPath(workbot.id), wholeVmAccess), 409, {
-    error: "not_configurable", message: "That computer's access can't be set here.",
+    error: "not_configurable", message: "You can't change access to this computer here.",
   })
 })
 
@@ -258,6 +276,10 @@ test("An allowed desktop action does not return connection information", async (
   assert.equal(access.status, 200, summary(access))
   const reserved = await den.request(token, "PUT", "/v1/computer-runners/access", { body: { choice: "allow", grants: [{ source: { kind: "computer", id: "owner_whole_vm" }, folders: ["/workspace"] }] } })
   assert.equal(reserved.status, 400, summary(reserved))
+  const conflicting = await den.request(token, "PUT", "/v1/computer-runners/access", { body: { choice: "allow", grants: [
+    { source: { kind: "owner" }, folders: ["/workspace"] }, { source: { kind: "workbot" }, folders: ["/workspace"] },
+  ] } })
+  assertError(conflicting, 400, { error: "invalid_request", message: "Choose different computers. You can also choose the owner's apps or Workbot once, but not both." })
   const computer = (await listed()).find((item) => item.label === label)
   assert.ok(computer)
   const result = await authorize(computer.id)

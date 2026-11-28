@@ -1,10 +1,17 @@
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { ComputerAccessTable, ComputerGrantTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, computerWholeVmScopeSchema, type ComputerGrant, type ComputerPolicy } from "@openwork/types/den/computers"
+import { refusal } from "@openwork/computers"
+import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, computerWholeVmScopeSchema, type Computer, type ComputerGrant, type ComputerPolicy } from "@openwork/types/den/computers"
 import { readOrganizationRemoteSessionSettings } from "@openwork/types/den/remote-sessions"
 import { db } from "../db.js"
 import { readOrganizationMetadataColumn } from "../organization-metadata.js"
+
+export function incomingComputerWorkRefusal(target: Computer, capabilities: readonly string[] | null | undefined) {
+  if (target.kind === "registered_vm") return null
+  if (target.kind === "member_machine" && target.provider === "openwork_desktop" && capabilities?.includes(COMPUTER_SHELL_RUNNER_CAPABILITY)) return null
+  return refusal("not_available_yet", target)
+}
 
 export async function loadComputerPolicy(
   organizationId: DenTypeId<"organization">,

@@ -76,9 +76,9 @@ export type ComputerAction = z.infer<typeof computerActionSchema>
 
 export const COMPUTER_DECISION_LAYERS = ["organization", "computer", "source"] as const
 export type ComputerDecisionLayer = (typeof COMPUTER_DECISION_LAYERS)[number]
-export const COMPUTER_REFUSAL_CODES = ["organization_off", "computer_not_allowed", "nothing_shared", "folder_not_shared"] as const
+export const COMPUTER_REFUSAL_CODES = ["organization_off", "computer_not_allowed", "not_available_yet", "owner_app_only", "nothing_shared", "folder_not_shared"] as const
 export type ComputerRefusalCode = (typeof COMPUTER_REFUSAL_CODES)[number]
-export const COMPUTER_CHANGEABLE_BY = ["organization_admin", "computer_owner"] as const
+export const COMPUTER_CHANGEABLE_BY = ["organization_admin", "computer_owner", "no_one"] as const
 export type ComputerChangeableBy = (typeof COMPUTER_CHANGEABLE_BY)[number]
 
 const refusalFields = {
@@ -155,6 +155,7 @@ export type ComputerAuthorizeResponse = z.infer<typeof computerAuthorizeResponse
 export const COMPUTER_COMMAND_STATUSES = ["pending", "claimed", "done", "failed", "refused", "expired"] as const
 export type ComputerCommandStatus = (typeof COMPUTER_COMMAND_STATUSES)[number]
 export const COMPUTER_OUTPUT_MAX_BYTES = 32_000
+export const COMPUTER_COMMAND_RETENTION_MS = 15 * 60_000
 
 const expiresAtSchema = z.iso.datetime({ offset: true })
 const executionErrorSchema = z.object({ code: z.string(), message: z.string() })
@@ -165,6 +166,7 @@ export const computerExecutionSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("offline"), message: z.string(), retryable: z.literal(true) }),
   z.object({ state: z.literal("unsupported"), message: z.string() }),
   z.object({ state: z.literal("running"), id: z.string(), expiresAt: expiresAtSchema }),
+  z.object({ state: z.literal("unknown"), id: z.string(), message: z.string() }),
   z.object({ state: z.literal("done"), id: z.string(), ...doneFields }),
   z.object({ state: z.literal("failed"), id: z.string(), error: executionErrorSchema }),
 ]).meta({ ref: "ComputerExecution" })
@@ -187,6 +189,10 @@ export const computerCommandListResponseSchema = z.object({
 })
 export type ComputerCommandListResponse = z.infer<typeof computerCommandListResponseSchema>
 
+/** A runner advertising computer_shell_v1 must run each assignment inside its
+ * sandbox with only the assignment's scope.folders mounted from the host.
+ * Den's check of the requested path is an early refusal, not a sandbox boundary.
+ */
 export const computerCommandAssignmentSchema = z.object({
   id: z.string(),
   source: computerSchema,

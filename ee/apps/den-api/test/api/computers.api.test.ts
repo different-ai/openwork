@@ -6,9 +6,10 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { workbotSessionId } from "@openwork-ee/headless-protocol/workbot-routing"
 import { decide } from "@openwork/computers"
 import {
-  COMPUTER_SHELL_RUNNER_CAPABILITY, computerCommandClaimResponseSchema, computerCommandListResponseSchema, computerDecisionSchema,
+  COMPUTER_COMMAND_RETENTION_MS, COMPUTER_SHELL_RUNNER_CAPABILITY, computerCommandClaimResponseSchema, computerCommandListResponseSchema, computerDecisionSchema,
   computerExecutionSchema, computerSchema, type ComputerAccessReport, type ComputerCommandAssignment, type ComputerCommandCompleteRequest,
 } from "@openwork/types/den/computers"
+import { remoteDeviceResponseSchema } from "@openwork/types/den/remote-devices"
 import { z } from "zod"
 import { bootDen, field, list, summary, text, type McpToolResult, type Member } from "./harness.js"
 import { gatewayFixtureEnv, grantGatewayModels, stubPublicModelCatalog } from "./gateway-fixture.js"
@@ -93,8 +94,8 @@ function refusal(result: McpToolResult, layer: string, code: string, message: st
   assert.deepEqual(result.structured, { state: "refused", layer, code, message, changeableBy })
   assert.deepEqual(result.body, result.structured)
 }
-const computerOff = "I can't do that. Ada's MacBook doesn't take work from other computers. Its owner can allow it in Settings > Devices on that computer."
-const notShared = "I can't use Ada's MacBook. Nothing on it is shared with me. Its owner can share its sandbox and folders in Settings > Devices on that computer."
+const computerOff = "Ada's MacBook isn't set to take work from other computers. Its owner decides whether to allow it."
+const notShared = "Nothing on Ada's MacBook is shared with me. Its owner decides what to share."
 const enabled = await den.asPlatformAdmin("PUT", `/v1/admin/organizations/${orgId}/capabilities`, { capabilities: { computers: true, remoteSessionAccess: true } })
 assert.equal(enabled.status, 200, summary(enabled))
 const adaRun = await workbot(ada, adaToken)
@@ -170,7 +171,7 @@ test("An allowed desktop refuses a source with nothing shared", async () => {
 })
 
 test("A sibling path outside the shared folder is refused", async () => {
-  refusal(await run("/workspace/logs2"), "source", "folder_not_shared", "I can't see the logs2 folder on Ada's MacBook. It isn't shared with me. Its owner can share it in Settings > Devices on that computer.")
+  refusal(await run(`/workspace/logs2/${computerId}`), "source", "folder_not_shared", "The folder I need on Ada's MacBook isn't shared with me. Its owner decides which folders to share.")
 })
 
 test("A simulated desktop claims the current folders, runs no real shell, and returns output to a waiting follower", async () => {
@@ -215,12 +216,34 @@ test("An offline computer answers immediately and creates no command", async () 
   }
 })
 
-test("A desktop without the shell runner capability needs a newer OpenWork", async () => {
-  const older = await simulatedComputer(ada, "ada-older", "Ada's old Mac", false)
-  await listComputers(adaRun)
-  const result = await shell(adaRun, { computerId: await older.id(), command: "fixture command", waitMs: 0 })
-  assert.equal(result.isError, true, result.raw)
-  assert.deepEqual(result.structured, { state: "unsupported", message: "Ada's old Mac can't take work from other computers yet. It needs a newer OpenWork." })
+test("A desktop without the shell runner capability can't take work on either MCP tool", async () => {
+  const laptop = await simulatedComputer(ada, "ada-personal", "Ada's other Mac", false)
+  const initialList = listSchema.parse((await listComputers(adaRun)).structured)
+  const computer = initialList.computers.find((item) => item.label === laptop.label)
+  assert.ok(computer)
+  const id = normalizeDenTypeId("remoteDevice", computer.id)
+  const reach = { outcome: "refuse", layer: "computer", code: "not_available_yet", changeableBy: "no_one", message: "Ada's other Mac can't take work from other computers yet." }
+  for (const token of [adaRun, adaToken]) {
+    const listed = listSchema.parse((await listComputers(token)).structured)
+    assert.deepEqual(listed.computers.find((item) => item.id === id)?.reach, reach)
+    refusal(await shell(token, { computerId: id, command: "fixture command", waitMs: 0 }), reach.layer, reach.code, reach.message, reach.changeableBy)
+  }
+  assert.deepEqual(await db.$primary.select({ id: ComputerCommandTable.id }).from(ComputerCommandTable).where(eq(ComputerCommandTable.targetDeviceId, id)), [])
+})
+
+test("Workbot cannot use a registered cloud computer even when its owner allows access", async () => {
+  const asAda = den.as(ada, orgId)
+  const vm = await asAda("POST", "/v1/remote-devices", { provider: "daytona", platform: "linux", label: "Build box", externalId: "test-provider-computer" })
+  assert.equal(vm.status, 201, summary(vm))
+  const { id } = remoteDeviceResponseSchema.parse(vm.body).device
+  const reach = { outcome: "refuse", layer: "source", code: "owner_app_only", changeableBy: "no_one", message: "Build box only takes work from its owner's own OpenWork apps." }
+  for (const setting of [{ choice: "off" }, { choice: "allow", scope: "whole_vm", folders: ["/workspace"] }]) {
+    const saved = await asAda("PUT", `/v1/computers/${id}/access`, setting)
+    assert.equal(saved.status, 200, summary(saved))
+    const listed = listSchema.parse((await listComputers(adaRun)).structured)
+    assert.deepEqual(listed.computers.find((item) => item.id === id)?.reach, reach)
+    refusal(await shell(adaRun, { computerId: id, command: "fixture command", waitMs: 0 }), reach.layer, reach.code, reach.message, reach.changeableBy)
+  }
 })
 
 test("Another member's Workbot cannot use the owner's private desktop or its Workbot grant", async () => {
@@ -235,7 +258,7 @@ test("Narrowing the owner's choice after enqueue prevents claim and settles the 
   try {
     const claim = await desktop.call("POST", claimPath(id))
     assert.equal(claim.status, 409, summary(claim))
-    assert.deepEqual(claim.body, { error: "command_refused" })
+    assert.deepEqual(claim.body, { error: "command_refused", message: "The current access settings don't allow this command." })
   } finally { await desktop.report(grant) }
   refusal(await shell(adaRun, { id, waitMs: 0 }), "computer", "computer_not_allowed", computerOff)
 })
@@ -243,10 +266,10 @@ test("Narrowing the owner's choice after enqueue prevents claim and settles the 
 test("A regular MCP caller cannot pass itself off as Workbot's computer", async () => {
   const result = await shell(adaToken, { computerId, command: "fixture command", waitMs: 0 })
   assert.equal(result.isError, true, result.raw)
-  assert.deepEqual(result.structured, { error: "source_unverified", message: "Only Workbot's own computer can run work on another computer in this version.", retryable: false })
+  assert.deepEqual(result.structured, { error: "source_unverified", message: "This tool only accepts new commands from a Workbot chat.", retryable: false })
 })
 
-test("An unclaimed command expires for its creator, disappears from the runner list, and cannot be claimed", async () => {
+test("An unclaimed command past its deadline says nothing ran, disappears from the runner list, and cannot be claimed", async () => {
   const { id } = await queued()
   const before = await desktop.call("GET", listPath)
   assert.ok(computerCommandListResponseSchema.parse(before.body).items.some((item) => item.id === id))
@@ -254,16 +277,16 @@ test("An unclaimed command expires for its creator, disappears from the runner l
     .where(eq(ComputerCommandTable.id, normalizeDenTypeId("computerCommand", id)))
   const expired = await shell(adaRun, { id, waitMs: 0 })
   assert.equal(expired.isError, true, expired.raw)
-  assert.deepEqual(expired.structured, { state: "failed", id, error: { code: "expired", message: "The computer command expired before it could finish." } })
+  assert.deepEqual(expired.structured, { state: "failed", id, error: { code: "not_picked_up", message: "Ada's MacBook didn't pick this up in time. Nothing ran." } })
   const after = await desktop.call("GET", listPath)
   assert.equal(after.status, 200, summary(after))
   assert.equal(computerCommandListResponseSchema.parse(after.body).items.some((item) => item.id === id), false)
   const claim = await desktop.call("POST", claimPath(id))
   assert.equal(claim.status, 409, summary(claim))
-  assert.deepEqual(claim.body, { error: "command_conflict" })
+  assert.deepEqual(claim.body, { error: "command_conflict", message: "This computer can't pick up the command." })
 })
 
-test("A claimed command cannot be claimed twice or completed by a different runner", async () => {
+test("Only the claiming runner can resolve the unknown outcome after the deadline, and can repeat the completion", async () => {
   const { id } = await queued()
   const earlyCompletion = await desktop.call("POST", completePath(id), canned)
   assert.equal(earlyCompletion.status, 409, summary(earlyCompletion))
@@ -272,13 +295,51 @@ test("A claimed command cannot be claimed twice or completed by a different runn
   const { assignment } = computerCommandClaimResponseSchema.parse(first.body)
   const repeated = await desktop.call("POST", claimPath(id))
   assert.equal(repeated.status, 409, summary(repeated))
-  assert.deepEqual(repeated.body, { error: "command_conflict" })
+  assert.deepEqual(repeated.body, { error: "command_conflict", message: "This computer can't pick up the command." })
+  await db.update(ComputerCommandTable).set({ expiresAt: new Date(Date.now() - 60_000) })
+    .where(eq(ComputerCommandTable.id, normalizeDenTypeId("computerCommand", id)))
+  const unknown = await shell(adaRun, { id, waitMs: 20_000 })
+  assert.equal(unknown.isError, true, unknown.raw)
+  assert.deepEqual(computerExecutionSchema.parse(unknown.structured), {
+    state: "unknown", id, message: "Ada's MacBook started handling this command but hasn't reported back. It may have run. Ask again later with this command's ID, or check on that computer before running it again.",
+  })
+  assert.doesNotMatch(unknown.raw, /expired/i)
   const other = await simulatedComputer(ada, "ada-third", "Ada's third Mac")
   await other.report(grant)
   const wrongRunner = await other.call("POST", completePath(id), canned)
   assert.equal(wrongRunner.status, 404, summary(wrongRunner))
   assert.deepEqual(wrongRunner.body, { error: "command_not_found" })
   assert.deepEqual(await desktop.finish(assignment), { command: { id, status: "done" } })
+  const done = await shell(adaRun, { id, waitMs: 0 })
+  assert.equal(done.isError, false, done.raw)
+  assert.deepEqual(done.structured, { state: "done", id, exitCode: 0, output: "simulated logs\n", truncated: false })
+  const repeat = await desktop.call("POST", completePath(id), canned)
+  assert.equal(repeat.status, 200, summary(repeat))
+  const changed = await desktop.call("POST", completePath(id), { ...canned, output: "changed" })
+  assert.equal(changed.status, 409, summary(changed))
+  assert.deepEqual(changed.body, { error: "command_conflict", message: "This computer can't report that result for this command." })
+})
+
+test("A late failure or refusal replaces the unknown outcome", async () => {
+  const failure = { status: "failed", error: { code: "runner_failed", message: "The shared drive isn't connected. Reconnect it and try again." } } satisfies ComputerCommandCompleteRequest
+  const denied = { status: "refused", layer: "source", code: "nothing_shared" } satisfies ComputerCommandCompleteRequest
+  for (const completion of [failure, denied]) {
+    const { id } = await queued()
+    const claim = await desktop.call("POST", claimPath(id))
+    assert.equal(claim.status, 200, summary(claim))
+    await db.update(ComputerCommandTable).set({ expiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(ComputerCommandTable.id, normalizeDenTypeId("computerCommand", id)))
+    assert.equal(field((await shell(adaRun, { id, waitMs: 0 })).structured, "state"), "unknown")
+    const reported = await desktop.call("POST", completePath(id), completion)
+    assert.equal(reported.status, 200, summary(reported))
+    const result = await shell(adaRun, { id, waitMs: 0 })
+    if (completion.status === "failed") {
+      assert.equal(result.isError, true, result.raw)
+      assert.deepEqual(result.structured, { state: "failed", id, error: failure.error })
+    } else {
+      refusal(result, "source", "nothing_shared", notShared)
+    }
+  }
 })
 
 test("Only the creating user can follow the command and only the target runner can claim it", async () => {
@@ -298,3 +359,36 @@ test("Only the creating user can follow the command and only the target runner c
   assert.deepEqual(completed, { command: { id, status: "refused" } })
   refusal(await shell(adaRun, { id, waitMs: 0 }), "computer", "computer_not_allowed", computerOff)
 })
+
+for (const trigger of ["runner list", "caller follow"]) {
+  test(`The ${trigger} prunes old queued and settled commands but keeps a fresh result`, async () => {
+    const [old, fresh, unattended] = [await queued(), await queued(), await queued()]
+    const settle = async (id: string) => {
+      const claim = await desktop.call("POST", claimPath(id))
+      assert.equal(claim.status, 200, summary(claim))
+      const complete = await desktop.call("POST", completePath(id), canned)
+      assert.equal(complete.status, 200, summary(complete))
+    }
+    await settle(old.id)
+    await settle(fresh.id)
+    const oldTime = new Date(Date.now() - COMPUTER_COMMAND_RETENTION_MS - 60_000)
+    const row = (id: string) => eq(ComputerCommandTable.id, normalizeDenTypeId("computerCommand", id))
+    await db.update(ComputerCommandTable).set({ completedAt: oldTime }).where(row(old.id))
+    await db.update(ComputerCommandTable).set({ expiresAt: oldTime }).where(row(fresh.id))
+    await db.update(ComputerCommandTable).set({ expiresAt: oldTime }).where(row(unattended.id))
+    const read = (id: string) => db.$primary.select({ id: ComputerCommandTable.id }).from(ComputerCommandTable).where(row(id))
+    assert.deepEqual(await read(old.id), [{ id: old.id }])
+    if (trigger === "runner list") {
+      const response = await desktop.call("GET", listPath)
+      assert.equal(response.status, 200, summary(response))
+    } else {
+      assert.equal(field((await shell(adaRun, { id: fresh.id, waitMs: 0 })).structured, "state"), "done")
+    }
+    assert.deepEqual(await read(old.id), [])
+    assert.deepEqual(await read(unattended.id), [])
+    assert.deepEqual(await read(fresh.id), [{ id: fresh.id }])
+    const removed = await shell(adaRun, { id: old.id, waitMs: 0 })
+    assert.equal(removed.isError, true, removed.raw)
+    assert.deepEqual(removed.structured, { error: "unknown_command", message: "That computer command could not be found." })
+  })
+}

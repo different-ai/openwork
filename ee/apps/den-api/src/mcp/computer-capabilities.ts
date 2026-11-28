@@ -15,16 +15,16 @@ const shellBody = z.union([
   z.strictObject({ id: z.string().min(1), waitMs }),
 ])
 const definitions = [
-  { name: "computers:list", summary: "List your computers and what this Workbot computer can access.", schema: listBody },
-  { name: "computers:shell", summary: "Run a shell command in a desktop computer's shared sandbox, or follow a command by id. Only Workbot can start a command.", schema: shellBody },
+  { name: "computers:list", summary: "List your computers and whether they can take work from this Workbot chat.", schema: listBody },
+  { name: "computers:shell", summary: "Check the result of a computer shell command by its ID. This tool can't send new work to your computers yet.", schema: shellBody },
 ]
 
 function result(payload: Record<string, unknown>, isError = false): ExecuteCapabilityToolResult {
   return { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload }
 }
 
-function unknown(name: string) {
-  return result({ error: "unknown_capability", message: `No capability named "${name}". Call search_capabilities to find a valid name.` }, true)
+function unknown() {
+  return result({ error: "unknown_capability", message: "That tool isn't available to your account." }, true)
 }
 
 export const computerSource: CapabilitySource = {
@@ -40,13 +40,13 @@ export const computerSource: CapabilitySource = {
   },
   enumerate: () => Promise.resolve([]),
   async execute(ctx, parsed, input) {
-    if (parsed.kind !== "computers" || !ctx.member) return unknown(input.name)
+    if (parsed.kind !== "computers" || !ctx.member) return unknown()
     const caller = { organizationId: ctx.organizationId, principal: ctx.principal, memberId: ctx.member.orgMembershipId }
-    const invalid = () => result({ error: "invalid_request", message: "The computer capability arguments are invalid." }, true)
+    const invalid = () => result({ error: "invalid_request", message: "This tool didn't get the information it needs." }, true)
     if (parsed.name === "computers:list") {
       return listBody.safeParse(input.body ?? {}).success ? result(await listComputers(caller)) : invalid()
     }
-    if (!ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE)) return result({ error: "insufficient_scope", message: "This capability requires the mcp:write scope." }, true)
+    if (!ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE)) return result({ error: "insufficient_scope", message: "This sign-in doesn't have permission to use this tool." }, true)
     const body = shellBody.safeParse(input.body)
     if (!body.success) return invalid()
     const args = body.data

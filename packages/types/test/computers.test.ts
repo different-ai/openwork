@@ -11,6 +11,7 @@ import {
   computerAuthorizeResponseSchema,
   computerCommandCompleteRequestSchema,
   computerDecisionSchema,
+  computerExecutionSchema,
   computerFolderSchema,
   computerGrantScopeSchema,
   computerListResponseSchema,
@@ -152,6 +153,23 @@ test("only a direct allowance can have a null scope", () => {
   assert.equal(computerDecisionSchema.safeParse({ outcome: "allow", route: "checked", scope }).success, true)
   assert.equal(computerDecisionSchema.safeParse({ outcome: "allow", route: "direct", scope }).success, false)
   assert.equal(computerDecisionSchema.safeParse({ outcome: "allow", route: "checked", scope: null }).success, false)
+})
+
+test("non-changeable computer refusals and unknown command outcomes keep their structured fields", () => {
+  for (const [layer, code, message] of [
+    ["computer", "not_available_yet", "Build box can't take work from other computers yet."],
+    ["source", "owner_app_only", "Build box only takes work from its owner's own OpenWork apps."],
+  ]) {
+    const fields = { layer, code, changeableBy: "no_one", message }
+    const decision = { outcome: "refuse", ...fields }
+    const execution = { state: "refused", ...fields }
+    assert.deepEqual(computerDecisionSchema.parse(decision), decision)
+    assert.deepEqual(computerExecutionSchema.parse(execution), execution)
+  }
+  const unknown = { state: "unknown", id: "queued-command", message: "Build box hasn't reported back. It may have run." }
+  assert.deepEqual(computerExecutionSchema.parse(unknown), unknown)
+  assert.equal(computerExecutionSchema.safeParse({ ...unknown, id: undefined }).success, false)
+  assert.equal(computerExecutionSchema.safeParse({ ...unknown, message: undefined }).success, false)
 })
 
 test("command completion caps UTF-8 bytes, not just string length", () => {
