@@ -1,5 +1,5 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire, isBuiltin } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -42,13 +42,18 @@ function packageRoot(name, fromPackageJson, resolveTarget = name) {
   const requireFromPackage = createRequire(pathToFileURL(fromPackageJson));
   let current;
   try {
+    // A package named like a Node builtin (buffer, events) resolves to the
+    // builtin, which has no files: find its manifest through the search paths.
+    if (isBuiltin(resolveTarget)) throw new Error(`${resolveTarget} resolves to a Node builtin.`);
     current = dirname(requireFromPackage.resolve(resolveTarget));
   } catch (error) {
     // A dependency may export only subpaths. Find its manifest through Node's
     // normal search directories without requiring a nonexistent root export.
-    for (const searchDirectory of requireFromPackage.resolve.paths(name) ?? []) {
-      const linkedPackageRoot = resolve(searchDirectory, name);
+    for (const searchDirectory of requireFromPackage.resolve.paths(isBuiltin(name) ? `${name}/package.json` : name) ?? []) {
       try {
+        // pnpm links a package next to its own dependencies: resolve the link
+        // so the package's dependencies are found from where it really lives.
+        const linkedPackageRoot = realpathSync(resolve(searchDirectory, name));
         const linkedPackageJson = JSON.parse(readFileSync(join(linkedPackageRoot, "package.json"), "utf8"));
         if (linkedPackageJson.name === name) return { root: linkedPackageRoot, packageJson: linkedPackageJson };
       } catch {
