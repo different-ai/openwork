@@ -4,6 +4,8 @@ import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, FileText, Globe, Lock, 
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { calmChat, computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
+import { createCloudCodingApprovals, useCloudCodingApprovals } from "./cloud-coding-approvals";
+import { CloudCodingApprovalCard } from "./cloud-coding-card";
 import { chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
 import { DesktopNavigation, MobileNavigation, type NavigationProps } from "./navigation";
 import { ProfileSheet, type ProfileTab } from "./profile-sheet";
@@ -108,6 +110,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     clearTimeout(disposeComposers.current);
     return () => { disposeComposers.current = setTimeout(() => { for (const owner of composers.values()) owner.dispose(); }, 0); };
   }, [composers]);
+  const approvals = useMemo(() => createCloudCodingApprovals((path, init) => workbotHost().requestJson(path, init)), [host.identity?.organizationId, host.identity?.principalId]);
   const [workspaceDrafts, setWorkspaceDrafts] = useState(false);
   const [chat, openChat] = useChatLocation(sideChats, workspaceDrafts ? () => false : undefined);
   const chats = useWorkbotChats(sideChats);
@@ -125,14 +128,14 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     <div ref={viewport} className="workbot-viewport">
     <WorkbotChatProvider value={chat}>
       <BrowserExperience key={`${host.identity?.organizationId ?? ""}:${host.identity?.principalId ?? ""}:${chat ?? "main"}`}>
-        <ChatScreen host={host} composerState={composer} position={position} navigation={navigation} onDraftsChange={setWorkspaceDrafts} />
+        <ChatScreen host={host} approvalStore={approvals} composerState={composer} position={position} navigation={navigation} onDraftsChange={setWorkspaceDrafts} />
       </BrowserExperience>
     </WorkbotChatProvider>
     </div>
   );
 }
 
-function ChatScreen({ host, composerState, position, navigation, onDraftsChange }: { host: WorkbotHost; composerState: ComposerState; position: ConversationScrollState; navigation: ChatNavigation | null; onDraftsChange(dirty: boolean): void }) {
+function ChatScreen({ host, approvalStore, composerState, position, navigation, onDraftsChange }: { host: WorkbotHost; approvalStore: ReturnType<typeof createCloudCodingApprovals>; composerState: ComposerState; position: ConversationScrollState; navigation: ChatNavigation | null; onDraftsChange(dirty: boolean): void }) {
   const { user } = host;
   const side = navigation?.chat != null;
   const queryClient = useQueryClient();
@@ -285,6 +288,12 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const filesEnabled = data?.filesEnabled ?? false;
   const activityNow = useTaskClock(data?.turns);
   const liveStatus = useWorkbotLiveStatus(stream.live);
+  const approvals = useCloudCodingApprovals(approvalStore, { ...host.identity, open: data !== null && (tab === "home" || (browserChat && wideScreen && tab === "computer")), busy: data?.status === "busy" || greetingAwaited || pending.some(entry => !entry.failed) });
+  const approvalCards = approvals.entries.length || approvals.error ? <div className="max-h-[45dvh] overflow-y-auto">
+    {approvals.error && <ErrorLine action={{ label: "Retry", onClick: () => void approvalStore.refresh() }}>{approvals.error}</ErrorLine>}
+    {approvals.entries.map(entry => <CloudCodingApprovalCard key={entry.approval.id} entry={entry} icons={host.appIcons("GitHub", "github.com")}
+      onDecide={decision => void approvalStore.decide(entry.approval.id, decision)} onRetry={() => void approvalStore.retry(entry.approval.id)} onDismiss={() => approvalStore.dismiss(entry.approval.id)} />)}
+  </div> : null;
   const remote = useWorkbotRemoteJobs(data !== null, { follow: true });
   const watcherKey = [...remoteWatcherTaskIds(remote.data?.jobs ?? [])].join("\n");
   const watcherIds = useMemo(() => new Set(watcherKey ? watcherKey.split("\n") : []), [watcherKey]);
@@ -449,8 +458,8 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       requestAnimationFrame(() => requestAnimationFrame(focusComposer));
     } : null;
     const attached = askContext && !browserPreview?.visible ? <AttachedContext context={askContext} onRemove={() => setAskContext(null)} /> : null;
-    const composer = <DraftComposer state={composerState} teaching={teaching} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled}
-      onSend={text => submit(text)} onStop={() => stop.mutate()} autoFocus={false} disabled={!data && !loading} />;
+    const composer = <>{approvalCards}<DraftComposer state={composerState} teaching={teaching} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled}
+      onSend={text => submit(text)} onStop={() => stop.mutate()} autoFocus={false} disabled={!data && !loading} /></>;
     const firstName = user?.name?.trim().split(/\s+/)[0] ?? null;
     const home = !data && !loading ? <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center text-[13px] text-[var(--wb-muted)]" role="status"><p>Couldn't load your conversation.</p><button type="button" className="rounded-lg px-3 py-2 underline focus-visible:shadow-[var(--wb-focus)]" onClick={() => void thread.refetch()}>Try again</button></div>
       : welcome === "showing" ? <Welcome name={name} firstName={firstName} onBegin={() => { if (start.isIdle) { setGreetingAwaited(true); start.mutate(); } }} onDone={() => setWelcome("done")} />
@@ -562,7 +571,8 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     );
   }
   const starting = empty && (start.isPending || (greetingAwaited && start.data?.started === true));
-  const composer = (
+  const composer = (<>
+    {approvalCards}
     <DraftComposer
       state={composerState}
       name={shown.name}
@@ -572,7 +582,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       onSend={(text) => submit(text)}
       onStop={() => stop.mutate()}
     />
-  );
+  </>);
 
   const chatId = navigation?.chat ?? null;
   const floating = !(empty && (side || !starting));

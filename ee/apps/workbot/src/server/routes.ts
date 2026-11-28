@@ -23,7 +23,22 @@ import { activationEventRequestSchema } from "@openwork/types/den/activation"
 import { mcpAppIdSchema } from "@openwork/types/mcp-app"
 import type { AppEnv, Member } from "./auth.js"
 import type { Config } from "./config.js"
-import { DenAppError, type Den } from "./den.js"
+import { DenAppError, workbotApprovalPath, type Den } from "./den.js"
+import { cloudCodingPushApprovalListSchema, cloudCodingPushApprovalSchema, cloudCodingPushDecisionInputSchema } from "@openwork/types/den/cloud-coding"
+
+const approvalErrorSchema = z.object({ error: z.string(), message: z.string().optional(), feature: z.literal("cloudCoding").optional() })
+
+function approvalResponse(result: { status: number; payload: unknown }, schema: z.ZodType) {
+  const headers = { "Cache-Control": "no-store" }
+  if (result.status === 200) {
+    const parsed = schema.safeParse(result.payload)
+    if (parsed.success) return Response.json(parsed.data, { headers })
+  } else if (result.status === 403 || result.status === 404 || result.status === 409) {
+    const parsed = approvalErrorSchema.safeParse(result.payload)
+    if (parsed.success) return Response.json(parsed.data, { status: result.status, headers })
+  }
+  return Response.json({ error: "approval_unavailable", message: "Workbot couldn’t reach the push approvals. Try again." }, { status: 502, headers })
+}
 import { COMPUTER_ACTION_EVENTS, createComputerReporter } from "./device-reports.js"
 import { observedRunnerFetch, reportError } from "./error-reporting.js"
 
@@ -182,6 +197,22 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.use("/v1/workbot/*", input.sameOrigin, input.member, phoneAllowed)
   app.use("/v1/workbot", input.sameOrigin, input.member, phoneAllowed)
+
+  app.get(workbotApprovalPath, async c => {
+    const member = c.get("member")
+    return approvalResponse(await den.cloudCodingApprovals(member.accessToken), cloudCodingPushApprovalListSchema)
+  })
+  app.get(`${workbotApprovalPath}/:id`, async c => {
+    const member = c.get("member")
+    return approvalResponse(await den.cloudCodingApproval(member.accessToken, c.req.param("id")), cloudCodingPushApprovalSchema)
+  })
+  app.post(`${workbotApprovalPath}/:id/decision`, bodyLimit({ maxSize: 1024 }), async c => {
+    c.header("Cache-Control", "no-store")
+    const member = c.get("member")
+    const body = cloudCodingPushDecisionInputSchema.safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: "invalid_request" }, 400)
+    return approvalResponse(await den.decideCloudCodingApproval(member.accessToken, c.req.param("id"), body.data), cloudCodingPushApprovalSchema)
+  })
   const teachingSaves = new Map<string, { markdown: string; name: string; saving: ReturnType<Den["saveBrowserSkill"]> }>()
   app.post("/v1/workbot/teaching", bodyLimit({ maxSize: 8192 }), async c => {
     c.header("Cache-Control", "no-store")

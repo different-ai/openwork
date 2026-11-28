@@ -60,6 +60,14 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
   }
   const current = thread(name)
   const path = url.pathname
+  if (path === "/v1/workbot/cloud-coding/approvals") {
+    if (name !== "cloud-coding") return json(response, 404, { error: "feature_disabled", feature: "cloudCoding" })
+    return json(response, 200, { approvals: [{
+      id: "approval_1", taskId: "task_1", status: "pending", repositoryFullName: "acme/storefront", branch: "openwork/readme", baseBranch: "main", headSha: "a".repeat(40), title: "Update README",
+      files: [{ path: "README.md", change: "modified" }, { path: "docs/setup.md", change: "added" }], fileCount: 2, tests: { status: "passed", command: null, summary: null },
+      requestedAt: "2026-11-27T12:00:00Z", expiresAt: "2026-11-28T12:00:00Z", decidedAt: null, pullRequest: null,
+    }] })
+  }
   if (path.startsWith("/v1/workbot/calendar/")) {
     const den = path.slice("/v1/workbot/calendar".length)
     const range = () => ({ from: Number(url.searchParams.get("from") ?? Date.parse(url.searchParams.get("timeMin") ?? "")), to: Number(url.searchParams.get("to") ?? Date.parse(url.searchParams.get("timeMax") ?? "")) })

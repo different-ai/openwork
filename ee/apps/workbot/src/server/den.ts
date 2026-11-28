@@ -8,6 +8,9 @@ import { remoteSessionStatusResultSchema, type RemoteSessionStatusRequest } from
 import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings"
 import type { RemoteDeviceWorkbotReport } from "@openwork/types/den/remote-devices"
 import type { Tokens } from "./sealed.js"
+import type { CloudCodingPushDecisionInput } from "@openwork/types/den/cloud-coding"
+
+export const workbotApprovalPath = "/v1/workbot/cloud-coding/approvals"
 
 export const WORKBOT_CLIENT_ID = "openwork-workbot"
 export const SIGN_IN_ONLY_PARAM = "openwork_sign_in_only"
@@ -256,6 +259,10 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     callApp: (accessToken: string, appId: string, name: string, args: Record<string, unknown>) =>
       withApp(accessToken, appId, (client) => client.callTool({ name, arguments: args }, undefined, { timeout: TIMEOUT_MS })),
     modelRecovery: (accessToken: string) => authorized("GET", "/v1/workbot/model-recovery", accessToken),
+    cloudCodingApprovals: (accessToken: string) => authorized("GET", workbotApprovalPath, accessToken),
+    cloudCodingApproval: (accessToken: string, id: string) => authorized("GET", `${workbotApprovalPath}/${encodeURIComponent(id)}`, accessToken),
+    decideCloudCodingApproval: (accessToken: string, id: string, body: CloudCodingPushDecisionInput) =>
+      authorized("POST", `${workbotApprovalPath}/${encodeURIComponent(id)}/decision`, accessToken, body),
     activation: (accessToken: string) => authorized("GET", "/v1/workbot/activation", accessToken),
     activationEvent: (accessToken: string, body: unknown) => authorized("POST", "/v1/workbot/activation/events", accessToken, body),
     devices: (accessToken: string) => authorized("GET", "/v1/workbot/devices", accessToken),
