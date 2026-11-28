@@ -38,7 +38,9 @@ export function ClaudeCoworkAlternativePage({ stars }: Props) {
 
         <div id="cost" className="scroll-mt-28 py-12 md:py-16">
           <CoworkCostCalculator />
-          <div className="mt-6">
+          <div className="mt-6 flex flex-col gap-3">
+            <LpArrowLink href="/guides/claude-cowork-pricing">What each Claude plan with Cowork costs and includes</LpArrowLink>
+            <LpArrowLink href="/guides/reduce-llm-costs">How to spend less on the same work, benchmarked</LpArrowLink>
             <LpArrowLink href={CLAUDE_COWORK_3P_PATH}>On Bedrock, Vertex, or Foundry? Compare features with Claude on 3P</LpArrowLink>
           </div>
         </div>

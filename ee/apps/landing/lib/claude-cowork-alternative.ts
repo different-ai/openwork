@@ -78,6 +78,9 @@ ${alternativeCards.map((card) => `- ${card.title}: [${card.link.label}](https://
 
 The page includes a calculator comparing Claude Team, Claude Enterprise, and OpenWork plans for your team size, usage, and models, using list API prices from models.dev. On Bedrock, Vertex, or Foundry? Compare features in [OpenWork vs Claude Cowork on 3P](https://openworklabs.com/alternatives/claude-cowork-3p).
 
+- [Claude Cowork pricing](https://openworklabs.com/guides/claude-cowork-pricing): what each Claude plan with Cowork costs and includes
+- [Reduce LLM costs](https://openworklabs.com/guides/reduce-llm-costs): skills, cheaper subagents, and model routing, with benchmark results
+
 ## FAQ
 
 ${claudeCoworkAlternativeFaq.map((entry) => `### ${entry.question}\n${entry.answer}`).join("\n\n")}
@@ -86,4 +89,5 @@ ${claudeCoworkAlternativeFaq.map((entry) => `### ${entry.question}\n${entry.answ
 
 - [Download OpenWork for free](https://openworklabs.com/download)
 - [Migration guide](https://openworklabs.com${MIGRATION_GUIDE_PATH})
+- [Run OpenWork on your own infrastructure](https://openworklabs.com/guides/self-hosted-ai-agent)
 `;

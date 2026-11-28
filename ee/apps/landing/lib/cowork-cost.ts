@@ -1,6 +1,6 @@
 import type { ModelPrice } from "./model-prices";
 
-export const anthropicPricingCheckedAt = "2026-09-25";
+export const anthropicPricingCheckedAt = "2026-11-27";
 
 export const pricingSources = [
   { label: "Claude plans", href: "https://claude.com/pricing" },
@@ -27,6 +27,9 @@ export const usageProfiles: Record<UsageProfileId, { label: string; usage: Usage
 };
 
 export const planPrices = {
+  claudePro: { monthly: 20, annual: 17, annualUpFront: 200 },
+  claudeMax: 100,
+  claudeUltra: 200,
   claudeTeamStandard: { monthly: 25, annual: 20 },
   claudeTeamPremium: { monthly: 125, annual: 100 },
   claudeTeamMinSeats: 2,
