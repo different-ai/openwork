@@ -9,7 +9,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSegmented } from "../../_components/ui/segmented";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
-import { getMembersRoute, getOrgAccessFlags, getPermissionSetRoute, permissionLockReason } from "../../_lib/den-org";
+import { getMembersRolesRoute, getOrgAccessFlags, getPermissionSetRoute, permissionLockReason } from "../../_lib/den-org";
 import {
   ROLE_STARTS,
   customRoleValue,
@@ -64,7 +64,7 @@ function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; r
   const base = new Set(roleStartKeys(start, ready.held));
   const allowed = new Set(PERMISSION_KEYS.filter((key) => (overrides.get(key) ?? (base.has(key) ? "allow" : "deny")) === "allow"));
   const missing = roleStartMissingLabels(start, ready.held);
-  const back = { href: `${getMembersRoute(ready.orgSlug)}?tab=roles`, label: "Roles" };
+  const back = { href: getMembersRolesRoute(ready.orgSlug), label: "Roles" };
   const trimmed = name.trim();
 
   const people = (orgContext?.members ?? []).filter((member) => !member.isOwner && member.id !== orgContext?.currentMember.id).map((member) => ({

@@ -5,7 +5,7 @@ import { ChevronRight } from "lucide-react";
 import { getPermissionDefinition, isPermissionKey } from "@openwork/types/den/permissions";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { getMembersRoute, getPermissionKeyRoute, getPermissionKeysRoute, getPermissionSetRoute } from "../../_lib/den-org";
+import { getMembersRolesRoute, getPermissionKeyRoute, getPermissionKeysRoute, getPermissionSetRoute } from "../../_lib/den-org";
 import { PermissionsRequestError, usePermissionKeyStatus } from "./permissions-data";
 import { roleSetKindRank } from "../../_lib/role-catalog";
 import { roleKindLabel, roleName } from "./team-roles";
@@ -27,7 +27,7 @@ export function PermissionKeysScreen() {
   if (permissions.state !== "ready") {
     return <PermissionsPage title="By permission" testId="permission-keys"><PermissionsAccessState access={permissions} /></PermissionsPage>;
   }
-  const back = { href: `${getMembersRoute(permissions.orgSlug)}?tab=roles`, label: "Roles" };
+  const back = { href: getMembersRolesRoute(permissions.orgSlug), label: "Roles" };
   return (
     <PermissionsPage title="By permission" back={back} testId="permission-keys">
       <div className="flex flex-col gap-6">
