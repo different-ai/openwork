@@ -54,10 +54,10 @@ type FreeMemberInput = { organizationId: OrgId; memberId: MemberId; userId: NonN
 const freeHash = freeInferenceDigest
 type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
 
-export async function freeAutoBlockedByDesktopPolicy(input: Pick<FreeMemberInput, "organizationId" | "memberId">): Promise<boolean> {
+async function freeAutoPolicyRefusal(input: Pick<FreeMemberInput, "organizationId" | "memberId">): Promise<"free_not_offered" | "free_sandbox_ended" | null> {
   const policy = await calculateDesktopPolicyForOrgMember({ organizationId: input.organizationId, orgMemberId: input.memberId })
-  if (policy.allowZenModel === false) return true
-  return sandboxFreeAutoStopped(db, input.organizationId)
+  if (policy.allowZenModel === false) return "free_not_offered"
+  return await sandboxFreeAutoStopped(db, input.organizationId) ? "free_sandbox_ended" : null
 }
 
 export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<InferenceAccess> {
@@ -76,7 +76,9 @@ export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<
     if (!freeInferenceOrganizationAllowed(row.metadata)) return unavailable("admin_disabled")
     const now = new Date(Number(row.nowMs))
     if (!env.inferenceFree.enabled) return { ...freeInferenceAccess({ config: env.inferenceFree, now, reason: "free_disabled" }), defaultPinned }
-    if (await freeAutoBlockedByDesktopPolicy(input)) return unavailable("admin_disabled")
+    const refusal = await freeAutoPolicyRefusal(input)
+    if (refusal === "free_sandbox_ended") return { ...unavailable("admin_disabled"), reasonDetail: refusal }
+    if (refusal) return unavailable("admin_disabled")
     const identity = freeHash("member", input.userId)
     const [bucket] = await db.select({ used_amount: InferenceFreeUsageBucketTable.used_amount }).from(InferenceFreeUsageBucketTable).where(and(
       eq(InferenceFreeUsageBucketTable.identity_hash, identity), eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start))).limit(1)
@@ -103,9 +105,11 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
     reason = "admin_disabled"
   }
   if (!freeInferenceOrganizationAllowed(organization.metadata)) reason = "admin_disabled"
-  if (await sandboxFreeAutoStopped(db, organizationId)) reason = "admin_disabled"
+  const trialEnded = reason === null && await sandboxFreeAutoStopped(db, organizationId)
+  if (trialEnded) reason = "admin_disabled"
   const summary: FreeInferenceProviderSummary = {
     state: reason ? "disabled" : "available", reason,
+    ...(trialEnded ? { reasonDetail: "free_sandbox_ended" } : {}),
     defaultPinned: freeInferenceDefaultPinned(organization.metadata),
     modelGroup: { id: "free", name: "Free" }, catalog: managedModelCatalog(),
     allowance: { usageScope: "organization", allowanceScope: "person", windowStartAt: window.start.toISOString(), resetsAt: window.end.toISOString(),
@@ -135,11 +139,12 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
   } }
 }
 
-export type FreeCredentialRefusal = "free_disabled" | "free_not_offered" | "not_eligible"
+export type FreeCredentialRefusal = "free_disabled" | "free_not_offered" | "free_sandbox_ended" | "not_eligible"
 
 export async function issueMemberFreeInferenceCredential(input: FreeMemberInput): Promise<{ credential: { apiKey: string; keyId: string; baseURL: string; statusURL: string; modelID: string } } | { refusal: FreeCredentialRefusal }> {
   if (!env.inferenceFree.enabled) return { refusal: "free_disabled" }
-  if (await freeAutoBlockedByDesktopPolicy(input)) return { refusal: "free_not_offered" }
+  const refusal = await freeAutoPolicyRefusal(input)
+  if (refusal) return { refusal }
   const result = await db.transaction(async (tx): Promise<{ apiKey: string; keyId: string } | { refusal: FreeCredentialRefusal }> => {
     const [organization] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
       .where(eq(OrganizationTable.id, input.organizationId)).limit(1).for("update")

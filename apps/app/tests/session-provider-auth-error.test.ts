@@ -3,7 +3,7 @@ import { presentOpencodeSessionError } from "../src/react-app/domains/session/sy
 
 const requestId = "req_01j-gateway-auth"
 
-function gatewayFailure(code: "provider_authentication_failed" | "provider_permission_denied", message: string) {
+function gatewayFailure(code: "provider_authentication_failed" | "provider_permission_denied" | "sandbox_trial_ended", message: string) {
   return {
     name: "APIError",
     data: {
@@ -36,6 +36,14 @@ describe("AI Gateway provider credential failures", () => {
     ))
     expect(presentation.kind).toBe("gateway-provider-permission-denied")
     expect(presentation.description).toContain("Ask your administrator")
+    expect(presentation.connectUrl).toBeUndefined()
+  })
+
+  test("explains how to restore an ended sponsored trial and keeps the request ID", () => {
+    const presentation = presentOpencodeSessionError(gatewayFailure("sandbox_trial_ended", "This sandbox trial has ended."))
+    expect(presentation.title).toBe("This sandbox trial has ended")
+    expect(presentation.description).toContain("Ask a platform admin to reopen")
+    expect(presentation.technicalDetails).toContain(requestId)
     expect(presentation.connectUrl).toBeUndefined()
   })
 

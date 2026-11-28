@@ -54,7 +54,9 @@ export function memberCredentialFailure(status: number, body: Uint8Array): { sta
   let code = mapped === 401 ? "member_free_auth_required" : mapped === 403 ? "member_free_policy_denied" : "member_free_credentials_unavailable";
   try {
     const error: unknown = JSON.parse(new TextDecoder().decode(body));
-    if (isRecord(error) && typeof error.error === "string" && DEN_ERROR_CODES.includes(error.error)) code = error.error;
+    if (isRecord(error) && typeof error.error === "string" && DEN_ERROR_CODES.includes(error.error)) {
+      code = mapped === 403 && error.error === "free_not_offered" && error.reason === "free_sandbox_ended" ? error.reason : error.error;
+    }
   } catch {}
   return { status: mapped, code };
 }
