@@ -26,6 +26,7 @@ import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { useMemberActivitySync } from "../domains/cloud/use-member-activity-sync";
+import { useOrgFeature } from "../domains/cloud/use-org-feature";
 import { useDesktopConfig } from "../domains/cloud/desktop-config-provider";
 import {
   clearCloudInventoryCache,
@@ -73,6 +74,11 @@ import { StartupScreen } from "./startup-screen";
 import { WebStartupScreen } from "./workspace-startup-status";
 import { isOpenworkGatewayRuntime } from "../../app/lib/gateway-runtime";
 
+
+function DesktopDeviceReporting() {
+  const computersEnabled = useOrgFeature("computers");
+  return <DeviceReporter computersEnabled={computersEnabled} />;
+}
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -494,7 +500,7 @@ export function AppRoot() {
               <OpenWorkWebAccessGate>
                 <CloudWorkspaceStatusProvider>
                   {isElectronRuntime() ? <ComputerBridge /> : null}
-                  {isElectronRuntime() ? <DeviceReporter /> : null}
+                  {isElectronRuntime() ? <DesktopDeviceReporting /> : null}
                   <Routes>
               <Route
                 path="/signin"

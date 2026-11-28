@@ -100,6 +100,7 @@ import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
 import { desktopFreeBootstrapEligible } from "./desktop-free-eligibility.mjs";
 import { createDesktopFreeSigner } from "./desktop-free-signer.mjs";
+import { readComputersMachineKey } from "./desktop-machine-id.mjs";
 import { applyDesktopFreeBuildSettings, loadDesktopFreeReleaseKey } from "./desktop-free-release.mjs";
 import {
   captureStartupException,
@@ -2334,7 +2335,8 @@ const desktopCommandHandlers = {
       assertComputerSender(event);
       let osVersion = null;
       try { osVersion = String(process.getSystemVersion?.() || os.release()).trim() || null; } catch { /* unnamed system */ }
-      return { installId: registeredRunnerId, ...await describeThisComputer(), osVersion, arch: process.arch };
+      const [computer, machineKey] = await Promise.all([describeThisComputer(), readComputersMachineKey()]);
+      return { installId: registeredRunnerId, ...computer, osVersion, arch: process.arch, machineKey };
   },
   "computerPresentation": async (event, sessionId, visible) => {
       assertComputerSender(event);
