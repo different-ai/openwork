@@ -25,6 +25,7 @@ developer's local files, git and credentials work exactly as before.
 | Who can use it | ![Choosing who can use Cloud coding](./who-can-use-it.png) |
 | What a member who cannot manage sees | ![The same page read-only for a member](./member-read-only.png) |
 | Linking your own account | ![The personal GitHub link page](./link-your-account.png) |
+| Approving a push in Workbot web | ![The push approval card above the Workbot composer](./workbot-approval.png) |
 
 ## Try it
 
