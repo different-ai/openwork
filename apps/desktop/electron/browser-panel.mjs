@@ -2356,12 +2356,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return tab.tabId;
     });
     ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
-    ipcMain.handle("openwork:browser:taskControl", (event, tabId, action) => {
-      if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame || !getBrowserTab(tabId) || registry.ownerOf(tabId) !== registry.visibleSessionId()) throw new Error("Select this conversation first.");
-      if (action === "resume") taskHost.resume(tabId);
-      else if (action === "pause") taskHost.pause(tabId);
-      else throw new Error("Unsupported browser control.");
-    });
     ipcMain.handle("openwork:webmcp:frame-policy", (event) => {
       const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === event.sender);
       if (!tab || !event.senderFrame) {
@@ -2407,8 +2401,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       await setTabPageSize(tab, key, "person");
       return true;
     });
-    // The person took over, then wrote to the agent again: that message
-    // hands the conversation's tabs back, so the new turn can use them.
+    // The agent stepped back for the person, who then wrote to it again: that
+    // message hands the conversation's tabs back, so the new turn can use them.
     ipcMain.handle("openwork:browser:startAgentTurn", (event, sessionId) => {
       const owner = normalizeSessionId(sessionId);
       if (!isMainRenderer(event) || !owner || !browserControlEnabled) return false;

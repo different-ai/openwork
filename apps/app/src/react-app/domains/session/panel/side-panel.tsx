@@ -60,8 +60,6 @@ import {
   hasNativeBrowserOccluder,
 } from "./utils";
 import { computeBrowserBounds, createBrowserBoundsSync } from "./browser-bounds-sync";
-import { browserOperationLabels } from "./browser-status";
-import { useDesktopFeature } from "../status/use-desktop-feature";
 import type { BrowserPresentationMode } from "./browser-presentation-store";
 import { chooseTabPageSize } from "./agent-viewport";
 import { isBrowserSecretsDialogTarget } from "./browser-secrets";
@@ -255,7 +253,6 @@ export function BrowserPanelContent({
   presentation,
 }: BrowserPanelContentProps) {
   const isAvailable = Boolean(getElectronBrowser());
-  const taskBarHidden = useDesktopFeature("hideBrowserTaskBar");
   const suspended = tab.status === "suspended";
   const busy = tab.status === "suspending" || tab.status === "restoring";
   const pageFailure = tab.loadError?.code === "page_load_failed" ? tab.loadError : null;
@@ -389,18 +386,6 @@ export function BrowserPanelContent({
     <>
       {failure?.owner === failureOwner ? <div className="shrink-0 px-3 py-2"><TaskRecovery compact title={failure.title} technicalDetails={failure.details}
         actions={<Button variant="ghost" size="xs" onClick={() => setFailure(null)}>Dismiss</Button>} /></div> : null}
-      {isAvailable && tab.browserTask && !taskBarHidden ? (
-        <div data-browser-shortcut-tab={tab.id} className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
-          <span className="shrink-0 font-medium">Built-in browser</span>
-          <span role="status" className="min-w-0 flex-1 truncate text-muted-foreground">
-            {tab.browserTask?.status === "paused" ? "You have control · your next message hands it back" : tab.browserTask?.status === "running" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Working on this page" : tab.browserTask?.status === "needs_attention" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Review this page" : "This conversation's tab"}
-          </span>
-          <Button variant="outline" size="sm" className="h-6 px-2 text-xs"
-            onClick={() => { void window.__OPENWORK_ELECTRON__?.browser?.taskControl?.(tab.id, tab.browserTask?.status === "paused" ? "resume" : "pause"); }}>
-            {tab.browserTask?.status === "paused" ? "Resume browser" : "Take over"}
-          </Button>
-        </div>
-      ) : null}
       <div data-browser-toolbar className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-background px-2 mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
         {isAvailable ? (
           <div data-browser-shortcut-tab={tab.id} className="flex min-w-0 flex-1 items-center gap-1">

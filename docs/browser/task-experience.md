@@ -19,9 +19,10 @@ agent permissions and takeover are the gates.
    supports a coordinate click without a useful DOM reference.
 3. WebMCP tools run and return their bounded result to the conversation. A
    site's read-only annotation is advisory and never makes a retry safe.
-4. Choose **Take over** to pause the conversation's browser operations. Sign in
-   directly in the page, then choose **Resume browser**; actions need a new
-   observation. Opening another tab cannot bypass takeover.
+4. When a page needs a sign-in or payment details, the session steps back
+   with `browser_handoff`. The person enters them directly in the page, and
+   their next message hands control back; actions need a new observation.
+   Opening another tab cannot bypass the handoff.
 5. Observe the requested result. An input event being dispatched and a site
    callback returning are separate from the user's desired outcome being met.
 
