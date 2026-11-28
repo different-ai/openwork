@@ -27,7 +27,7 @@ export async function subscribeNativeThread(thread: EventThread, originalScopes:
       return existing
     }
     if (watches.length >= 10) throw new EventAccessError("This chat already has ten watches.")
-    const value = { id, source: "openwork", organizationId: thread.organizationId, userId: thread.userId, memberId: thread.memberId, sessionId: thread.sessionId, connectionId: null, name, arguments: args, instruction: input.instruction, secret: "", callbackUrl: "", remoteId: null, cursor: null, incomplete: false, model: thread.model, scopes, status: "pending", expiresAt: new Date(Date.now() + input.ttlMs), createdAt: new Date() }
+    const value = { id, source: "openwork", organizationId: thread.organizationId, userId: thread.userId, memberId: thread.memberId, sessionId: thread.sessionId, connectionId: null, name, arguments: args, instruction: input.instruction, secret: "", callbackUrl: "", remoteId: null, cursor: null, incomplete: false, model: thread.model, scopes, status: "pending", delivery: "webhook", nextPollAt: null, pollFailures: 0, expiresAt: new Date(Date.now() + input.ttlMs), createdAt: new Date() }
     await tx.insert(Subscription).values(value)
     return value
   })

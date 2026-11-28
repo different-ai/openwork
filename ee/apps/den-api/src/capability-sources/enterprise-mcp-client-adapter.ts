@@ -503,7 +503,7 @@ export function inspectExternalMcpToolCall(input: ExternalMcpToolCallInput) {
 }
 
 export function requestExternalMcpEvents(input: ExternalMcpResourceInput & {
-  method: "events/list" | "events/subscribe" | "events/unsubscribe"
+  method: "events/list" | "events/subscribe" | "events/unsubscribe" | "events/poll"
   params: Record<string, unknown>
 }) {
   return runEnterpriseMcpOperation({
