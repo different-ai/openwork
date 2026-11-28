@@ -56,7 +56,7 @@ export function AgentToolDecision({ runtime, agent, request, onAllowed, onChoose
   );
 }
 
-export function AgentToolReceipt({ agent, request }: { agent: PersonalAgentDetail; request: PersonalAgentRequest }) {
+export function AgentToolReceipt({ agent, request, answered = false }: { agent: PersonalAgentDetail; request: PersonalAgentRequest; answered?: boolean }) {
   const connection = requestConnectionName(request);
   if (request.status === "awaiting_owner") {
     return <p data-agent-ask={request.id} role="status" className="text-xs leading-relaxed text-dls-secondary">{t("agents.connector_ask_waiting", { connection })}</p>;
@@ -73,7 +73,7 @@ export function AgentToolReceipt({ agent, request }: { agent: PersonalAgentDetai
     : toolRequestReceipt(request.toolName || !connectorAccess ? request : { ...request, toolTitle: connection }, name, deniedByYou);
   if (!receipt) return null;
   const Shield = request.status === "denied" ? ShieldX : ShieldCheck;
-  const next = agent.role === "collaborator" ? null : request.runId ? toolRequestRerunLine(request)
+  const next = agent.role === "collaborator" || answered ? null : request.runId ? toolRequestRerunLine(request)
     : request.requestedByCaller && (request.status === "allowed_once" || request.status === "always_allowed")
       ? t("agents.chat_permission_next") : null;
   return (

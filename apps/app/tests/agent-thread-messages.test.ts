@@ -79,3 +79,10 @@ test("routine runs sit between chat turns by time, and a new message goes last",
   expect(items.map((item) => item.kind === "run" ? item.run.id : item.messages.filter((m) => m.role === "user").length))
     .toEqual(["run-early", 3, "run-late", 1]);
 });
+
+test("an answered request sits where it was answered, so later messages come after it", () => {
+  const at = (iso: string) => ({ ...turn, id: iso, clientMessageId: iso, status: "succeeded" as const, reply: "ok", createdAt: iso });
+  const requests = [{ id: "ask", createdAt: "2026-11-26T10:00:30.000Z", decidedAt: "2026-11-26T10:30:00.000Z" }];
+  const items = agentThreadTimeline([at("2026-11-26T10:00:00.000Z"), at("2026-11-26T11:00:00.000Z")], [], null, requests);
+  expect(items.map((item) => item.kind)).toEqual(["chat", "request", "chat"]);
+});

@@ -13,9 +13,10 @@ import { AgentChatDock } from "./agent-chat-dock";
 import { agentChatFor, agentChatKey, useAgentChatStore } from "./agent-chat-store";
 import { AGENT_ROW_INSET, AgentRunEntry } from "./agent-run-result";
 import { agentThreadTimeline } from "./agent-thread-messages";
-import { AgentTranscriptFooter } from "./agent-transcript-footer";
+import { AgentChangeRequest } from "./agent-change-request";
+import { AgentToolReceipt, canDecideAgentToolRequest, isVisibleAgentRequest } from "./agent-tool-request";
 import { useAgentsRuntime, type AgentsRuntime } from "./agents-runtime";
-import { agentsQueryRoot, isActiveRun, useAgentDetail, useAgentRunsQuery } from "./use-agents";
+import { agentsQueryRoot, isActiveRun, useAgentDetail, useAgentRequestsQuery, useAgentRunsQuery } from "./use-agents";
 
 type ThreadSend = { input: SendPersonalAgentChatMessage; createdAt: number };
 
@@ -88,8 +89,11 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
   const runsActive = agent?.routines.some((routine) => isActiveRun(routine.latestRun)) ?? false;
   const runs = useAgentRunsQuery(runtime, agent ? agentId : null, runsActive);
   const recentRuns = useMemo(() => [...runs.data ?? []].sort((a, b) => a.createdAt - b.createdAt).slice(-5), [runs.data]);
+  const requests = useAgentRequestsQuery(runtime, agent ? agentId : null, Boolean(agent?.openRequestCount));
+  const answeredRequests = useMemo(() => agent ? (requests.data ?? []).filter((request) => !canDecideAgentToolRequest(request) && isVisibleAgentRequest(agent, request)) : [],
+    [requests.data, agent]);
   const timeline = useMemo(() => agentThreadTimeline(thread.data?.turns ?? [], recentRuns,
-    pending ? { ...pending.input, createdAt: pending.createdAt } : null), [thread.data?.turns, recentRuns, pending]);
+    pending ? { ...pending.input, createdAt: pending.createdAt } : null, answeredRequests), [thread.data?.turns, recentRuns, pending, answeredRequests]);
   const lastChat = timeline.findLast((item) => item.kind === "chat");
   const pinned = useRef(true);
   const keepAtBottom = useCallback((inner: HTMLDivElement | null) => {
@@ -135,12 +139,17 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
           <Skeleton className="h-4 w-56 max-w-full" />
         </div> : !thread.isError && timeline.length === 0 ?
           <p className={`${AGENT_ROW_INSET} text-sm text-dls-secondary`}>{t("agents.chat_empty", { name: displayName })}</p> : null}
-        {timeline.map((item) => item.kind === "chat"
+        {timeline.map((item, index) => item.kind === "request"
+          ? agent && <div key={item.key} className={AGENT_ROW_INSET}>
+            {item.request.kind === "tool" ? <AgentToolReceipt agent={agent} request={item.request} answered={index < timeline.length - 1} />
+              : <AgentChangeRequest runtime={runtime} agent={agent} request={item.request} />}
+          </div>
+          : item.kind === "chat"
           ? <RemoteTranscriptView key={item.key} threadKey={`${threadKey}:${item.key}`} messages={item.messages}
             running={item === lastChat && (running || Boolean(pending))} showThinking={local.prefs.showThinking} developerMode={false} />
           : agent && <AgentRunEntry key={item.key} runtime={runtime} agentId={agentId} role={agent.role} run={item.run}
             routineName={agent.routines.find((routine) => routine.id === item.run.automationId)?.name ?? displayName} />)}
-        <AgentTranscriptFooter sessionId={sessionId} scoped />
+        {requests.isError && <p className={`${AGENT_ROW_INSET} text-xs text-dls-secondary`}>{t("agents.requests_unavailable")}</p>}
       </div>
     </div>
     <AgentChatDock sessionId={sessionId} name={displayName} draft={draft} onDraftChange={setText}
