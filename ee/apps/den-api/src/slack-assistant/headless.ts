@@ -64,7 +64,7 @@ export type SlackRunStep = { id: string; label: string; status: "running" | "com
 
 export type SlackBackgroundTurn = { id: string; title: string; status: string }
 
-export type SlackSessionSettings = { instructions: string; reactions: boolean; tasks: boolean }
+export type SlackSessionSettings = { instructions: string; reactions: boolean; tasks: boolean; computer?: boolean }
 
 export const TASK_STARTED_LINE = "I'm on it in the background and will post the result here."
 

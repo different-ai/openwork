@@ -240,6 +240,9 @@ export async function exchangeHeadlessResumeGrant(
       memberId: input.memberId, sessionId: row.sessionId, expiresAt: row.expiresAt,
     })
   }
+  await (await import("../slack-assistant/desktop-handoff.js"))
+    .recordSlackRunToken({ tokenId: minted.tokenId, expiresAt: minted.expiresAt, userId: row.userId, messageId: row.messageId })
+    .catch(() => false)
   await db
     .update(HeadlessResumeGrantTable)
     .set({ lastUsedAt: now, useCount: sql`${HeadlessResumeGrantTable.useCount} + 1` })

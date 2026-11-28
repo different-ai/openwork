@@ -4,6 +4,7 @@ import {
   OAuthAccessTokenTable,
   SlackAssistantDesktopHandoffTable as Handoff,
   SlackAssistantEventTable as Event,
+  SlackAssistantInstallationTable as Installation,
   SlackAssistantRunTokenTable as RunToken,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
@@ -61,20 +62,21 @@ export async function recordSlackRunToken(input: { tokenId: string; expiresAt: D
   return true
 }
 
-export async function linkDesktopCommandToSlack(input: {
-  commandId: string
+export async function slackRunOrigin(input: {
   organizationId: DenTypeId<"organization">
   userId: string
   runTokenId: string
-}) {
+}, database: Pick<typeof db, "select"> = db.$primary) {
   const tokenId = tokenIdOrNull(input.runTokenId)
-  if (!tokenId) return false
+  if (!tokenId) return null
   const userId = normalizeDenTypeId("user", input.userId)
   const now = new Date()
-  const [link] = await db.$primary
-    .select({ eventId: RunToken.eventId, connectionId: RunToken.connectionId })
+  const [link] = await database
+    .select({ event: Event, organizationId: Installation.organizationId })
     .from(RunToken)
     .innerJoin(OAuthAccessTokenTable, eq(OAuthAccessTokenTable.id, RunToken.tokenId))
+    .innerJoin(Event, and(eq(Event.id, RunToken.eventId), eq(Event.connectionId, RunToken.connectionId)))
+    .innerJoin(Installation, eq(Installation.connectionId, RunToken.connectionId))
     .where(
       and(
         eq(RunToken.tokenId, tokenId),
@@ -84,25 +86,35 @@ export async function linkDesktopCommandToSlack(input: {
         eq(OAuthAccessTokenTable.userId, userId),
         eq(OAuthAccessTokenTable.referenceId, input.organizationId),
         gt(OAuthAccessTokenTable.expiresAt, now),
+        isNull(OAuthAccessTokenTable.revoked),
       ),
     )
     .limit(1)
-  if (!link) return false
-  const installation = await getInstallation(link.connectionId)
-  if (!installation || installation.organizationId !== input.organizationId) return false
-  const [event] = await db
-    .select()
-    .from(Event)
-    .where(and(eq(Event.id, link.eventId), eq(Event.connectionId, link.connectionId)))
-    .limit(1)
-  if (!event) return false
-  const output = checkpointSchema.safeParse(event.checkpoint ? JSON.parse(event.checkpoint) : {})
-  const cp = output.success ? output.data : null
+  if (!link || link.organizationId !== input.organizationId) return null
+  const { event } = link
+  try {
+    const output = checkpointSchema.safeParse(event.checkpoint ? JSON.parse(event.checkpoint) : {})
+    return { event, checkpoint: output.success ? output.data : null }
+  } catch {
+    return { event, checkpoint: null }
+  }
+}
+
+export async function linkDesktopCommandToSlack(input: {
+  commandId: string
+  organizationId: DenTypeId<"organization">
+  userId: string
+  runTokenId: string
+}) {
+  const origin = await slackRunOrigin(input)
+  if (!origin) return false
+  const { event, checkpoint: cp } = origin
+  const now = new Date()
   await db.insert(Handoff).values({
     commandId: normalizeDenTypeId("remoteSessionCommand", input.commandId),
-    connectionId: link.connectionId,
+    connectionId: event.connectionId,
     organizationId: input.organizationId,
-    userId,
+    userId: normalizeDenTypeId("user", input.userId),
     eventId: event.id,
     teamId: cp?.recipientTeamId ?? event.teamId,
     channelId: cp?.channel ?? event.channelId,
