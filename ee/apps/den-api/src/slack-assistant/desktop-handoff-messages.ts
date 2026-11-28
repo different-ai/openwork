@@ -42,7 +42,7 @@ function finishedMessage(to: string, finalText: string): SlackMessage {
   }
 }
 
-const MAX_RICH_MESSAGES = 3
+const MAX_RICH_MESSAGES = 6
 export const DESKTOP_HANDOFF_REST_LINE = "_The rest of this answer is in OpenWork on that computer._"
 
 export function desktopHandoffRichMessages(

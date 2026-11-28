@@ -82,6 +82,8 @@ as plain mrkdwn sections and `slack_rich_message_rejected` is logged with the su
 - `@channel`, `@here`, `@everyone` and group mentions are neutralized everywhere. Text in headers, context lines,
   fields, table cells and button labels is escaped, so a model cannot mention a person from them.
 - Button and action ids are OpenWork's. A model cannot name one, so it cannot imitate feedback or a choice.
+- A choice button has no hidden value: what is queued as the member's request is the label they saw and pressed,
+  and the handler checks it against the buttons on that message.
 - Link buttons need `https`. Your agent's links still pass its own allowlist before layout.
 - A picture is fetched by Slack as soon as the message arrives, which would let a prompt injection send data out in
   the image address. So a picture is shown only from this deployment's own web or API address. Any other image is a

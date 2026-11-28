@@ -190,7 +190,7 @@ export const slackComponentSchema = z.discriminatedUnion("type", [
 ])
 export type SlackComponent = z.infer<typeof slackComponentSchema>
 
-export const SLACK_COMPONENTS_MAX = 20
+const SLACK_COMPONENTS_MAX = 20
 
 export const slackComponentsSchema = z
   .array(slackComponentSchema)
@@ -457,18 +457,15 @@ export function composeSlackMessages(parts: readonly SlackPart[], options: Slack
     messages.push(outgoing(units.map((unit) => unit.block), units.map((unit) => unit.part), options, false))
     units = []
   }
+  const addressed = options.choiceFor && /^[UW][A-Z0-9]{2,}$/.test(options.choiceFor) ? options.choiceFor : null
   for (const part of parts) {
-    if (part.type === "choices") {
-      const addressed = options.choiceFor && /^[UW][A-Z0-9]{2,}$/.test(options.choiceFor) ? options.choiceFor : null
-      if (!addressed) {
-        units.push({ part, block: section(partMrkdwn(part, options)), markdown: 0, table: false })
-        continue
-      }
+    if (part.type === "choices" && addressed) {
       flush()
       messages.push(choiceMessage(part, addressed, options))
       continue
     }
-    for (const unit of unitsOf(part, options)) {
+    const produced = part.type === "choices" ? [{ part, block: section(partMrkdwn(part, options)), markdown: 0, table: false }] : unitsOf(part, options)
+    for (const unit of produced) {
       const markdown = units.reduce((sum, entry) => sum + entry.markdown, 0)
       if (units.length + 1 > maxBlocks || markdown + unit.markdown > MARKDOWN_BUDGET || (unit.table && units.some((entry) => entry.table))) flush()
       units.push(unit)
@@ -586,7 +583,7 @@ export function markdownToSlackParts(markdown: string, options: { directives?: b
 
 const BLOCK_REJECTIONS: ReadonlySet<string> = new Set(["invalid_blocks", "invalid_blocks_format", "msg_blocks_too_long", "msg_blocks_too_many", "invalid_attachments", "block_mismatch"])
 
-export function slackRejectedBlocks(error: unknown): error is SlackApiError {
+function slackRejectedBlocks(error: unknown): error is SlackApiError {
   return error instanceof SlackApiError && BLOCK_REJECTIONS.has(error.code)
 }
 

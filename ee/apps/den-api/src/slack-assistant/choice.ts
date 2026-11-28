@@ -35,12 +35,17 @@ const defaultChoiceDeps: SlackChoiceDeps = {
 }
 
 const promptBlock = z.object({ type: z.literal("section"), text: z.object({ type: z.literal("mrkdwn"), text: z.string().min(1).max(SLACK_LIMITS.sectionText) }) })
-const choiceBlock = z.object({ type: z.literal("actions"), block_id: z.string(), elements: z.array(z.object({ value: z.string().optional() }).loose()) })
+const choiceBlock = z.object({
+  type: z.literal("actions"),
+  block_id: z.string(),
+  elements: z.array(z.object({ action_id: z.string().optional(), value: z.string().optional(), text: z.object({ text: z.string() }).optional() }).loose()),
+})
 
-function shownChoices(blocks: readonly unknown[] | undefined, blockId: string) {
+function offered(blocks: readonly unknown[] | undefined, blockId: string, actionId: string, label: string) {
   for (const block of blocks ?? []) {
     const parsed = choiceBlock.safeParse(block)
-    if (parsed.success && parsed.data.block_id === blockId) return parsed.data.elements.flatMap((element) => (element.value ? [element.value] : []))
+    if (parsed.success && parsed.data.block_id === blockId)
+      return parsed.data.elements.some((element) => element.action_id === actionId && element.value === label && (element.text === undefined || element.text.text === label))
   }
   return null
 }
@@ -73,8 +78,7 @@ export async function answerSlackChoice(
   const messageTs = payload.message?.ts ?? payload.container?.message_ts
   const label = action?.value?.trim() ?? ""
   if (!action?.block_id || !channel || !messageTs || !label || label.length > SLACK_LIMITS.buttonText) return done("not_a_choice")
-  const shown = shownChoices(payload.message?.blocks, action.block_id)
-  if (shown && !shown.includes(label)) return done("not_a_choice")
+  if (offered(payload.message?.blocks, action.block_id, action.action_id, label) === false) return done("not_a_choice")
 
   const addressed = action.block_id.slice(SLACK_CHOICE_PREFIX.length)
   const user = payload.user.id
