@@ -1,3 +1,4 @@
+import { uniqueComputerLabel } from "@openwork/computers"
 import { createHash } from "node:crypto"
 import { and, desc, eq, gte, inArray, isNull, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
@@ -156,13 +157,13 @@ function quietSince(lastSeenAt: Date | null, now: number, ms: number) {
 }
 
 export function memberRemoteDeviceActions(row: Pick<DeviceRow, "ownerMemberId" | "provider" | "source">, input: {
-  viewer: RemoteDeviceActor; canManageShared: boolean; disconnected: boolean; lastSeenAt: Date | null; now: number
+  viewer: RemoteDeviceActor; canManageShared: boolean; computersEnabled?: boolean; disconnected: boolean; lastSeenAt: Date | null; now: number
 }) {
   const mine = row.ownerMemberId === input.viewer.memberId
   const manages = mine || (row.ownerMemberId === null && input.canManageShared)
   const signedIn = row.provider === DESKTOP_PROVIDER
   return {
-    canRename: manages && row.source === "manual",
+    canRename: (manages && row.source === "manual") || (mine && signedIn && input.computersEnabled === true),
     canRemove: manages && (!signedIn || input.disconnected || quietSince(input.lastSeenAt, input.now, REMOTE_DEVICE_DESKTOP_RETENTION_MS)),
     canDisconnect: mine && signedIn && !input.disconnected,
   }
@@ -187,6 +188,7 @@ function workingSinceOf(row: Pick<DeviceRow, "provider">, activeTurnSince: Date 
 function deviceView(row: DeviceRow, input: {
   viewer: RemoteDeviceActor
   canManageShared: boolean
+  computersEnabled?: boolean
   runner: RunnerFacts | null
   session: WorkbotSession | null
   disconnectedAt: Date | null
@@ -329,11 +331,11 @@ function visibleTo(actor: RemoteDeviceActor) {
 
 const AVAILABILITY_ORDER: Record<RemoteDeviceAvailability, number> = { online: 0, needs_setup: 1, paused: 2, unknown: 3, offline: 4 }
 
-export async function listMemberRemoteDevices(actor: RemoteDeviceActor, options: { canManageShared: boolean; now?: Date }): Promise<RemoteDevice[]> {
+export async function listMemberRemoteDevices(actor: RemoteDeviceActor, options: { canManageShared: boolean; computersEnabled?: boolean; now?: Date }): Promise<RemoteDevice[]> {
   return (await listMemberRemoteDeviceRows(actor, options)).map(({ device }) => device)
 }
 
-export async function listMemberRemoteDeviceRows(actor: RemoteDeviceActor, options: { canManageShared: boolean; now?: Date }) {
+export async function listMemberRemoteDeviceRows(actor: RemoteDeviceActor, options: { canManageShared: boolean; computersEnabled?: boolean; now?: Date }) {
   const now = options.now ?? new Date()
   await syncDesktopsFromRunners({ organizationId: actor.organizationId, memberId: actor.memberId }, now)
   const rows = await db.$primary.select().from(RemoteDeviceTable).where(visibleTo(actor)).limit(500)
@@ -344,7 +346,7 @@ export async function listMemberRemoteDeviceRows(actor: RemoteDeviceActor, optio
     .map((row) => {
       const runner = runners.get(row.externalId) ?? null
       const device = deviceView(row, {
-        viewer: actor, canManageShared: options.canManageShared, runner, session: sessions.get(row.id) ?? null,
+        viewer: actor, canManageShared: options.canManageShared, computersEnabled: options.computersEnabled, runner, session: sessions.get(row.id) ?? null,
         disconnectedAt: disconnections.get(row.id) ?? null, policy, now: now.getTime(),
       })
       return { row, device, runner }
@@ -360,26 +362,32 @@ async function visibleRow(actor: RemoteDeviceActor, deviceId: DeviceId, database
   return row ?? null
 }
 
-async function viewOne(row: DeviceRow, actor: RemoteDeviceActor, canManageShared: boolean, now: Date) {
+async function viewWithRunner(row: DeviceRow, actor: RemoteDeviceActor, canManageShared: boolean, now: Date, computersEnabled?: boolean) {
   const { runners, sessions, disconnections, policy } = await related([row], actor)
-  return deviceView(row, {
-    viewer: actor, canManageShared, runner: runners.get(row.externalId) ?? null, session: sessions.get(row.id) ?? null,
+  const runner = runners.get(row.externalId) ?? null
+  const device = deviceView(row, {
+    viewer: actor, canManageShared, computersEnabled, runner, session: sessions.get(row.id) ?? null,
     disconnectedAt: disconnections.get(row.id) ?? null, policy, now: now.getTime(),
   })
+  return { row, device, runner }
+}
+
+async function viewOne(row: DeviceRow, actor: RemoteDeviceActor, canManageShared: boolean, now: Date, computersEnabled?: boolean) {
+  return (await viewWithRunner(row, actor, canManageShared, now, computersEnabled)).device
 }
 
 export async function readMemberRemoteDeviceRow(actor: RemoteDeviceActor, deviceId: DeviceId) {
   const row = await visibleRow(actor, deviceId)
-  return row ? { row, device: await viewOne(row, actor, false, new Date()) } : null
+  return row ? viewWithRunner(row, actor, false, new Date()) : null
 }
 
-export async function readMemberRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, options: { canManageShared: boolean; now?: Date }) {
+export async function readMemberRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, options: { canManageShared: boolean; computersEnabled?: boolean; now?: Date }) {
   const row = await visibleRow(actor, deviceId)
   if (!row) return null
   const events = await db.$primary.select().from(RemoteDeviceEventTable)
     .where(and(eq(RemoteDeviceEventTable.deviceId, row.id), legacyRemoteDeviceEvent))
     .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(20)
-  return { device: await viewOne(row, actor, options.canManageShared, options.now ?? new Date()), events: events.map(legacyEventView) }
+  return { device: await viewOne(row, actor, options.canManageShared, options.now ?? new Date(), options.computersEnabled), events: events.map(legacyEventView) }
 }
 
 export async function registerRemoteDevice(actor: RemoteDeviceActor, input: RemoteDeviceRegisterRequest, options: { canManageShared: boolean; now?: Date }): Promise<RemoteDevice> {
@@ -438,7 +446,8 @@ export async function renameRemoteDevice(actor: RemoteDeviceActor, deviceId: Dev
   const now = options.now ?? new Date()
   const rename = () => db.transaction(async (tx) => {
     const existing = await manageableRow(actor, deviceId, options.canManageShared, tx)
-    if (existing.source !== "manual") throw new RemoteDeviceError("remote_device_forbidden", "This computer names itself.")
+    const renameDesktop = options.uniqueName && existing.kind === "desktop" && existing.ownerMemberId === actor.memberId
+    if (existing.source !== "manual" && !renameDesktop) throw new RemoteDeviceError("remote_device_forbidden", "This computer names itself.")
     if (options.uniqueName) {
       const owned = await tx.select({ id: RemoteDeviceTable.id, label: RemoteDeviceTable.label }).from(RemoteDeviceTable).where(and(
         eq(RemoteDeviceTable.organizationId, actor.organizationId), eq(RemoteDeviceTable.ownerMemberId, actor.memberId), isNull(RemoteDeviceTable.removedAt),
@@ -447,13 +456,14 @@ export async function renameRemoteDevice(actor: RemoteDeviceActor, deviceId: Dev
         throw new RemoteDeviceError("name_taken", "You already have a computer called that. Pick another name.")
       }
     }
-    if (existing.label === label) return existing
-    await tx.update(RemoteDeviceTable).set({ label, updatedAt: now }).where(eq(RemoteDeviceTable.id, existing.id))
+    if (existing.label === label && (!renameDesktop || existing.labelChosenAt)) return existing
+    const values = { label, updatedAt: now, ...(renameDesktop ? { labelChosenAt: now } : {}) }
+    await tx.update(RemoteDeviceTable).set(values).where(eq(RemoteDeviceTable.id, existing.id))
     await recordEvent(tx, { organizationId: actor.organizationId, deviceId: existing.id, type: "renamed", actor: "member", actorId: actor.memberId, message: "Renamed", now })
-    return { ...existing, label }
+    return { ...existing, ...values }
   })
   const row = await (options.uniqueName ? withDeadlockRetry(rename) : rename())
-  return viewOne(row, actor, options.canManageShared, now)
+  return viewOne(row, actor, options.canManageShared, now, options.uniqueName)
 }
 
 export async function removeRemoteDevice(actor: RemoteDeviceActor, deviceId: DeviceId, options: { canManageShared: boolean; now?: Date }) {
@@ -525,10 +535,34 @@ async function desktopMachineKey(tx: Database, actor: RemoteDeviceActor, machine
   return createHash("sha256").update(`${actor.organizationId}\n${machineKey}`).digest("hex")
 }
 
+function reportedDesktopLabel(diagnostics: RemoteDeviceDiagnostics | null) {
+  return diagnostics && "reportedLabel" in diagnostics && typeof diagnostics.reportedLabel === "string" ? diagnostics.reportedLabel : null
+}
+
+async function desktopReportLabel(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], actor: RemoteDeviceActor, existing: DeviceRow | undefined, label: string, now: Date) {
+  if (existing?.labelChosenAt) return existing.label
+  if (existing && existing.label !== label && reportedDesktopLabel(existing.diagnostics) === label) return existing.label
+  const d = RemoteDeviceTable
+  const others = await tx.select({ id: d.id, label: d.label, lastSeenAt: d.lastSeenAt, runnerSeenAt: AutomationRunnerTable.last_seen_at })
+    .from(d).leftJoin(AutomationRunnerTable, remoteDeviceRunnerJoin).where(and(
+      eq(d.organizationId, actor.organizationId), eq(d.ownerMemberId, actor.memberId), isNull(d.removedAt),
+    )).orderBy(d.id).for("update")
+  const peers = others.filter(({ id }) => id !== existing?.id)
+  const collision = peers.some((peer) => peer.label.toLowerCase() === label.toLowerCase() &&
+    !quietSince(latestDeviceContact(peer.lastSeenAt, peer.runnerSeenAt), now.getTime(), REMOTE_DEVICE_ONLINE_WINDOW_MS))
+  return collision ? uniqueComputerLabel(label, peers.map((peer) => peer.label)) : label
+}
+
+function publicDiagnostics(diagnostics: RemoteDeviceDiagnostics | null) {
+  if (!diagnostics || !("reportedLabel" in diagnostics)) return diagnostics
+  const { reportedLabel, ...publicFields } = diagnostics
+  return publicFields
+}
+
 export async function reportDesktopDevice(
   actor: RemoteDeviceActor,
   report: RemoteDeviceDesktopReport,
-  options: { canManageShared: boolean; session: SignInSession | null; now?: Date },
+  options: { canManageShared: boolean; computersEnabled?: boolean; session: SignInSession | null; now?: Date },
 ): Promise<RemoteDevice> {
   const now = options.now ?? new Date()
   const externalId = automationRunnerRowId({ organizationId: actor.organizationId, ownerMemberId: actor.memberId, runnerId: report.installId })
@@ -543,14 +577,16 @@ export async function reportDesktopDevice(
     const disconnection = await findDisconnection(actor.organizationId, actor.memberId, report.installId, tx)
     if (disconnection && await reconnectIfSignedInAgain(disconnection, options.session, { database: tx, now }) === "refused") throw new ComputerDisconnectedError()
     const machineKey = report.machineKey ? await desktopMachineKey(tx, actor, report.machineKey) : undefined
+    const label = options.computersEnabled ? await desktopReportLabel(tx, actor, existing, report.label, now) : report.label
+    const diagnostics = { ...diagnosticsOf(report, now), ...(options.computersEnabled ? { reportedLabel: report.label } : {}) }
     const values = {
       ...(machineKey ? { machineKey } : {}),
       platform: report.platform,
-      label: report.label,
+      label,
       state,
       statusDetail: detail,
       appVersion: report.appVersion,
-      diagnostics: diagnosticsOf(report, now),
+      diagnostics,
       lastSeenAt: now,
       removedAt: null,
       updatedAt: now,
@@ -590,7 +626,7 @@ export async function reportDesktopDevice(
   if (options.session) {
     await automationRepository.noteDesktopRunnerSignIn({ organizationId: actor.organizationId, ownerMemberId: actor.memberId, runnerId: report.installId, authSessionId: options.session.id })
   }
-  return viewOne(row, actor, options.canManageShared, now)
+  return viewOne(row, actor, options.canManageShared, now, options.computersEnabled)
 }
 
 const READINESS_STATE = { ready: "ready", "setup-required": "setup_required", unsupported: "unavailable", unavailable: "unavailable" } as const
@@ -955,7 +991,7 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
   const session = sessionRows[0]
   return {
     device: view,
-    diagnostics: device.diagnostics ?? null,
+    diagnostics: publicDiagnostics(device.diagnostics),
     events: events.map(organizationComputerEventView),
     runner: runner ? {
       computerId: runner.id,

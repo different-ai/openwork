@@ -1001,7 +1001,7 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
 
 function capabilityHasNoApprovalPath(parsed: ParsedCapability): boolean {
   if (parsed.kind === "admin" || parsed.kind === "slackSendAsBot") return true
-  if (parsed.kind === "computers") return parsed.name === "computers:shell"
+  if (parsed.kind === "computers") return parsed.name !== "computers:list"
   return parsed.kind === "remoteSession" && !["read", "list", "targets", "status"].includes(parsed.action)
 }
 

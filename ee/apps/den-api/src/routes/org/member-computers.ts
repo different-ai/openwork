@@ -61,7 +61,7 @@ export function registerOrgMemberComputerRoutes<T extends { Variables: OrgRouteV
   app.post(`${base}/:computerId/authorize`, describeComputerRoute({
     tags: ["Devices"], operationId: "authorizeMemberComputer", "x-mcp": false,
     summary: "Check whether my OpenWork app can do work on a computer",
-    description: "Checks the requested action on one of the caller's computers or a computer shared with the organization. Registered virtual computers require the owner's own OpenWork app and explicit permission to use the entire computer. The organization can turn access off. Personal computers don't take work yet. Both allowed and refused decisions return HTTP 200. Only an allowed action on a registered virtual computer includes its provider and provider id. Den never runs the action or supplies provider credentials. Requires active organization membership and Computers.",
+    description: "Checks the requested action on one of the caller's computers or a computer shared with the organization. Registered virtual computers require the owner's own OpenWork app and explicit permission to use the entire computer. The organization can turn access off. Using a personal computer requires an identified desktop and a grant from its owner. Both allowed and refused decisions return HTTP 200. Only an allowed action on a registered virtual computer includes its provider and provider id. Den never runs the action or supplies provider credentials. Requires active organization membership and Computers.",
     responses: {
       200: jsonResponse("The decision, computer and connection if available.", computerAuthorizeResponseSchema),
       400: invalid,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { after, test } from "node:test"
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { eq } from "@openwork-ee/den-db/drizzle"
 import { AutomationRunnerTable, ComputerGrantTable, MemberTable, OrganizationTable, RemoteDeviceTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { workbotSessionId, workbotSideChatSessionId } from "@openwork-ee/headless-protocol/workbot-routing"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -67,7 +67,7 @@ test("five sign-ins resolve to one Mac without altering the legacy device list o
   assert.ok(first && newest)
   await db.update(RemoteDeviceTable).set({ lastSeenAt: new Date() }).where(eq(RemoteDeviceTable.id, newest))
   const inventory = await list()
-  assert.deepEqual(inventory.computers.map(({ id, mergedSignIns, runCode }) => ({ id, mergedSignIns, runCode })), [{ id: newest, mergedSignIns: 4, runCode: { value: "not_available" } }])
+  assert.deepEqual(inventory.computers.map(({ id, mergedSignIns, runCode }) => ({ id, mergedSignIns, runCode })), [{ id: newest, mergedSignIns: 4, runCode: { value: "no", reason: "sandbox_unavailable" } }])
   assert.deepEqual(inventory.mergedSignIns.map(({ id }) => id).sort(), ids.slice(0, 4).sort())
   assert.ok(inventory.mergedSignIns.every((signIn) => signIn.computerId === newest && !signIn.canRemove))
   assert.deepEqual((await detail(newest)).installed.mergedSignIns, inventory.mergedSignIns)
@@ -141,7 +141,7 @@ test("desktop permissions are a note, while a registered Daytona computer can ru
   const allow = await asMaya("PUT", `/v1/computers/${cloud}/access`, { choice: "allow", scope: "whole_vm", folders: ["/workspace"] })
   assert.equal(allow.status, 200, summary(allow))
   const own = await detail(cloud)
-  assert.deepEqual(own.runCode, { value: { value: "whole_computer" }, sources: [{ key: "owner_whole_vm", label: "Maya Okafor's OpenWork apps", scope: "whole_computer", folders: ["/workspace"], revokedAt: null, revokedBy: null }], canChange: true, canRevoke: true, canRestore: true })
+  assert.deepEqual(own.runCode, { value: { value: "whole_computer" }, sources: [{ key: "owner_whole_vm", label: "Maya Okafor's OpenWork apps", scope: "whole_computer", folders: ["/workspace"], writableFolders: [], revokedAt: null, revokedBy: null }], canChange: true, canRevoke: true, canRestore: true })
   const admin = await detail(cloud, asOwner, team)
   assert.deepEqual([admin.callerIsOwner, admin.runCode.canChange, admin.runCode.canRevoke, admin.runCode.canRestore], [false, false, true, false])
   const revokedAt = new Date()
@@ -174,7 +174,7 @@ test("a capable runner supplies effective contact and remote session access, and
     { source: { kind: "workbot" }, folders: ["/notes", "/work"] },
     { source: { kind: "owner" }, folders: ["/notes", "/other"] },
   ] })
-  await db.update(ComputerGrantTable).set({ revokedAt: new Date() }).where(and(eq(ComputerGrantTable.targetDeviceId, id), eq(ComputerGrantTable.sourceKey, "owner")))
+  await db.insert(ComputerGrantTable).values({ id: createDenTypeId("computerGrant"), organizationId, targetDeviceId: id, sourceKey: "owner", folders: ["/notes", "/other"], revokedAt: new Date() })
   const item = await detail(id)
   assert.deepEqual(item.computer.status, { state: "online", lastSeenAt: seenAt.toISOString() })
   assert.deepEqual(item.sessions, { sendTasks: true, readSessions: "started_by_them", access: { effective: "created", chosen: false, reason: null } })

@@ -9,7 +9,7 @@ import type { RemoteDeviceActor } from "../remote-devices.js"
 import { withDeadlockRetry } from "../utils/deadlock-retry.js"
 import { computerMemberNames } from "./activity.js"
 
-type Grant = Pick<typeof ComputerGrantTable.$inferSelect, "sourceKey" | "folders" | "revokedAt" | "revokedByMemberId"> & Partial<Pick<typeof ComputerGrantTable.$inferSelect, "writableFolders">>
+type Grant = Pick<typeof ComputerGrantTable.$inferSelect, "sourceKey" | "folders" | "writableFolders" | "revokedAt" | "revokedByMemberId">
 type Viewer = { kind: "member" | "organization"; actor: RemoteDeviceActor }
 
 export async function sourceViews(database: RemoteDeviceDatabase, viewer: Viewer, ownerName: string | null, grants: Grant[]): Promise<ComputerSourceAccess[]> {

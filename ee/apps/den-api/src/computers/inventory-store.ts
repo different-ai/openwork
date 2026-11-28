@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, AutomationRunnerTable, ComputerAccessTable, ComputerDisconnectionTable, ComputerGrantTable, MemberTable, OrganizationTable, RemoteDeviceEventTable, RemoteDeviceTable, WorkerTable } from "@openwork-ee/den-db/schema"
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { ownerWholeVmScope } from "@openwork/computers"
 import {
   COMPUTER_INVENTORY_PAGE_SIZE, COMPUTER_INVENTORY_RECENT_MS, readOrganizationComputerRules,
@@ -8,7 +8,7 @@ import {
   type ComputerRunCode, type MyComputerInventoryResponse, type OrganizationComputerInventoryResponse,
   type OrganizationComputerInventoryTab, type OrganizationComputerRules,
 } from "@openwork/types/den/computer-inventory"
-import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, type ComputerOwnerChoice } from "@openwork/types/den/computers"
+import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, isExecutableVmProvider, type ComputerOwnerChoice } from "@openwork/types/den/computers"
 import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY } from "@openwork/types/automations"
 import { remoteDeviceTypeLabel } from "@openwork/types/den/remote-devices"
 import { deviceDisconnectionJoin } from "../computer-disconnect.js"
@@ -98,7 +98,7 @@ async function readBatches<T extends { id: string }, I extends T["id"]>(read: (a
 async function readGrants(organizationId: RemoteDeviceActor["organizationId"], ids: DeviceId[]) {
   const g = ComputerGrantTable
   return db.$primary.select({
-    targetId: g.targetDeviceId, sourceKey: g.sourceKey, folders: g.folders, revokedAt: g.revokedAt, revokedByMemberId: g.revokedByMemberId,
+    targetId: g.targetDeviceId, sourceKey: g.sourceKey, folders: g.folders, writableFolders: g.writableFolders, revokedAt: g.revokedAt, revokedByMemberId: g.revokedByMemberId,
   }).from(g).where(and(eq(g.organizationId, organizationId), inArray(g.targetDeviceId, ids))).orderBy(asc(g.sourceKey))
 }
 
@@ -116,26 +116,26 @@ async function grantsByDevice(organizationId: RemoteDeviceActor["organizationId"
   return grants
 }
 
-function isDaytona(device: Device) {
-  return device.kind === "vm" && device.provider === "daytona" && device.source === "manual"
+function isExecutableVm(device: Device) {
+  return device.kind === "vm" && isExecutableVmProvider(device.provider) && device.source === "manual"
 }
 
 function canRunCode(device: Device, kind: SignInGroup<Device>["kind"]) {
-  return isDaytona(device) || (kind === "desktop" && device.runnerCapabilities?.includes(COMPUTER_SHELL_RUNNER_CAPABILITY) === true)
+  return isExecutableVm(device) || (kind === "desktop" && device.runnerCapabilities?.includes(COMPUTER_SHELL_RUNNER_CAPABILITY) === true)
 }
 
 function runCode(group: SignInGroup<Device>, rules: OrganizationComputerRules, grants: Grant[]): ComputerRunCode {
   const { newest: device, kind } = group
-  if (!canRunCode(device, kind)) return { value: "not_available" }
+  if (!canRunCode(device, kind)) return kind === "desktop" ? { value: "no", reason: "sandbox_unavailable" } : { value: "not_available" }
   if (!rules.runCode) return { value: "no", reason: "organization" }
   if (device.choice === null) return { value: "no", reason: "not_chosen" }
   if (device.choice !== "allow") return { value: "no", reason: "owner" }
   if (kind === "desktop") {
-    const sandbox = grants.filter((grant) => grant.sourceKey !== COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY)
+    const sandbox = grants.filter((grant) => grant.sourceKey === "workbot" || isDenTypeId("remoteDevice", grant.sourceKey))
     const active = sandbox.filter((grant) => !grant.revokedAt)
     if (sandbox.length && !active.length) return { value: "no", reason: "revoked" }
     const folders = new Set(active.flatMap((grant) => grant.folders))
-    return { value: "sandbox", folders: folders.size }
+    return folders.size ? { value: "sandbox", folders: folders.size } : { value: "no", reason: "nothing_shared" }
   }
   const whole = grants.find((grant) => grant.sourceKey === COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY)
   const scope = ownerWholeVmScope(device.id, {
@@ -149,8 +149,9 @@ function runCode(group: SignInGroup<Device>, rules: OrganizationComputerRules, g
 function actions(device: Device, viewer: Viewer, now: number) {
   const facts = { disconnected: device.disconnectedAt !== null, lastSeenAt: device.lastSeenAt, now }
   return viewer.kind === "member"
-    ? memberRemoteDeviceActions(device, { ...facts, viewer: viewer.actor, canManageShared: viewer.canManageShared })
-    : { canRename: false, ...organizationRemoteDeviceActions(device, { ...facts, canDisconnect: viewer.canDisconnect, former: device.owner?.former === true }) }
+    ? memberRemoteDeviceActions(device, { ...facts, viewer: viewer.actor, canManageShared: viewer.canManageShared, computersEnabled: true })
+    : { canRename: device.kind === "desktop" && device.provider === "openwork_desktop" && device.ownerMemberId === viewer.actor.memberId && device.owner?.former === false,
+      ...organizationRemoteDeviceActions(device, { ...facts, canDisconnect: viewer.canDisconnect, former: device.owner?.former === true }) }
 }
 
 async function loadInventory(viewer: Viewer, now: Date) {
@@ -286,7 +287,7 @@ export async function readComputerInventoryDetail(viewer: Viewer, id: DeviceId, 
     installed: { appVersion: newest.appVersion, platform: newest.platform && platformNames[newest.platform], signedInAs: signedInAs(computer.owner), addedAt, lastSeenAt: computer.status.lastSeenAt, mergedSignIns },
     runCode: {
       value: computer.runCode, sources: canReadGrants ? await sourceViews(db.$primary, viewer, computer.owner?.name ?? computer.owner?.email ?? null, grants) : [],
-      canChange: callerIsOwner && isDaytona(newest), canRevoke: viewer.kind === "member" ? callerIsOwner : viewer.canDisconnect, canRestore: callerIsOwner,
+      canChange: callerIsOwner && isExecutableVm(newest), canRevoke: viewer.kind === "member" ? callerIsOwner : viewer.canDisconnect, canRestore: callerIsOwner,
     },
   }
 }
