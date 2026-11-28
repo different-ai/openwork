@@ -7,7 +7,7 @@ import {
   organizationToolRuleInstructions,
   personalAgentRunInstructions,
 } from "@openwork/automations"
-import { AUTOMATION_RUNNER_WORK_RUN_LIMIT, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY, isAutomationCloudDefaultModel } from "@openwork/types/automations"
+import { AUTOMATION_DEFAULT_MAXIMUM_RUNTIME_MS, AUTOMATION_RUNNER_WORK_RUN_LIMIT, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY, isAutomationCloudDefaultModel } from "@openwork/types/automations"
 import type {
   AutomationCloudTarget,
   AutomationDesktopRunnerCapability,
@@ -29,6 +29,7 @@ import type {
   UpdateAutomation,
 } from "@openwork/types/automations"
 import { listSharedAutomations } from "./sharing.js"
+import { requireCloudAgentRuntime } from "./runtime-limit.js"
 import { env } from "../env.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
 import { runnerStanding } from "../computer-disconnect.js"
@@ -73,6 +74,7 @@ const DESKTOP_TARGET_LIST_LIMIT = 100
 type OwnerScope = {
   organizationId: string
   ownerMemberId: string
+  userId?: string
   modelAttentionCapable?: boolean
   readableScheduleKinds?: ReadonlySet<AutomationScheduleKind> | null
 }
@@ -411,6 +413,16 @@ export class AutomationService {
     this.requireScheduleAllowed(scope, changes.schedule ?? current.revision.schedule, nextTarget, current.revision.schedule)
     const moved = nextTarget !== currentTarget
     const nextAction = changes.action ?? current.revision.action
+    if (changes.maximumRuntimeMs !== undefined) {
+      if (!await organizationFeatureEnabled(scope.organizationId, "automationHourRuntime", { userId: scope.userId })) {
+        throw new HTTPException(404, { res: Response.json({ error: "feature_disabled", feature: "automationHourRuntime" }, { status: 404 }) })
+      }
+      requireCloudAgentRuntime(nextTarget, nextAction)
+      markFeaturesUsed({ organizationId: scope.organizationId, memberId: scope.ownerMemberId, keys: ["automationHourRuntime"] })
+    }
+    if ((changes.maximumRuntimeMs ?? current.revision.maximumRuntimeMs) > AUTOMATION_DEFAULT_MAXIMUM_RUNTIME_MS) {
+      requireCloudAgentRuntime(nextTarget, nextAction)
+    }
     requireAgentRoutineRunsAsCloudAgent(current.automation, nextTarget, nextAction)
     await requireRoutineAgentActive(scope, current.automation)
     if (nextTarget === "desktop" && nextAction?.kind === "saved_script") {
@@ -481,6 +493,9 @@ export class AutomationService {
     const actorScope = actingMemberId ? { ...scope, ownerMemberId: actingMemberId } : scope
     const savedTarget = current.revision.executionTarget ?? "desktop"
     const target = options.executionTarget ?? savedTarget
+    if (current.revision.maximumRuntimeMs > AUTOMATION_DEFAULT_MAXIMUM_RUNTIME_MS) {
+      requireCloudAgentRuntime(target, current.revision.action)
+    }
     requireAgentRoutineRunsAsCloudAgent(current.automation, target, current.revision.action)
     await requireRoutineAgentActive(scope, current.automation)
     if (target !== savedTarget) await this.requireTargetMove(actorScope, current.revision.action, target, options)

@@ -81,6 +81,7 @@ function scope(c: {
   return {
     organizationId: context.organization.id,
     ownerMemberId: context.currentMember.id,
+    userId: context.currentMember.userId,
     modelAttentionCapable,
     readableScheduleKinds: readableAutomationScheduleKinds({
       scheduleKindsHeader: c.req.header(AUTOMATION_SCHEDULE_KINDS_HEADER),
@@ -119,6 +120,9 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
   if (error.message === "automation_not_found") return { status: 404, body: { error: "automation_not_found" } }
   if (error.message === "automation_once_time_in_past") {
     return { status: 400, body: { error: error.message, message: "That time has already passed. Choose a future time for this Automation." } }
+  }
+  if (error.message === "automation_runtime_cloud_agent_only") {
+    return { status: 400, body: { error: error.message } }
   }
   if (error.message === "automation_action_target_mismatch") {
     return { status: 400, body: { error: "automation_action_target_mismatch", message: "This Automation runs only in OpenWork Cloud." } }
