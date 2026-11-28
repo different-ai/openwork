@@ -61,6 +61,7 @@ import {
 } from "./utils";
 import { computeBrowserBounds, createBrowserBoundsSync } from "./browser-bounds-sync";
 import { browserOperationLabels } from "./browser-status";
+import { useDesktopFeature } from "../status/use-desktop-feature";
 import type { BrowserPresentationMode } from "./browser-presentation-store";
 import { chooseTabPageSize } from "./agent-viewport";
 import { isBrowserSecretsDialogTarget } from "./browser-secrets";
@@ -254,6 +255,7 @@ export function BrowserPanelContent({
   presentation,
 }: BrowserPanelContentProps) {
   const isAvailable = Boolean(getElectronBrowser());
+  const taskBarHidden = useDesktopFeature("hideBrowserTaskBar");
   const suspended = tab.status === "suspended";
   const busy = tab.status === "suspending" || tab.status === "restoring";
   const pageFailure = tab.loadError?.code === "page_load_failed" ? tab.loadError : null;
@@ -387,7 +389,7 @@ export function BrowserPanelContent({
     <>
       {failure?.owner === failureOwner ? <div className="shrink-0 px-3 py-2"><TaskRecovery compact title={failure.title} technicalDetails={failure.details}
         actions={<Button variant="ghost" size="xs" onClick={() => setFailure(null)}>Dismiss</Button>} /></div> : null}
-      {isAvailable && tab.browserTask ? (
+      {isAvailable && tab.browserTask && !taskBarHidden ? (
         <div data-browser-shortcut-tab={tab.id} className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
           <span className="shrink-0 font-medium">Built-in browser</span>
           <span role="status" className="min-w-0 flex-1 truncate text-muted-foreground">

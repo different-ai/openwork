@@ -22,6 +22,7 @@ export { default as flatSessionPanes } from "@openwork/features/flags/flat-sessi
 export { default as followUpDelivery } from "@openwork/features/flags/follow-up-delivery"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
 export { default as gmailThreadRead } from "@openwork/features/flags/gmail-thread-read"
+export { default as hideBrowserTaskBar } from "@openwork/features/flags/hide-browser-task-bar"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
 export { default as lowStorageWarning } from "@openwork/features/flags/low-storage-warning"
 export { default as managedDeploymentAssistants } from "@openwork/features/flags/managed-deployment-assistants"
