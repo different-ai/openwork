@@ -53,6 +53,7 @@ export const openworkProviderSyncV2PluginPath = () => {
 };
 export const openworkContextV2PluginPath = () => openworkPluginPath("openwork-context-v2");
 export const openworkProviderFiltersV2PluginPath = () => openworkPluginPath("openwork-provider-filters-v2");
+export const openworkProviderKeysV2PluginPath = () => openworkPluginPath("openwork-provider-keys-v2");
 export const openworkMcpResultsV2PluginPath = () => openworkPluginPath("openwork-mcp-results-v2");
 export const openworkMcpReadinessV2PluginPath = () => openworkPluginPath("openwork-mcp-readiness-v2");
 export const openworkVisibleReasoningV2PluginPath = () => openworkPluginPath("openwork-visible-reasoning-v2");
