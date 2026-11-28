@@ -60,16 +60,16 @@ run(pnpmCmd, ["--filter", "@openwork/computer-use", "build"], repoRoot);
 run(pnpmCmd, ["--filter", "@openwork/sandbox", "--filter", "@openwork/sandbox-freestyle", "--filter", "@openwork/sandbox-daytona", "--filter", "@openwork/sandbox-microsandbox", "build"], repoRoot);
 // The staged @openwork/types serves every export from this build.
 run(pnpmCmd, ["--filter", "@openwork/types", "build"], repoRoot);
+// Compile the server and its workspace dependencies (including @openwork/computers)
+// before copying them into the runtime. --server-built supplies those outputs from CI.
+if (!process.argv.includes("--server-built")) {
+  run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
+}
 run(nodeCmd, [resolve(__dirname, "prepare-runtime-node-modules.mjs"), "--outdir", packagedRuntimeRoot], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-packaged-sandbox-image.mjs"), "--outdir", resolve(desktopRoot, ".electron-runtime", "sandbox-image")], desktopRoot);
 writeSentryBuildConfig();
 run(pnpmCmd, ["--filter", "@openwork/free-auto", "build"], repoRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-desktop-free-release.mjs")], desktopRoot);
-// Build the server TS → JS so Electron can import it in-process
-// CI already compiles this exact checkout in the required build job.
-if (!process.argv.includes("--server-built")) {
-  run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
-}
 // Resolve the pinned v1 engine's plugin dependencies at build time. Fresh
 // desktops unpack this install instead of requiring npm access to open a folder.
 run(nodeCmd, [resolve(repoRoot, "apps/server/scripts/build-opencode-plugin-deps.mjs")], repoRoot);

@@ -48,6 +48,9 @@ async function fixture(t, { omit = [], helperModule = "microsandbox", aliases = 
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const source = join(root, "input");
   const files = {
+    "server/dist/computers/incoming-runner.js": 'import { fixture } from "@openwork/computers"; export { fixture };',
+    "node_modules/@openwork/computers/package.json": JSON.stringify({ type: "module", exports: { ".": { development: "./src/index.ts", default: "./dist/index.js" } } }),
+    "node_modules/@openwork/computers/dist/index.js": "export const fixture = true;",
     "server/dist/local-sandbox-runtime.js": `import "ipaddr.js"; ${aliases ? 'import "ipaddr-alias.js"; import "ipaddr.js/alias";' : ""} export { loadSdk } from "./packaged-sandbox-assets.js"; const adapter = "@openwork/sandbox-microsandbox"; export const load = () => import(adapter);`,
     "node_modules/ipaddr.js/package.json": JSON.stringify({ name: "ipaddr.js", type: "module", exports: { ".": "./lib/ipaddr.js", "./alias": "./lib/alias.js" } }),
     "node_modules/ipaddr.js/lib/ipaddr.js": "export const fixture = true;",
@@ -127,6 +130,12 @@ test("package boundary rejects a damaged bundled guest image archive", async (t)
 test("package boundary catches original missing lazy workspace adapter", async (t) => {
   const { archive, entries } = await fixture(t, { omit: ["node_modules/@openwork/sandbox-microsandbox/package.json"] });
   assert.throws(() => verifyPackagedSandboxDependencies(archive, entries, context), /Packaged runtime cannot resolve @openwork\/sandbox-microsandbox/);
+});
+
+test("package boundary rejects a computers manifest without the server's compiled entrypoint", async (t) => {
+  const { archive, entries } = await fixture(t, { omit: ["node_modules/@openwork/computers/dist/index.js"] });
+  assert.ok(entries.has("/node_modules/@openwork/computers/package.json"));
+  assert.throws(() => verifyPackagedSandboxDependencies(archive, entries, context), /missing: @openwork\/computers from server\/dist\/computers\/incoming-runner\.js/);
 });
 
 test("package boundary follows transitive dynamic imports, not only package manifests", async (t) => {

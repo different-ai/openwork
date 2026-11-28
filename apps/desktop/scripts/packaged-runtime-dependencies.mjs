@@ -89,6 +89,9 @@ export function verifyPackagedImportGraph(root, entry = "server/dist/local-sandb
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = process.argv[2];
   if (!root) throw new Error("Expected extracted packaged app directory.");
-  const files = verifyPackagedImportGraph(root);
-  process.stdout.write(`${JSON.stringify({ verifiedRuntimeModules: files.length })}\n`);
+  const files = new Set([
+    ...verifyPackagedImportGraph(root),
+    ...verifyPackagedImportGraph(root, "server/dist/computers/incoming-runner.js"),
+  ]);
+  process.stdout.write(`${JSON.stringify({ verifiedRuntimeModules: files.size })}\n`);
 }

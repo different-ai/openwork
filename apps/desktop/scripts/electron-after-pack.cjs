@@ -166,7 +166,7 @@ function verifyPackagedSandboxDependencies(appAsarPath, packagedFiles, context) 
     }
     const result = spawnSync(process.execPath, ["--experimental-import-meta-resolve", path.join(__dirname, "packaged-runtime-dependencies.mjs"), extracted], { encoding: "utf8", env: { ...process.env, NODE_PATH: "", NODE_OPTIONS: "" } });
     if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(`Packaged sandbox dependency boundary failed:\n${result.stderr}`);
+    if (result.status !== 0) throw new Error(`Packaged runtime dependency boundary failed:\n${result.stderr}`);
   } finally {
     fs.rmSync(extracted, { recursive: true, force: true });
   }
