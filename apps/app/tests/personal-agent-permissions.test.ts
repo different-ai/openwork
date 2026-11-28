@@ -76,9 +76,9 @@ describe("personal agent permissions", () => {
     expect(toolRequestReceipt({ ...request, status: "denied" }, "Bug watcher")).toBe("Dana Reyes said no, so Bug watcher didn't use Post a message");
     expect(toolRequestReceipt({ ...request, status: "denied" }, "Bug watcher", true)).toBe("You said no, so Bug watcher didn't use Post a message");
     expect(toolRequestReceipt({ ...request, status: "denied", decidedBy: null }, "Bug watcher")).toBe("You said no, so Bug watcher didn't use Post a message");
-    expect(toolRequestReceipt({ ...request, status: "allowed_once" }, "Bug watcher")).toBe("Bug watcher can use Post a message this time");
-    expect(toolRequestReceipt({ ...request, status: "used" }, "Bug watcher")).toBe("Bug watcher can use Post a message this time");
-    expect(toolRequestReceipt({ ...request, status: "always_allowed" }, "Bug watcher")).toBe("Bug watcher can use Post a message from now on");
+    expect(toolRequestReceipt({ ...request, status: "allowed_once" }, "Bug watcher")).toBe("Post a message allowed once");
+    expect(toolRequestReceipt({ ...request, status: "used" }, "Bug watcher")).toBe("Post a message allowed once");
+    expect(toolRequestReceipt({ ...request, status: "always_allowed" }, "Bug watcher")).toBe("Post a message always allowed");
     expect(toolRequestReceipt({ ...request, status: "pending" }, "Bug watcher")).toBeNull();
   });
 

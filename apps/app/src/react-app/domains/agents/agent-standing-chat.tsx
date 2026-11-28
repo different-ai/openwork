@@ -14,8 +14,10 @@ import { agentChatFor, agentChatKey, useAgentChatStore } from "./agent-chat-stor
 import { AGENT_ROW_INSET, AgentRunEntry } from "./agent-run-result";
 import { agentThreadTimeline } from "./agent-thread-messages";
 import { AgentChangeRequest } from "./agent-change-request";
+import { agentConnectorIdentities } from "./agent-connection-logo";
 import { AgentToolReceipt, canDecideAgentToolRequest, isVisibleAgentRequest } from "./agent-tool-request";
 import { useAgentsRuntime, type AgentsRuntime } from "./agents-runtime";
+import { useAgentToolsQuery } from "./use-agent-permissions";
 import { agentsQueryRoot, isActiveRun, useAgentDetail, useAgentRequestsQuery, useAgentRunsQuery } from "./use-agents";
 
 type ThreadSend = { input: SendPersonalAgentChatMessage; createdAt: number };
@@ -39,6 +41,8 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
   const local = useLocal();
   const agent = useAgentDetail(runtime, agentId);
   const displayName = agent?.agent.name ?? name;
+  const catalog = useAgentToolsQuery(runtime, agentId).data;
+  const connectorIdentities = useMemo(() => agentConnectorIdentities(catalog), [catalog]);
   const paused = Boolean(agent?.agent.pausedAt);
   const sendInProgress = useRef(false);
   const [text, setText] = useState("");
@@ -89,7 +93,7 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
   const runsActive = agent?.routines.some((routine) => isActiveRun(routine.latestRun)) ?? false;
   const runs = useAgentRunsQuery(runtime, agent ? agentId : null, runsActive);
   const recentRuns = useMemo(() => [...runs.data ?? []].sort((a, b) => a.createdAt - b.createdAt).slice(-5), [runs.data]);
-  const requests = useAgentRequestsQuery(runtime, agent ? agentId : null, Boolean(agent?.openRequestCount));
+  const requests = useAgentRequestsQuery(runtime, agent ? agentId : null, Boolean(agent?.openRequestCount), true, running);
   const answeredRequests = useMemo(() => agent ? (requests.data ?? []).filter((request) => !canDecideAgentToolRequest(request) && isVisibleAgentRequest(agent, request)) : [],
     [requests.data, agent]);
   const timeline = useMemo(() => agentThreadTimeline(thread.data?.turns ?? [], recentRuns,
@@ -139,7 +143,7 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
           <Skeleton className="h-9 w-40 self-end rounded-2xl" />
           <Skeleton className="h-4 w-56 max-w-full" />
         </div> : !thread.isError && timeline.length === 0 ?
-          <p className={`${AGENT_ROW_INSET} text-sm text-dls-secondary`}>{agent?.routines.length === 0 ? t("agents.greeting") : t("agents.chat_empty", { name: displayName })}</p> : null}
+          <div className={AGENT_ROW_INSET}><p className="w-fit max-w-[92%] rounded-3xl border border-dls-border bg-dls-surface px-4 py-2.5 text-sm leading-6 text-dls-text">{agent?.routines.length === 0 ? t("agents.greeting") : t("agents.chat_empty", { name: displayName })}</p></div> : null}
         {timeline.map((item, index) => item.kind === "request"
           ? agent && <div key={item.key} className={AGENT_ROW_INSET}>
             {item.request.kind === "tool" ? <AgentToolReceipt agent={agent} request={item.request} answered={index < timeline.length - 1} />
@@ -147,7 +151,7 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
           </div>
           : item.kind === "chat"
           ? <RemoteTranscriptView key={item.key} threadKey={`${threadKey}:${item.key}`} messages={item.messages}
-            running={item === lastChat && (running || Boolean(pending))} showThinking={local.prefs.showThinking} developerMode={false} />
+            running={item === lastChat && (running || Boolean(pending))} showThinking={local.prefs.showThinking} developerMode={false} assistantBubbles connectorIdentities={connectorIdentities} />
           : agent && <AgentRunEntry key={item.key} runtime={runtime} agentId={agentId} role={agent.role} run={item.run}
             routineName={agent.routines.find((routine) => routine.id === item.run.automationId)?.name ?? displayName} />)}
         {requests.isError && <p className={`${AGENT_ROW_INSET} text-xs text-dls-secondary`}>{t("agents.requests_unavailable")}</p>}

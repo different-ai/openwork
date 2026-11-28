@@ -2,7 +2,7 @@ import { getMediaBadge } from "@/components/chat/utils";
 import { formatAttachmentBytes } from "@/app/lib/v2-prompt-context";
 
 import { humanizeCapabilityName } from "./composer-plus-menu-model";
-import { composerConnectorLogoUrls } from "./composer-connector-logos";
+import { composerConnectorLogoUrls } from "@/react-app/design-system/connector-logos";
 import { composerPillTitle, type ComposerPill } from "./composer-pills";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 

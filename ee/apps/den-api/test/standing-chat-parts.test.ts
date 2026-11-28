@@ -17,3 +17,13 @@ test("standing chat projects only the caller's assistant steps and redacts conne
     { type: "text", text: "**Agenda ready**" },
   ]]])
 })
+
+test("standing chat names the capability a step ran without its arguments", () => {
+  const history = standingChatParts(new Set(["turn"]), [
+    { role: "assistant", messageId: "turn", text: "", toolCalls: [{ id: "call", name: "execute_capability", input: { name: "mcp:emc_1:linear_list_issues", body: { query: "private" } } }] },
+    { role: "tool", messageId: "turn", callId: "call", name: "execute_capability", isError: false, output: "private result" },
+  ])
+  assert.deepEqual([...history], [["turn", [
+    { type: "tool", id: "call", name: "execute_capability", status: "completed", input: JSON.stringify({ name: "mcp:emc_1:linear_list_issues" }), output: null, error: null, truncated: false },
+  ]]])
+})

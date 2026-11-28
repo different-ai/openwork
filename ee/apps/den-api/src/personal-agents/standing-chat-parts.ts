@@ -9,6 +9,11 @@ import { boundCloudPage } from "../mcp/remote-session-transcript.js"
 type ToolResult = Extract<RunnerMessage, { role: "tool" }>
 type TurnParts = { id: string; parts: RemoteSessionTranscriptPart[] }
 
+function capabilityCalled(call: { name: string; input: Record<string, unknown> }): string | null {
+  const name = call.input.name
+  return call.name === "execute_capability" && typeof name === "string" ? JSON.stringify({ name: name.slice(0, 240) }) : null
+}
+
 export function standingChatParts(turnIds: ReadonlySet<string>, messages: readonly RunnerMessage[]) {
   const resultsByTurn = new Map<string, Map<string, ToolResult>>()
   for (const message of messages) {
@@ -32,7 +37,7 @@ export function standingChatParts(turnIds: ReadonlySet<string>, messages: readon
         id: call.id.slice(0, 240),
         name: call.name.slice(0, 240),
         status: result ? result.isError ? "error" : "completed" : "running",
-        input: null,
+        input: capabilityCalled(call),
         output: null,
         error: null,
         truncated: false,

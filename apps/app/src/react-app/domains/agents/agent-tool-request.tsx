@@ -6,7 +6,8 @@ import { ToolApprovalCard } from "@/react-app/design-system/tool-approval-card";
 
 import { requestConnectionName, requestToolTitle, shouldRerunAfterToolDecision, toolRequestReceipt, toolRequestRerunLine, toolRequestWaitingLine } from "./agent-permission-words";
 import type { AgentsRuntime } from "./agents-runtime";
-import { useDecideAgentToolRequest } from "./use-agent-permissions";
+import { AgentConnectionLogo } from "./agent-connection-logo";
+import { useAgentToolsQuery, useDecideAgentToolRequest } from "./use-agent-permissions";
 
 export function isVisibleAgentRequest(agent: PersonalAgentDetail, request: PersonalAgentRequest): boolean {
   if (request.kind !== "tool" || request.status !== "pending" || !request.connectionId || !request.toolName) return true;
@@ -32,14 +33,19 @@ export function AgentToolDecision({ runtime, agent, request, onAllowed, onChoose
   const connectorAccess = request.connectorAccess === true;
   const tool = requestToolTitle(request);
   const connection = requestConnectionName(request);
+  const catalog = useAgentToolsQuery(runtime, agent.agent.id);
+  const known = request.toolName ? catalog.data?.connections.find((entry) => entry.connectionId === request.connectionId)?.tools.find((entry) => entry.name === request.toolName) : undefined;
+  const computer = request.connectionId === "computer";
 
   return (
     <ToolApprovalCard data-agent-ask={request.id}
-      variant="inline"
-      title={connectorAccess
-        ? (request.toolName ? t("agents.connector_ask_tool_title", { agent: name, tool, connection }) : t("agents.connector_ask_title", { agent: name, connection }))
-        : t("agents.permission_ask_title", { agent: name, tool, connection })}
-      line={connectorAccess && request.connectionId === "computer" ? t("agents.computer_ask_line") : connectorAccess ? t(request.toolName ? "agents.connector_ask_tool_line" : "agents.connector_ask_line", { connection }) : t("agents.permission_ask_accounts")}
+      variant="composer"
+      icon={<AgentConnectionLogo connectionId={request.connectionId} name={connection} size="md" />}
+      eyebrow={t("agents.ask_eyebrow", { agent: name })}
+      title={request.toolName ? tool : computer ? connection : t("agents.ask_whole_connection", { connection })}
+      tag={known ? t(known.write ? "agents.permissions_changes" : "agents.permissions_reads") : undefined}
+      line={connectorAccess && computer ? t("agents.computer_ask_line") : connectorAccess ? t(request.toolName ? "agents.connector_ask_tool_line" : "agents.connector_ask_line", { connection }) : t("agents.permission_ask_in_connection", { connection })}
+      details={onChooseTools && (request.toolName || !connectorAccess || agent.role !== "owner") ? { label: t("agents.ask_view_permissions"), run: onChooseTools } : undefined}
       decisions={request.canDecide.filter((choice) => choice !== "approve" && choice !== "turn_on")}
       turnOn={connectorAccess && request.canDecide.includes("turn_on") ? {
         label: t(agent.role === "manager" ? "agents.connector_ask_request_on" : "agents.connector_ask_turn_on", { connection }),
@@ -77,12 +83,12 @@ export function AgentToolReceipt({ agent, request, answered = false }: { agent: 
     : request.requestedByCaller && (request.status === "allowed_once" || request.status === "always_allowed")
       ? t("agents.chat_permission_next") : null;
   return (
-    <div data-agent-ask={request.id} data-agent-ask-receipt={request.status} className="text-xs leading-relaxed text-dls-secondary">
-      <p className="flex items-baseline gap-1.5">
-        <Shield aria-hidden="true" className="relative top-0.5 size-3.5 shrink-0" />
-        {receipt}
+    <div data-agent-ask={request.id} data-agent-ask-receipt={request.status} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dls-secondary">
+      <p className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-dls-border bg-dls-surface px-2.5 py-1 text-dls-text">
+        <Shield aria-hidden="true" className="size-3.5 shrink-0 text-dls-secondary" />
+        <span className="wrap-anywhere">{receipt}</span>
       </p>
-      {next && <p className="ps-5">{next}</p>}
+      {next && <p>{next}</p>}
     </div>
   );
 }

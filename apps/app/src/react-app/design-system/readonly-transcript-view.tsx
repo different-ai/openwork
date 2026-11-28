@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { useCallback, type ComponentProps } from "react"
 import type { UIMessage } from "ai"
 
 import { UntrustedMarkdown } from "@/components/markdown/untrusted-markdown"
@@ -13,6 +13,8 @@ export function RemoteTranscriptView({
   running,
   showThinking,
   developerMode,
+  assistantBubbles = false,
+  connectorIdentities,
   waiting = false,
   runStartedAt = null,
 }: {
@@ -21,6 +23,8 @@ export function RemoteTranscriptView({
   running: boolean
   showThinking: boolean
   developerMode: boolean
+  assistantBubbles?: boolean
+  connectorIdentities?: ComponentProps<typeof MessageListProvider>["connectorIdentities"]
   waiting?: boolean
   runStartedAt?: number | null
 }) {
@@ -33,6 +37,8 @@ export function RemoteTranscriptView({
   return (
     <MessageListProvider
       readOnly
+      assistantBubbles={assistantBubbles}
+      connectorIdentities={connectorIdentities}
       workspaceId={scope}
       sessionId={scope}
       showThinking={showThinking}

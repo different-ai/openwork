@@ -645,7 +645,7 @@ type AssistantMessageProps = {
 
 const AssistantMessage = React.memo(
   ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
-    const { showThinking, highlightQuery, onRunCommand } = useMessageList()
+    const { showThinking, highlightQuery, onRunCommand, assistantBubbles } = useMessageList()
     const computerHistory = React.useContext(ComputerHistoryContext)
     const assistantRenderGroups = React.useMemo(
       () => {
@@ -667,7 +667,9 @@ const AssistantMessage = React.memo(
               return (
                 <div key={`text-${index}`} className="flex min-w-0 items-start gap-2">
                   <MessageContent
-                    className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
+                    className={assistantBubbles
+                      ? "text-foreground prose border-border bg-background w-fit max-w-[92%] min-w-0 rounded-3xl border px-4 py-2.5 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+                      : "text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"}
                     markdown
                     sessionReferences
                     githubReferences
