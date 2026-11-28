@@ -26,11 +26,13 @@ Agent permissions is an Enterprise feature that is rolling out, and applies to m
 | **Search the web** | Allowed or blocked | None |
 | **Use local skills** | Allowed or blocked | None |
 | **Use local MCP servers** | Allowed or blocked | None |
+| **Use skills from MCP servers** | Allowed or blocked | None |
 
 - **Ask first** has the agent ask the member each time before it acts.
 - **Always allowed** lists exceptions while a permission is set to **Ask first** or **Block**. They run without asking.
 - **Always blocked** lists what is blocked in every case. A blocked pattern always wins over an allowed one.
 - **Use local skills** and **Use local MCP servers** cover the skills and MCP servers on members' computers, all of them at once. Your organization's skills and connections in OpenWork Cloud aren't affected and keep working, including the connections OpenWork adds to members' apps for them.
+- **Use skills from MCP servers** covers the skills that MCP servers on members' computers offer the agent. Blocking it keeps those servers' tools and leaves out their skills. Blocking **Use local MCP servers** leaves out both.
 
 ### Patterns
 

@@ -83,6 +83,8 @@ export async function mcpPost(fetcher: McpFetch, url: string, headers: Record<st
 export type McpResourceReader = {
   read(uri: string, meta?: Record<string, unknown>): Promise<string | null>;
   readContents(uri: string, meta?: Record<string, unknown>): Promise<{ texts: Map<string, string>; blobs: Map<string, string>; meta: Record<string, unknown> } | null>;
+  request(method: string, params: Record<string, unknown>): Promise<Record<string, unknown> | null>;
+  readonly serverCapabilities: Record<string, unknown>;
   readonly broken: boolean;
 };
 
@@ -90,6 +92,7 @@ export async function openMcpResourceReader(input: {
   config: Record<string, unknown>;
   fetcher: McpFetch;
   clientName: string;
+  capabilities?: Record<string, unknown>;
 }): Promise<McpResourceReader | null> {
   const url = typeof input.config.url === "string" ? input.config.url : "";
   if (!/^https?:\/\//.test(url) || input.config.enabled === false) return null;
@@ -99,13 +102,15 @@ export async function openMcpResourceReader(input: {
     jsonrpc: "2.0",
     method: "initialize",
     params: {
-      capabilities: {},
+      capabilities: input.capabilities ?? {},
       clientInfo: { name: input.clientName, version: "1.0.0" },
       protocolVersion: "2025-06-18",
     },
   });
   if (!initialized.response.ok) return null;
-  const protocolVersion = jsonRpcResult(initialized.payload)?.protocolVersion;
+  const initializeResult = jsonRpcResult(initialized.payload);
+  const protocolVersion = initializeResult?.protocolVersion;
+  const serverCapabilities = isRecord(initializeResult?.capabilities) ? initializeResult.capabilities : {};
   if (protocolVersion !== "2025-06-18" && protocolVersion !== "2025-03-26") return null;
   const sessionId = initialized.response.headers.get("mcp-session-id");
   const sessionHeaders = {
@@ -141,6 +146,15 @@ export async function openMcpResourceReader(input: {
   };
   return {
     readContents,
+    serverCapabilities,
+    async request(method, params) {
+      const reply = await mcpPost(input.fetcher, url, sessionHeaders, { id: nextId++, jsonrpc: "2.0", method, params }).catch(() => null);
+      if (!reply?.response.ok || reply.payload === null) {
+        broken = true;
+        return null;
+      }
+      return jsonRpcResult(reply.payload);
+    },
     async read(uri, meta) {
       return (await readContents(uri, meta))?.texts.get(uri) ?? null;
     },

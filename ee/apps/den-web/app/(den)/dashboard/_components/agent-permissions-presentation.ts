@@ -17,7 +17,7 @@ const PRIVATE_VALUE_KEYS: readonly string[] = ["privateValueFills", "privateValu
 const BROWSER_KEYS: readonly string[] = ["websites", "browserUploads", ...PRIVATE_VALUE_KEYS];
 const BLOCKED_WITH_COMPUTER_USE: readonly string[] = ["computerFiles", "computerClipboard", "appScripting"];
 
-const BLOCKED_WITH_HOST_EXECUTION: readonly string[] = ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers"];
+const BLOCKED_WITH_HOST_EXECUTION: readonly string[] = ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers", "mcpServerSkills"];
 
 function forceRequired(settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null): boolean {
   return (settings.hostExecution?.decision ?? everyone?.hostExecution?.decision) === "deny";

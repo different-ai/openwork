@@ -20,6 +20,7 @@ import {
   withoutAgentHarnessRules,
   withoutPrivateValuePermissions,
   withoutHostExecutionPermissions,
+  withoutMcpSkillPermissions,
   withoutSandboxOptOutPermissions,
   type AgentPermissionRule,
   type AgentPermissionSettings,
@@ -230,4 +231,22 @@ test("pasting a private value is a switch, and a desktop that cannot read these 
   assert.deepEqual(agentPermissionRulesForClient(rules, { ...everything, privateValues: true }), [...rules, terminalBlock])
   assert.deepEqual(agentPermissionRulesForClient(rules, everything).map((rule) => rule.action), ["shell"])
   assert.deepEqual(withoutPrivateValuePermissions({ privateValuePaste: { decision: "deny" }, privateValueFills: { decision: "ask" }, privateValueCommands: { block: ["op *"] }, commands: { block: ["rm *"] } }), { commands: { block: ["rm *"] } })
+})
+
+test("skills from MCP servers are a switch whose rule reaches only desktops that read those skills", () => {
+  const definition = agentPermissionDefinition("mcpServerSkills")
+  assert.equal(definition.section, "extensions")
+  assert.equal(definition.control, "toggle")
+  assert.equal(agentPermissionDefaultDecision("mcpServerSkills"), "allow")
+  assert.deepEqual(rulesFor({ mcpServerSkills: { decision: "allow" } }), [])
+  assert.equal(agentPermissionSettingsSchema.safeParse({ mcpServerSkills: { decision: "ask" } }).success, false)
+
+  const blocked = rulesFor({ mcpServerSkills: { decision: "deny" } })
+  assert.deepEqual(blocked, [{ action: "mcp_skill", resource: "*", effect: "deny", source: AGENT_PERMISSION_EVERYONE }])
+  assert.equal(decideAgentPermission(blocked, "mcp_skill", ["*"]).effect, "deny")
+  assert.equal(decideAgentPermission(blocked, "skill", ["*"]).effect, "allow")
+  assert.equal(decideAgentPermission(blocked, "mcp", ["*"]).effect, "allow")
+  assert.deepEqual(agentPermissionRulesForClient(blocked, everything), [])
+  assert.deepEqual(agentPermissionRulesForClient(blocked, { ...everything, mcpSkills: true }), blocked)
+  assert.deepEqual(withoutMcpSkillPermissions({ mcpServerSkills: { decision: "deny" }, commands: { decision: "ask" } }), { commands: { decision: "ask" } })
 })

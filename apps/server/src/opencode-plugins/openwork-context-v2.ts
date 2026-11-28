@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { approvalLoopbackFetch } from "./approval-loopback-fetch.js";
 import { registerCloudSkillDiscovery, type CloudSkillContext } from "./openwork-cloud-skills-v2.js";
+import { registerMcpServerSkills } from "./openwork-mcp-server-skills-v2.js";
 import { server as browserTools } from "./openwork-chrome-devtools.js";
 import { server as computerTools } from "./openwork-computer-use.js";
 import { ASK_FORM, ASK_WITHOUT_WAITING, askArgs, askDescription, askFormArgs, askFormDescription } from "./openwork-agent-questions.js";
@@ -179,6 +180,7 @@ export default {
       if (event.tool === "computer_act" || event.tool === "browser_act") event.input = singleActionAsList(event.input);
     });
     const stopSkills = await registerCloudSkillDiscovery(context);
-    return async () => { await stopSkills(); await singleAction?.dispose(); await registration.dispose(); };
+    const stopMcpServerSkills = await registerMcpServerSkills(context);
+    return async () => { await stopMcpServerSkills(); await stopSkills(); await singleAction?.dispose(); await registration.dispose(); };
   },
 };
