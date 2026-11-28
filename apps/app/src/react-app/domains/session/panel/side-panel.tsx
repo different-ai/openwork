@@ -399,7 +399,7 @@ export function BrowserPanelContent({
           </Button>
         </div>
       ) : null}
-      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-background px-2 mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+      <div data-browser-toolbar className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-background px-2 mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
         {isAvailable ? (
           <div data-browser-shortcut-tab={tab.id} className="flex min-w-0 flex-1 items-center gap-1">
             <Tooltip>
@@ -588,7 +588,7 @@ export function BrowserPanelContent({
           {tab.loadError.message}
         </div>
       ) : null}
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div data-browser-page className="relative min-h-0 flex-1 overflow-hidden">
         {isAvailable ? (
           <div ref={contentRef} data-browser-shortcut-tab={tab.id} className={`h-full overflow-hidden${tab.agentViewport ? " bg-muted" : ""}`}>
             {blockedSite && !suspended ? (
@@ -824,7 +824,7 @@ export function SidePanel({
   return (
     <TooltipProvider delay={1000}>
       <div
-        className={cn("flex h-full flex-col", titlebar ? "[&>*:not([data-panel-titlebar-row])]:border-y [&>*:not([data-panel-titlebar-row])]:border-l [&>*:not([data-panel-titlebar-row])]:border-border [&>*:not([data-panel-titlebar-row])]:bg-dls-surface" : null)}
+        className="flex h-full flex-col"
         onKeyDownCapture={(event) => {
           if (isBrowserSecretsDialogTarget(event.target)) return;
           if (!handlePanelEscape(event.key, onClose)) return;
@@ -833,8 +833,8 @@ export function SidePanel({
         }}
       >
         {titlebar || !(tabs.length === 1 && (activeTab?.type === "mcp-app" || activeTab?.type === "remote-thread")) ? <div data-panel-titlebar-row={titlebar ? "" : undefined} className={cn("shrink-0", titlebar ? null : "border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
-          <div data-panel-titlebar={titlebar ? "" : undefined} className={cn("flex items-center gap-1", titlebar ? "window-titlebar pe-2 electron:titlebar-drag" : "h-10 border-b border-border/60 px-2")}>
-            {titlebar ? <span data-panel-titlebar-separator aria-hidden="true" className="me-1 h-4 w-px shrink-0 bg-border" /> : null}
+          <div data-panel-titlebar={titlebar ? "" : undefined} className={cn("flex items-center gap-1", titlebar ? "window-titlebar pe-2 electron:titlebar-drag [&_[data-panel-tab-active=true]]:bg-dls-surface [&_[data-panel-tab-active=true]]:shadow-sm" : "h-10 border-b border-border/60 px-2")}>
+            {titlebar ? <span data-panel-titlebar-separator aria-hidden="true" className="me-1 h-4 w-px shrink-0 bg-foreground/20" /> : null}
             <div className={cn("no-scrollbar min-w-0 overflow-x-auto", titlebar ? "titlebar-no-drag" : "flex-1")}>
               <PanelTabList
                 values={tabs.map((tab) => tab.id)}
@@ -895,6 +895,7 @@ export function SidePanel({
             ) : null}
           </div>
         </div> : null}
+        <div data-panel-card={titlebar ? "" : undefined} className={titlebar ? "flex min-h-0 flex-1 flex-col overflow-hidden rounded-r-[14px] border border-border bg-dls-surface [&_[data-browser-toolbar]]:!bg-transparent [&_[data-browser-toolbar]]:!backdrop-filter-none [&_[data-browser-page]]:mx-1.5 [&_[data-browser-page]]:mb-1.5" : "contents"}>
         {!activeTab ? (
           <PanelEmpty
             view={emptyView}
@@ -964,6 +965,7 @@ export function SidePanel({
             />
           </div>
         ) : null}
+        </div>
       </div>
     </TooltipProvider>
   );
