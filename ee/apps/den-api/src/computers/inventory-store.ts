@@ -1,11 +1,11 @@
 import { and, asc, desc, eq, gt, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, AutomationRunnerTable, ComputerAccessTable, ComputerDisconnectionTable, ComputerGrantTable, MemberTable, OrganizationTable, RemoteDeviceEventTable, RemoteDeviceTable, WorkerTable } from "@openwork-ee/den-db/schema"
-import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { ownerWholeVmScope } from "@openwork/computers"
 import {
   COMPUTER_INVENTORY_PAGE_SIZE, COMPUTER_INVENTORY_RECENT_MS, readOrganizationComputerRules,
   type ComputerInventoryDetailResponse, type ComputerInventoryOwner, type ComputerInventoryRow, type ComputerMergedSignIn,
-  type ComputerRunCode, type ComputerSourceAccess, type MyComputerInventoryResponse, type OrganizationComputerInventoryResponse,
+  type ComputerRunCode, type MyComputerInventoryResponse, type OrganizationComputerInventoryResponse,
   type OrganizationComputerInventoryTab, type OrganizationComputerRules,
 } from "@openwork/types/den/computer-inventory"
 import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, type ComputerOwnerChoice } from "@openwork/types/den/computers"
@@ -19,6 +19,7 @@ import {
   remoteDeviceRunnerJoin, syncDesktopsFromRunners, WORKBOT_COMPUTER_LABEL, type RemoteDeviceActor,
 } from "../remote-devices.js"
 import { remoteSessionAccessPolicy } from "../remote-sessions/access.js"
+import { sourceViews } from "./grants.js"
 import { deviceInventoryStatus, groupComputerSignIns, inventorySessions, type SignInGroup } from "./inventory.js"
 
 const BATCH_SIZE = 500
@@ -136,7 +137,7 @@ function runCode(group: SignInGroup<Device>, rules: OrganizationComputerRules, g
   }
   const whole = active.find((grant) => grant.sourceKey === COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY)
   const scope = ownerWholeVmScope(device.id, {
-    organization: { allowed: rules.runCode }, owner: { choice: device.choice },
+    organization: { allowed: rules.runCode, requireSandboxOnPersonal: rules.requireSandboxOnPersonal }, owner: { choice: device.choice },
     grants: whole ? [{ source: { kind: "owner" }, targetId: device.id, scope: { surface: "whole_vm", folders: whole.folders } }] : [],
   })
   return scope ? { value: "whole_computer" } : { value: "no", reason: "owner" }
@@ -254,31 +255,6 @@ export async function listOrganizationComputerInventory(viewer: Extract<Viewer, 
   }
 }
 
-async function sourceViews(viewer: Viewer, computer: ComputerInventoryRow, grants: Grant[]): Promise<ComputerSourceAccess[]> {
-  const ids = grants.flatMap(({ sourceKey }) => isDenTypeId("remoteDevice", sourceKey) ? [sourceKey] : [])
-  const d = RemoteDeviceTable
-  const revokerIds = [...new Set(grants.flatMap(({ revokedAt, revokedByMemberId }) => revokedAt && revokedByMemberId ? [revokedByMemberId] : []))]
-  const [rows, revokers] = await Promise.all([
-    ids.length ? db.$primary.select({ id: d.id, label: d.label }).from(d).where(and(
-      eq(d.organizationId, viewer.actor.organizationId), inArray(d.id, ids), isNull(d.removedAt),
-      viewer.kind === "member" ? or(eq(d.ownerMemberId, viewer.actor.memberId), isNull(d.ownerMemberId)) : undefined,
-    )) : [],
-    revokerIds.length ? db.$primary.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email })
-      .from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
-      .where(and(eq(MemberTable.organizationId, viewer.actor.organizationId), inArray(MemberTable.id, revokerIds))).limit(revokerIds.length) : [],
-  ])
-  const names = new Map<string, string>(rows.map(({ id, label }) => [id, label]))
-  const revokerNames = new Map(revokers.map(({ id, name, email }) => [id, name.trim() ? name : email]))
-  return grants.map(({ sourceKey, folders, revokedAt, revokedByMemberId }) => {
-    const whole = sourceKey === COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY
-    const label = sourceKey === "workbot" ? "Workbot" : whole || sourceKey === "owner"
-      ? computer.owner?.name ? `${computer.owner.name}'s OpenWork apps` : "The owner's OpenWork apps"
-      : names.get(sourceKey) ?? "A removed computer"
-    const revokedBy = revokedAt && revokedByMemberId ? revokerNames.get(revokedByMemberId) ?? null : null
-    return { key: sourceKey, label, scope: whole ? "whole_computer" : "sandbox", folders, revokedAt: revokedAt?.toISOString() ?? null, revokedBy }
-  })
-}
-
 const platformNames = { darwin: "macOS", win32: "Windows", linux: "Linux" }
 
 export async function readComputerInventoryDetail(viewer: Viewer, id: DeviceId, now = new Date()): Promise<ComputerInventoryDetailResponse | null> {
@@ -300,7 +276,7 @@ export async function readComputerInventoryDetail(viewer: Viewer, id: DeviceId, 
     computer, callerIsOwner, rules, sessions: computer.sessions, activity: events.map(eventView),
     installed: { appVersion: newest.appVersion, platform: newest.platform && platformNames[newest.platform], signedInAs: signedInAs(computer.owner), addedAt, lastSeenAt: computer.status.lastSeenAt, mergedSignIns },
     runCode: {
-      value: computer.runCode, sources: canReadGrants ? await sourceViews(viewer, computer, grants) : [],
+      value: computer.runCode, sources: canReadGrants ? await sourceViews(db.$primary, viewer, computer.owner?.name ?? computer.owner?.email ?? null, grants) : [],
       canChange: callerIsOwner && isDaytona(newest), canRevoke: viewer.kind === "member" ? callerIsOwner : viewer.canDisconnect, canRestore: callerIsOwner,
     },
   }

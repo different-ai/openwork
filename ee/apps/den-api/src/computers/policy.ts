@@ -1,11 +1,10 @@
-import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { ComputerAccessTable, ComputerGrantTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { refusal } from "@openwork/computers"
 import { COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY, COMPUTER_SHELL_RUNNER_CAPABILITY, computerWholeVmScopeSchema, type Computer, type ComputerGrant, type ComputerPolicy } from "@openwork/types/den/computers"
-import { readOrganizationRemoteSessionSettings } from "@openwork/types/den/remote-sessions"
+import { readOrganizationComputerRules } from "@openwork/types/den/computer-inventory"
 import { db } from "../db.js"
-import { readOrganizationMetadataColumn } from "../organization-metadata.js"
 
 export function incomingComputerWorkRefusal(target: Computer, capabilities: readonly string[] | null | undefined) {
   if (target.kind === "registered_vm") return null
@@ -22,16 +21,16 @@ export async function loadComputerPolicy(
   const access = database.select({ choice: ComputerAccessTable.ownerChoice }).from(ComputerAccessTable).where(and(
     eq(ComputerAccessTable.organizationId, organizationId), eq(ComputerAccessTable.deviceId, targetId),
   )).limit(1)
-  const organization = tx
-    ? tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1).for("share").then(([row]) => row)
-    : readOrganizationMetadataColumn(organizationId)
-  const metadata = await organization
+  const organization = database.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1)
+  const [metadata] = await (tx ? organization.for("share") : organization)
   const [owner] = await (tx ? access.for("share") : access)
-  const grants = await database.select().from(ComputerGrantTable).where(and(
-    eq(ComputerGrantTable.organizationId, organizationId), eq(ComputerGrantTable.targetDeviceId, targetId),
+  const grantsQuery = database.select().from(ComputerGrantTable).where(and(
+    eq(ComputerGrantTable.organizationId, organizationId), eq(ComputerGrantTable.targetDeviceId, targetId), isNull(ComputerGrantTable.revokedAt),
   ))
+  const grants = await (tx ? grantsQuery.for("share") : grantsQuery)
+  const { rules } = readOrganizationComputerRules(metadata?.metadata)
   return {
-    organization: { allowed: metadata != null && readOrganizationRemoteSessionSettings(metadata.metadata).access !== "off" },
+    organization: { allowed: metadata != null && rules.runCode, requireSandboxOnPersonal: rules.requireSandboxOnPersonal },
     owner: { choice: owner?.choice ?? null },
     grants: grants.flatMap<ComputerGrant>(({ sourceKey, folders }) => {
       if (sourceKey === COMPUTER_OWNER_WHOLE_VM_SOURCE_KEY) {

@@ -1,10 +1,12 @@
 import { computerState, decide, ownerWholeVmScope, projectComputer, signedInApp } from "@openwork/computers"
 import type { ComputerAccessSetting, ComputerAction, ComputerAuthorizeResponse, ComputerListResponse, ComputerPolicy, ListedComputer } from "@openwork/types/den/computers"
-import { and, eq } from "@openwork-ee/den-db/drizzle"
-import { AutomationRunnerTable } from "@openwork-ee/den-db/schema"
+import { and, eq, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { AutomationRunnerTable, RemoteDeviceTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { listMemberRemoteDeviceRows, readMemberRemoteDeviceRow, type RemoteDeviceActor } from "../remote-devices.js"
+import { withDeadlockRetry } from "../utils/deadlock-retry.js"
+import { recordAcceptedComputerWork } from "./activity.js"
 import { incomingComputerWorkRefusal, loadComputerPolicy } from "./policy.js"
 import { replaceRegisteredVmAccess } from "./store.js"
 
@@ -56,13 +58,23 @@ export async function authorizeMemberComputer(actor: RemoteDeviceActor, id: Comp
   if (!item) return null
   const { row } = item
   const { provider, externalId } = row
-  const policy = await db.transaction((tx) => loadComputerPolicy(actor.organizationId, row.id, tx))
-  const [runner] = row.kind === "desktop" && row.ownerMemberId ? await db.$primary
-    .select({ capabilities: AutomationRunnerTable.capabilities }).from(AutomationRunnerTable).where(and(
-      eq(AutomationRunnerTable.id, externalId), eq(AutomationRunnerTable.organization_id, actor.organizationId),
-      eq(AutomationRunnerTable.owner_member_id, row.ownerMemberId),
-    )).limit(1) : []
-  const computer = listedComputer(actor, { ...item, capabilities: runner?.capabilities }, policy)
-  const decision = incomingComputerWorkRefusal(computer, runner?.capabilities) ?? decide(signedInApp(actor.memberId), computer, action, policy)
-  return { decision, computer, connection: decision.outcome === "allow" && decision.scope?.surface === "whole_vm" && isRegisteredVm(item.row) ? { provider, externalId } : null }
+  const d = RemoteDeviceTable
+  return withDeadlockRetry(() => db.transaction(async (tx) => {
+    const [visible] = await tx.select({ id: d.id }).from(d).where(and(
+      eq(d.id, id), eq(d.organizationId, actor.organizationId), isNull(d.removedAt), or(eq(d.ownerMemberId, actor.memberId), isNull(d.ownerMemberId)),
+    )).limit(1).for("update")
+    if (!visible) return null
+    const policy = await loadComputerPolicy(actor.organizationId, row.id, tx)
+    const [runner] = row.kind === "desktop" && row.ownerMemberId ? await tx
+      .select({ capabilities: AutomationRunnerTable.capabilities }).from(AutomationRunnerTable).where(and(
+        eq(AutomationRunnerTable.id, externalId), eq(AutomationRunnerTable.organization_id, actor.organizationId),
+        eq(AutomationRunnerTable.owner_member_id, row.ownerMemberId),
+      )).limit(1) : []
+    const computer = listedComputer(actor, { ...item, capabilities: runner?.capabilities }, policy)
+    const decision = incomingComputerWorkRefusal(computer, runner?.capabilities) ?? decide(signedInApp(actor.memberId), computer, action, policy)
+    if (decision.outcome === "allow" && decision.route === "checked") {
+      await recordAcceptedComputerWork(tx, { actor, deviceId: id, action, scope: decision.scope, source: "owner_app", now: new Date() })
+    }
+    return { decision, computer, connection: decision.outcome === "allow" && decision.scope?.surface === "whole_vm" && isRegisteredVm(row) ? { provider, externalId } : null }
+  }))
 }

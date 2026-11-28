@@ -38,7 +38,7 @@ const workbot: ComputerGrant = { source: { kind: "workbot" }, targetId: target.i
 const exact: ComputerGrant = { source: { kind: "computer", id: source.id }, targetId: target.id, scope: { surface: "sandbox", folders: ["/exact"] } }
 
 function policy(grants: ComputerGrant[] = [workbot]): ComputerPolicy {
-  return { organization: { allowed: true }, owner: { choice: "allow" }, grants }
+  return { organization: { allowed: true, requireSandboxOnPersonal: true }, owner: { choice: "allow" }, grants }
 }
 
 function checked(grant: ComputerGrant) {
@@ -58,11 +58,19 @@ const sourceRefusal = {
   message: "Nothing on Ada's MacBook is shared with me. Its owner decides what to share.",
 }
 
+test("a whole-computer grant never counts as a sandbox grant on a personal computer", () => {
+  const whole: ComputerGrant = { ...exact, scope: { surface: "whole_vm", folders: ["/workspace"] } }
+  assert.deepEqual(decide(source, target, action, policy([whole])), sourceRefusal)
+  assert.deepEqual(decide(source, target, action, policy([whole, workbot])), checked(workbot))
+  const sandboxNotRequired = { ...policy([whole]), organization: { allowed: true, requireSandboxOnPersonal: false } }
+  assert.deepEqual(decide(source, target, action, sandboxNotRequired), sourceRefusal)
+})
+
 for (const allowed of [false, true]) {
   for (const choice of [null, "off", "allow"] as const) {
     for (const shared of [false, true]) {
       test(`decision: organization allowed=${allowed}, owner=${choice}, source shared=${shared}`, () => {
-        const snapshot: ComputerPolicy = { organization: { allowed }, owner: { choice }, grants: shared ? [workbot] : [] }
+        const snapshot: ComputerPolicy = { organization: { allowed, requireSandboxOnPersonal: true }, owner: { choice }, grants: shared ? [workbot] : [] }
         const expected = !allowed ? organizationRefusal : choice !== "allow" ? computerRefusal : shared ? checked(workbot) : sourceRefusal
         assert.deepEqual(decide(source, target, action, snapshot), expected)
       })
@@ -250,7 +258,7 @@ test("an empty folder list permits the sandbox but no explicit cwd", () => {
 
 test("same-computer decisions use IDs and skip all layers", () => {
   const sameId: Computer = { ...source, label: "Same computer", availability: "offline" }
-  const denied: ComputerPolicy = { organization: { allowed: false }, owner: { choice: null }, grants: [] }
+  const denied: ComputerPolicy = { organization: { allowed: false, requireSandboxOnPersonal: true }, owner: { choice: null }, grants: [] }
   assert.deepEqual(decide(source, sameId, { ...action, cwd: "/unshared" }, denied), { outcome: "allow", route: "direct", scope: null })
 })
 

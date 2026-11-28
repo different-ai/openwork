@@ -13,6 +13,7 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY, type RemoteSessionAccessMode } from "@openwork/types/automations"
 import {
+  remoteDeviceEventSchema,
   ORGANIZATION_COMPUTER_PAGE_SIZE,
   ORGANIZATION_COMPUTER_STALE_MS,
   REMOTE_DEVICE_DESKTOP_RETENTION_MS,
@@ -61,7 +62,7 @@ import { withDeadlockRetry } from "./utils/deadlock-retry.js"
 import { db } from "./db.js"
 import { getOrganizationFeatures, organizationFeatureEnabled } from "./features.js"
 import { listOrganizationComputerInstances, type OrganizationInstanceFilters } from "./organization-computer-instances.js"
-import { pruneRemoteDeviceEvents, recordRemoteDeviceEvent as recordEvent, type RemoteDeviceDatabase, type RemoteDeviceEventData } from "./remote-device-events.js"
+import { legacyRemoteDeviceEvent, pruneRemoteDeviceEvents, recordRemoteDeviceEvent as recordEvent, type RemoteDeviceDatabase, type RemoteDeviceEventData } from "./remote-device-events.js"
 
 export { pruneRemoteDeviceEvents }
 
@@ -227,8 +228,12 @@ export function eventView(row: typeof RemoteDeviceEventTable.$inferSelect): Remo
   return { id: row.id, type: row.type, level: row.level, message: row.message, actor: row.actor, createdAt: row.createdAt.toISOString() }
 }
 
+function legacyEventView(row: typeof RemoteDeviceEventTable.$inferSelect) {
+  return remoteDeviceEventSchema.parse(eventView(row))
+}
+
 function organizationComputerEventView(row: typeof RemoteDeviceEventTable.$inferSelect): OrganizationComputerEvent {
-  return { ...eventView(row), data: row.data ?? null, actorId: row.actorId }
+  return { ...legacyEventView(row), data: row.data ?? null, actorId: row.actorId }
 }
 
 export async function syncDesktopsFromRunners(scope: { organizationId: OrganizationId; memberId?: MemberId; includeStale?: boolean }, now: Date) {
@@ -372,8 +377,9 @@ export async function readMemberRemoteDevice(actor: RemoteDeviceActor, deviceId:
   const row = await visibleRow(actor, deviceId)
   if (!row) return null
   const events = await db.$primary.select().from(RemoteDeviceEventTable)
-    .where(eq(RemoteDeviceEventTable.deviceId, row.id)).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(20)
-  return { device: await viewOne(row, actor, options.canManageShared, options.now ?? new Date()), events: events.map(eventView) }
+    .where(and(eq(RemoteDeviceEventTable.deviceId, row.id), legacyRemoteDeviceEvent))
+    .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(20)
+  return { device: await viewOne(row, actor, options.canManageShared, options.now ?? new Date()), events: events.map(legacyEventView) }
 }
 
 export async function registerRemoteDevice(actor: RemoteDeviceActor, input: RemoteDeviceRegisterRequest, options: { canManageShared: boolean; now?: Date }): Promise<RemoteDevice> {
@@ -764,7 +770,7 @@ function problemsSince(now: Date) {
 function hasProblemsSql(now: Date) {
   return sql`exists (select 1 from ${RemoteDeviceEventTable} where ${RemoteDeviceEventTable.deviceId} = ${RemoteDeviceTable.id}
     and ${RemoteDeviceEventTable.organizationId} = ${RemoteDeviceTable.organizationId}
-    and ${RemoteDeviceEventTable.level} in ('warning', 'error') and ${RemoteDeviceEventTable.createdAt} >= ${sql.param(problemsSince(now), RemoteDeviceEventTable.createdAt)})`
+    and ${legacyRemoteDeviceEvent} and ${RemoteDeviceEventTable.level} in ('warning', 'error') and ${RemoteDeviceEventTable.createdAt} >= ${sql.param(problemsSince(now), RemoteDeviceEventTable.createdAt)})`
 }
 
 type OrganizationComputerRow = {
@@ -819,9 +825,11 @@ async function organizationComputerViews(
   const taskOwners = rows.flatMap((row) => row.device.ownerMemberId && takesRemoteTasks(row.device, runnerOf(row), row.disconnectedAt !== null) ? [row.device.ownerMemberId] : [])
   const [problems, lastEvents, policies, sessions] = await Promise.all([
     ids.length === 0 ? [] : db.select({ deviceId: RemoteDeviceEventTable.deviceId, total: sql<number>`count(*)` }).from(RemoteDeviceEventTable)
-      .where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), inArray(RemoteDeviceEventTable.deviceId, ids), inArray(RemoteDeviceEventTable.level, ["warning", "error"]), gte(RemoteDeviceEventTable.createdAt, since)))
+      .where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), inArray(RemoteDeviceEventTable.deviceId, ids), legacyRemoteDeviceEvent, inArray(RemoteDeviceEventTable.level, ["warning", "error"]), gte(RemoteDeviceEventTable.createdAt, since)))
       .groupBy(RemoteDeviceEventTable.deviceId),
-    Promise.all(ids.map(async (id) => (await db.select().from(RemoteDeviceEventTable).where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, id)))
+    Promise.all(ids.map(async (id) => (await db.select().from(RemoteDeviceEventTable).where(and(
+      eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, id), legacyRemoteDeviceEvent,
+    ))
       .orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(1))[0] ?? null)),
     readRemoteSessionAccessPolicies(organizationId, taskOwners),
     workbotSessions(rows.map((row) => row.device)),
@@ -915,7 +923,9 @@ export async function readOrganizationComputerRecord(organizationId: Organizatio
   const device = row.device
   const [[view], events, runnerRows, sessionRows, ownerRows] = await Promise.all([
     organizationComputerViews([row], now, organizationId, viewer),
-    db.select().from(RemoteDeviceEventTable).where(and(eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, device.id))).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(100),
+    db.select().from(RemoteDeviceEventTable).where(and(
+      eq(RemoteDeviceEventTable.organizationId, organizationId), eq(RemoteDeviceEventTable.deviceId, device.id), legacyRemoteDeviceEvent,
+    )).orderBy(desc(RemoteDeviceEventTable.createdAt), desc(RemoteDeviceEventTable.id)).limit(100),
     device.kind === "desktop"
       ? db.select({
           id: AutomationRunnerTable.id, capabilities: AutomationRunnerTable.capabilities, appVersion: AutomationRunnerTable.app_version,

@@ -108,7 +108,7 @@ export type ComputerOwnerChoice = (typeof COMPUTER_OWNER_CHOICES)[number]
 const ownerChoiceSchema = z.enum(COMPUTER_OWNER_CHOICES).nullable()
 
 export const computerPolicySchema = z.object({
-  organization: z.object({ allowed: z.boolean() }),
+  organization: z.object({ allowed: z.boolean(), requireSandboxOnPersonal: z.boolean() }),
   owner: z.object({ choice: ownerChoiceSchema }),
   grants: z.array(computerGrantSchema),
 })

@@ -63,7 +63,7 @@ async function simulatedComputer(person: Member, runnerId: string, label: string
   async function finish(assignment: ComputerCommandAssignment, localPolicy = local) {
     const target = computerSchema.parse({ id: assignmentScopeTarget, label, kind: "member_machine", provider: "openwork_desktop", ownerMemberId: person.memberId, availability: "online" })
     const verdict = decide(assignment.source, target, assignment.action, {
-      organization: { allowed: true }, owner: { choice: localPolicy.choice }, grants: localPolicy.grants.map(({ source, folders }) => ({ source, targetId: target.id, scope: { surface: "sandbox", folders } })),
+      organization: { allowed: true, requireSandboxOnPersonal: true }, owner: { choice: localPolicy.choice }, grants: localPolicy.grants.map(({ source, folders }) => ({ source, targetId: target.id, scope: { surface: "sandbox", folders } })),
     })
     if (verdict.outcome === "allow") assert.deepEqual(verdict.scope, assignment.scope)
     const body = verdict.outcome === "refuse" ? { status: "refused", layer: verdict.layer, code: verdict.code } : canned

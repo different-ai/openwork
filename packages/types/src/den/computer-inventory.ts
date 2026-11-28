@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { remoteSessionAccessModeSchema } from "@openwork/types/automations"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
-import { remoteDeviceAccessSchema, remoteDeviceEventSchema } from "@openwork/types/den/remote-devices"
+import { COMPUTER_ACTIVITY_EVENT_TYPES, REMOTE_DEVICE_EVENT_TYPES, remoteDeviceAccessSchema, remoteDeviceEventSchema } from "@openwork/types/den/remote-devices"
 import { readOrganizationRemoteSessionSettings } from "@openwork/types/den/remote-sessions"
 
 const timestampSchema = z.string().datetime({ offset: true })
@@ -137,6 +137,10 @@ export const computerSourceAccessSchema = z.object({
 }).meta({ ref: "ComputerSourceAccess" })
 export type ComputerSourceAccess = z.infer<typeof computerSourceAccessSchema>
 
+const inventoryActivitySchema = remoteDeviceEventSchema.extend({
+  type: z.enum([...REMOTE_DEVICE_EVENT_TYPES, ...COMPUTER_ACTIVITY_EVENT_TYPES]),
+}).meta({ ref: "ComputerInventoryActivity" })
+
 export const computerInventoryDetailResponseSchema = z.object({
   computer: computerInventoryRowSchema,
   installed: z.object({
@@ -157,7 +161,7 @@ export const computerInventoryDetailResponseSchema = z.object({
   sessions: computerSessionsSchema,
   rules: organizationComputerRulesSchema,
   callerIsOwner: z.boolean(),
-  activity: z.array(remoteDeviceEventSchema),
+  activity: z.array(inventoryActivitySchema),
 }).meta({ ref: "ComputerInventoryDetailResponse" })
 export type ComputerInventoryDetailResponse = z.infer<typeof computerInventoryDetailResponseSchema>
 
@@ -168,7 +172,7 @@ export const organizationComputerRulesResponseSchema = z.object({
 export type OrganizationComputerRulesResponse = z.infer<typeof organizationComputerRulesResponseSchema>
 
 export const organizationComputerRulesUpdateSchema = z.strictObject({
-  runCode: z.boolean().optional(),
+  runCode: z.boolean().nullable().optional().describe("Use null to follow the remote-tasks setting again."),
   requireSandboxOnPersonal: z.boolean().optional(),
 }).refine((value) => value.runCode !== undefined || value.requireSandboxOnPersonal !== undefined, "Change at least one rule.")
   .meta({ ref: "UpdateOrganizationComputerRulesRequest" })

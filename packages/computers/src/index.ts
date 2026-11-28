@@ -131,7 +131,8 @@ export function decide(source: Computer, target: Computer, action: ComputerActio
     return scope ? { outcome: "allow", route: "checked", scope } : refusal("computer_not_allowed", target)
   }
 
-  const grants = policy.grants.filter((grant) => grant.scope.surface === "sandbox")
+  const requiresSandbox = target.kind === "member_machine" && policy.organization.requireSandboxOnPersonal
+  const grants = requiresSandbox ? policy.grants.filter((grant) => grant.scope.surface === "sandbox") : policy.grants
   const exact = grants.find((grant) =>
     grant.targetId === target.id && grant.source.kind === "computer" && grant.source.id === source.id,
   )
@@ -140,7 +141,7 @@ export function decide(source: Computer, target: Computer, action: ComputerActio
   ) ?? grants.find((entry) =>
     entry.targetId === target.id && entry.source.kind === "workbot" && sameOwner && source.provider === "workbot",
   )
-  if (!grant) return refusal("nothing_shared", target)
+  if (!grant || grant.scope.surface !== "sandbox") return refusal("nothing_shared", target)
 
   const path = actionPath(action)
   if (path !== undefined && !insideSharedFolder(path, grant.scope.folders)) {
