@@ -1,11 +1,20 @@
 ---
 title: "Specialized client plugins"
-description: "The OpenCode plugin brings OpenWork AI Gateway models and MCP resources into one client. Cursor and Codex integrations are in progress."
+description: "Install OpenWork Connect as a plugin in OpenCode, Codex, Cursor, or Claude Code. One install adds the connection and a skill that shows the agent how to use it."
 ---
 
-An [MCP connection](/integrations/mcp) gives your client skills and tools. A client plugin also adds your organization's AI Gateway models to the model picker, with one sign-in.
+An [MCP connection](/integrations/mcp) gives your client your organization's skills and tools. A client plugin sets that connection up for you and adds a skill that shows the agent how to find and use what you have access to.
 
-## OpenCode — ready
+| Client | Plugin adds | Models |
+| --- | --- | --- |
+| [OpenCode](#opencode) | Skills, tools, and models | Included: your organization's AI Gateway models appear in the model picker |
+| [Codex](#codex) | Skills and tools | [AI Gateway API key](/ai-gateway/codex) |
+| [Cursor](#cursor) | Skills and tools | [AI Gateway API key](/ai-gateway/cursor) |
+| [Claude Code](#claude-code) | Skills and tools | [AI Gateway API key](/ai-gateway/claude-code) |
+
+Every plugin uses the signed-in person's access. Installing one doesn't grant anything extra.
+
+## OpenCode
 
 Install [`opencode-openwork`](https://www.npmjs.com/package/opencode-openwork) in OpenCode 2. No desktop app needed.
 
@@ -18,13 +27,52 @@ Choose **Browser**, sign in, pick your organization, and approve the matching co
 
 Requirements, checks, self-hosted setup, and sign-out: [OpenCode plugin guide](/model-context-protocol/opencode-plugin).
 
-## Cursor — in progress
+## Codex
 
-A Cursor plugin with AI Gateway models is in progress. Skills and tools work today through MCP: [connect Cursor](/model-context-protocol/cursor). Models work today with an [AI Gateway API key](/ai-gateway/cursor).
+Add the OpenWork marketplace, install the plugin, and sign in.
 
-## Codex — in progress
+```sh
+codex plugin marketplace add different-ai/openwork-connect
+codex plugin add openwork-connect@openwork
+codex mcp login openwork
+```
 
-A Codex plugin with AI Gateway models is in progress. Skills and tools work today through MCP: [connect Codex](/model-context-protocol/codex). Models work today with an [AI Gateway API key](/ai-gateway/codex).
+Sign in to OpenWork in the browser and pick your organization. Then ask: "Which OpenWork organization am I connected to?"
+
+If you added OpenWork by hand before, remove that entry first with `codex mcp remove openwork`. Codex uses a manual server named `openwork` instead of the plugin's one, even when the manual server is turned off.
+
+## Cursor
+
+The plugin lives in a public repository:
+
+```text
+https://github.com/different-ai/openwork-connect
+```
+
+**For your team.** On a Cursor Teams or Enterprise plan, an admin opens **Dashboard**, then **Plugins & MCPs**, chooses **Import from Repo**, and pastes the URL. Teammates then install OpenWork Connect from the team marketplace.
+
+**For yourself.** Clone the repository into Cursor's local plugins folder and reload Cursor.
+
+```sh
+git clone https://github.com/different-ai/openwork-connect ~/.cursor/plugins/local/openwork-connect
+```
+
+Start sign-in from Cursor's connection prompt, sign in to OpenWork, and pick your organization. If you already added OpenWork as an MCP server, remove it so you have one OpenWork connection.
+
+## Claude Code
+
+```sh
+claude plugin marketplace add different-ai/openwork-connect
+claude plugin install openwork-connect@openwork
+```
+
+Start a new session, run `/mcp`, select the OpenWork server, and sign in.
+
+## What the plugin contains
+
+The Codex, Cursor, and Claude Code plugin is one open-source package, [`different-ai/openwork-connect`](https://github.com/different-ai/openwork-connect). It holds the address of the OpenWork MCP gateway and the `openwork-connect` skill. It holds no credentials: your client opens the browser sign-in and stores the result.
+
+It follows the open Agent Plugins format, so other compatible clients can install it too. See [OpenWork Connect as an Agent Plugin](/model-context-protocol/agent-plugins).
 
 ## Other clients
 

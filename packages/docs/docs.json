@@ -167,7 +167,7 @@
           "integrations/mcp",
           "integrations/client-plugins",
           {
-            "group": "OpenCode — ready",
+            "group": "OpenCode plugin",
             "pages": [
               "model-context-protocol/opencode-plugin"
             ]

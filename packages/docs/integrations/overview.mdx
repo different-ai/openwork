@@ -14,7 +14,7 @@ Use them from the AI client you already have. The OpenWork desktop app is option
     Skills and connected tools in any MCP client. One URL, one sign-in.
   </Card>
   <Card title="Specialized client plugins" icon="terminal" href="/integrations/client-plugins">
-    Models plus skills and tools in one plugin. OpenCode is ready; Cursor and Codex are in progress.
+    One install for the connection and its skill in OpenCode, Codex, Cursor, and Claude Code. The OpenCode plugin adds models too.
   </Card>
 </CardGroup>
 
@@ -26,16 +26,16 @@ Use them from the AI client you already have. The OpenWork desktop app is option
 | MCP Gateway | Shared service connections and tool access | Your agent discovers and calls authorized tools |
 | Skills Gateway | Reusable skills assigned to people and teams | Your agent retrieves the skills it can use through OpenWork MCP |
 
-MCP carries tools and skills, not model calls. A client plugin connects both with one sign-in.
+MCP carries tools and skills, not model calls. The OpenCode plugin connects both with one sign-in. In other clients, models come from an AI Gateway API key.
 
 ## Client availability
 
-| Client | MCP integration | Specialized integration |
+| Client | MCP integration | Client plugin |
 | --- | --- | --- |
-| OpenCode | [Available](/model-context-protocol/opencode) | **Ready:** [install `opencode-openwork`](/model-context-protocol/opencode-plugin) |
-| Cursor | [Available](/model-context-protocol/cursor) | **In progress** |
-| Codex | [Available](/model-context-protocol/codex) | **In progress** |
-| Claude Code | [Available](/model-context-protocol/claude-code) | Use MCP |
+| OpenCode | [Available](/model-context-protocol/opencode) | [Install `opencode-openwork`](/model-context-protocol/opencode-plugin): skills, tools, and models |
+| Cursor | [Available](/model-context-protocol/cursor) | [Install the plugin](/integrations/client-plugins#cursor): skills and tools |
+| Codex | [Available](/model-context-protocol/codex) | [Install the plugin](/integrations/client-plugins#codex): skills and tools |
+| Claude Code | [Available](/model-context-protocol/claude-code) | [Install the plugin](/integrations/client-plugins#claude-code): skills and tools |
 | Other compatible clients | [MCP setup guides](/start-here/connect-openwork-mcp) | Depends on the client |
 
 Cursor, Codex, Claude Code and other OpenAI or Anthropic compatible tools can already use your organization's AI Gateway models with an [AI Gateway API key](/ai-gateway/third-party-tools). That is a separate setup from MCP.
