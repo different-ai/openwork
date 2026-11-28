@@ -48,15 +48,17 @@
   app-region: no-drag;
 }
 
-/* Native chrome is measured in CSS pixels, independent of the UI font scale. */
+/* Native chrome keeps its screen size when the app zooms, so the space
+   reserved for it is divided by the zoom factor. */
 :root {
+  --window-zoom: 1;
   --window-titlebar-height: 40px;
   --window-controls-left: 0px;
 }
 
 html.openwork-electron.openwork-platform-mac:not([data-window-fullscreen="true"]) {
-  --window-titlebar-height: 48px;
-  --window-controls-left: 88px;
+  --window-titlebar-height: calc(48px / var(--window-zoom));
+  --window-controls-left: calc(88px / var(--window-zoom));
 }
 
 @utility window-titlebar {

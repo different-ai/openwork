@@ -27,11 +27,14 @@ export function useDesktopFontZoomBehavior() {
         .then((applied) => {
           if (applied) {
             document.documentElement.style.removeProperty("--openwork-font-size");
+            document.documentElement.style.setProperty("--window-zoom", String(next));
             return;
           }
+          document.documentElement.style.removeProperty("--window-zoom");
           applyFontZoom(document.documentElement.style, next);
         })
         .catch(() => {
+          document.documentElement.style.removeProperty("--window-zoom");
           applyFontZoom(document.documentElement.style, next);
         });
 
