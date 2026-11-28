@@ -112,6 +112,7 @@ export type DiagnosticKind =
   | "ParseError"
   | "UnsupportedSyntax"
   | "UnknownTool"
+  | "ToolUnavailable"
   | "InvalidToolInput"
   | "InvalidToolOutput"
   | "InvalidDataValue"
