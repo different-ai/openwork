@@ -8,11 +8,14 @@ import {
   workbotSlackCall,
 } from "./direct-message.js"
 import { isSandboxSlackToken, SlackApiError, slackClient, type SlackCall } from "./protocol.js"
+import { logSlackBlocksRejected } from "./rich-delivery.js"
+import { postSlackFollowUps, postSlackMessage, type SlackOutgoingMessage } from "./rich-message.js"
+import { withoutSlackBroadcasts } from "./slack-text.js"
 
 export type WorkbotChannelPostFailure = WorkbotDirectMessageFailure | "bot_not_in_channel" | "channel_access_denied"
 
 export type WorkbotChannelPostResult =
-  | { ok: true; channelId: string; messageTs: string; permalink?: string }
+  | { ok: true; channelId: string; messageTs: string; permalink?: string; partial?: boolean }
   | { ok: false; reason: WorkbotChannelPostFailure; code?: string; retryAfterMs?: number }
 
 export type MemberChannelAccess = (input: {
@@ -56,16 +59,13 @@ export function workbotAttributionLine(slackUserId: string) {
   return `<@${slackUserId}>'s agent`
 }
 
-export function withoutSlackBroadcasts(text: string) {
-  return text
-    .replace(/<!(here|channel|everyone)(\|[^>]*)?>/gi, "@\u200b$1")
-    .replace(/<!subteam\^[^>]*>/gi, "@\u200bgroup")
-    .replace(/@(here|channel|everyone)\b/gi, "@\u200b$1")
-}
+export { withoutSlackBroadcasts }
+
+export const WORKBOT_ATTRIBUTION_BLOCKS = 1
 
 export async function postWorkbotChannelMessage(
   member: WorkbotSlackMember,
-  message: { channelId: string; text: string; threadTs?: string },
+  message: { channelId: string; text: string; threadTs?: string; rich?: readonly SlackOutgoingMessage[] },
   deps: Pick<WorkbotChannelPostDeps, "botToken" | "slack" | "sandboxApiBase" | "memberCanReadChannel"> = defaultWorkbotChannelPostDeps,
 ): Promise<WorkbotChannelPostResult> {
   const token = await deps.botToken(member.connectionId)
@@ -76,19 +76,20 @@ export async function postWorkbotChannelMessage(
   const slack = await workbotSlackCall(member.connectionId, token, deps)
   if (!slack) return { ok: false, reason: "slack_error", code: "sandbox_slack_unavailable" }
   try {
+    const attribution = workbotAttributionLine(member.slackUserId)
+    const place = { channel: message.channelId, ...(message.threadTs ? { thread_ts: message.threadTs } : {}) }
+    const onRejected = (code: string) => logSlackBlocksRejected("channel_post", code)
+    const [lead, ...rest] = message.rich ?? []
     const posted = z.object({ channel: z.string().optional(), ts: z.string() }).safeParse(
-      await slack("chat.postMessage", {
-        channel: message.channelId,
-        text: `${workbotAttributionLine(member.slackUserId)}\n${withoutSlackBroadcasts(message.text)}`,
-        ...(message.threadTs ? { thread_ts: message.threadTs } : {}),
-        unfurl_links: false,
-        unfurl_media: false,
-      }),
+      lead
+        ? await postSlackMessage(slack, place, lead, { before: [{ type: "section", text: { type: "mrkdwn", text: attribution } }], textPrefix: `${attribution}\n`, onRejected })
+        : await slack("chat.postMessage", { ...place, text: `${attribution}\n${withoutSlackBroadcasts(message.text)}`, unfurl_links: false, unfurl_media: false }),
     )
     if (!posted.success) return { ok: false, reason: "slack_error", code: "post_unconfirmed" }
+    const complete = await postSlackFollowUps(slack, place, rest, onRejected)
     const channelId = posted.data.channel ?? message.channelId
     const permalink = await messagePermalink(slack, channelId, posted.data.ts)
-    return { ok: true, channelId, messageTs: posted.data.ts, ...(permalink ? { permalink } : {}) }
+    return { ok: true, channelId, messageTs: posted.data.ts, ...(permalink ? { permalink } : {}), ...(complete ? {} : { partial: true }) }
   } catch (error) {
     if (error instanceof SlackApiError) {
       if (BOT_NOT_IN_CHANNEL_CODES.has(error.code)) return { ok: false, reason: "bot_not_in_channel", code: error.code }

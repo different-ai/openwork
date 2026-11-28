@@ -1,3 +1,4 @@
+import { composeSlackMessages, markdownToSlackParts, type SlackComposeOptions, type SlackOutgoingMessage } from "./rich-message.js"
 import { excerpt, markdownToMrkdwn, markdownToPlainText, SECTION_TEXT_LIMIT, slackSafeText, splitSlackText } from "./slack-text.js"
 
 export { excerpt, slackSafeText } from "./slack-text.js"
@@ -39,6 +40,19 @@ function finishedMessage(to: string, finalText: string): SlackMessage {
     text: `${to}Your desktop finished: ${slackSafeText(excerpt(markdownToPlainText(finalText), NOTIFICATION_TEXT_LIMIT))}`,
     blocks: shown.map(section),
   }
+}
+
+const MAX_RICH_MESSAGES = 6
+export const DESKTOP_HANDOFF_REST_LINE = "_The rest of this answer is in OpenWork on that computer._"
+
+export function desktopHandoffRichMessages(
+  recipientUserId: string,
+  notice: DesktopHandoffNotice,
+  options: Pick<SlackComposeOptions, "places" | "imageUrl">,
+): { messages: SlackOutgoingMessage[]; cut: boolean } | null {
+  if (notice.kind !== "finished" || !notice.finalText?.trim()) return null
+  const messages = composeSlackMessages([{ type: "mrkdwn", text: `${mention(recipientUserId)}Your desktop finished:`, trusted: true }, ...markdownToSlackParts(notice.finalText).parts], options)
+  return { messages: messages.slice(0, MAX_RICH_MESSAGES), cut: messages.length > MAX_RICH_MESSAGES }
 }
 
 export type DesktopHandoffNotice =

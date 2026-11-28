@@ -150,6 +150,7 @@ export type CapabilityRegistryContext = {
   managedDeploymentsEnabled: boolean
   artifactStorageEnabled?: boolean
   toolPermissionsEnabled?: boolean
+  slackRichMessagesEnabled?: boolean
   limitedAgentRun: boolean
   agentExecution: boolean
   agentToolFilter: (connectionId: string) => Promise<((toolName: string) => boolean) | null>
@@ -171,7 +172,7 @@ export type CapabilityRegistryContextInput = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "microsoft365ReadResources" | "personalAgents" | "artifactStorage" | "teamsMeetingTranscripts">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead" | "microsoft365ReadResources" | "personalAgents" | "artifactStorage" | "teamsMeetingTranscripts" | "slackRichMessages">>
   organizationToolPermissions?: boolean
   audit?: McpAuditPrincipal | null
   usageSource: CapabilityUsageSource
@@ -224,6 +225,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
     artifactStorageEnabled: input.organizationFeatures.artifactStorage === true,
     toolPermissionsEnabled: input.organizationToolPermissions,
+    slackRichMessagesEnabled: input.organizationFeatures.slackRichMessages === true,
     limitedAgentRun: isLimitedAgentRun(input.principal.scopes),
     agentExecution,
     agentToolFilter,
@@ -840,7 +842,7 @@ const slackSendAsBotSource: CapabilitySource = {
   parseName: (name) => isSlackSendAsBotCapabilityName(name) ? { kind: "slackSendAsBot", name } : null,
   search: async (ctx, query) => {
     if (!(ctx.sourceFilter.api || ctx.sourceFilter.mcp) || !slackSendAsBotAvailable(ctx)) return []
-    return searchSlackSendAsBotCapability(query)
+    return searchSlackSendAsBotCapability(query, { rich: ctx.slackRichMessagesEnabled === true })
   },
   enumerate: () => Promise.resolve([]),
   execute: async (ctx, parsed, input) => {
@@ -850,6 +852,7 @@ const slackSendAsBotSource: CapabilitySource = {
       userId: ctx.principal.userId,
       memberId: ctx.member?.orgMembershipId ?? null,
       hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
+      richEnabled: ctx.slackRichMessagesEnabled === true,
       body: input.body,
     })
     if (!ctx.audit) return run()

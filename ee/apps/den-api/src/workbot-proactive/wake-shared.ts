@@ -5,6 +5,8 @@ import type { AgentMemberCheckMessage, AgentMemberCheckSource } from "@openwork-
 import { appLogger } from "../observability/logger.js"
 import type { MemberCalendarRead } from "../routes/org/google-workspace.js"
 import type { DeliveryResult } from "./deliver.js"
+import type { SlackPart } from "../slack-assistant/rich-message.js"
+import { agentNoticeParts } from "./slack-layout.js"
 import type { AgentInstanceRow } from "./repository.js"
 import { connectionService, readableConnections, stoppedSources, withConnectionState, type MemberConnection, type MemberSourceChoice, type ResolvedSource } from "./sources.js"
 
@@ -49,7 +51,7 @@ export async function noticeUnreadableSources(input: {
   deps: {
     holdsLease: (row: AgentInstanceRow) => Promise<boolean>
     allowed: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
-    deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; text: string }) => Promise<DeliveryResult>
+    deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; memberId?: string; text: string; parts?: readonly SlackPart[] }) => Promise<DeliveryResult>
     connectLink: (connectionId: string) => string
   }
   record: (input: CheckRecordInput) => Promise<void>
@@ -58,13 +60,15 @@ export async function noticeUnreadableSources(input: {
   type Entry = (typeof input.unreadable)[number]
   const notices: Record<string, number> = {}
   const untold: Entry[] = []
-  const actionLink = (connection: MemberConnection) => {
-    const action = `${connection.state === "reconnect" ? "Reconnect" : "Connect"} ${connectionName(connection)}`
-    return `<${deps.connectLink(connection.id)}|${action}>`
-  }
-  const sendAndRecord = async (entries: Entry[], text: string) => {
+  const action = (connection: MemberConnection) => ({
+    text: `${connection.state === "reconnect" ? "Reconnect" : "Connect"} ${connectionName(connection)}`,
+    url: deps.connectLink(connection.id),
+  })
+  const sendAndRecord = async (entries: Entry[], sentence: string) => {
+    const actions = entries.map((entry) => action(entry.connection))
+    const text = `${sentence} ${actions.map((entry) => `<${entry.url}|${entry.text}>`).join(" · ")}`
     const sent = (await deps.holdsLease(input.row)) && (await deps.allowed(input.organizationId, input.userId))
-      ? await deps.deliver({ organizationId: input.organizationId, userId: input.userId, text })
+      ? await deps.deliver({ organizationId: input.organizationId, userId: input.userId, memberId: input.row.memberId, text, parts: agentNoticeParts({ text: sentence, actions }) })
       : null
     for (const entry of entries) {
       if (sent?.ok) notices[entry.connection.id] = input.now
@@ -86,8 +90,8 @@ export async function noticeUnreadableSources(input: {
     } else {
       const what = joinNames(entry.sources.map((source) => source.name))
       const text = input.othersReadable
-        ? `Quick check: I can't read your ${what}, so I've paused checking ${entry.sources.length > 1 ? "them" : "it"} and kept reading the rest. ${actionLink(entry.connection)}`
-        : `Quick check: I can't read your ${what}, so I've paused your checks until it's fixed. ${actionLink(entry.connection)}`
+        ? `Quick check: I can't read your ${what}, so I've paused checking ${entry.sources.length > 1 ? "them" : "it"} and kept reading the rest.`
+        : `Quick check: I can't read your ${what}, so I've paused your checks until it's fixed.`
       await sendAndRecord([entry], text)
     }
   }
@@ -98,7 +102,7 @@ export async function noticeUnreadableSources(input: {
     const rest = input.othersReadable
       ? `I'm skipping ${many ? "them" : "it"}. Everything else is still being checked.`
       : `your checks are paused until ${many ? "they're" : "it's"} connected again.`
-    await sendAndRecord(untold, `I can't read ${what} right now, so ${rest} ${untold.map((entry) => actionLink(entry.connection)).join(" · ")}`)
+    await sendAndRecord(untold, `I can't read ${what} right now, so ${rest}`)
   }
   return notices
 }
@@ -121,7 +125,7 @@ export async function noticeStoppedSources(input: {
   deps: {
     holdsLease: (row: AgentInstanceRow) => Promise<boolean>
     allowed: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
-    deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; text: string }) => Promise<DeliveryResult>
+    deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; memberId?: string; text: string; parts?: readonly SlackPart[] }) => Promise<DeliveryResult>
     agentLink: () => string
   }
   record: (input: CheckRecordInput) => Promise<void>
@@ -145,11 +149,13 @@ export async function noticeStoppedSources(input: {
     if (!group.sources.length) continue
     const what = joinNames(group.sources.map((source) => source.name))
     const many = group.sources.length > 1
-    const text = group.byAdmin
+    const sentence = group.byAdmin
       ? `Quick check: I've stopped reading your ${what} because your admin turned ${many ? "them" : "it"} off for agents.${rest}`
-      : `Quick check: I've stopped reading your ${what} because ${many ? "they are" : "it is"} no longer on for me.${rest} <${deps.agentLink()}|Choose what I read>`
+      : `Quick check: I've stopped reading your ${what} because ${many ? "they are" : "it is"} no longer on for me.${rest}`
+    const actions = group.byAdmin ? [] : [{ text: "Choose what I read", url: deps.agentLink() }]
+    const text = `${sentence}${actions.map((entry) => ` <${entry.url}|${entry.text}>`).join("")}`
     const sent = (await deps.holdsLease(input.row)) && (await deps.allowed(input.organizationId, input.userId))
-      ? await deps.deliver({ organizationId: input.organizationId, userId: input.userId, text })
+      ? await deps.deliver({ organizationId: input.organizationId, userId: input.userId, memberId: input.row.memberId, text, parts: agentNoticeParts({ text: sentence, actions }) })
       : { ok: false as const, code: "lease_or_feature_lost" }
     for (const source of group.sources) {
       if (sent.ok) notices[stoppedNoticeKey(source.id)] = input.now

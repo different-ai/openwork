@@ -41,6 +41,8 @@ import { appLogger } from "../observability/logger.js"
 import type { MemberCalendarRead } from "../routes/org/google-workspace.js"
 import { describeAgentCheck, type AgentCheckRecord } from "./checks.js"
 import type { DeliveryResult } from "./deliver.js"
+import type { SlackPart } from "../slack-assistant/rich-message.js"
+import { agentBriefParts } from "./slack-layout.js"
 import { memberBriefLines, memberRhythm, nextScheduledCheck } from "./brief.js"
 import { memberAgentOn } from "./policy.js"
 import { memberLimits, parseStoredPreferences } from "./preferences.js"
@@ -87,7 +89,7 @@ export type AgentBriefWakeDeps = {
   holdsLease: (row: AgentInstanceRow) => Promise<boolean>
   settle: (row: AgentInstanceRow, changes: AgentSettle) => Promise<boolean>
   destinationBlock: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user"> }) => Promise<AgentDestinationBlock | null>
-  deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; text: string }) => Promise<DeliveryResult>
+  deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; memberId?: string; text: string; parts?: readonly SlackPart[] }) => Promise<DeliveryResult>
   recordChecks: (input: { organizationId: DenTypeId<"organization">; day: string; counts: readonly AgentCheckCount[] }) => Promise<void>
   recordCheck: (record: AgentCheckRecord) => Promise<void>
   person: (organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">) => Promise<string | null>
@@ -406,6 +408,8 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       outcome = { reason: decision.reason === "outside_hours" ? "outside_hours" : decision.reason === "quiet_hours" ? "quiet_window" : "snoozed" }
     } else {
       const linkDomains = readable.flatMap((source) => readableConnections(source).flatMap(connectionLinkDomains))
+      const deliverBrief = (text: string) =>
+        deps.deliver({ organizationId, userId, memberId, text, parts: agentBriefParts({ text, sources: readable.map((source) => source.name), at: now, timeZone, first: occasion.kind === "first" }) })
       const drew: AgentItem[] = []
       let first: AgentMemberCheckMessage | null = null
       let failed = false
@@ -417,7 +421,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
         for (const entry of folded) await deps.reserve({ organizationId, memberId, item: entry.item, outcome: "folded", kind: "brief" })
         const allowedNow = (await deps.holdsLease(row)) && (await deps.allowed(organizationId, userId))
         const result: DeliveryResult | { ok: false; code: "lease_or_feature_lost" } = allowedNow
-          ? await deps.deliver({ organizationId, userId, text: cleanAgentMessage(message.text, { limit: AGENT_ONE_MESSAGE_LIMIT, linkDomains }) })
+          ? await deliverBrief(cleanAgentMessage(message.text, { limit: AGENT_ONE_MESSAGE_LIMIT, linkDomains }))
           : { ok: false, code: "lease_or_feature_lost" }
         await deps.finish(id, result.ok ? "sent" : "failed")
         if (result.ok) {

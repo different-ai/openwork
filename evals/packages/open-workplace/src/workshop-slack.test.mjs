@@ -185,4 +185,80 @@ test("message text renders as Slack mrkdwn without becoming markup", () => {
   assert.equal(renderMrkdwn("<javascript:alert(1)|x> <img src=x onerror=1>"), "&lt;javascript:alert(1)|x&gt; &lt;img src=x onerror=1&gt;");
   assert.equal(renderMrkdwn('<https://example.com/"onmouseover="x|label>'), '<a href="https://example.com/&quot;onmouseover=&quot;x" target="_blank" rel="noreferrer noopener">label</a>');
   assert.equal(renderMrkdwn("2 * 3 * 4"), "2 * 3 * 4");
+  assert.equal(renderMrkdwn("R&amp;D &lt;@U123&gt; &lt;!here&gt; &lt;https://example.com|x&gt;", () => "Jordan"), "R&amp;D &lt;@U123&gt; &lt;!here&gt; &lt;https://example.com|x&gt;");
+  assert.equal(renderMrkdwn("Table:\n```\na | *b*\n1 | <2>\n```\nDone"), "Table:<br><pre>a | *b*\n1 | &lt;2&gt;</pre><br>Done");
+});
+
+test("a bot's blocks are checked against Slack's limits and drawn on the person's page", { timeout: 60_000 }, async (t) => {
+  const f = await fixture(t);
+  const app = (await f.register()).body;
+  const browser = await f.enter();
+  const person = await f.slack(app, await f.connect(browser), "auth.test");
+  const channel = (await f.slack(app, app.bot_token, "conversations.open", { users: person.user_id })).channel.id;
+  const post = (body) => f.slack(app, app.bot_token, "chat.postMessage", { channel, text: "Open issues this week", ...body });
+  const raw = (text) => ({ type: "raw_text", text });
+
+  const blocks = [
+    { type: "header", text: { type: "plain_text", text: "Open issues <b>", emoji: true } },
+    { type: "section", text: { type: "mrkdwn", text: "*Three* need you. <script>x</script>" } },
+    { type: "section", fields: [{ type: "mrkdwn", text: "*Owner*\nDana" }, { type: "mrkdwn", text: "*Due*\nFriday" }] },
+    { type: "table", column_settings: [{ align: "left" }, { align: "right" }], rows: [[raw("Issue"), raw("Days")], [{ type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "link", url: "https://example.com/1", text: "ACME-1" }] }] }, raw("9")]] },
+    { type: "divider" },
+    { type: "markdown", text: "**Next**\n\n- one\n- [two](https://example.com/2)\n\n| A | B |\n| --- | --- |\n| 1 | 2 |" },
+    { type: "image", image_url: "https://example.com/chart.png", alt_text: "Signups by week" },
+    { type: "context", elements: [{ type: "mrkdwn", text: "From Linear, read just now" }] },
+    { type: "actions", block_id: "openwork_link:1", elements: [{ type: "button", action_id: "openwork_link:0", text: { type: "plain_text", text: "Open the board" }, url: "https://example.com/board" }] },
+    { type: "actions", block_id: "openwork_choice:U1", elements: [{ type: "button", action_id: "openwork_choice:0", text: { type: "plain_text", text: "Send it" }, value: "Send it" }] },
+  ];
+  const sent = await post({ blocks });
+  assert.equal(sent.ok, true, sent.error);
+  assert.deepEqual((await f.slack(app, app.bot_token, "conversations.history", { channel, oldest: "0" })).messages[0].blocks, blocks);
+
+  const { html } = await f.page(browser);
+  assert.match(html, /<div class="bk-header">Open issues &lt;b&gt;<\/div>/);
+  assert.match(html, /<strong>Three<\/strong> need you\. &lt;script&gt;x&lt;\/script&gt;/);
+  assert.match(html, /<div class="bk-fields"><div><strong>Owner<\/strong><br>Dana<\/div><div><strong>Due<\/strong><br>Friday<\/div><\/div>/);
+  assert.match(html, /<th style="text-align:right;white-space:nowrap">Days<\/th>/);
+  assert.match(html, /<td style="text-align:left;white-space:nowrap"><a href="https:\/\/example\.com\/1" target="_blank" rel="noreferrer noopener">ACME-1<\/a><\/td>/);
+  assert.match(html, /<hr class="bk-divider">/);
+  assert.match(html, /<ul><li>one<\/li><li><a href="https:\/\/example\.com\/2" target="_blank" rel="noreferrer noopener">two<\/a><\/li><\/ul>/);
+  assert.match(html, /<thead><tr><th>A<\/th><th>B<\/th><\/tr><\/thead>/);
+  assert.match(html, /aria-label="Image: Signups by week"/);
+  assert.ok(!html.includes("<img"), "the sandbox never loads an image from elsewhere");
+  assert.match(html, /<div class="bk-context"><span>From Linear, read just now<\/span><\/div>/);
+  assert.match(html, /<a class="bk-button" href="https:\/\/example\.com\/board" target="_blank" rel="noreferrer noopener">Open the board<\/a>/);
+  assert.match(html, /<button type="button" class="bk-button" aria-disabled="true"[^>]*>Send it<\/button>/);
+  assert.ok(!html.includes("<script>x"), "block text never becomes markup");
+
+  // What Slack refuses is refused here, with Slack's error names.
+  const error = async (value) => (await post({ blocks: value })).error;
+  assert.equal(await error("not json"), "invalid_blocks_format");
+  assert.equal(await error({ type: "section" }), "invalid_blocks_format");
+  assert.equal(await error([{ type: "marquee", text: "x" }]), "invalid_blocks");
+  assert.equal(await error([{ type: "header", text: { type: "plain_text", text: "x".repeat(151) } }]), "invalid_blocks");
+  assert.equal(await error([{ type: "header", text: { type: "mrkdwn", text: "x" } }]), "invalid_blocks");
+  assert.equal(await error([{ type: "section", text: { type: "mrkdwn", text: "x".repeat(3001) } }]), "invalid_blocks");
+  assert.equal(await error([{ type: "section", fields: Array.from({ length: 11 }, () => ({ type: "mrkdwn", text: "x" })) }]), "invalid_blocks");
+  assert.equal(await error(Array.from({ length: 51 }, () => ({ type: "divider" }))), "invalid_blocks");
+  assert.equal(await error([{ type: "table", rows: [Array.from({ length: 21 }, () => raw("x"))] }]), "invalid_blocks");
+  assert.equal(await error([{ type: "table", rows: Array.from({ length: 101 }, () => [raw("x")]) }]), "invalid_blocks");
+  assert.equal(await error([{ type: "table", rows: [[raw("")]] }]), "invalid_blocks");
+  assert.equal(await error([{ type: "table", rows: Array.from({ length: 11 }, () => [raw("x".repeat(1000))]) }]), "msg_blocks_too_long");
+  assert.equal(await error([{ type: "markdown", text: "x".repeat(7000) }, { type: "markdown", text: "x".repeat(7000) }]), "msg_blocks_too_long");
+  assert.equal(await error([{ type: "image", image_url: "javascript:alert(1)", alt_text: "x" }]), "invalid_blocks");
+  assert.equal(await error([{ type: "image", image_url: "https://example.com/a.png" }]), "invalid_blocks");
+  assert.equal(await error([{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "x".repeat(76) }, url: "https://example.com" }] }]), "invalid_blocks");
+  assert.equal(await error([{ type: "actions", elements: [{ type: "button", action_id: "a", text: { type: "plain_text", text: "x" } }, { type: "button", action_id: "a", text: { type: "plain_text", text: "y" } }] }]), "invalid_blocks");
+  assert.equal(await error([{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "x" }, url: "javascript:alert(1)" }] }]), "invalid_blocks");
+  assert.equal((await f.slack(app, app.bot_token, "conversations.history", { channel, oldest: "0" })).messages.length, 1, "a refused message is not stored");
+
+  // An update replaces the blocks; new text alone removes them, as in Slack.
+  const updated = await f.slack(app, app.bot_token, "chat.update", { channel, ts: sent.ts, text: "Chosen", blocks: [{ type: "context", elements: [{ type: "mrkdwn", text: "<@" + person.user_id + "> chose *Send it*" }] }] });
+  assert.equal(updated.ok, true, updated.error);
+  const after = (await f.page(browser)).html;
+  assert.match(after, /<span class="mention">@[^<]+<\/span> chose <strong>Send it<\/strong>/);
+  assert.ok(!after.includes("<div class=\"bk-header\">"));
+  assert.equal((await f.slack(app, app.bot_token, "chat.update", { channel, ts: sent.ts, blocks: [{ type: "marquee" }] })).error, "invalid_blocks");
+  assert.equal((await f.slack(app, app.bot_token, "chat.update", { channel, ts: sent.ts, text: "Plain again" })).ok, true);
+  assert.equal((await f.slack(app, app.bot_token, "conversations.history", { channel, oldest: "0" })).messages[0].blocks, undefined);
 });

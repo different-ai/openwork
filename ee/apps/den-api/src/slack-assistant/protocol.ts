@@ -16,9 +16,11 @@ export const slackEventSchema = z.object({
   title: z.string().optional(),
   app_context: z.unknown().optional(),
   files: z.array(z.object({ id: z.string(), name: z.string().optional() })).optional(),
+  choice: z.object({ addressed: z.string().max(64), prompt: z.string().max(3_000).optional() }).optional(),
   tokens: z.object({ oauth: z.array(z.string()).optional(), bot: z.array(z.string()).optional() }).optional(),
 })
 export type SlackEvent = z.infer<typeof slackEventSchema>
+export const SLACK_CHOICE_PRESSED = "choice_pressed"
 export const slackEnvelopeSchema = z.object({
   type: z.string(),
   challenge: z.string().optional(),
@@ -108,11 +110,16 @@ export const SLACK_DRIVE_FILES_INSTRUCTIONS = `- Read Google Drive and OneDrive 
 export const SLACK_ANSWER_REPLY_INSTRUCTIONS = `- What you write before doing work shows in the thread as you go. Your last message is posted as its own new reply, which is what notifies them, so write it as coming back to them with the result ("Alright, booked it…", "Here's what I found…"), in your own words. Don't repeat what you said on the way, and don't start it with "Done:".
 - Acknowledge once. When you hand a job to start_task, your one sentence before it is the acknowledgment: say what you'll do and that you'll post it here ("I'll match your calendar with your meeting notes and post what I find here."), then end your turn with nothing more once the task starts. Write again only if it couldn't start.`
 
-export function slackWorkbotInstructions(input: { driveFiles: boolean; answerReply?: boolean }) {
+export const SLACK_RICH_REPLY_INSTRUCTIONS = `- Your last message can use Slack's own components. Plain Markdown already gives you four: a # or ## heading on its own line is a header, --- between blank lines is a divider, a Markdown table is a real table (up to 20 columns, short cells; a cell that is only a link stays a link), and an image on its own line, ![what it shows](https://…), is a picture when OpenWork hosts it and a link otherwise.
+- For the rest, put one fenced block with the language slack in your last message, holding JSON: one component or a list of them. {"type":"context","text":"From Linear, read at 9:02"} is a small grey line for sources and freshness. {"type":"fields","fields":[{"label":"Owner","value":"Dana"}]} shows up to ten short label and value pairs in two columns. {"type":"buttons","buttons":[{"text":"Open the doc","url":"https://…"}]} adds up to five link buttons; {"text":"Open Automations","open":"automations"} and "open":"connections" go to those pages in OpenWork. {"type":"choices","prompt":"Send this reply to Dana?","options":["Send it","Don't send"]} asks one question with two to five buttons that only asked_by can press. What they press arrives as invocation.text of their next message in this thread, so name each option by what it does and carry on from their answer.
+- Use a component when it makes the answer faster to read: a table for three or more items with the same facts (open issues, deals by stage, action items with owners), fields for a few facts about one thing, a context line for where the data came from, one button for the place to go next, choices when you need a yes or no before you act. Everything else stays plain sentences: a short answer, one fact, a draft to copy or a casual reply gets no header, table or button. At most one table and one question per reply, and never a component in what you write before doing work. Name people in words: a <@…> mention you write is shown as text and notifies no one.`
+
+export function slackWorkbotInstructions(input: { driveFiles: boolean; answerReply?: boolean; rich?: boolean }) {
   return [
     SLACK_WORKBOT_INSTRUCTIONS,
     ...(input.driveFiles ? [SLACK_DRIVE_FILES_INSTRUCTIONS] : []),
     ...(input.answerReply ? [SLACK_ANSWER_REPLY_INSTRUCTIONS] : []),
+    ...(input.answerReply && input.rich ? [SLACK_RICH_REPLY_INSTRUCTIONS] : []),
   ].join("\n")
 }
 

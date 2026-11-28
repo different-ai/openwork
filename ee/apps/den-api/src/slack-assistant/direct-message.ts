@@ -8,11 +8,13 @@ import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { db } from "../db.js"
 import { isSandboxSlackToken, SlackApiError, slackClient, type SlackCall } from "./protocol.js"
+import { logSlackBlocksRejected } from "./rich-delivery.js"
+import { postSlackFollowUps, postSlackMessage, type SlackOutgoingMessage } from "./rich-message.js"
 
 export type WorkbotDirectMessageFailure = "slack_app_not_installed" | "member_not_linked" | "slack_error"
 
 export type WorkbotDirectMessageResult =
-  | { ok: true; channelId: string; messageTs: string; permalink?: string | null }
+  | { ok: true; channelId: string; messageTs: string; permalink?: string | null; partial?: boolean }
   | { ok: false; reason: WorkbotDirectMessageFailure; code?: string; retryAfterMs?: number }
 
 export type WorkbotDirectMessageTarget =
@@ -108,7 +110,7 @@ export async function resolveWorkbotDirectMessageTarget(
 }
 
 export async function sendWorkbotDirectMessage(
-  input: { organizationId: string; userId: string; text: string; threadTs?: string; permalink?: boolean },
+  input: { organizationId: string; userId: string; text: string; threadTs?: string; permalink?: boolean; rich?: readonly SlackOutgoingMessage[] },
   deps: WorkbotDirectMessageDeps = defaultWorkbotDirectMessageDeps,
 ): Promise<WorkbotDirectMessageResult> {
   const target = await resolveWorkbotDirectMessageTarget(input, deps)
@@ -187,7 +189,7 @@ function slackPermalink(value: unknown): string | null {
 
 export async function sendWorkbotDirectMessageTo(
   target: WorkbotSlackMember,
-  message: { text: string; threadTs?: string; permalink?: boolean },
+  message: { text: string; threadTs?: string; permalink?: boolean; rich?: readonly SlackOutgoingMessage[] },
   deps: Pick<WorkbotDirectMessageDeps, "botToken" | "slack" | "sandboxApiBase"> = defaultWorkbotDirectMessageDeps,
 ): Promise<WorkbotDirectMessageResult> {
   const token = await deps.botToken(target.connectionId)
@@ -197,17 +199,17 @@ export async function sendWorkbotDirectMessageTo(
   try {
     const opened = z.object({ channel: z.object({ id: z.string() }) }).safeParse(await slack("conversations.open", { users: target.slackUserId }))
     if (!opened.success) return { ok: false, reason: "slack_error", code: "dm_unavailable" }
+    const place = { channel: opened.data.channel.id, ...(message.threadTs ? { thread_ts: message.threadTs } : {}) }
+    const onRejected = (code: string) => logSlackBlocksRejected("direct_message", code)
+    const [lead, ...rest] = message.rich ?? []
     const posted = z.object({ ts: z.string() }).safeParse(
-      await slack("chat.postMessage", {
-        channel: opened.data.channel.id,
-        text: message.text,
-        ...(message.threadTs ? { thread_ts: message.threadTs } : {}),
-        unfurl_links: false,
-        unfurl_media: false,
-      }),
+      lead
+        ? await postSlackMessage(slack, place, lead, { onRejected })
+        : await slack("chat.postMessage", { ...place, text: message.text, unfurl_links: false, unfurl_media: false }),
     )
     if (!posted.success) return { ok: false, reason: "slack_error", code: "post_unconfirmed" }
-    const sent: WorkbotDirectMessageResult = { ok: true, channelId: opened.data.channel.id, messageTs: posted.data.ts }
+    const complete = await postSlackFollowUps(slack, place, rest, onRejected)
+    const sent: WorkbotDirectMessageResult = { ok: true, channelId: opened.data.channel.id, messageTs: posted.data.ts, ...(complete ? {} : { partial: true }) }
     if (!message.permalink) return sent
     const permalink = await slack("chat.getPermalink", { channel: opened.data.channel.id, message_ts: posted.data.ts }).then(slackPermalink, () => null)
     return { ...sent, permalink }

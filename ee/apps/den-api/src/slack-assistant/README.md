@@ -56,9 +56,10 @@ platform capability are rechecked while processing each turn.
   in a fresh session.
 - Streams use Slack `chunks` mode throughout, including Markdown and task updates.
   Delivered answer chunks are checkpointed. Slack closes a streamed message on
-  its own after about five minutes (`message_not_in_streaming_state`), so a reply
-  continues in a new stream in the same thread after four minutes or 30,000
-  characters, or right after Slack closed it early. The Slack session stays in
+  its own after about five minutes (`message_not_in_streaming_state`) and allows
+  12,000 Markdown characters in one stream, so a reply continues in a new stream
+  in the same thread after four minutes or 11,000 characters, or right after
+  Slack closed it early or answered `msg_too_long`. The Slack session stays in
   progress across streams, so Stop keeps working. Closing text that has no open
   stream is posted as a plain reply.
 - Slack Stop cancels the signed actor's running task, including replies moved into a DM.
@@ -116,6 +117,22 @@ platform capability are rechecked while processing each turn.
   when every task reported or was stopped, after a day, or quietly when the
   feature, the assistant, the runner or the member's access is gone (the report
   stays in the conversation).
+
+## Components (`slackRichMessages`)
+
+With the `slackRichMessages` feature on for the member, the final answer, task
+reports and desktop results go through one composer (`rich-message.ts`) instead
+of a single Markdown block: headings become header blocks, Markdown tables
+become table blocks, and one fenced `slack` block of validated JSON adds a
+context line, fields, link buttons or a question with choice buttons. Slack's
+limits are enforced there, the top-level `text` carries the whole message, and
+blocks Slack refuses are posted again as plain sections. A press on a choice
+button is queued by the interactions route and acknowledged; the worker settles
+it (`choice.ts`): only the member it was addressed to, with the feature still
+on, starts anything, the first press becomes their next request in the thread,
+and the buttons are replaced.
+The live stream is unchanged. See
+`docs/features/slack-rich-messages/README.md`.
 
 ## Work handed to the desktop
 
@@ -180,12 +197,14 @@ API also returns sampled latency medians and feedback totals for the latest 1,00
 24-hour events. Logs contain event IDs/timing/error codes, never tokens or content.
 Turn off the connector's assistant toggle to stop new routing. Active runs stop
 publishing on the next access check; already running external tool calls cannot
-be recalled. Socket Mode, approval buttons, Work Objects, and a separate fast lane
-are outside this implementation.
+be recalled. Socket Mode, Work Objects, and a separate fast lane are outside this
+implementation.
 
 ## Slack contracts
 
 - [Native lifecycle and Stop](https://docs.slack.dev/reference/methods/agents.sessions.setStatus/)
 - [Streaming chunks](https://docs.slack.dev/reference/methods/chat.appendStream/)
+- [Stream limits](https://docs.slack.dev/reference/methods/chat.startStream/)
+- [Blocks](https://docs.slack.dev/reference/block-kit/blocks/) and [interactions](https://docs.slack.dev/interactivity/handling-user-interaction/)
 - [Stop events](https://docs.slack.dev/reference/events/agent_session_stopped/)
 - [Title changes](https://docs.slack.dev/reference/events/agent_session_title_changed/)

@@ -8,6 +8,17 @@ export function slackSafeText(text: string) {
     .replace(/@(here|channel|everyone)\b/gi, "@\u200b$1")
 }
 
+export function withoutSlackBroadcasts(text: string) {
+  return text
+    .replace(/<!(here|channel|everyone)(\|[^>]*)?>/gi, "@\u200b$1")
+    .replace(/<!subteam\^[^>]*>/gi, "@\u200bgroup")
+    .replace(/@(here|channel|everyone)\b/gi, "@\u200b$1")
+}
+
+export function withoutSlackMentions(text: string) {
+  return text.replace(/<@([A-Z0-9]+)(?:\|([^>\n]*))?>/gi, (_, id: string, label: string | undefined) => `@\u200b${label?.trim() || id}`)
+}
+
 function balanceFormatting(text: string, ending = "") {
   let out = text
   if ((out.match(/```/g) ?? []).length % 2 === 1) return `${out}${ending}\n\`\`\``

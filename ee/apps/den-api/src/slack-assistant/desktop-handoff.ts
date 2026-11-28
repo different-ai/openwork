@@ -16,7 +16,9 @@ import {
   type RemoteSessionCommand,
   type RemoteSessionCommandStore,
 } from "../remote-sessions/commands.js"
-import { desktopHandoffMessage, type DesktopHandoffNotice } from "./desktop-handoff-messages.js"
+import type { DesktopHandoffNotice } from "./desktop-handoff-messages.js"
+import { postDesktopHandoffNotice, type DesktopHandoffRich } from "./desktop-handoff-post.js"
+import { slackComposeDefaults, slackRichEnabled } from "./rich-delivery.js"
 import { SlackApiError, slackClient, type SlackCall } from "./protocol.js"
 import { getInstallation, resolveSlackActor } from "./repository.js"
 import { checkpointSchema } from "./run.js"
@@ -204,12 +206,14 @@ export type HandoffSweepDeps = {
   slack: (token: string) => SlackCall
   commandStore: RemoteSessionCommandStore
   now: () => number
+  rich?: DesktopHandoffRich
 }
 
 const defaultSweepDeps: HandoffSweepDeps = {
   slack: slackClient,
   commandStore: databaseRemoteSessionCommandStore,
   now: Date.now,
+  rich: async (handoff) => ((await slackRichEnabled(handoff.organizationId, handoff.userId)) ? slackComposeDefaults() : null),
 }
 
 async function processHandoff(handoff: HandoffRow, deps: HandoffSweepDeps) {
@@ -230,13 +234,7 @@ async function processHandoff(handoff: HandoffRow, deps: HandoffSweepDeps) {
 
   if (!(await holdLease(handoff, deps.now()))) return false
   try {
-    await deps.slack(installation.botToken)("chat.postMessage", {
-      channel: handoff.channelId,
-      thread_ts: handoff.threadTs,
-      ...desktopHandoffMessage(handoff.recipientUserId, step.notice),
-      unfurl_links: false,
-      unfurl_media: false,
-    })
+    await postDesktopHandoffNotice(deps.slack(installation.botToken), handoff, step.notice, deps.rich)
   } catch (error) {
     const code = error instanceof SlackApiError ? error.code : "post_failed"
     appLogger.warn("slack_desktop_handoff_post_failed", { command_id: handoff.commandId, code, attempt: handoff.attempts + 1 })
