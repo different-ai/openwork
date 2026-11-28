@@ -46,7 +46,7 @@ const createSessionBody = z
     memoryScope: z.enum(["owner"]).optional(),
   })
   .strict()
-  .refine((body) => body.profile !== "agent_chat" || (body.owner && ![body.files, body.computer, body.desktop, body.desktopViews, body.reactions, body.tasks, body.documentNavigation, body.teachingNavigation, body.sandboxGateway, body.browserRecovery, body.autoTitle, body.memoryOf, body.memoryScope].some(Boolean)), "agent chat cannot enable workspace features and requires an owner")
+  .refine((body) => body.profile !== "agent_chat" || (body.owner && ![body.files, body.desktop, body.desktopViews, body.reactions, body.tasks, body.documentNavigation, body.teachingNavigation, body.sandboxGateway, body.browserRecovery, body.autoTitle, body.memoryOf, body.memoryScope].some(Boolean)), "agent chat cannot enable workspace features and requires an owner")
 const messageIdSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)
 const sessionIdSchema = z.string().regex(/^hs_[A-Za-z0-9_-]{8,96}$/)
 const listQuery = z.object({ owner: z.string().min(1).max(200), limit: z.coerce.number().int().min(1).max(200).default(50) })

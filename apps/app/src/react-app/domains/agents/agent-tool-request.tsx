@@ -39,7 +39,7 @@ export function AgentToolDecision({ runtime, agent, request, onAllowed, onChoose
       title={connectorAccess
         ? (request.toolName ? t("agents.connector_ask_tool_title", { agent: name, tool, connection }) : t("agents.connector_ask_title", { agent: name, connection }))
         : t("agents.permission_ask_title", { agent: name, tool, connection })}
-      line={connectorAccess ? t(request.toolName ? "agents.connector_ask_tool_line" : "agents.connector_ask_line", { connection }) : t("agents.permission_ask_accounts")}
+      line={connectorAccess && request.connectionId === "computer" ? t("agents.computer_ask_line") : connectorAccess ? t(request.toolName ? "agents.connector_ask_tool_line" : "agents.connector_ask_line", { connection }) : t("agents.permission_ask_accounts")}
       decisions={request.canDecide.filter((choice) => choice !== "approve" && choice !== "turn_on")}
       turnOn={connectorAccess && request.canDecide.includes("turn_on") ? {
         label: t(agent.role === "manager" ? "agents.connector_ask_request_on" : "agents.connector_ask_turn_on", { connection }),

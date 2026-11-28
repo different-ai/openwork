@@ -67,6 +67,7 @@ export function OrgAgentPolicy({ orgId, policy, connectorsHref }: { orgId: strin
   const candidates = connections.data?.filter(({ id, nativeProviderKey }) => !isNativeProviderConnectionId(id, nativeProviderKey)) ?? [];
   const builtInConnections = [
     { id: "openwork", name: "OpenWork", hint: "Agents, routines, Automations and the rest of your organization's OpenWork data." },
+    { id: "computer", name: "Computer", hint: "A Linux computer of the agent's own, for work that needs real programs, files or code." },
     ...(builtIn.data?.filter(({ id, nativeProviderKey }) => isNativeProviderConnectionId(id, nativeProviderKey)).map(({ id, name }) => ({ id, name, hint: "" })) ?? []),
   ];
   const saveSettings = (settings: Extract<PolicyEdit, { action: "settings" }>["settings"]) => edit.mutate({ action: "settings", settings });

@@ -73,7 +73,7 @@ export async function main(): Promise<void> {
   // The runner imports the computer package's built files; a fresh checkout has none.
   await promisify(execFile)("pnpm", ["--filter", "@openwork-ee/headless-computer", "build"], { cwd: REPO_ROOT, timeout: 600_000, maxBuffer: 16 * 1024 * 1024 });
   await using stack = new AsyncDisposableStack();
-  const world = await bootWorkbot(stack, undefined, { live: true, agentChat: true, denEnv: { DEN_DEPLOYMENT: "cloud" }, features: { personalAgents: true, toolPermissions: true } });
+  const world = await bootWorkbot(stack, undefined, { live: true, agentChat: true, denEnv: { DEN_DEPLOYMENT: "cloud" }, features: { personalAgents: true, toolPermissions: true, remoteComputers: true } });
   const agents = await seedAgents(world.den, world.orgId);
   const desktop = stack.use(await app({
     den: world.den, place, as: "admin", enterpriseActivated: true,

@@ -1,4 +1,4 @@
-import { personalAgentConnectorState } from "./connector-access.js"
+import { COMPUTER_CONNECTION_ID, COMPUTER_CONNECTION_NAME, COMPUTER_CONNECTION_TOOLS, personalAgentConnectorState } from "./connector-access.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { PersonalAgentToolCatalog, PersonalAgentToolPolicy } from "@openwork/types/den/personal-agents"
 import { externalMcpConnectionReadyForMember, listUsableExternalMcpConnections, type ExternalMcpConnectionRow } from "../capability-sources/external-mcp-connections.js"
@@ -62,12 +62,13 @@ function operationTools(operations: readonly McpToolOperation[]): ListedTool[] {
 export async function personalAgentToolCatalog(caller: PersonalAgentCaller, policy: PersonalAgentToolPolicy, agent: PersonalAgentAccess, operations: readonly McpToolOperation[] = []): Promise<PersonalAgentToolCatalog> {
   const organizationId = normalizeDenTypeId("organization", caller.organizationId)
   const memberId = normalizeDenTypeId("member", caller.memberId)
-  const [teams, organization, memberRulesEnabled, managedDeploymentsEnabled, gmailThreadRead] = await Promise.all([
+  const [teams, organization, memberRulesEnabled, managedDeploymentsEnabled, gmailThreadRead, computerOffered] = await Promise.all([
     listTeamsForMember({ organizationId, memberId }),
     personalAgentOrganizationRules(organizationId, { fresh: true }),
     organizationFeatureEnabled(organizationId, "toolPermissions"),
     organizationFeatureEnabled(organizationId, "managedDeployments"),
     organizationFeatureEnabled(organizationId, "gmailThreadRead"),
+    organizationFeatureEnabled(organizationId, "remoteComputers"),
   ])
   const teamIds = teams.map(({ id }) => id)
   const [connections, native, teamPolicies, memberPolicies] = await Promise.all([
@@ -106,6 +107,7 @@ export async function personalAgentToolCatalog(caller: PersonalAgentCaller, poli
   })
   const catalog: PersonalAgentToolCatalog["connections"] = [
     builtIn(OPENWORK_CONNECTION_ID, OPENWORK_CONNECTION_NAME, operationTools(openWork)),
+    ...(computerOffered ? [builtIn(COMPUTER_CONNECTION_ID, COMPUTER_CONNECTION_NAME, COMPUTER_CONNECTION_TOOLS.map(({ name, title }) => ({ name, title, write: false })))] : []),
     ...native.filter((entry) => entry.connectedForMe).map((entry) => builtIn(entry.id, entry.name, operationTools(nativeOperations(available, entry.nativeProviderKey)))),
   ]
   for (let index = 0; index < connections.length; index += 8) {
