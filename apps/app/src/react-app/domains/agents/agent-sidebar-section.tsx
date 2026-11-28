@@ -31,6 +31,14 @@ export function agentSidebarGroups<T extends { listed?: boolean; agent: Pick<Per
   return { listed: active.filter((item) => item.listed !== false), offered: active.filter((item) => item.listed === false) };
 }
 
+export function newAgentName(taken: readonly string[]): string {
+  const base = t("agents.new");
+  for (let index = 1; ; index += 1) {
+    const name = index === 1 ? base : `${base} ${index}`;
+    if (!taken.includes(name)) return name;
+  }
+}
+
 export function AgentSidebarSection() {
   const queryClient = useQueryClient();
   const [sharingOpen, setSharingOpen] = useState(false);
@@ -57,16 +65,26 @@ export function AgentSidebarSection() {
         }
         return;
       }
-      const draft = row?.chat ?? agentChatsInScope(store.chats, runtime)
-        .find((chat) => chat.workspaceId === workspaceId && !chat.agentId && !chat.asked);
-      if (draft) {
-        if (await runtime.sessionState(workspaceId, draft.sessionId) !== "gone") return runtime.openSession(workspaceId, draft.sessionId);
-        store.forget(runtime, draft.sessionId);
-        if (row) return;
+      if (row?.chat) {
+        if (await runtime.sessionState(workspaceId, row.chat.sessionId) !== "gone") return runtime.openSession(workspaceId, row.chat.sessionId);
+        return store.forget(runtime, row.chat.sessionId);
       }
-      const sessionId = await runtime.createSession(workspaceId);
-      if (!sessionId) return;
-      store.open({ denBaseUrl, organizationId, principal, workspaceId, sessionId });
+      const created = await runtime.client.createPersonalAgent(organizationId, {
+        name: newAgentName((queryClient.getQueryData<PersonalAgentDetail[]>(agentListKey(runtime)) ?? []).map((item) => item.agent.name)),
+        brief: t("agents.new_brief"),
+        idempotencyKey: crypto.randomUUID(),
+      });
+      queryClient.setQueryData<PersonalAgentDetail[]>(agentListKey(runtime), (items) =>
+        items?.some((item) => item.agent.id === created.agent.id) ? items : [...items ?? [], created]);
+      const sessionId = standingChatSessionId(created.agent.id);
+      store.open({ denBaseUrl, organizationId, principal, workspaceId, sessionId, agentId: created.agent.id, agentName: created.agent.name });
+      runtime.openSession(workspaceId, sessionId);
+      if (workspaceId) {
+        store.save(runtime, sessionId, { chatLinkPending: true });
+        await runtime.client.setPersonalAgentChat(organizationId, created.agent.id, { workspaceId, sessionId });
+        store.save(runtime, sessionId, { chatLinkPending: false });
+      }
+      await queryClient.invalidateQueries({ queryKey: agentListKey(runtime) });
     },
     onError: () => toast.error(t("agents.open_failed"), { id: "agent-chat-link" }),
   });

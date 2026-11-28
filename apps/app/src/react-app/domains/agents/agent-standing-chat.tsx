@@ -139,7 +139,7 @@ function StandingThread({ runtime, agentId, sessionId, name, threadKey }: { runt
           <Skeleton className="h-9 w-40 self-end rounded-2xl" />
           <Skeleton className="h-4 w-56 max-w-full" />
         </div> : !thread.isError && timeline.length === 0 ?
-          <p className={`${AGENT_ROW_INSET} text-sm text-dls-secondary`}>{t("agents.chat_empty", { name: displayName })}</p> : null}
+          <p className={`${AGENT_ROW_INSET} text-sm text-dls-secondary`}>{agent?.routines.length === 0 ? t("agents.greeting") : t("agents.chat_empty", { name: displayName })}</p> : null}
         {timeline.map((item, index) => item.kind === "request"
           ? agent && <div key={item.key} className={AGENT_ROW_INSET}>
             {item.request.kind === "tool" ? <AgentToolReceipt agent={agent} request={item.request} answered={index < timeline.length - 1} />

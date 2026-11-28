@@ -1,3 +1,4 @@
+import type { PersonalAgentDetail, PersonalAgentRequest } from "@openwork/types/den/personal-agents";
 import { useContext, type ReactNode } from "react";
 
 import { t } from "@/i18n";
@@ -46,6 +47,11 @@ export function AgentChatDock({ sessionId, name, draft, onDraftChange, onSend, d
   );
 }
 
+export function isBeingChosen(agent: PersonalAgentDetail, request: PersonalAgentRequest, choosing: boolean): boolean {
+  if (request.connectorAccess !== true || request.toolName || !request.connectionId) return false;
+  return choosing || Object.keys(agent.revision.toolPolicy.tools[request.connectionId] ?? {}).length > 0;
+}
+
 function AgentDockApproval({ sessionId }: { sessionId: string }) {
   const runtime = useAgentsRuntime();
   const chat = useAgentChatStore((state) => agentChatFor(state.chats, runtime, sessionId));
@@ -55,8 +61,10 @@ function AgentDockApproval({ sessionId }: { sessionId: string }) {
   const requests = useAgentRequestsQuery(runtime, agentId, Boolean(agent?.openRequestCount));
   const runs = useAgentRunsQuery(runtime, agentId, active);
   const actions = useAgentActions(runtime);
+  const panel = useAgentChatStore((state) => state.panel);
   if (!runtime || !chat || !agent || !agentId) return null;
-  const request = (requests.data ?? []).filter((entry) => canDecideAgentToolRequest(entry) && isVisibleAgentRequest(agent, entry))
+  const choosing = panel?.view === "settings" && panel.chatKey === agentChatKey(chat, chat.sessionId);
+  const request = (requests.data ?? []).filter((entry) => canDecideAgentToolRequest(entry) && isVisibleAgentRequest(agent, entry) && !isBeingChosen(agent, entry, choosing))
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))[0];
   const runQueueMessage = agentRunQueueMessage(actions.runNow.error);
   return <>

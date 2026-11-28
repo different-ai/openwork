@@ -24,6 +24,7 @@ dev, or demo work. Names follow `<lifecycle>-<surface>`:
 | `preview-app-web` | The web app plus the server it needs (local, private Daytona URL, Freestyle). |
 | `acme-web` | The seeded Acme demo stack: Den, AI Gateway, and the web app. |
 | `preview-workbot` | Workbot with Den sign-in and the headless runner: the seeded Acme org, Workbot turned on. `-- --calendar` adds the owner's seeded Automations, model choices and mock meetings for Workbot's Calendar. `-- --open-workplace` (local) makes Open Outlook, Open Calendar and Open Drive each person's Microsoft 365 through Den's real connector: Alex and Casey each get their own, already connected, and Workbot's turns run through the AI Gateway on a scripted model that really calls those tools (`--live` for a real model). |
+| `preview-agents` | Agents in the desktop app (local): the Acme Den with Agents and tool permissions on, the headless runner behind the organization's AI Gateway on a real model, a signed-in desktop window, and three seeded agents (one with a routine, one with apps only, one with no job yet). Needs a model key: `ANTHROPIC_API_KEY`, or an Infisical login. |
 | `dev-app-web` | Your working tree as the local server plus web app (`pnpm dev:headless-web`). |
 | `live-desktop`, `live-app-web` | Source desktop or web app on your installed production state. |
 
