@@ -15,17 +15,17 @@ import { useDenToast } from "../../_components/den-toast";
 import { ConfirmDialog, DisclosureSection } from "../../_components/item-list";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { TimeAgo, hairline, secondaryText } from "./computer-parts";
-import { absoluteTime } from "./computers-format";
+import { absoluteTime, SHARED_COMPUTER_LABEL } from "./computers-format";
 import { InventoryDetailActions, InventoryMergedSignIns, useInventoryActions } from "./inventory-actions";
 import { saveWholeComputerChoice, useChangeComputerSourceAccess, useInventoryDetail, useRefreshInventory, type InventoryScope } from "./inventory-data";
-import { computerRulesLine, inventoryOwnerName, onOff, runCodeLabel, runCodeReason } from "./inventory-format";
+import { inventoryDate, inventoryOwnerName, onOff, runCodeLabel, runCodeReason } from "./inventory-format";
 import { InventoryError } from "./inventory-parts";
 import { InventoryLock, sessionLockReason } from "./inventory-rows";
 import { MyComputerActivity } from "./my-computers-screen";
 import { remoteAccessChangeHint, remoteAccessNote } from "./remote-access";
 
 type Detail = ComputerInventoryDetailResponse;
-const cardGrid = "grid gap-3 @3xl:grid-cols-3";
+const cardGrid = "grid items-start gap-3 @3xl:grid-cols-3";
 
 function DetailCard({ title, children }: { title: string; children: ReactNode }) {
   return <DenCard className="min-w-0 space-y-2">
@@ -35,7 +35,7 @@ function DetailCard({ title, children }: { title: string; children: ReactNode })
 }
 
 function DetailValue({ label, value }: { label: string; value: ReactNode }) {
-  if (value === null || value === undefined || value === "") return null;
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null;
   return <div className={`flex min-h-10 flex-wrap items-center justify-between gap-x-2 border-b py-1 last:border-b-0 ${hairline}`}>
     <dt className={secondaryText}>{label}</dt>
     <dd className="min-w-0 wrap-anywhere">{value}</dd>
@@ -51,7 +51,7 @@ function Installed({ installed, now, onRemove }: { installed: Detail["installed"
       <DetailValue label="App version" value={appVersion} />
       <DetailValue label="Signed in as" value={identity} />
       <DetailValue label="Last contact" value={lastSeenAt ? <TimeAgo iso={lastSeenAt} now={now} /> : null} />
-      <DetailValue label="Added date" value={<time dateTime={addedAt}>{absoluteTime(addedAt)}</time>} />
+      <DetailValue label="Added" value={<time dateTime={addedAt}>{inventoryDate(addedAt)}</time>} />
       <DetailValue label="Platform" value={platform} />
     </dl>
     <InventoryMergedSignIns signIns={mergedSignIns} now={now} onRemove={onRemove} installed />
@@ -64,6 +64,7 @@ function SourceRow({ detail, scope, source }: { detail: Detail; scope: Inventory
   const toast = useDenToast();
   const mutation = useChangeComputerSourceAccess(scope, detail.computer.id, source.key);
   const whole = source.scope === "whole_computer";
+  const folders = source.folders.filter((folder) => folder.trim());
   const computer = detail.computer.label;
   const restore = source.revokedAt !== null;
   const label = restore ? "Allow again" : "Revoke";
@@ -79,9 +80,9 @@ function SourceRow({ detail, scope, source }: { detail: Detail; scope: Inventory
     <div className="min-w-0 flex-1">
       <p id={sourceLabelId} className="font-medium wrap-anywhere">{source.label}</p>
       <p className={secondaryText}>{whole ? "Whole computer" : "In sandbox"}</p>
-      {source.folders.length ? <div className={`mt-1 text-xs ${secondaryText}`}>
+      {folders.length ? <div className={`mt-1 text-xs ${secondaryText}`}>
         <span>{whole ? "Working folder" : "Shared folders"}</span>
-        <ul>{source.folders.map((folder) => <li key={folder}><code className="wrap-anywhere">{folder}</code></li>)}</ul>
+        <ul>{folders.map((folder) => <li key={folder}><code className="wrap-anywhere">{folder}</code></li>)}</ul>
       </div> : !whole ? <p className={`text-xs ${secondaryText}`}>No shared folders</p> : null}
       {source.revokedAt ? <p className={`mt-1 text-xs wrap-anywhere ${secondaryText}`}>
         {source.revokedBy ? `Revoked by ${source.revokedBy} on ` : "Revoked on "}<time dateTime={source.revokedAt}>{absoluteTime(source.revokedAt)}</time>
@@ -160,12 +161,12 @@ function WholeComputerChoice({ detail, scope }: { detail: Detail; scope: Invento
       <DenSwitch size="sm" aria-label={SWITCH_LABEL} aria-describedby={checked ? undefined : hintId}
         checked={checked} disabled={busy || blocked || (!checked && !parsed.success)} onChange={toggle} />
     </div>
-    {checked ? savedFolder ? <p className={secondaryText}>Working folder: <code className="wrap-anywhere">{savedFolder}</code></p> : null : <div className="space-y-1">
+    {!checked ? <div className="space-y-1">
       <label htmlFor={folderId} className={secondaryText}>Working folder</label>
       <DenInput id={folderId} className={COMPACT_INPUT_CLASS} autoComplete="off" spellCheck={false} placeholder="/home/openwork" required maxLength={1024}
         value={folder} aria-describedby={hintId} disabled={busy || blocked} onChange={(event) => setDraft(event.target.value)} />
       <p id={hintId} className={`text-xs ${secondaryText}`}>{blocked ? "An organization owner or admin can allow this in Organization settings." : FOLDER_HINT}</p>
-    </div>}
+    </div> : null}
     {error ? <p role="alert" className="text-[var(--ow-danger)]">{error}</p> : null}
     <ConfirmDialog confirm={confirmFolder !== null ? {
       title: `Allow whole-computer access to ${detail.computer.label}?`,
@@ -179,7 +180,7 @@ function RunCode({ detail, scope }: { detail: Detail; scope: InventoryScope }) {
   const code = detail.runCode.value;
   const reason = runCodeReason(code);
   return <DetailCard title="Run code here">
-    {code.value === "not_available" ? <p>{detail.computer.label} can&apos;t take work from other computers yet.</p> : <>
+    {code.value === "not_available" ? <p>Agents on other computers can&apos;t run code on {detail.computer.label} yet.</p> : <>
       <p>{runCodeLabel(code)}</p>
       {reason ? <p className={`flex items-start gap-2 text-xs ${secondaryText}`}>
         {code.value === "no" && code.reason === "organization" ? <InventoryLock reason={reason} /> : null}{reason}
@@ -204,6 +205,20 @@ function Sessions({ detail }: { detail: Detail }) {
     {note ? <p className={`flex items-start gap-2 text-xs ${secondaryText}`}>{lock ? <InventoryLock reason={lock} /> : null}{note}</p> : null}
     {hint ? <p className={`text-xs ${secondaryText}`}>{hint}</p> : null}
   </DetailCard>;
+}
+
+function OrganizationRules({ rules }: { rules: Detail["rules"] }) {
+  const sessions = rules.sessions === "off" ? "Off"
+    : rules.sessions === "created" ? "Start tasks and open only sessions those devices started"
+      : "Start tasks and open sessions";
+  return <div>
+    <p className="font-medium">What the organization allows</p>
+    <ul>
+      <li>Tasks and sessions: {sessions}</li>
+      <li>Run code from other computers: {rules.runCode ? "Allowed" : "Off"}</li>
+      <li>Sandbox on personal computers: {rules.requireSandboxOnPersonal ? "Required" : "Not required"}</li>
+    </ul>
+  </div>;
 }
 
 function DetailActivity({ events, now }: { events: Detail["activity"]; now: number }) {
@@ -235,7 +250,9 @@ export function InventoryDetail({ id, scope, onClose, onRemoved, canDisconnect =
   const detail = query.data;
   const row = detail?.computer;
   const owner = row && inventoryOwnerName(row.owner);
-  const ownerLine = owner ? `Only ${owner} can change these.` : row?.shared ? "This computer is shared with the organization." : "Only the owner can change these.";
+  const ownerLine = row?.shared ? `${SHARED_COMPUTER_LABEL}.`
+    : row?.owner?.former ? "This computer belongs to a former member."
+      : owner ? `Only ${owner} can change these.` : "Only the owner can change these.";
   const adminCanRevoke = detail?.runCode.canRevoke && detail.runCode.sources.some((source) => !source.revokedAt);
   const disconnectLocked = scope.admin && !canDisconnect && row?.kind === "desktop" && !row.canDisconnect && !row.canRemove && !row.notes.some((note) => note.code === "disconnected");
   return <div data-testid={`computer-inventory-detail-${id}`} aria-busy={query.isFetching} className="@container space-y-3">
@@ -248,7 +265,7 @@ export function InventoryDetail({ id, scope, onClose, onRemoved, canDisconnect =
         <p className="flex items-center gap-2"><InventoryLock reason={ownerLine} />
           <span>{ownerLine}{adminCanRevoke ? " You can revoke access." : ""}</span>
         </p>
-        <p>{computerRulesLine(detail.rules)}</p>
+        {row.owner && !row.owner.former && !row.shared ? <OrganizationRules rules={detail.rules} /> : null}
       </div> : null}
       <div className={cardGrid}>
         <Installed installed={detail.installed} now={now} onRemove={removeSignIn} />

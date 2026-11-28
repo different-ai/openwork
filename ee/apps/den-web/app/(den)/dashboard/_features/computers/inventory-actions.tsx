@@ -10,9 +10,9 @@ import { ComputerActionButtons, RenameComputerDialog, type ComputerActionSet } f
 import { disconnectOwnConfirm, disconnectTeamConfirm, disconnectedLine, myComputerActions, removeConfirm, teamComputerActions } from "./computer-actions";
 import { TimeAgo, hairline, secondaryText } from "./computer-parts";
 import { disconnectOrganizationComputer, removeOrganizationComputer } from "./computers-data";
-import { absoluteTime, countLabel } from "./computers-format";
+import { countLabel } from "./computers-format";
 import { useRefreshInventory, type InventoryScope } from "./inventory-data";
-import { inventoryOwnerName, mergedInventoryLine, removableMergedSignIns } from "./inventory-format";
+import { inventoryDate, inventoryOwnerName, mergedInventoryLine, removableMergedSignIns } from "./inventory-format";
 import { disconnectMyComputer, removeMyComputer, renameMyComputer } from "./my-computers-data";
 
 export function useInventoryActions(scope: InventoryScope, onRemoved?: (id: string) => void) {
@@ -88,19 +88,17 @@ export function InventoryDetailActions({ row, set }: { row: ComputerInventoryRow
 
 function MergedSignIn({ signIn, now, onRemove }: { signIn: ComputerMergedSignIn; now: number; onRemove: () => Promise<void> }) {
   const [confirming, setConfirming] = useState(false);
-  return <li className={`flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 border-b py-1 last:border-b-0 ${hairline}`}>
-    <div className="min-w-0 flex-1">
-      <p className="truncate" title={signIn.label}>{signIn.label}</p>
-      <p className={`flex flex-wrap gap-x-2 text-xs ${secondaryText}`}>
-        <span>Added <time dateTime={signIn.addedAt}>{new Date(signIn.addedAt).toLocaleDateString(undefined, { dateStyle: "medium" })}</time></span>
-        {signIn.lastSeenAt ? <span title={absoluteTime(signIn.lastSeenAt)}>Last seen <TimeAgo iso={signIn.lastSeenAt} now={now} className="lowercase" /></span> : <span>Never seen</span>}
-        {signIn.appVersion ? <span>App version {signIn.appVersion}</span> : null}
-      </p>
-    </div>
-    {signIn.canRemove ? <>
+  return <li className={`grid min-h-10 grid-cols-2 items-center gap-x-3 gap-y-1 border-b py-2 text-xs last:border-b-0 @xl:grid-cols-[minmax(0,2fr)_minmax(0,1.15fr)_minmax(0,1.35fr)_minmax(0,1fr)_3.5rem] @xl:py-1 ${hairline} ${secondaryText}`}>
+    <span className="min-w-0 truncate text-[var(--dls-text-primary)]" title={signIn.label}>{signIn.label}</span>
+    <span className="col-start-1 row-start-2 @xl:col-start-2 @xl:row-start-1">Added <time dateTime={signIn.addedAt}>{inventoryDate(signIn.addedAt)}</time></span>
+    <span className="col-start-2 row-start-2 @xl:col-start-3 @xl:row-start-1">
+      {signIn.lastSeenAt ? <>Last seen <TimeAgo iso={signIn.lastSeenAt} now={now} className="lowercase" /></> : "Never seen"}
+    </span>
+    {signIn.appVersion?.trim() ? <span className="col-start-1 row-start-3 wrap-anywhere @xl:col-start-4 @xl:row-start-1">App version {signIn.appVersion}</span> : null}
+    {signIn.canRemove ? <div className="col-start-2 row-start-1 justify-self-end @xl:col-start-5">
       <DenButton variant="ghost" size="inline" onClick={() => setConfirming(true)} aria-label={`Remove older sign-in for ${signIn.label}`}>Remove</DenButton>
       <ConfirmDialog destructive confirm={confirming ? { ...removeConfirm(signIn.label), title: `Remove the older sign-in for ${signIn.label}?` } : null} onConfirm={onRemove} onClose={() => setConfirming(false)} />
-    </> : null}
+    </div> : null}
   </li>;
 }
 
@@ -118,7 +116,7 @@ export function InventoryMergedSignIns({ signIns, now, onRemove, installed = fal
       <span>{installed ? `${countLabel(signIns.length, "older sign-in")} merged in` : mergedInventoryLine(signIns.length)}</span>
       <DenButton variant="ghost" size="inline" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>{open ? "Hide" : "Show"}</DenButton>
     </div>
-    <ul id={id} hidden={!open} aria-label="Older sign-ins" className={`border-t ${hairline}`}>
+    <ul id={id} hidden={!open} aria-label="Older sign-ins" className={`@container border-t ${hairline}`}>
       {open ? signIns.map((signIn) => <MergedSignIn key={signIn.id} signIn={signIn} now={now} onRemove={() => onRemove(signIn)} />) : null}
     </ul>
   </div>;

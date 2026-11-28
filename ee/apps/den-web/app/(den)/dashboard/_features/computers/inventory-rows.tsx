@@ -6,6 +6,7 @@ import { COMPUTER_READ_SESSIONS_LABELS, type ComputerInventoryRow } from "@openw
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { StatusDot, secondaryText } from "./computer-parts";
 import { ListRow, OwnerLane, RowLane, RowLaneLabel, RowList, RowListHeader, computerIcon } from "./computer-rows";
+import { SHARED_COMPUTER_LABEL } from "./computers-format";
 import { inventoryStatus, onOff, runCodeLabel, runCodeReason } from "./inventory-format";
 import { remoteAccessNote, type RemoteAccessVoice } from "./remote-access";
 
@@ -50,7 +51,7 @@ function InventoryCells({ row, admin, now }: { row: ComputerInventoryRow; admin:
   const read = COMPUTER_READ_SESSIONS_LABELS[row.sessions.readSessions];
   const runBlocked = row.runCode.value === "no" && row.runCode.reason === "organization";
   return <>
-    {admin ? <OwnerLane device={row} lane={`flex ${columns.owner} ${bottom}`} /> : null}
+    {admin ? <OwnerLane device={row} lane={`flex ${columns.owner} ${bottom}`} sharedLabel="Shared" /> : null}
     <div role="cell" data-status={row.status.state} className={`shrink-0 leading-5 ${columns.status}`} title={status.detail ?? undefined}>
       <span className="flex items-center gap-2"><StatusDot tone={status.tone} />{status.label}</span>
       {status.detail ? <span className={`block truncate pl-4 text-xs leading-4 ${secondaryText}`}>{status.detail}</span> : null}
@@ -83,9 +84,11 @@ export function InventoryRows({ rows, admin = false, openId, now, onToggle, rowA
     {rows.map((row) => {
       const open = row.id === openId;
       const note = row.notes[0]?.message;
+      const shared = !admin && row.shared ? SHARED_COMPUTER_LABEL : null;
+      const description = [row.kindLabel, shared, note].filter(Boolean).join(", ");
       return <ListRow key={row.id} icon={computerIcon({ kind: row.kind === "desktop" ? "desktop" : "vm", provider: row.kind === "workbot" ? "workbot" : "other" })}
-        rowTestId={`computer-inventory-row-${row.id}`} rowData={{ "data-inventory-row": "" }} name={row.label}
-        secondLine={<span title={note ? `${row.kindLabel}: ${note}` : undefined}>{row.kindLabel}{note ? <span className="ml-2">{note}</span> : null}</span>}
+        rowTestId={`computer-inventory-row-${row.id}`} rowData={{ "data-inventory-row": "" }} name={row.label} wrapSecondLine
+        secondLine={<span title={description}>{row.kindLabel}{shared ? <> <span className="ml-1">{shared}</span></> : null}{note ? <> <span className="ml-1">{note}</span></> : null}</span>}
         lanes={<InventoryCells row={row} admin={admin} now={now} />}
         below={<span aria-hidden="true" className="order-1 basis-full @3xl:hidden" />}
         action={admin ? rowAction?.(row) ?? null : undefined}

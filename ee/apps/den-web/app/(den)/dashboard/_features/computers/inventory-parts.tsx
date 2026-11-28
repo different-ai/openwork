@@ -44,7 +44,7 @@ export function InventoryRulesSkeleton() {
 export function InventoryOlder({ hidden, shown, onToggle }: { hidden: number; shown: boolean; onToggle: () => void }) {
   if (!shown && hidden === 0) return null;
   return <div className={`mt-2 flex flex-wrap items-center gap-x-2 text-xs ${secondaryText}`} data-testid="computer-inventory-older">
-    <span>{shown ? "Showing computers not heard from in the last week." : `${hidden.toLocaleString("en-US")} not heard from in the last week.`}</span>
+    <span>{shown ? "Also showing computers not heard from in the last week." : `${hidden.toLocaleString("en-US")} not heard from in the last week.`}</span>
     <DenButton variant="ghost" size="inline" aria-expanded={shown} onClick={onToggle}>{shown ? "Hide" : "Show older"}</DenButton>
   </div>;
 }

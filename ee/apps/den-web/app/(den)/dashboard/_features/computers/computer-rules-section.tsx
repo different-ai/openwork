@@ -78,7 +78,7 @@ export function ComputerRulesSection({ orgId, canEdit }: { orgId: string; canEdi
   const sandboxId = useId();
   return <div ref={scrollToComputersAnchor} id="computers" data-testid="computer-rules" className="mt-6 scroll-mt-6">
     <ItemSection variant="rule" title="Computers">
-      <div className="pt-3 [&>div]:mb-0"><RemoteAccessSetting orgId={orgId} /></div>
+      <RemoteAccessSetting orgId={orgId} hideSectionHeading />
       <RunCodeRule orgId={orgId} canEdit={canEdit} />
       <div className={`border-b ${hairline}`}>
         <SettingRow flush label="Work arriving on personal computers runs in the sandbox" labelId={sandboxId} stateLine={SANDBOX_REASON}>

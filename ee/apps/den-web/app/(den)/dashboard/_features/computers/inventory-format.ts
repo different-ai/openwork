@@ -60,6 +60,16 @@ const STATUS_TONES: Record<ComputerInventoryState, DeviceTone> = {
   online: "success", ready: "success", offline: "neutral", starts_when_needed: "neutral", has_a_problem: "warning",
 };
 
+export function inventoryReachableLine(computers: readonly ComputerInventoryRow[]) {
+  if (!computers.length) return "No computers yet";
+  const count = computers.filter(({ status }) => status.state === "online" || status.state === "ready").length;
+  return `${count.toLocaleString()} of ${computers.length.toLocaleString()} reachable now`;
+}
+
+export function inventoryDate(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
 export function lastSeenLine(iso: string | null, now: number) {
   return iso ? `Last seen ${relativeTime(iso, now).toLowerCase()}` : "Never seen";
 }
@@ -76,6 +86,7 @@ const RUN_CODE_REASONS: Record<ComputerRunCodeOffReason, string> = {
   organization: "The organization turned it off.",
   owner: "Its owner turned it off.",
   not_chosen: "Its owner has not chosen yet.",
+  revoked: "Access was revoked.",
 };
 
 export function runCodeLabel(runCode: ComputerRunCode): string {

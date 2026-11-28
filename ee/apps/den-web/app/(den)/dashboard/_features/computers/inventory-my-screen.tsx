@@ -4,11 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { getComputersRoute } from "../../../_lib/den-org";
 import { focusRing, secondaryText } from "./computer-parts";
-import { computersStateLine } from "./computers-format";
 import { InventoryMergedSignIns, useInventoryActions } from "./inventory-actions";
 import { useMyInventory, useRefreshInventory, type InventoryScope } from "./inventory-data";
 import { InventoryDetail } from "./inventory-detail";
-import { MY_INVENTORY_EMPTY } from "./inventory-format";
+import { inventoryReachableLine, MY_INVENTORY_EMPTY } from "./inventory-format";
 import { InventoryEmpty, InventoryError, InventoryHeader, inventoryText } from "./inventory-parts";
 import { InventoryRows, InventoryRowsSkeleton } from "./inventory-rows";
 
@@ -19,7 +18,7 @@ export function MyInventoryScreen({ scope, orgSlug, canViewComputers }: { scope:
   const onRemoved = (id: string) => setOpenId((current) => current === id ? "" : current);
   const { removeSignIn } = useInventoryActions(scope);
   const data = query.data;
-  const state = data ? computersStateLine({ total: data.computers.length, online: data.computers.filter((row) => row.status.state === "online").length }) : query.isPending ? null : undefined;
+  const state = data ? inventoryReachableLine(data.computers) : query.isPending ? null : undefined;
   const now = Date.now();
 
   return <section className={`min-w-0 ${inventoryText}`} data-testid="my-computer-inventory" aria-busy={query.isFetching}>
