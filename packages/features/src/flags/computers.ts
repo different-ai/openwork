@@ -2,7 +2,7 @@ import { defineFeature, everywhere } from "@openwork/features/define"
 
 export default defineFeature({
   label: "Computers",
-  description: "Use your desktop chat's file and shell tools on your own registered cloud computer, and see one row per computer in Den.",
+  description: "Use a chat's file and shell tools on your other computers: another laptop through its sandbox, or your registered cloud computer. Den shows one row per computer.",
   category: "computerUse",
   added: "2026-11-26",
   since: "2026-11",
